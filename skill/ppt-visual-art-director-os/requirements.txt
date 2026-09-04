@@ -1,0 +1,4 @@
+# Runtime dependencies for ppt-visual-art-director-os
+# Python 3.10+ recommended
+python-pptx>=1.0.2,<2.0
+Pillow>=10.0,<13.0

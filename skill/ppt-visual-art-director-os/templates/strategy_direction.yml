@@ -1,0 +1,33 @@
+strategy:
+  audience: ""
+  decision: ""
+  tension: ""
+  narrative_arc: [establish, explain, prove, recommend, close]
+  emotional_target: calm_authority
+  evidence_posture: fact_led
+
+direction:
+  visual_world: ""
+  composition_grammar: evidence_field
+  type_voice: neutral_sans
+  color_behavior: single_signal
+  color_intent: [brand, emotion, hierarchy]
+  media_role: none
+  background_scene: solid_world
+  motion_posture: still
+  forbidden_signals: [card_wall, decorative_stock, competing_highlights]
+
+slides:
+  - id: s01
+    page_intent:
+      insight: ""
+      narrative_role: establish
+      audience_question: ""
+      focus: ""
+      reading_order: [conclusion, evidence, implication, source]
+      energy: low
+      density: balanced
+      empty_space_role: protect_focus
+      page_family: STATEMENT
+      rhythm_stage: opening
+      continuity_token: "one signature spatial gesture"
