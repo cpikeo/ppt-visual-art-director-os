@@ -1,0 +1,8 @@
+# Runtime dependencies for ppt-visual-art-director-os
+# Python 3.10+ recommended
+python-pptx>=1.0.2,<2.0
+Pillow>=10.0,<13.0
+# render_check.py 的像素测量依赖 numpy（缺失时渲染证据降级为结构证据）
+numpy>=1.24
+# 可选：opencv-python 提供更准的显著图；不可用时使用确定性回退
+# 渲染证据还需系统级组件（不在 pip 范围）：LibreOffice(soffice) + poppler-utils(pdftoppm)

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编译产物与渲染证据（本地迭代，不入库）
+*.pptx
+*_render/
+*.pdf
+
+# OS / 编辑器
+.DS_Store

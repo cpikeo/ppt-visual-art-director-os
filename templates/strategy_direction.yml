@@ -1,0 +1,89 @@
+# 战略 / 方向 / 节奏模板
+#
+# 字段为空时本模板是「空白契约」；在交付前请按项目实际填写。
+# 下方提供的 narrative_arc_default / rhythm_anchors / continuity_token_default
+# 三个示例值用于演示「编辑感」节奏，可按项目删除或覆盖；
+# 它们是高级感的最小化提示，不参与 runtime 编译。
+
+# ────────────────────────────────────────────────────────────
+# 必填最小集（OS 治理必需；缺失会让 Guard 返回 INPUT_MISSING / INTENT_UNCLEAR）
+# ────────────────────────────────────────────────────────────
+# 任何字段为 "" 时，编译可通过但 Release Manifest 状态不会是 PASS。
+# 字段名是 OS §1 强制决策流程第 1-2 步对应的最小输入集。
+required_minimum:
+  strategy.audience:    ""   # 受众：谁会看、看到底会做什么决定
+  strategy.decision:    ""   # 观看后要支持的决定（一个动词 + 一个对象）
+  strategy.tension:     ""   # 观众当前的疑问、风险或阻力
+  direction.visual_world: "" # 一句话描述整套 deck 的光线、材质、空间与情绪
+  slides[].page_intent.insight: ""   # 一页一句可复述结论（必填，否则 INTENT_UNCLEAR）
+  slides[].page_intent.focus:    ""   # 唯一主焦点（必填，否则 FOCUS_COMPETING）
+  # 可选但强烈建议（缺失会让 critic 维度打分停留在基线 3/5）
+  slides[].page_intent.empty_space_role: ""   # protect_focus | create_authority | separate_chapter | hold_emotion
+  slides[].page_intent.continuity_token:   ""   # one signature spatial gesture（如 "01 / 06 + 编辑栏"）
+  slides[].source_zone.x:      48   # 左下角来源区独立保留
+  slides[].source_zone.y:      672
+  slides[].source_zone.width:  1184
+  slides[].source_zone.height: 32
+
+strategy:
+  audience: ""
+  decision: ""
+  tension: ""
+  # narrative_arc：默认按 establish → explain → prove → recommend → close。
+  # 编辑感强的 deck 会在 opening/closing 加大留白、把 prove 放中段、避免
+  # "一张接一张并列"的均匀叙事。
+  narrative_arc: [establish, explain, prove, recommend, close]
+  emotional_target: calm_authority        # calm_authority | constructive_urgency | human_trust | technical_clarity
+  evidence_posture: fact_led              # fact_led | hypothesis_led | exploratory
+
+direction:
+  visual_world: ""                        # 一句话描述整套 deck 的光线、材质、空间与情绪
+  composition_grammar: evidence_field     # soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence
+  type_voice: neutral_sans                # editorial_serif | neutral_sans | product_display | humanist_sans
+  color_behavior: single_signal           # quiet_neutral | single_signal | warm_material | dark_luminous
+  color_intent: [brand, emotion, hierarchy]   # 三种职责的当前优先顺序
+  media_role: none                        # none | context | emotion | proof | hero
+  background_scene: solid_world           # solid_world | atmospheric | cinematic
+  motion_posture: still                   # still | reveal | progressive
+  forbidden_signals: [card_wall, decorative_stock, competing_highlights]
+
+  # 编辑感默认：跨页「one signature spatial gesture」——同一只签名动作反复出现，
+  # 形成识别度。Apple 用留白、Pentagram 用几何、FT 用红条；建议在每套 deck
+  # 选择一种克制的、可重复的"动作"（如左缘轴线收束、章节编号、右下页码），
+  # 并写到这里，让跨页连续性可被验证。
+  continuity_token_default: "one signature spatial gesture"
+
+slides:
+  - id: s01
+    page_intent:
+      insight: ""                         # 一页一句可复述结论
+      narrative_role: establish           # establish | explain | compare | prove | recommend | close
+      audience_question: ""               # 观众此刻最想知道什么
+      focus: ""                           # 唯一主焦点（对应元素 id）
+      reading_order: [conclusion, evidence, implication, source]
+      energy: low                         # low | medium | high
+      density: balanced                   # sparse | balanced | dense
+      empty_space_role: protect_focus     # protect_focus | create_authority | separate_chapter | hold_emotion
+      page_family: MINIMAL_STATEMENT      # COVER | HERO | EDITORIAL | NARRATIVE | DATA_STORY | COMPARISON | FRAMEWORK | TIMELINE | DASHBOARD | MINIMAL_STATEMENT | CASE_STUDY | CLOSING | EXECUTIVE_SUMMARY
+      rhythm_stage: opening               # opening | context | problem | insight | evidence | solution | proof | vision | closing
+      continuity_token: "one signature spatial gesture"
+
+# 节奏锚点（建议但非强制）：让整套 deck 拥有可识别的"呼吸"曲线。
+# 8 页标准节奏示例：opening 高 / sparse，evidence 低 / dense，closing 高 / sparse。
+rhythm_anchors_default:
+  opening:  { energy: high,   density: sparse,   family: HERO }
+  context:  { energy: medium, density: balanced, family: EDITORIAL }
+  problem:  { energy: medium, density: balanced, family: NARRATIVE }
+  insight:  { energy: low,    density: sparse,   family: MINIMAL_STATEMENT }
+  evidence: { energy: low,    density: dense,    family: DATA_STORY }
+  solution: { energy: medium, density: balanced, family: FRAMEWORK }
+  proof:    { energy: low,    density: balanced, family: CASE_STUDY }
+  vision:   { energy: high,   density: sparse,   family: HERO }
+  closing:  { energy: high,   density: sparse,   family: MINIMAL_STATEMENT }
+
+# 安全区与版心（建议声明，可被 spec.canvas 覆盖）
+safe_zone_default:
+  x: 48
+  y: 48
+  width: 1184
+  height: 624
