@@ -82,6 +82,7 @@ ppt-visual-art-director-os/
 │   ├── primitives.py
 │   ├── qa.py
 │   ├── render_check.py
+│   ├── route.py
 │   └── selftest.py
 └── templates/
     └── strategy_direction.yml
@@ -147,6 +148,17 @@ python3 -m venv .venv
 python3 -m pip install -r requirements.txt
 ```
 
+### 先分路，再预检（默认入口）
+
+不确定该用多大复杂度时，让决策层按内容分类，而不是先假设「最高质量」：
+
+```bash
+python3 scripts/route.py path/to/brief.yml --json      # 内容 → 路径 / 页面家族 / 密度 / 资产预算
+python3 scripts/guard.py path/to/build_mydeck.py --preflight   # 静态预检（0.2s 级，无需渲染）
+```
+
+`route.py` 只接受 `content_type / design_direction / quality_level`，返回该页的家族、密度、能量、字阶、图像决策与派生方向（背景、材质、光线、图表风格、动效、构图语法）；数据、表格、流程、结构页在闸门上直接判为「不出图」。`guard.py --preflight` 用与 Art Critic 同一组常量提前点名确定性硬门槛，返回 `slide / code / observation / minimal_fix`，因此一轮修改从「渲染 4 秒」压缩到「静态 0.2 秒」。
+
 ### 编译 PPTX
 
 `compiler.py` 接受一个定义 `build_spec()` 或顶层 `SPEC` 的 Python 模块：
@@ -164,8 +176,19 @@ python3 scripts/guard.py path/to/build_mydeck.py --json
 ### 运行完整 QA
 
 ```bash
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --json
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --json       # 发布口径：dpi 96 + 全量渲染证据
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --quick       # Level 1：静态判定，不渲染
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --key-pages   # Level 2：只渲染关键页
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --fast        # 便宜的全量渲染：dpi 72 + 预检闸门
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --preflight   # 只列可执行修正项
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --manifest    # 追加 Critic + Release Manifest
 ```
+
+渐进层级只改变「测了多少」，不改变「放宽什么」：Level 1/2 的状态上限是 `REVISE`/`PREVIEW_ONLY`，`release_eligible=False`；`qa["performance"]` 与 `qa["render"]["coverage"]` 记录每轮实际测了什么。
+
+渲染阶段内部并行最多 2 个 worker（按 CPU 收敛，页数 <4 自动关闭），并把 poppler 转换与像素测量串成一条流水。渲染侧另有两层复用：pptx 逐字节未变就复用上一轮 PDF（省掉 1.7s 的 soffice 整份转换），「会被编译成像素的那部分 spec」没变就连 `compile_deck` 一起跳过；两层都做内容核验，`--no-cache` 既不查也不写。12 页真实 deck 实测：Level 3 冷跑 4.7s，同输入重跑 0.0s，Level 2 收口后补齐全量 2.57s → 0.82s，只改 `density`/`insight`/`focus` 标签的一轮 4.8s → 0.01s；冷热两条路径的像素质标逐位一致。
+
+`--fast` / `--preflight` 不改变任何判定阈值，只改变采样密度与批评轮次；当静态预检已能确定渲染必然不是 `PASS` 时，跳过渲染（`performance.render_skipped`）并直接给出 `next_action`。每次运行都返回 `performance`（`guard_ms / compile_ms / render_ms / preflight_items`），使「省掉的轮次」可核对。
 
 渲染证据（Render Evidence）需要系统级依赖：LibreOffice（`soffice`）将 PPTX 转 PDF，`poppler-utils`（`pdftoppm`）将 PDF 转 PNG。缺少任一项时 `run_qa` 自动降级：不阻塞静态治理，但状态只能是 `PREVIEW_ONLY`，不能发布。`--no-render` 仅用于快速迭代布局，同样不代表发布通过。
 
@@ -197,7 +220,7 @@ Deterministic QA 只判断可编译、可渲染、可读、可编辑、无越界
 
 ## 版本与验证状态
 
-当前目录整理为 `ppt-visual-art-director-os`，基于 v9 优化版。评分链路已升级：Art Critic v2.0（证据驱动加减分、真实失败码、PASS 可达）、Render Evidence v1.1（声明锚点解析、主题 Accent 测量、显著图分布）、QA v1.2（分域扣分明细、可选边缘带检查）。已通过技能结构验证、Python 语法检查和项目自检；建议在具体项目中继续使用真实 deck 做渲染级回归。
+当前目录整理为 `ppt-visual-art-director-os`，基于 v9 优化版。v2.3 把「少跑一轮」做实：三处内容核验的复用（按页像素 / 整份 PDF / 编译视图）+ deck 级色彩与图表纪律（色相族预算、强调角距离、脏渐变提示、图表样式漂移）+ 焦点落位的轴线判定。评分链路已升级：Art Critic v2.0（证据驱动加减分、真实失败码、PASS 可达）、Render Evidence v1.1（声明锚点解析、主题 Accent 测量、显著图分布）、QA v1.2（分域扣分明细、可选边缘带检查）。速度与智能层：新增 `route.py` 决策层（内容类型 → 版式/风格/资产/字阶/密度）、Guard 静态预检（与 Critic 阈值同源）、QA 分阶段耗时与渲染跳过、背景层直接叠加合同（不计媒体预算、自动置底并补内容保护层）。既有 `compile_deck / run_qa / critique_deck / release_manifest / check_spec` 的参数与返回结构保持向后兼容。27 项自检全部 PASS（含渐进层级、子集证据对齐、并行上限、按页渲染缓存与内容核验、决策缓存、背景层资格、文字对比与行长门禁、报告自证戳）；实测 12 页真实 deck：预检 0.2s（等价于此前需一轮渲染才能发现的缺陷），Level 1 迭代 0.03s，Level 2 关键页冷测 3.7s／热态 0.0s，Level 3 全量冷测 4.7s，同输入复跑 0.0s，只改声明字段（density／insight／focus）的一轮 0.01s，QA 98.4 / Critic 94.2 / Manifest 全部 PASS，冷热两条路径的像素质标逐位一致。发布门本轮转为可自证：证据缓存按内容指纹核验、背景层免检需要资格、文字对比按渲染像素实测、报告与清单互相核对来源——四类曾经能蒙混通过的路径现在一律 fail closed。
 
 ## 许可证
 

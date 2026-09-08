@@ -82,6 +82,37 @@ def contrast(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
+# 辅助文字角色：语义上是注记/来源/轴标签，可读性门槛按「非正文」处理（3:1），
+# 不参与正文级 4.5:1 判定。guard 的行长豁免与渲染层对比度分级共用这一份名单。
+AUX_TEXT_ROLES = frozenset({"source", "method", "metadata", "caption", "legend", "axis",
+                            "data_label", "annotation", "page_number"})
+
+
+def text_role(element: dict) -> str:
+    return str((element or {}).get("role") or "")
+
+
+def is_aux_text(element: dict) -> bool:
+    return text_role(element) in AUX_TEXT_ROLES
+
+
+def spec_fingerprint(spec: dict) -> str:
+    """spec 的规范化内容指纹（16 hex）。
+
+    报告用它自证来源：QA / Art Critic 各盖一次，Release Manifest 核对后才会承认
+    其中的 PASS。没有一致指纹的「合格」不能进入发布判定。
+    """
+    import hashlib
+    import json
+    try:
+        canonical = json.dumps(spec, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:                       # 循环引用/不可序列化：退化到键集合，仍可辨版
+        keys = sorted(str(k) for k in (spec or {}).keys())
+        slides = (spec or {}).get("slides") or []
+        canonical = repr((keys, len(slides), [str(s.get("id")) for s in slides if isinstance(s, dict)]))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def with_alpha(hex_color: str, alpha: float) -> str:
     """生成 #RRGGBBAA（供色板推导使用）。"""
     a = max(0.0, min(1.0, alpha))

@@ -45,6 +45,28 @@ Direction 不是装饰偏好，而是对受众心理的假设。例如技术决�
 | 高端品牌/发布 | 建立期待与记忆 | 单一 Hero、尺度张力、克制光线 | 金色铺满、产品堆叠 |
 | 行动建议 | 让下一步明确 | 结论式标题、行动动词、限定条件 | 把建议做成装饰性标语 |
 
+### 内容类型 → 路由（Layer 0.7）
+
+`scripts/route.py` 把内容分类变成一次可复算的查表，不再靠调用方逐项传参。输入只有 `content_type / design_direction / quality_level`，输出一页的完整设计决策；缺省值即“未指定 = 由内容判断”，同输入必得同输出。
+
+| 内容类型 | 页面家族 | 默认密度 / 能量 | 图像决策 | 资产理由 |
+|---|---|---|---|---|
+| 封面 / cover | COVER | sparse / high | required | 建立世界与情绪 |
+| 业务总览 / business | EXECUTIVE_SUMMARY | balanced / medium | none | 结构承担阅读 |
+| 数据 / 指标 / data | DATA_STORY | balanced / low | none | 图与数即视觉 |
+| 对比 / comparison | COMPARISON | sparse 或 balanced / low | none | 并列关系需空白 |
+| 时间线 / timeline | TIMELINE | balanced / medium | none | 轴即结构 |
+| 流程 / process | PROCESS | balanced / medium | none | 路径即结构 |
+| 架构 / 分层 / architecture | FRAMEWORK | balanced / medium | required(仅品牌叙事) | 空间隐喻可选 |
+| 产品 / product | PRODUCT | sparse / high | required | 产品即主角 |
+| 案例 / case | CASE_STUDY | sparse / medium | optional | 具体感 |
+| 结论判断 / statement | MINIMAL_STATEMENT | sparse / low | optional | 语言本身即画面 |
+| 收束 / closing | MINIMAL_STATEMENT | sparse / medium | optional | 情绪余量 |
+
+路由同时给出色阶（Statement / Body / Caption 三档）、`media_budget`、`text_budget`、`empty_space_role`、`needs_pixel_evidence`，并从方向人格派生背景、材质、光线、图表风格、动效姿态与构图语法。`needs_pixel_evidence` 只有一句话的含义：**这页的判断是否必须看像素**——封面与含画心的页为真，纯文字结构页为假；QA 因此可以在迭代期只渲染这几页（Level 2），而不是每轮把整副 deck 变成图片。整副规划结果带决策缓存：同一 brief 在修订循环里重复调用直接命中（`cache_stats()` 可核对命中数），返回深拷贝，调用方改动不会污染缓存。`plan_deck` 额外产出疏密曲线（相邻页密度互斥，与 Guard `DENSITY_FLAT` / Critic rhythm 同口径）与资产清单：`assets.generate / reuse / skipped / planned_calls` 对应路径预算（Fast ≤2，Advanced ≤4）。
+
+**占用率口径**：`render_check` 的 occupancy 是渲染像素差值（96×54 采样、与角落底色比较），不是几何面积。浅色水墨画心几乎不占读数，因此声明 `balanced` / `dense` 前应以渲染值为准（±0.20 内），或在 `field()`、色带与文字块上增加真实墨迹，而不是改标签骗过节奏。
+
 ## 页面合同
 
 ```yaml

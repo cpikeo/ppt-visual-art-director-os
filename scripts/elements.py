@@ -318,6 +318,16 @@ def _fit_image(src: Path, w: float, h: float, fit: str, crop=None,
     return Path(tmp.name)
 
 
+def _content_protection_overlay(element: dict) -> dict | None:
+    """取画心的内容保护叠加层：Fill Contract 或 content_protection.overlay。"""
+    ov = element.get("overlay")
+    if not ov:
+        cp = element.get("content_protection")
+        if isinstance(cp, dict):
+            ov = cp.get("overlay") or cp.get("scrim") or cp.get("fill")
+    return ov if isinstance(ov, (dict, str)) and ov else None
+
+
 def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = None) -> None:
     x, y, w, h = ctx.bounds(element)
     src = _resolve_src(element, base_path)
@@ -343,6 +353,18 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
         pic = slide.shapes.add_picture(str(path_to_use), Emu(emu(x)), Emu(emu(y)),
                                        Emu(emu(w)), Emu(emu(h)))
         pic.name = str(element.get("id", "image"))
+        # Content Protection 层：紧随图片、覆盖同一盒，使文字可直接叠加而不牺牲可读性
+        overlay = _content_protection_overlay(element)
+        if overlay:
+            shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(emu(x)), Emu(emu(y)),
+                                        Emu(emu(w)), Emu(emu(h)))
+            shp.name = f"{element.get('id', 'image')}__protection"
+            try:
+                shp.shadow.inherit = False
+            except Exception:
+                pass
+            apply_fill(shp, overlay, ctx)
+            shp.line.fill.background()
     finally:
         if temp_path is not None:
             try:

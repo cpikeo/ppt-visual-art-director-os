@@ -93,7 +93,13 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
             except Exception:
                 pass
 
-        for ei, element in enumerate(slide_spec.get("elements") or []):
+        _ordered = list(slide_spec.get("elements") or [])
+        # z-order 安全网：声明为 background/backdrop 层的画心永远先绘制，
+        # 使文字与图表稳定位于其上；作者无需记忆元素顺序。
+        _ordered.sort(key=lambda e: 0 if isinstance(e, dict) and (
+            str(e.get("layer", "")).lower() in {"background", "backdrop"}
+            or str(e.get("role", "")).lower() in {"background", "backdrop"}) else 1)
+        for ei, element in enumerate(_ordered):
             fn = DISPATCH.get(str(element.get("type", "text")))
             if fn is None:
                 ctx.warn(f"slide[{si}].elements[{ei}]: 未知 type="

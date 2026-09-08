@@ -25,7 +25,7 @@ description: >
 
 | 当前任务 | 首先读取 | 主要产出 |
 |---|---|---|
-| 新建或重构 deck | `references/design-intelligence.md` | Strategy、Direction、Story Map、Page Intent |
+| 新建或重构 deck | `scripts/route.py`（先分类）+ `references/design-intelligence.md` | 执行路径、页面家族与密度曲线、Strategy、Direction、Story Map、Page Intent |
 | 落地视觉系统 | `references/design-system.md`、`references/themes.md` | Theme DNA、页面 spec、媒体 brief |
 | 参考案例校准 | `references/evidence-library.md` | Evidence Cards、可执行规则、反例边界 |
 | 评分与阈值调优 | `references/scoring.md`、`references/production-contract.md` | 评分口径、penalties/thresholds 调参、分域扣分明细 |
@@ -41,18 +41,35 @@ description: >
 3. **发布前审校**：直接运行 `qa.py` 的完整入口；仅当 QA 有 `render_missing` 或需要解释美学问题时，再补运行 `render_check.py` / `art_critic.py`。
 4. **修改后**：只重跑受影响页面的编译、渲染与 QA；发布前必须再跑一次全 deck。任何脚本输出都保存为 JSON 摘要，避免把实现源码或重复诊断灌入上下文。
 
+## 执行路径与验证层级
+
+先分类再决定复杂度。路径与层级只改变**预算与测多少**，不改变任何阈值（阈值唯一来源：`art_critic.py` 导出常量，Guard 预检与之同源）。
+
+| 决策 | Fast：内部汇报 / 数据 / 产品 / 年终总结 | Advanced：发布会 / 品牌 / 高端视觉 |
+|---|---|---|
+| 图像资产 | ≤2：cover / brand story / closing | ≤4：可加 statement / proof，逐页绑定留白锚点 |
+| 数据·对比·流程·结构页 | 闸门同源：不出图、不给预算（背景画心不计入预算） | 同左 |
+| 渲染与批评 | `--fast`（dpi 72），Critic 只在收口跑 | dpi 96，每轮改动都过 Critic |
+
+- **先预检再渲染**：`guard.py <module> --preflight`（12 页 0.2s）静态复现 Art Critic 的确定性门槛（焦点尺度与压制、媒体/文本预算、卡片墙、疏密与节奏、非对称声明），返回 `slide / code / observation / minimal_fix`；干净了才付渲染成本。
+- **验证分级**：Level 1 `--quick`（不渲染，判结构）→ Level 2 `--key-pages`（只测封面、收尾、含图含表页）→ Level 3 全量（发布唯一口径）。Level 1/2 的状态上限是 `REVISE`，`release_eligible=False`，Critic 记 `PIXEL_COVERAGE_PARTIAL`。12 页实测：0.7s / 3.4s / 4.6s。
+- **不重复计算**：三处复用只认一个判据——「会不会改变量到的数字」。① 页级像素缓存（键 = 本页投影 + 主题投影 + 画布 + dpi + 页内图片指纹 + 渲染器身份 + `page_intent.focus`）；② PPTX 逐字节未变则复用上一轮 PDF，不再调用 soffice（实测省 1.7s）；③ `page_intent` 的叙述字段 / `source_zone` / 备注既不产出像素也不参与量测，编译视图一致时连 `compile_deck` 都跳过。12 页实测：改一句 insight 后整轮 4.8s → 0.01s，Level 2 收口后升 Level 3 由 2.57s → 0.82s，绝对冷测仍 4.7s 且与热测指标逐位一致。`--no-cache` 一律绕过三处复用，也不写回任何记录。
+- **并行硬上限 2**：渲染阶段 poppler 转换与像素测量串成一条流水、块间最多 2 worker（按 CPU 收敛，页数 <4 关闭）。设计推导与资产/渲染两条线只在 `qa.run_qa` 汇合一次，禁止逐页往返通信与循环等待。实测成本链为 guard 2ms → 编译 179ms → soffice 1.70s → pdftoppm 80ms/页 → 像素量测 75ms/页，除渲染外没有第二条可重叠的独立流，因此不再增设进程内线程。
+- **色彩与图表纪律（deck 级）**：单页合规不等于成套。Guard 另核三件——全套色相族 ≤4（30° 一档，纸色与灰阶不计）、Accent 与主/辅色色相差 ≥12°（否则强调色只是主色的重复）、同一图表类型跨页共用一套标签规格（>1.25× 判漂移）。互补且等彩度的两色渐变提示「混成脏灰」，同族低对比渐变是留白手法、不打击。焦点落位：中心对齐中线/三分线/黄金分割线任一条时 Critic 记一次层级加分（已有正向证据不叠加），完全不上线只在预检提示、不判罚——高级设计是「在正确的位置留下正确的东西」，不是把留白填满。
+- **方向即参数**：只传 `content_type / design_direction / quality_level`，色彩、材质、光线、图表风格、动效与构图语法由方向人格派生。升档需理由；不得用 Fast 路径跳过事实口径、防遮挡与图表数据合同。
+
 ## 强制决策流程
 
 严格按以下顺序执行，不得先选模板、颜色或图片：
 
-1. **冻结输入**：记录受众、观看场景、目的、页数、交付格式、品牌限制、事实来源、时间、单位、口径和不确定性。
+1. **冻结输入并分路**：记录受众、观看场景、目的、页数、交付格式、品牌限制、事实来源、时间、单位、口径和不确定性；用 `route.plan_deck(brief)` 得到执行路径、逐页内容类型、密度曲线与资产预算，并把它当作后续所有调用的默认值。
 2. **建立 Strategy**：写出 audience、decision、tension、narrative_arc、emotional_target。把 `claim / evidence / implication / action` 分离。
 3. **建立 Direction 与 Visual DNA**：定义 visual_world、composition_grammar、type_voice、color_behavior、media_role、background_scene、motion_posture 与 forbidden_signals；把光线、材质、透视、层级和对比关系作为全 deck 的统一空间假设。不要把风格参考名当作模板或事实。
 4. **编排叙事**：先建立整套 deck 的 `opening → context → problem → insight → evidence → solution → proof → vision → closing` 阶段序列，再为每页写 `insight`、`narrative_role`、`focus`、`reading_order`、`energy`、`density`、`empty_space_role`、`rhythm_stage` 和 `continuity_token`。一页只保留一个可复述结论，并为页面家族声明使用场景、内容结构、视觉重点和禁用情况。
 5. **选页面家族**：内容任务决定 Family；主题只决定其视觉表达。先定场景，再决定对象、图片、光线与材质。
-6. **生成 spec**：主题 token 进入 `spec.theme`；页面内容、背景、图表、来源和叠加层进入 `slides[]`。先完成数据分析与洞察提取，再选择诚实的原生可编辑图表；无法表达单一关系时使用文字或表格。元素填充优先使用 `{"fill":{"type":"solid|gradient|none",...}}`；历史字符串与 `{color, opacity}` 可兼容，但无效 fill 必须按错误提示迁移，不能依赖默认蓝色。图表数据必须逐行提供 `label` 与有限数值 `value`，单位、期间、比较口径、来源和 `display` 格式分开声明；缺失、非数值、非有限值、空数据、无效高亮索引和无效构成总和必须在 Guard/Compile 阶段暴露，禁止静默补零或伪造单位。每个文本框还要声明足够的 `width / height / max_lines / line_height / padding`；不要把字号缩小当作溢出修复。
-7. **治理媒体与背景**：图片必须有功能（context / emotion / proof / hero），并有主体、镜头、构图、留白锚点和裁切要求。背景是空间与阅读引导，不是填充；默认低能量，主刺激最多一项、辅刺激最多一项。卡片不是默认容器；优先使用空间分组、发丝线、字体层级和留白关系。布局应从内容选择版式，不从模板选择内容：允许 Executive / Editorial / Data Intelligence / Comparative / Narrative / Spatial 等布局语法，但同一 deck 要共享网格、版心、来源区和安全区，仅改变重心、比例、阅读轴与留白角色。
-8. **执行生产链**：`Guard → Compile → Render Evidence → Deterministic QA → Art Critic → Revision`。最终渲染是判断依据；检查安全区、拥挤、重心、背景竞争、图表关系、低级设计错误和跨页一致性。任何修正后重新执行完整链路，并记录 observation、minimal_fix、recheck 与 revision_count。
+6. **生成 spec**：主题 token 进入 `spec.theme`；页面内容、背景、图表、来源和叠加层进入 `slides[]`。先完成数据分析与洞察提取，再选择诚实的原生可编辑图表；无法表达单一关系时使用文字或表格。元素填充优先使用 `{"fill":{"type":"solid|gradient|none",...}}`；历史字符串与 `{color, opacity}` 可兼容，但无效 fill 必须按错误提示迁移，不能依赖默认蓝色。图表数据必须逐行提供 `label` 与有限数值 `value`，单位、期间、比较口径、来源和 `display` 格式分开声明；缺失、非数值、非有限值、空数据、无效高亮索引和无效构成总和必须在 Guard/Compile 阶段暴露，禁止静默补零或伪造单位。每个文本框还要声明足够的 `width / height / max_lines / line_height / padding`；不要把字号缩小当作溢出修复。行长按盒宽与字号可测：CJK 每行 ≤38 字、拉丁 ≤75，超过上限两倍按阻断处理——缩字号不算修复，拆句或收窄版心才算。
+7. **治理媒体与背景**：图片必须有功能（context / emotion / proof / hero）且通过资产闸门——只有 Hero、品牌叙事、情绪与产品页可要图，数据 / 表格 / 流程 / 结构页永远不给图；整幅背景画心声明 `layer: background` 并自带 `overlay` 内容保护，可不拆内容盒、不计入媒体预算；**免检需要资格**：覆盖 ≥60% 画布且遮罩不透明度 ≥0.20（或显式 `readability_exempt`）。面积不够、遮罩虚设的「伪背景」按普通内容对象对待，并被 `BACKGROUND_DISGUISED` 点名。每张图片仍须给出主体、镜头、构图、留白锚点与裁切要求。背景是空间与阅读引导，不是填充；默认低能量，主刺激最多一项、辅刺激最多一项。卡片不是默认容器；优先使用空间分组、发丝线、字体层级和留白关系。布局应从内容选择版式，不从模板选择内容：允许 Executive / Editorial / Data Intelligence / Comparative / Narrative / Spatial 等布局语法，但同一 deck 要共享网格、版心、来源区和安全区，仅改变重心、比例、阅读轴与留白角色。
+8. **执行生产链**：`Guard → Compile → Render Evidence → Deterministic QA → Art Critic → Revision`。最终渲染是判断依据；检查安全区、拥挤、重心、背景竞争、图表关系、低级设计错误和跨页一致性。任何修正后重新执行完整链路，并记录 observation、minimal_fix、recheck 与 revision_count（`revision_count` 必须来自真实修订流水，不是占位 0）。QA 与 Art Critic 报告各自盖 `source_spec_hash` 自证来源，Release Manifest 核对不通过就降为 `BLOCKED`：过期或旁路生成的「PASS」不能进入发布判定。
 9. **最小修正**：`删除 → 简化 → 恢复空间 → 重构重心 → 替换媒体 → 微调装饰`。不得用缩字号、堆色彩或加背景修复高层问题。
 10. **发布判断**：硬门槛优先于平均分。只有真实渲染证据存在、无阻断错误且所有必需报告完成时才可为 `PASS`；缺少真实渲染证据只能为 `PREVIEW_ONLY`；存在可修复问题为 `REVISE`，存在输入/事实/编译等阻断问题为 `BLOCKED`。状态只能使用 `PASS`、`REVISE`、`BLOCKED` 或 `PREVIEW_ONLY`。
 
@@ -72,7 +89,7 @@ input:
 
 ## 防遮挡与高级排版底线
 
-文本、图表、图片与来源区之间必须保留明确的几何安全距离。正文与正文的有效墨迹不得相交；正文与图表/图片即使外框相交也必须显式声明 `allow_overlap: true` 和 `overlap_reason`，否则按碰撞处理。来源、方法、轴标签和图例属于独立低权重区域，不得被主体覆盖。图表若使用直接标注，就关闭重复图例或坐标读数；标签密度超过可读阈值时拆图、减少类别或改用表格，不自动压缩字体。渲染后优先修正 `READABILITY_FAIL`、`OVERLAP`、`SOURCE_COLLISION`，再处理风格。
+文本、图表、图片与来源区之间必须保留明确的几何安全距离。正文与正文的有效墨迹不得相交；正文与图表/图片即使外框相交也必须显式声明 `allow_overlap: true` 和 `overlap_reason`，否则按碰撞处理。来源、方法、轴标签和图例属于独立低权重区域，不得被主体覆盖。图表若使用直接标注，就关闭重复图例或坐标读数；标签密度超过可读阈值时拆图、减少类别或改用表格，不自动压缩字体。可读性不只按声明色对撞：渲染后逐页实测「文字 vs 其下方那块底」，正文级低于 4.5:1 提示、任何角色低于 3.0:1 阻断（`READABILITY_FAIL`）。跨页节奏同样以实测墨迹为准：占用率真的变了就算成立，只改 `density` 标签而墨迹不动要扣分。渲染后优先修正 `READABILITY_FAIL`、`OVERLAP`、`SOURCE_COLLISION`，再处理风格。
 
 ## 图表执行边界
 

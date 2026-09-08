@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT
+from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, spec_fingerprint
 from guard import check_spec
 
 # 扣分规则（确定性，非审美判断）：
@@ -33,11 +33,16 @@ DEFAULT_PENALTIES = {
     "render_occupancy": 3.0,   # 渲染占用率超过主题最小留白要求
     "render_margin": 2.0,      # 渲染边缘带不安静（内容贴近安全区边缘）
     "render_missing": 2.0,     # 无渲染环境（结构证据降级，轻微提示）
+    "render_contrast": 3.0,    # 渲染实测「文字 vs 其下方像素」低于 WCAG AA（每项）
+    "render_contrast_low": 1.5,  # 同上但仅偏软（3.0–4.5:1），只提示不阻断
+    "preflight_hint": 0.0,     # guard 预检 hint：与 Art Critic 同口径的提前提醒，不扣分
 }
 DEFAULT_THRESHOLDS = {
     "pass": 90.0,              # passed = score >= pass
     "gravity_drift": 0.28,     # 归一化漂移上限
     "accent_pixel": 0.08,      # 强调色像素比上限
+    "text_contrast_fail": 3.0,   # 实测文字对比低于此值 → 阻断（叠加不可读）
+    "text_contrast_warn": 4.5,   # WCAG AA 正文门槛
     # 可选：主题 constraints.min_whitespace 或调用方 thresholds.min_whitespace
     # 指定最小留白比例；显式 thresholds 优先。
     # 可选：margin_occupancy 开启「边缘带安静度」检查（None=默认关闭，因为
@@ -46,20 +51,79 @@ DEFAULT_THRESHOLDS = {
 }
 
 
+# 预检码 → Art Critic 硬门槛：命中这些项时渲染结果必然不是 PASS，先修再渲染
+PREFLIGHT_HARD_CODES = {
+    "INTENT_UNCLEAR": "BLOCKED",     # 无可复述 insight
+    "FOCUS_UNBOUND": "REVISE",       # focus 未绑定元素 → FOCUS_COMPETING
+    "CARD_WALL": "REVISE",           # 圆角容器超预算 → CARD_WALL
+    "RHYTHM_FLAT": "REVISE",         # 连续三页同密度同能量
+}
+
+
+KEY_PAGE_CAP = 6   # Level 2 最多测这么多页；再多与全量无异，失去渐进意义
+
+
+def key_pages(spec: dict) -> list[int]:
+    """Progressive QA Level 2 的选页：只有这些页的判断真的需要像素证据。
+
+    规则刻意保守且可从 spec 复算：封面与收尾页（节奏/留白/首尾印象）、含图片或
+    背景画心的页（叠加可读性与资产侵入）、含图表的页（占用率与标签密度）。
+    纯文字结构页的 QA 结论在静态阶段已经确定，渲染它们不改变判断。
+    """
+    slides = spec.get("slides") or []
+    picked: list[int] = []
+    for i, s in enumerate(slides):
+        n = i + 1
+        if i == 0 or i == len(slides) - 1:
+            picked.append(n)
+            continue
+        hit = False
+        for e in s.get("elements") or []:
+            if not isinstance(e, dict):
+                continue
+            t = str(e.get("type", ""))
+            if t in ("image", "chart", "native_chart") or e.get("overlay") \
+                    or e.get("content_protection"):
+                hit = True
+                break
+        if hit:
+            picked.append(n)
+    if len(picked) > KEY_PAGE_CAP:   # 保留首尾 + 中段均匀取样，避免退化成全量
+        mid = [n for n in picked if n not in (picked[0], picked[-1])]
+        step = max(1, len(mid) // (KEY_PAGE_CAP - 2)) if len(mid) > 1 else 1
+        picked = [picked[0]] + mid[::step][:KEY_PAGE_CAP - 2] + [picked[-1]]
+    return sorted(set(picked))
+
+
 def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
            thresholds: dict | None = None, guard_rules: dict | None = None,
            render_dir: str | Path | None = None, dpi: int = 96,
-           render: bool = True) -> dict:
+           render: bool = True, preflight_gate: bool = False,
+           qa_level: int = 3, render_pages: list[int] | None = None,
+           workers: int = 2, use_cache: bool = True) -> dict:
     """
     完整 QA：guard + compile + render（可选）。
 
     penalties / thresholds / guard_rules 由调用方传入，覆盖默认值（不写死参数）。
     render_dir 为 None 时使用 `<output>_render/` 稳定目录，保证渲染证据可被
     Release Manifest 的 render_evidence_path 记录与复核；无渲染环境自动降级。
+
+    复用（use_cache=True）覆盖三段重复劳动：按页指标缓存、PPTX→PDF 转换复用、以及
+    「本轮会编译成像素的那部分 spec」未变时跳过编译本身。改 insight / density / focus
+    这类声明字段不动像素，因此一整轮重跑只需几十毫秒；元素、图片或主题一变即失效。
     render=False 适合快速迭代布局，发布前必须恢复为 True。
+
+    Progressive QA：qa_level=1 只看文件/元素/页数（不渲染），=2 只渲染关键页
+    （`render_pages` 缺省时按 spec 自动挑选），=3（默认）全量渲染 + 全部检查。
+    Level 1/2 的判定不会被用于发布：缺少全量像素证据时状态上限为 REVISE。
+
+    use_cache=True（默认）复用渲染目录里按页内容寻址的指标：未改动的页不再重测，
+    全部命中时连 LibreOffice 都不启动。判定口径不变——缓存键覆盖本页、主题、画布、
+    dpi、页内图片指纹与渲染器身份；需要绝对冷测时传 use_cache=False 或 --no-cache。
     """
     import time
     from compiler import compile_deck
+    from render_check import compile_reuse, record_compile, spec_view
 
     pen = {**DEFAULT_PENALTIES, **(penalties or {})}
     thr = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
@@ -67,29 +131,84 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     t0 = time.time()
 
     # 1) 静态治理（guard_rules 独立传入，qa 不解读内部结构）
+    t_guard = time.time()
     guard = check_spec(spec, rules=guard_rules)
+    t_compile = time.time()
 
-    # 2) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
-    # 发布仍会在 compile_report 中保留 guard 摘要，口径由本函数唯一掌握。
-    compile_report = compile_deck(spec, output_path, checks=False, guard_rules=guard_rules)
-    compile_warnings = list(compile_report.get("warnings", []))
-
-    # 3) 渲染证据（环境缺失时降级）
+    # 2) 渲染证据目录先定下来：编译/PDF 的复用记录都放在这里
     render_dir = (Path(render_dir) if render_dir
                   else output_path.with_name(output_path.stem + "_render"))
+
+    # 3) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
+    # 发布仍会在 compile_report 中保留 guard 摘要，口径由本函数唯一掌握。
+    # 先问一句「像素视图变了吗」：没变就连 compile 与 soffice 都省掉（决策先于生成）。
+    compile_report = None
+    view = None
+    if use_cache:
+        try:
+            render_dir.mkdir(parents=True, exist_ok=True)
+            view = spec_view(spec, base_path=output_path.parent)
+            compile_report = compile_reuse(render_dir, output_path, view)
+        except Exception:
+            compile_report = None
+    if compile_report is None:
+        compile_report = compile_deck(spec, output_path, checks=False,
+                                      guard_rules=guard_rules)
+        if use_cache and view is not None:
+            record_compile(render_dir, output_path, view, compile_report)
+    else:
+        try:
+            compile_report["file_bytes"] = output_path.stat().st_size
+        except OSError:
+            pass
+    t_render = time.time()
+    compile_warnings = list(compile_report.get("warnings", []))
+
+    # 4) 渲染证据（环境缺失时降级；按 Progressive 级别只测需要的页）
     evidence = {"rendered": False, "reason": None, "pages": []}
+    skip_render_reason = None if render else "render_disabled"
+    gate_hit: list[dict] = []
+    try:
+        qa_level = max(1, min(3, int(qa_level)))
+    except (TypeError, ValueError):
+        qa_level = 3
+    if qa_level == 1 and render:
+        render, skip_render_reason = False, "qa_level_1"
+    if render and preflight_gate:
+        codes = {i.get("code"): i for i in (guard.get("preflight") or [])
+                 if i.get("code") in PREFLIGHT_HARD_CODES}
+        if codes:
+            # 不渲染：省掉一轮 soffice+poppler，同时把可执行修正直接交回调用方
+            gate_hit = list(codes.values())
+            skip_render_reason = "preflight_gate"
+            render = False
+    wanted_pages = None
+    if render and qa_level == 2:
+        # 调用方（或 route.plan_deck 的 verification.pixel_page_ids）给了页码就用它；
+        # 否则按 spec 自己挑关键页——两条路径都能独立工作，不产生隐式依赖。
+        wanted_pages = [int(n) for n in render_pages] if render_pages else key_pages(spec)
     if render:
         try:
             from render_check import render_evidence
-            evidence = render_evidence(output_path, spec, render_dir, dpi)
+            evidence = render_evidence(output_path, spec, render_dir, dpi,
+                                       pages=wanted_pages, workers=workers,
+                                       use_cache=use_cache)
+            evidence.setdefault("coverage", {})
+            evidence["coverage"].update({"qa_level": qa_level,
+                                         "total_slides": len(spec.get("slides") or []),
+                                         "workers": workers})
         except Exception as exc:
             evidence = {"rendered": False, "reason": f"render evidence failed: {exc}",
                         "pages": []}
     else:
         evidence = {"rendered": False, "reason": "render disabled for fast iteration",
-                    "pages": []}
+                    "pages": [],
+                    "coverage": {"qa_level": qa_level, "rendered_pages": 0,
+                                 "total_pages": len(spec.get("slides") or [])}}
 
-    # 4) 计分
+    slides_count = [x for x in (spec.get("slides") or [])]
+
+    # 5) 计分
     deduction = 0.0
     items: list[dict] = []
     deduction_by_domain = {"guard": 0.0, "compile": 0.0,
@@ -99,6 +218,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     hint_buckets: dict[str, dict] = {}
     for c in guard["checks"]:
         key = f"guard_{c['level']}"
+        if c.get("rule") == "preflight" and c["level"] == "hint":
+            key = "preflight_hint"      # 预检提前给出，避免同一问题在渲染后二次扣分
         if key not in pen:
             continue
         deduction += pen[key]
@@ -183,6 +304,70 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
                                   f"{thr['accent_pixel']:.0%}（OS §06）"),
                           "penalty": pen["render_accent"]})
 
+    readability_fail = False
+    for p in evidence.get("pages", []):
+        # 渲染实测「文字 vs 字下面那块底」——全页亮度一致地暗/亮都掩盖不了它。
+        tc = p.get("text_contrast_min")
+        if tc is None:
+            continue
+        try:
+            tc = float(tc)
+        except (TypeError, ValueError):
+            continue
+        worst = p.get("text_contrast_worst") or {}
+        allmin = p.get("text_contrast_all_min")
+        try:
+            allmin = float(allmin) if allmin is not None else None
+        except (TypeError, ValueError):
+            allmin = None
+        # 阻断线看含注记的最坏值：辅助文字可以低于 AA，但不能低到看不见
+        hard = tc if allmin is None else min(tc, allmin)
+        if hard < thr["text_contrast_fail"]:
+            tc = hard
+            readability_fail = True
+            deduction += pen["render_contrast"]
+            deduction_by_domain["render"] += pen["render_contrast"]
+            items.append({"domain": "render", "level": "error",
+                          "rule": "text_contrast", "id": p.get("slide"),
+                          "msg": (f"实测文字对比 {tc:.2f}:1 < {thr['text_contrast_fail']}:1"
+                                  f"（「{worst.get('id', '?')}」字色 {worst.get('color')}"
+                                  f" vs 局部底 {worst.get('background')}）"
+                                  ),
+                          "penalty": pen["render_contrast"]})
+        elif tc < thr["text_contrast_warn"]:
+            # tc 已是正文级最坏值：注记级低于 AA 但 ≥3:1 属允许范围，不提示
+            deduction += pen["render_contrast_low"]
+            deduction_by_domain["render"] += pen["render_contrast_low"]
+            items.append({"domain": "render", "level": "warn",
+                          "rule": "text_contrast", "id": p.get("slide"),
+                          "msg": (f"实测文字对比 {tc:.2f}:1 < WCAG AA {thr['text_contrast_warn']}:1"
+                                  f"（「{worst.get('id', '?')}」）"),
+                          "penalty": pen["render_contrast_low"]})
+
+    _t_end = time.time()
+    perf = {
+        "total_ms": int((_t_end - t0) * 1000),
+        "guard_ms": int((t_compile - t_guard) * 1000),
+        "compile_ms": int((t_render - t_compile) * 1000),
+        "compile_reused": bool(compile_report.get("reused")),
+        "render_ms": int((_t_end - t_render) * 1000),
+        "slides": len(slides_count),
+        "preflight_items": len(guard.get("preflight") or []),
+        "render_skipped": bool(skip_render_reason),
+        # 渐进级别与并行度：让「省掉了什么」可核对，而不是只报一个总时长
+        "qa_level": qa_level,
+        "render_workers": workers,
+        "rendered_pages": len(evidence.get("pages") or []),
+        "requested_pages": wanted_pages,
+        # 重复计算的直接证据：命中越多，说明这一轮越没白跑
+        # L1 不渲染 → 缓存语义不适用，报 0 而不是 None（报表里可直接求和）
+        "cache_hits": ((evidence.get("coverage") or {}).get("cache_hits")
+                       if evidence.get("rendered") else 0),
+        "cache_misses": ((evidence.get("coverage") or {}).get("cache_misses")
+                         if evidence.get("rendered") else 0),
+        "cache_enabled": bool(use_cache),
+    }
+
     if not evidence.get("rendered"):
         deduction += pen["render_missing"]
         deduction_by_domain["render"] += pen["render_missing"]
@@ -215,6 +400,9 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     if any("估算高度" in str(w) or "max_lines" in str(w) for w in compile_warnings):
         if "TEXT_OVERFLOW" not in failure_codes:
             failure_codes.append("TEXT_OVERFLOW")
+    if readability_fail and "READABILITY_FAIL" not in failure_codes:
+        # 渲染层实测的可读性失败与静态 contrast 同级：阻断发布
+        failure_codes.append("READABILITY_FAIL")
     if not compile_report.get("passed", False):
         failure_codes.append("COMPILE_FAIL")
     if not evidence.get("rendered"):
@@ -224,16 +412,38 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "READABILITY_FAIL", "DATA_INTEGRITY_FAIL", "COMPILE_FAIL", "GUARD_FAIL"}))
     passed = score >= thr["pass"] and not blocking
     status = "BLOCKED" if blocking else ("PREVIEW_ONLY" if not evidence.get("rendered") else ("PASS" if passed else "REVISE"))
-    next_action = ("fix: " + ", ".join(failure_codes)) if failure_codes else "ready for Art Critic"
+    # 像素证据覆盖率决定「能不能发布」：Level 1/2（或任何子集渲染）都不给发布级结论，
+    # 判定阈值一律不放宽——只是把 PASS 留给 Level 3。
+    coverage = evidence.get("coverage") or {}
+    rendered_n = int(coverage.get("rendered_pages") or len(evidence.get("pages") or []))
+    total_n = int(coverage.get("total_pages") or len(slides_count)) or 1
+    partial_pixel = bool(evidence.get("rendered")) and rendered_n < total_n
+    release_eligible = (status == "PASS" and rendered_n >= total_n
+                        and not blocking and not partial_pixel)
+    if status == "PASS" and not release_eligible:
+        status = "REVISE"
+    if partial_pixel:
+        failure_codes = sorted(set(failure_codes) | {"PIXEL_COVERAGE_PARTIAL"})
+    if gate_hit:
+        next_action = "fix preflight before render: " + ", ".join(
+            f"{i.get('slide')}:{i['code']}" for i in gate_hit)
+        failure_codes = sorted(set(failure_codes) | {i["code"] for i in gate_hit})
+    else:
+        base = ("fix: " + ", ".join(failure_codes)) if failure_codes else "ready for Art Critic"
+        next_action = (base + " · 发布前需 qa_level=3 全量像素复核"
+                       if (partial_pixel or qa_level < 3) else base)
     return {
-        "qa_version": "1.2",
+        "qa_version": "1.4",
+        # 自证戳：报告属于哪一份 spec。清单会核对，防止拿旧报告/旁路产物冒充新结果
+        "source_spec_hash": spec_fingerprint(spec),
         "score": round(score, 1),
         "passed": passed,
         "status": status,
         "threshold": thr["pass"],
         "deduction_by_domain": {k: round(v, 1) for k, v in deduction_by_domain.items()},
         "items": items,
-        "guard": {"score": guard["score"], "checks": len(guard["checks"])},
+        "guard": {"score": guard["score"], "checks": len(guard["checks"]),
+                  "grid": guard.get("grid"), "line_measure": guard.get("line_measure")},
         "compile": {"passed": compile_report.get("passed"),
                     "warnings": len(compile_warnings),
                     "slides": compile_report.get("slides"),
@@ -241,8 +451,16 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "render": {"rendered": evidence.get("rendered"),
                    "reason": evidence.get("reason"),
                    "dir": str(render_dir) if render else None,
-                   "pages": len(evidence.get("pages", []))},
+                   "pages": len(evidence.get("pages", [])),
+                   "coverage": coverage or None},
+        "release_eligible": release_eligible,
         "render_evidence": evidence,
+        "preflight": {"count": len(guard.get("preflight") or []),
+                      "codes": guard.get("preflight_codes") or [],
+                      "items": guard.get("preflight") or []},
+        "performance": perf,
+        "preflight_gate": {"enabled": preflight_gate, "triggered": bool(gate_hit),
+                           "hits": gate_hit},
         "failure_codes": failure_codes,
         "blocking_items": sum(1 for it in items if it.get("level") == "error"),
         "affected_slides": sorted({str(it.get("id")) for it in items if it.get("id")}),
@@ -254,19 +472,62 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
 def release_manifest(spec: dict, qa_report: dict, critic_report: dict | None = None,
                      *, compile_report: dict | None = None, theme_id: str | None = None,
                      render_evidence_path: str | None = None,
-                     revision_count: int = 0, revision_log: list | None = None) -> dict:
+                     revision_count: int = 0, revision_log: list | None = None,
+                     verification: dict | None = None) -> dict:
     """按 production-contract.md「Release Manifest」契约确定性生成发布清单。
 
     状态合成规则：任一方 BLOCKED → BLOCKED；任一方 REVISE → REVISE；
     两者都 PASS 才为 PASS；其余（如缺少真实渲染证据）为 PREVIEW_ONLY。
     revision_log 只应引用失败码与页面 ID，不嵌入整份中间报告。
     """
-    import hashlib
-    import json
     from datetime import datetime, timezone
 
-    canonical = json.dumps(spec, ensure_ascii=False, sort_keys=True, default=str)
-    spec_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+    spec_hash = spec_fingerprint(spec)
+    issues: list[str] = []
+    notes: list[str] = []
+    page_ids = {str(s.get("id")) for s in (spec.get("slides") or []) if s.get("id")}
+
+    def _attest(report: dict | None, name: str) -> None:
+        """报告必须能被追溯到当前 spec：盖过戳的要一致，声称 PASS 的必须有戳。"""
+        if not isinstance(report, dict) or not report:
+            return
+        claims_pass = str(report.get("status", "")).upper() == "PASS"
+        got = report.get("source_spec_hash")
+        if got and got != spec_hash:
+            issues.append(f"{name} 的 source_spec_hash={got} 与当前 spec {spec_hash} 不符"
+                          f"（报告来自另一版 spec，已过期或被替换）")
+        elif not got:
+            if claims_pass:
+                issues.append(f"{name} 声称 PASS 却没有 source_spec_hash，无法证明它由当前 spec "
+                              f"产出（旁路生成的报告不能作为发布证据）")
+            else:
+                notes.append(f"{name} 未盖 source_spec_hash（旧格式报告，仅记录不阻断）")
+
+    _attest(qa_report, "qa_report")
+    _attest(critic_report, "critic_report")
+
+    def _pages(report: dict | None, name: str) -> None:
+        if not isinstance(report, dict):
+            return
+        seen = {str(x.get("slide")) for x in (report.get("slides") or [])
+                if isinstance(x, dict) and x.get("slide") is not None}
+        cov = report.get("coverage") or (report.get("render") or {}).get("coverage") or {}
+        seen |= {str(x) for x in (cov.get("rendered_ids") or []) if x is not None}
+        seen |= {str(p.get("slide")) for p in (report.get("pages") or [])
+                 if isinstance(p, dict) and p.get("slide") is not None}
+        seen.discard("None")
+        ghost = sorted(seen - page_ids) if page_ids else sorted(seen)
+        if ghost:
+            issues.append(f"{name} 引用了当前 spec 之外的页面：{'、'.join(ghost)}")
+
+    if critic_report:
+        _pages(critic_report, "critic_report")
+        n_c = len(critic_report.get("slides") or [])
+        if n_c and page_ids and n_c != len(page_ids):
+            issues.append(f"critic_report 覆盖 {n_c} 页，与 spec 的 {len(page_ids)} 页不一致")
+    if qa_report.get("render_evidence"):
+        _pages(qa_report["render_evidence"], "qa render_evidence")
+
     qa_status = str(qa_report.get("status", "BLOCKED"))
     critic_status = str((critic_report or {}).get("status", "PREVIEW_ONLY"))
     if "BLOCKED" in (qa_status, critic_status):
@@ -277,10 +538,23 @@ def release_manifest(spec: dict, qa_report: dict, critic_report: dict | None = N
         status = "PASS"
     else:
         status = "PREVIEW_ONLY"
+    cov = ((qa_report.get("render") or {}).get("coverage")
+           or ((qa_report.get("render_evidence") or {}).get("coverage")) or {})
+    ver = {
+        "qa_level": (qa_report.get("performance") or {}).get("qa_level"),
+        "pixel_pages": cov.get("rendered_pages"),
+        "pixel_total": cov.get("total_pages"),
+        "release_eligible": bool(qa_report.get("release_eligible")),
+    }
+    ver.update(verification or {})
+    if issues:
+        status = "BLOCKED"          # 报告与 spec 对不上时，任何 PASS 都不作数
     return {
         "source_spec_hash": spec_hash,
+        "validation": {"issues": issues, "notes": notes, "page_count": len(page_ids)},
         "theme_id": theme_id or (spec.get("theme") or {}).get("id"),
         "slide_count": len(spec.get("slides") or []),
+        "verification": ver,
         "compile_report": compile_report or qa_report.get("compile"),
         "qa_report": qa_report,
         "critic_report": critic_report,
@@ -300,8 +574,9 @@ def main(argv):
     import importlib.util
     import json
     if len(argv) < 3:
-        print("usage: python qa.py <build_module.py> <output.pptx> "
-              "[--json] [--no-render] [--manifest]")
+        print("usage: python qa.py <build_module.py> <output.pptx> [--json] "
+              "[--no-render] [--manifest] [--fast] [--preflight] "
+              "[--quick | --key-pages | --level N] [--no-cache]")
         return 1
     mod_path = Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
@@ -311,7 +586,32 @@ def main(argv):
     if spec is None:
         print("build module must define build_spec() or SPEC")
         return 1
-    result = run_qa(spec, argv[2], render="--no-render" not in argv)
+    fast = "--fast" in argv
+    # --preflight 即启用闸门：静态可判定的硬门槛命中时直接跳过渲染
+    gate = fast or "--preflight" in argv
+    # Progressive QA：--quick=L1（不渲染）· --key-pages=L2（只测关键页）· 默认 L3 全量
+    level = 3
+    for i, a in enumerate(argv):
+        if a in ("--quick", "--level1"):
+            level = 1
+        elif a in ("--key-pages", "--key", "--level2"):
+            level = 2
+        elif a == "--level" and i + 1 < len(argv):
+            level = int(argv[i + 1])
+    result = run_qa(spec, argv[2], render="--no-render" not in argv,
+                    preflight_gate=gate, dpi=72 if fast else 96, qa_level=level,
+                    use_cache="--no-cache" not in argv)
+    if "--preflight" in argv:
+        for i in (result.get("preflight") or {}).get("items", []):
+            print(f"  {i['slide']:>6} {i['code']:17s} {i['observation']}")
+            print(f"          fix → {i['minimal_fix']}")
+        print(f"preflight: {result['performance']['preflight_items']} 项 · "
+              f"guard {result['performance']['guard_ms']}ms · "
+              f"compile {result['performance']['compile_ms']}ms · "
+              f"render {result['performance']['render_ms']}ms"
+              + (f" (skipped: {result['performance']['render_skipped']})"
+                 if result['performance']['render_skipped'] else ""))
+        return 0
     if "--manifest" in argv:
         from art_critic import critique_deck
         critic = critique_deck(spec, result.get("render_evidence"))
@@ -323,8 +623,13 @@ def main(argv):
     if "--json" in argv:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
+        cov = (result.get("render") or {}).get("coverage") or {}
         print(f"QA score={result['score']}/100 passed={result['passed']} "
-              f"(threshold {result['threshold']})")
+              f"(threshold {result['threshold']}) status={result['status']} "
+              f"level={result['performance']['qa_level']} "
+              f"pixel={cov.get('rendered_pages', result['render']['pages'])}/"
+              f"{cov.get('total_pages', result['performance']['slides'])}"
+              + ("" if result["release_eligible"] else " [非发布级]"))
         for it in result["items"]:
             print(f"  [{it['domain']}/{it['level']:5s}] -{it['penalty']:.1f}  {it['msg']}")
     return 0 if result["passed"] else 2
