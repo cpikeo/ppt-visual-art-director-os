@@ -462,13 +462,17 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         n = min(len(data), 8)
         data = data[:n]
         label_w = w * float(element.get("label_ratio", 0.24))
-        bar_x = x + label_w + 16
+        bar_x = x + label_w + float(element.get("label_gap", 24))
         value_w = float(element.get("value_width", 70))
-        bar_right = x + w - value_w
-        span = max(bar_right - bar_x, 10)
-        maxv = max((r["value"] for r in data), default=1) or 1
         row_h = h / max(n, 1)
         bar_h = max(6, min(float(element.get("bar_height", 12)), row_h * 0.34))
+        # 轨道右缘要同时让出「端点圆点半径 + 间隙 + 数值列」，否则最长的一条
+        # 会把数值推出图表边界。
+        dot_d = bar_h + 6
+        value_gap = float(element.get("value_gap", 10))
+        bar_right = x + w - value_w - dot_d / 2 - value_gap
+        span = max(bar_right - bar_x, 10)
+        maxv = max((r["value"] for r in data), default=1) or 1
         track_c, track_a = ctx.paint("track")
         hairline_c, hairline_a = ctx.paint("hairline")
         hl = _safe_index(element.get("highlight"), -1)
@@ -501,7 +505,11 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             _textbox(slide, f"{eid}__label_{i}", x, cy - row_h / 2, label_w, row_h,
                      r["label"], float(element.get("label_size", 13)), ink, ctx, element,
                      align=PP_ALIGN.RIGHT)
-            _textbox(slide, f"{eid}__value_{i}", bar_x + bw + 8, cy - row_h / 2,
+            # 数值必须绕开端点圆点，而不是绕开条末端：圆点半径 = dot_d/2 已经
+            # 越过条末端，若只加固定 8px（< 半径）数值会被圆点压住。
+            value_gap = float(element.get("value_gap", 10))
+            _textbox(slide, f"{eid}__value_{i}",
+                     bar_x + max(bw, 4) + dot_d / 2 + value_gap, cy - row_h / 2,
                      value_w, row_h, _display(r, element),
                      float(element.get("value_size", 12)), ink, ctx, element,
                      align=PP_ALIGN.LEFT, bold=True)
