@@ -131,12 +131,18 @@ def _png_present(work: Path, entry: dict) -> bool:
 
 
 def _png_name(work: Path, page_no: int, token: str | None = None) -> str | None:
-    """页码 → 本轮（同一 token 前缀）生成的 PNG 文件名。"""
-    pat = f"page-{token}-*.png" if token else "page-*-*-*.png"
-    for f in sorted(work.glob(pat)):
-        digits = "".join(c for c in f.stem.rsplit("-", 1)[-1] if c.isdigit())
-        if digits and int(digits) == page_no:
-            return f.name
+    """页码 → 本轮（同一 token 前缀）生成的证据图文件名（png 或 jpg）。
+
+    快测用 JPEG 时产物是 .jpg；这里若只认 .png，JPEG 页会「测了却入不了缓存」，
+    下一轮白白重测——缓存与光栅格式必须同一种格式感知。
+    """
+    pats = ([f"page-{token}-*.{e}" for e in RASTER_EXTS] if token
+            else [f"page-*-*-*.{e}" for e in RASTER_EXTS])
+    for pat in pats:
+        for f in sorted(work.glob(pat)):
+            digits = "".join(c for c in f.stem.rsplit("-", 1)[-1] if c.isdigit())
+            if digits and int(digits) == page_no:
+                return f.name
     return None
 
 
@@ -268,6 +274,78 @@ def _clamp_workers(workers) -> int:
     return max(1, min(MAX_RENDER_WORKERS, w, cpus))
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 部分渲染：拆页转 PDF（性能）
+#
+# LibreOffice 只能整份转换，而转换成本随页数线性增长（实测 1 页 0.52s、
+# 3 页 0.76s、12 页 2.14s）。只重测 1–2 页时，把这几页拆成一个临时小 deck
+# 再转，能省下整份转换的开销。
+#
+# 风险只有一个：页码映射搞错 = 把别页的像素当本页发布。因此本函数自带三道校验
+# （小 deck 页数 == 请求页数、每页都有产物、页码按绝对编号回填），任一不过就
+# 返回失败，调用方退回整份转换——宁可慢，不可错。
+# ─────────────────────────────────────────────────────────────────────────
+_RID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+PARTIAL_MAX_RATIO = 0.5     # 需重测页数 ≤ 总页数的一半才值得拆
+PARTIAL_MIN_SAVING = 4      # 至少省下 4 页的转换量才值得拆
+
+
+def _partial_worth_it(need: list[int], total: int) -> bool:
+    if not need or total <= 0 or not need or len(need) >= total:
+        return False
+    if len(need) > max(1, int(total * PARTIAL_MAX_RATIO)):
+        return False
+    return (total - len(need)) >= PARTIAL_MIN_SAVING
+
+
+def _subset_deck(pptx: Path, pages: list[int]):
+    """把 deck 拆成只含指定页的临时小 deck。返回 (小deck路径, {小页号: 原页号})。"""
+    import shutil as _sh
+    try:
+        from pptx import Presentation
+    except Exception:
+        return None, None
+    tmp = Path(tempfile.mkdtemp(prefix="pptx-subset-"))
+    dst = tmp / "subset.pptx"
+    try:
+        _sh.copyfile(str(pptx), str(dst))
+        prs = Presentation(str(dst))
+        lst = prs.slides._sldIdLst
+        keep = set(int(n) for n in pages)
+        for i in range(len(lst) - 1, -1, -1):
+            if (i + 1) not in keep:
+                rid = lst[i].get(_RID)
+                try:
+                    prs.part.drop_rel(rid)
+                except Exception:
+                    pass
+                del lst[i]
+        prs.save(str(dst))
+        # 校验一：小 deck 页数必须与请求页数严格相等
+        if len(Presentation(str(dst)).slides) != len(keep):
+            return None, None
+        return dst, {i: n for i, n in enumerate(sorted(keep), start=1)}
+    except Exception:
+        try:
+            _sh.rmtree(tmp, ignore_errors=True)
+        except Exception:
+            pass
+        return None, None
+
+
+def _rename_evidence(work: Path, token: str, src_no: int, dst_no: int) -> None:
+    """小 deck 的产物按小页号命名，回填成原页号，否则缓存会认成别页。"""
+    for ext in RASTER_EXTS:
+        for f in work.glob(f"page-{token}-*-{src_no:02d}.{ext}"):
+            target = work / f"page-{token}-{f.stem.split('-')[2]}-{dst_no:02d}.{ext}"
+            try:
+                if target.exists():
+                    target.unlink()
+                f.rename(target)
+            except OSError:
+                pass
+
+
 def _runs(page_numbers: list[int]) -> list[tuple[int, int]]:
     """把页码压成连续区间：[(start, end), ...]（1-based，含端点）。"""
     nums = sorted({int(n) for n in page_numbers})
@@ -281,6 +359,77 @@ def _runs(page_numbers: list[int]) -> list[tuple[int, int]]:
 
 
 MIN_CHUNK_PAGES = 2   # 每次 pdftoppm 约 60ms 进程启动成本，切太碎反而更慢
+
+# ─────────────────────────────────────────────────────────────────────────
+# 快测光栅化（性能）
+#
+# 实测 12 页含照片的 deck：-png 8.6s、-jpeg 0.8s —— PNG 慢在**编码**不在解码，
+# 而我们要的只是统计量（亮度/边缘/占据率/主色/质心），JPEG q95 与 PNG 的偏差为：
+# 对比度 ≤0.04、强调面积 0.000、重心 ≤0.015、占据率 ≤0.002 —— 远离阈值时可互换。
+#
+# 但「远离」必须被证明，不能假设：凡指标落在判定阈值 ±eps 内，就用无损 PNG 重测
+# 该页再定稿（_near_threshold）。代价只发生在临界页上，典型 0–3 页。
+# ─────────────────────────────────────────────────────────────────────────
+JPEG_QUALITY = 95
+
+# 光栅格式表：(pdftoppm 参数, 扩展名, 是否有损)
+#
+# 实测 12 页含照片的 deck：png 8.11s ｜ jpeg q95 0.78s ｜ tiff+lzw 0.99s ｜ tiff 无压缩 0.90s
+# 逐页像素比对：tiff+lzw 与 png **最大差 0**（LZW 是无损压缩）。
+# 结论：PNG 慢在 deflate，而不在渲染本身。既然无损也能做到 ~1s，
+# 默认就该用无损格式——JPEG 那点优势（0.2s）不值得引入「有损 + 边缘复检」的复杂度。
+# 扩展名曾散落在三处（命名/清理/改名），漏一处就会静默失效，故收敛成这张表。
+RASTER_FORMATS = {
+    "tiff": (["-tiff", "-tiffcompression", "lzw"], "tif", False),
+    "png":  (["-png"], "png", False),
+    "jpeg": (["-jpeg", "-jpegopt", f"quality={JPEG_QUALITY}"], "jpg", True),
+}
+RASTER_DEFAULT = "tiff"          # 默认：无损 + 快
+RASTER_EXTS = tuple(e for _, e, _ in RASTER_FORMATS.values())
+
+
+def _raster_args(raster: str):
+    """光栅格式 → (pdftoppm 参数, 扩展名, 是否有损)。未知格式一律退回无损默认。"""
+    return RASTER_FORMATS.get(str(raster or "").lower(), RASTER_FORMATS[RASTER_DEFAULT])
+
+# 判定阈值 → 边缘带宽。贴着这些值的页必须无损复测，否则 JPEG 噪声可能翻判。
+_RECHECK_THRESHOLDS = {
+    "text_contrast_min":     (3.0, 4.5),
+    "text_contrast_all_min": (3.0, 4.5),
+    "gravity_drift":         (0.28,),
+    "occupancy":             (0.60, 0.65, 0.75, 0.85),
+}
+_RECHECK_EPS = {
+    "text_contrast_min": 0.15, "text_contrast_all_min": 0.15,
+    "gravity_drift": 0.030, "occupancy": 0.020, "accent_pixel_ratio": 0.010,
+}
+_ACCENT_MAX_DEFAULT = 0.05
+
+
+def _near_threshold(item: dict, accent_max: float | None = None) -> bool:
+    """该页是否有指标贴着判定阈值？贴着就必须用无损 PNG 重测。
+
+    宁可多测几页，不可让 JPEG 的编码噪声改变发布判定——省下的时间远没有
+    一次误判昂贵。
+    """
+    if not isinstance(item, dict):
+        return False
+    thresholds = dict(_RECHECK_THRESHOLDS)
+    thresholds["accent_pixel_ratio"] = (
+        (float(accent_max),) if accent_max else (_ACCENT_MAX_DEFAULT,))
+    for key, bounds in thresholds.items():
+        v = item.get(key)
+        if v is None:
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        eps = _RECHECK_EPS.get(key, 0.02)
+        for b in bounds:
+            if abs(v - float(b)) <= eps:
+                return True
+    return False
 
 
 def _plan_jobs(page_numbers: list[int], workers: int) -> tuple[list[tuple[int, int]], int]:
@@ -329,7 +478,8 @@ def _run_token(src: Path, page_numbers: list[int]) -> str:
 
 
 def _run_pipeline(pdf: Path, out_dir: Path, dpi: int, page_numbers: list[int],
-                  workers: int, work, token: str | None = None) -> dict[int, Any]:
+                  workers: int, work, token: str | None = None,
+                  raster: str = "png") -> dict[int, Any]:
     """把「poppler 转换」与「逐页像素测量」放进同一个 worker：块间并行、块内串行。
 
     比先全部转换再全部测量少两道全局栅栏——第 1 块在测量时第 2 块已在转换。
@@ -347,19 +497,20 @@ def _run_pipeline(pdf: Path, out_dir: Path, dpi: int, page_numbers: list[int],
     # 每轮一个唯一前缀：复用同一前缀会让本轮产物与上轮残留混进同一次 glob，页码映射
     # 随即错位——上一版的「命中 12/重测 0 却给出别页指标」正是这样发生的。
     token = token or _run_token(pdf, page_numbers)
+    fmt_args, fmt, _lossy = _raster_args(raster)
 
     def run_job(idx_job):
         idx, (a, b) = idx_job
         stem = f"page-{token}-r{idx}"
         try:
-            subprocess.run([pdftoppm, "-png", "-r", str(dpi), "-f", str(a), "-l", str(b),
+            subprocess.run([pdftoppm] + fmt_args + ["-r", str(dpi), "-f", str(a), "-l", str(b),
                             str(pdf), str(out_dir / stem)], check=True, capture_output=True,
                            timeout=300)
         except Exception:
             return {}               # 该区间缺页 → coverage.unrendered 记录，不整轮报废
         wanted = set(range(a, b + 1))
         picked: list[tuple[int, Path]] = []
-        for f in out_dir.glob(f"{stem}-*.png"):
+        for f in out_dir.glob(f"{stem}-*.{fmt}"):
             digits = "".join(ch for ch in f.stem.rsplit("-", 1)[-1] if ch.isdigit())
             if not digits:
                 continue
@@ -383,6 +534,70 @@ def _run_pipeline(pdf: Path, out_dir: Path, dpi: int, page_numbers: list[int],
     return results
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# LibreOffice UserInstallation（profile）
+#
+# 旧行为：profile 建在渲染目录里。渲染目录一清（冷跑、--no-cache），profile 跟着
+# 重建，每次都要多付一笔固定成本——实测 12 页转换：新建 profile 2.12s，复用 1.57s，
+# 差 0.55s/次。profile 与 deck 无关，没有理由跟着渲染目录一起死。
+#
+# 改为跨 deck 共享的持久 profile，用文件锁串行化（同一 profile 不能被两个 soffice
+# 同时写）。拿不到锁或共享目录不可用时，退回渲染目录内的私有 profile——
+# 慢一点可以，转换失败不行。
+# ─────────────────────────────────────────────────────────────────────────
+_LO_PROFILE_ROOT = Path(tempfile.gettempdir()) / "ppt-vao-lo-profile"
+_LO_LOCK_TIMEOUT = 120.0        # 等锁上限：一次转换约 2s，等得起
+_LO_LOCK_STALE = 300.0          # 锁文件僵死阈值（进程被 kill 时兜底）
+
+
+def _acquire_profile_lock(lock: Path, timeout: float) -> bool:
+    """极简文件锁：O_EXCL 创建 + 僵死回收。拿到返回 True。"""
+    import os as _os
+    import time as _time
+    deadline = _time.time() + max(0.0, float(timeout))
+    while True:
+        try:
+            fd = _os.open(str(lock), _os.O_CREAT | _os.O_EXCL | _os.O_WRONLY)
+            try:
+                _os.write(fd, str(_os.getpid()).encode())
+            finally:
+                _os.close(fd)
+            return True
+        except FileExistsError:
+            try:                                   # 僵死锁：超时未更新即强删
+                if _time.time() - lock.stat().st_mtime > _LO_LOCK_STALE:
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if _time.time() >= deadline:
+                return False
+            _time.sleep(0.05)
+        except OSError:
+            return False
+
+
+def _release_profile_lock(lock: Path) -> None:
+    try:
+        lock.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _choose_profile(out_dir: Path) -> tuple[Path, Path | None]:
+    """返回 (profile 目录, 持有的锁文件 or None)。"""
+    try:
+        _LO_PROFILE_ROOT.mkdir(parents=True, exist_ok=True)
+        lock = _LO_PROFILE_ROOT / ".lock"
+        if _acquire_profile_lock(lock, _LO_LOCK_TIMEOUT):
+            return _LO_PROFILE_ROOT, lock
+    except Exception:
+        pass
+    private = out_dir / "lo-profile"
+    private.mkdir(exist_ok=True)
+    return private, None
+
+
 def _pdf_from_pptx(pptx: Path, out_dir: Path, keep_pngs=...) -> tuple[Path | None, str | None]:
     """PPTX → PDF（LibreOffice 单进程，整份文件，不可分页）。返回 (pdf, 失败原因)。
 
@@ -402,23 +617,39 @@ def _pdf_from_pptx(pptx: Path, out_dir: Path, keep_pngs=...) -> tuple[Path | Non
     # keep_pngs=... → 清掉旧页（默认）；None → 完全不动（冷测不该把别人的热缓存打回冷）；
     # 集合 → 只保留被有效缓存条目引用且内容校验通过的证据文件。
     keep = None if keep_pngs is None else (set() if keep_pngs is ... else set(keep_pngs))
-    for stale in (sorted(out_dir.glob("page-*.png")) if keep is not None else []):
+    for stale in (sorted([f for e in RASTER_EXTS for f in out_dir.glob(f"page-*.{e}")])
+                  if keep is not None else []):
         if stale.name in keep:
             continue
         try:
             stale.unlink()
         except OSError:
             pass
-    profile = out_dir / "lo-profile"
-    profile.mkdir(exist_ok=True)
+    profile, lock = _choose_profile(out_dir)
+    cmd = [soffice, "--headless",
+           f"-env:UserInstallation=file://{profile}",
+           "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)]
     try:
-        subprocess.run(
-            [soffice, "--headless",
-             f"-env:UserInstallation=file://{profile}",
-             "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)],
-            check=True, capture_output=True, timeout=300)
+        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
     except Exception as exc:
-        return None, f"libreoffice convert failed: {exc}"
+        first = str(exc)
+        if lock is not None:              # 共享 profile 疑似损坏 → 私有 profile 重试
+            _release_profile_lock(lock)
+            try:
+                private = out_dir / "lo-profile"
+                private.mkdir(exist_ok=True)
+                subprocess.run(
+                    [soffice, "--headless",
+                     f"-env:UserInstallation=file://{private}",
+                     "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)],
+                    check=True, capture_output=True, timeout=300)
+                return out_dir / f"{Path(pptx).stem}.pdf", None
+            except Exception as exc2:
+                return None, f"libreoffice convert failed: {first} / retry: {exc2}"
+        return None, f"libreoffice convert failed: {first}"
+    finally:
+        if lock is not None:
+            _release_profile_lock(lock)
     pdf = out_dir / f"{Path(pptx).stem}.pdf"
     if not pdf.exists():
         return None, "pdf not produced"
@@ -823,7 +1054,8 @@ def resolve_anchor(slide: dict, cw: float, ch: float) -> tuple[str | None, dict 
 def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
                     dpi: int = 96, pages: list[int] | None = None,
                     workers: int = MAX_RENDER_WORKERS,
-                    use_cache: bool = True) -> dict[str, Any]:
+                    use_cache: bool = True,
+                    raster: str = "auto") -> dict[str, Any]:
     """
     编译产物 + spec → 每页渲染证据。
     返回 {"rendered", "reason", "pages", "coverage"}；pages[i]["index"] 与
@@ -834,6 +1066,13 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
     use_cache：命中 render_cache.json 的页直接复用指标，全部命中时连 LibreOffice
     都不启动。缓存键 = 该页内容 + 画布 + dpi + Accent + 渲染器身份，因此其他页的
     修改不会让本页失效；证据 PNG 保留在原目录，可随时复核。
+
+    raster：光栅化格式。
+      "auto"/"tiff"（默认）＝ TIFF+LZW，**无损且快**（比 PNG 快约 8×，像素完全等价），
+                             无需任何复检，是发布判定的默认口径；
+      "png"                 ＝ 无损 PNG（最慢，兼容性与存档性最好，取证/排障用）；
+      "jpeg"                ＝ 有损快测，会对指标贴着判定阈值的页自动无损复检；
+                              仅在超大 deck 追求极限速度时使用。
     """
     work = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="pptx-render-"))
     work.mkdir(parents=True, exist_ok=True)
@@ -876,17 +1115,33 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
     token = _run_token(Path(pptx), need)
     # 冷测（use_cache=False）不清空证据目录：清它会把别人的热缓存打回冷态。
     keep = None if not use_cache else {e["png"] for e in live.values() if e.get("png")}
+    # 只重测少数页时，拆成小 deck 转 PDF（1 页 0.52s vs 整份 2.14s）
+    mini_pdf, mini_map, mini_tmp = (None, None, None)
+    reusable_full = _pdf_is_reusable(Path(pptx), work, renderer) if use_cache else None
+    if reusable_full is None and use_cache and _partial_worth_it(need, len(slides)):
+        mini_deck, mini_map = _subset_deck(Path(pptx), need)
+        if mini_deck is not None:
+            mini_tmp = mini_deck.parent
+            mp, _ = _pdf_from_pptx(mini_deck, mini_tmp, keep_pngs=None)
+            mini_pdf = mp
+        if mini_pdf is None:                 # 拆失败 → 整份转换，正确性优先
+            mini_map = None
+            try:
+                shutil.rmtree(mini_tmp, ignore_errors=True)
+            except Exception:
+                pass
+            mini_tmp = None
     # PPTX 逐字节没变就先复用上一轮 PDF：soffice 只能整份转换（实测 1.7s），
     # 而 Level 2 → Level 3、改 dpi 抽查这类二次运行的输入文件并没有变化。
-    pdf = _pdf_is_reusable(Path(pptx), work, renderer) if use_cache else None
+    pdf = reusable_full
     reason = None
-    if pdf is None:
+    if pdf is None and mini_pdf is None:
         pdf, reason = _pdf_from_pptx(Path(pptx), work, keep_pngs=keep)
         if pdf is not None:
             _pdf_record(Path(pptx), work, pdf, renderer)
-    if pdf is None:
+    if pdf is None and mini_pdf is None:
         return {"rendered": False, "reason": reason, "pages": []}
-    total = _pdf_page_count(pdf)
+    total = _pdf_page_count(pdf) if pdf is not None else len(slides)
     need = [n for n in need if 1 <= n <= total]
 
     def _measure(n: int, png: Path) -> dict[str, Any]:
@@ -899,16 +1154,92 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
                                                     slide, cw, ch, theme))}
         return _apply_anchor(item, slide, cw, ch)
 
-    measured = _run_pipeline(pdf, work, dpi, need, workers, _measure, token)
+    # ── 光栅化：默认 tiff+lzw（无损且快）；jpeg 为有损快测，需临界复检 ──
+    mode = str(raster or "auto").lower()
+    if mode in ("auto", "lossless"):
+        mode = RASTER_DEFAULT
+    _, _, use_jpeg = _raster_args(mode)
+    src_pdf = mini_pdf if mini_pdf is not None else pdf
+    if mini_map:
+        # 小 deck 的页号是局部的；work 收到的必须是**原页号**，否则指标串页
+        def _work(n, png):
+            return _measure(mini_map[n], png)
+        want_pages = sorted(mini_map.keys())
+    else:
+        _work = _measure
+        want_pages = need
+    measured = _run_pipeline(src_pdf, work, dpi, want_pages, workers, _work, token,
+                             raster=mode)
+    # 校验二：拆页渲染时每一页都必须有产物，缺一页就整份重来（绝不拿别页顶替）
+    if mini_map and (len(measured) != len(mini_map)):
+        measured = {}
+    if mini_map and measured:
+        for k, n in mini_map.items():
+            _rename_evidence(work, token, k, n)
+        # 键从小 deck 页号回填为原页号：不回填会让「第 1 页拿到第 5 页的指标」
+        measured = {mini_map.get(n, n): v for n, v in measured.items()}
     if not measured:
-        return {"rendered": False, "reason": "pdftoppm produced no pages", "pages": []}
+        if mini_pdf is not None:             # 拆页失败，退回整份
+            try:
+                shutil.rmtree(mini_tmp, ignore_errors=True)
+            except Exception:
+                pass
+            mini_pdf, mini_map, mini_tmp = (None, None, None)
+            if pdf is None:
+                pdf, reason = _pdf_from_pptx(Path(pptx), work, keep_pngs=keep)
+                if pdf is not None:
+                    _pdf_record(Path(pptx), work, pdf, renderer)
+            if pdf is None:
+                return {"rendered": False, "reason": reason, "pages": []}
+            measured = _run_pipeline(pdf, work, dpi, need, workers, _measure, token,
+                                     raster=mode)
+        if not measured:
+            return {"rendered": False, "reason": "pdftoppm produced no pages", "pages": []}
+    # ── 临界页无损复检：JPEG 编码噪声不得改变发布判定 ──
+    rechecked: list[int] = []
+    if use_jpeg and mode == "auto":
+        acc_max = None
+        for src in (spec.get("constraints") or {}, (theme.get("constraints") or {})):
+            if isinstance(src, dict) and src.get("accent_max") is not None:
+                try:
+                    acc_max = float(src["accent_max"])
+                except (TypeError, ValueError):
+                    pass
+                break
+        marginal = sorted(n for n, it in measured.items() if _near_threshold(it, acc_max))
+        if marginal:
+            if mini_map:
+                inv = {v: k for k, v in mini_map.items()}
+                sub = sorted(inv[n] for n in marginal if n in inv)
+
+                def _work2(n, png):
+                    return _measure(mini_map[n], png)
+                fixed_sub = _run_pipeline(src_pdf, work, dpi, sub, 1, _work2,
+                                          token + "x", raster=RASTER_DEFAULT)
+                for k, n in mini_map.items():
+                    _rename_evidence(work, token + "x", k, n)
+                fixed = {mini_map[k]: v for k, v in fixed_sub.items()}
+            else:
+                fixed = _run_pipeline(pdf, work, dpi, marginal, 1, _measure,
+                                      token + "x", raster=RASTER_DEFAULT)
+            for n, it in fixed.items():
+                measured[n] = it      # 无损结果覆盖快测结果
+            rechecked = sorted(fixed.keys())
+    if mini_tmp is not None:
+        try:
+            shutil.rmtree(mini_tmp, ignore_errors=True)
+        except Exception:
+            pass
     if use_cache:                        # 只保留本 deck 的条目：自动裁剪，不会无限增长
         fresh = {}
         for n in measured:
             name = _png_name(work, n, token)
             if not name:                 # 找不到本轮 PNG → 不入库（宁缺勿错）
                 continue
-            fresh[keys[n]] = dict(measured[n], png=name, png_sha=_file_sha(work / name))
+            fresh[keys[n]] = dict(measured[n], png=name,
+                                  png_sha=_file_sha(work / name),
+                                  raster=(mode if (use_jpeg and n not in rechecked)
+                                          else (mode if not use_jpeg else RASTER_DEFAULT)))
         merged = {k: v for k, v in cache.items() if k in set(keys.values())}
         merged.update({k: v for k, v in fresh.items() if v.get("png_sha")})
         _save_cache(work, merged)
@@ -927,7 +1258,9 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
                          "rendered_ids": [p["slide"] for p in out],
                          "requested": wanted, "workers": _clamp_workers(workers),
                          "cache_hits": cached_n, "cache_misses": len(measured),
-                         "unrendered": gaps or None}}
+                         "unrendered": gaps or None,
+                         "raster": mode,
+                         "lossless_recheck": rechecked}}
 
 
 # --------------------------------------------------------------------------

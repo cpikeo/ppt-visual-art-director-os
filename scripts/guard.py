@@ -653,6 +653,108 @@ def _gradient_muck(fill) -> str | None:
             f"（互补）且彩度居中")
 
 
+def _box(e: dict) -> tuple:
+    try:
+        x, y = float(e.get("x", 0)), float(e.get("y", 0))
+        w, h = float(e.get("width", 0) or 0), float(e.get("height", 0) or 0)
+    except (TypeError, ValueError):
+        return (0.0, 0.0, 0.0, 0.0)
+    return (x, y, w, h)
+
+
+def _geometry_occlusion(slide: dict):
+    """文字框两两重叠检测：覆盖率超过 30% 即认定为遮挡。
+
+    只查文字——图形/图片的有意叠压（画心、蒙版、色块衬底）是设计手法，
+    文字压文字则一定是失误。返回 [(id_a, id_b, 覆盖率), ...]。
+    """
+    texts = [e for e in (slide.get("elements") or [])
+             if isinstance(e, dict) and e.get("type") == "text"
+             and (e.get("text") or "").strip()]
+    out = []
+    for i in range(len(texts)):
+        for j in range(i + 1, len(texts)):
+            a, b = texts[i], texts[j]
+            ax, ay, aw, ah = _box(a)
+            bx, by, bw, bh = _box(b)
+            ox = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+            oy = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+            inter = ox * oy
+            if inter <= 0:
+                continue
+            smaller = min(aw * ah, bw * bh)
+            if smaller <= 0:
+                continue
+            ratio = inter / smaller
+            if ratio >= 0.30:
+                out.append((a.get("id") or a.get("role") or "text",
+                            b.get("id") or b.get("role") or "text", ratio))
+    return out
+
+
+def _chart_values(chart: dict):
+    """取图表里的全部数值（兼容 data 行与 series 两种写法）。"""
+    vals = []
+    for row in (chart.get("data") or []):
+        if isinstance(row, dict) and isinstance(row.get("value"), (int, float)):
+            vals.append(float(row["value"]))
+    for srs in (chart.get("series") or []):
+        if isinstance(srs, dict):
+            for v in (srs.get("values") or []):
+                if isinstance(v, (int, float)):
+                    vals.append(float(v))
+    return vals
+
+
+def _data_claim_mismatch(slide: dict):
+    """标题里的百分比，能否由本页图表数据推出？
+
+    支持三种等价算法：直接等于某值、占总量百分比、占最大值百分比。
+    任一命中即视为主张成立（不同图表的口径本就不同，不宜只认一种）。
+    """
+    import re
+    charts = [e for e in (slide.get("elements") or [])
+              if isinstance(e, dict) and e.get("type") in ("chart", "native_chart")]
+    if not charts:
+        return []
+    texts = [e for e in (slide.get("elements") or [])
+             if isinstance(e, dict) and e.get("type") == "text"
+             and (e.get("text") or "").strip()]
+    if not texts:
+        return []
+    # 主张句 = 字号最大的**句子**，不是最大的数字。
+    # 反例：KPI 页里 44px 的「↓ 34%」比 40px 的标题还大，若按字号直接取，
+    # 会把指标值当成主张去图表里找，凭空造出一条误报。故要求 ≥8 个字符。
+    candidates = [e for e in texts if len(str(e.get("text") or "").strip()) >= 8]
+    if not candidates:
+        return []
+    head = max(candidates, key=lambda e: float(e.get("size") or 0))
+    head_txt = str(head.get("text") or "")
+    claims = [float(m) for m in re.findall(r"(\d+(?:\.\d+)?)\s*%", head_txt)]
+    if not claims:
+        return []
+    out = []
+    for chart in charts:
+        vals = _chart_values(chart)
+        if not vals:
+            continue
+        total = sum(vals) or 1.0
+        vmax = max(vals) or 1.0
+        for n in claims:
+            cands = [abs(v - n) for v in vals]
+            cands += [abs(100.0 * v / total - n) for v in vals]
+            cands += [abs(100.0 * v / vmax - n) for v in vals]
+            best = min(cands)
+            if best > 0.6:                     # 容差 0.6：容得下四舍五入
+                nearest = min(
+                    [100.0 * v / total for v in vals] +
+                    [100.0 * v / vmax for v in vals] + list(vals),
+                    key=lambda x: abs(x - n))
+                out.append((chart.get("id") or "chart", f"{n:g}%",
+                            f"最接近 {nearest:.1f}"))
+    return out
+
+
 def check_spec(spec: dict, rules: dict | None = None) -> dict:
     """
     静态治理：对调用方传入的 spec 做 OS 硬约束断言。
@@ -945,11 +1047,14 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                             add("data_integrity", eid, "error",
                                 "多序列图表缺少 categories 或 series")
                         else:
-                            for si, s in enumerate(series_list):
-                                vals = s.get("values") if isinstance(s, dict) else None
+                            # 变量必须避开外层的 si / s：同名会覆盖「当前页」，
+                            # 使本轮后续所有用 s 的检查（source_zone、overlap、
+                            # 几何自检…）拿到序列字典而非页面——那些检查会静默失效。
+                            for _sidx, _srs in enumerate(series_list):
+                                vals = _srs.get("values") if isinstance(_srs, dict) else None
                                 if not isinstance(vals, list) or not vals:
-                                    add("data_integrity", f"{eid}[s{si}]", "error",
-                                        f"series[{si}] 缺少 values")
+                                    add("data_integrity", f"{eid}[s{_sidx}]", "error",
+                                        f"series[{_sidx}] 缺少 values")
                                     continue
                                 for vi, v in enumerate(vals):
                                     try:
@@ -957,8 +1062,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                                         if not math.isfinite(value):
                                             raise ValueError
                                     except (TypeError, ValueError):
-                                        add("data_integrity", f"{eid}[s{si}][{vi}]", "error",
-                                            f"series[{si}] value={v!r} 不是有限数字")
+                                        add("data_integrity", f"{eid}[s{_sidx}][{vi}]", "error",
+                                            f"series[{_sidx}] value={v!r} 不是有限数字")
                     elif not isinstance(data, list) or not data:
                         add("data_integrity", eid, "error",
                             "数值图表缺少 data，无法验证或渲染")
@@ -1153,6 +1258,25 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 f"装饰面积 {decoration_area / (cw * ch):.1%} > 上限 {decoration_area_max:.0%}")
         if len(icon_styles) > 1:
             add("icon_consistency", sid, "warn", "页面混用多种图标风格")
+
+        # ── 几何自检：三级门禁都不查元素互相遮挡，只能静态补 ──
+        # 真实案例：图例(1096–1232) 与页码(1112–1232) 100% 重叠，guard / QA /
+        # Critic 全数通过，人眼才发现。遮挡一旦发生，页面等于少了一处信息。
+        if _geometry_occlusion(s):
+            for a_id, b_id, ratio in _geometry_occlusion(s):
+                add("geom_occlude", sid, "warn",
+                    f"「{a_id}」与「{b_id}」重叠 {ratio:.0%}（互相遮挡，"
+                    f"其中一方信息实际不可读；挪开或删掉其一）")
+
+        # ── 主张 vs 图表：标题里的百分比必须能在图上算出来 ──
+        # 真实案例：标题写「自有内容 61%」，图表单位是「指数点」，68/180=37.8%，
+        # 主张与证据不符；另一页「Q4 占 38%」而实际 142/486=29%。这类错误
+        # 静态就能判定，不该拖到发布评审才发现。
+        for cid, claim, got in _data_claim_mismatch(s):
+            add("data_claim_unsupported", sid, "warn",
+                f"标题声称 {claim}，但图表「{cid}」里算不出该值"
+                + (f"（最接近的是 {got}）" if got else "")
+                + f"；主张必须能被页内证据推出")
 
         # §07 排版预算（hint 级：字号等级过碎会让层级失焦，提示收拢）
         if len(font_levels) > font_levels_max:

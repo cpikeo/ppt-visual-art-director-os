@@ -524,8 +524,18 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
     if render_page:
         drift = float(render_page.get("gravity_drift", 0) or 0)
         if drift > 0.28:
-            r.add("balance", -2, f"渲染显著性质心漂移 {drift:.2f}，与声明重心不一致。",
-                  "调整主视觉尺寸/位置或重新声明 gravity_anchor；不要用装饰补偿。")
+            # 锚点来源必须写明：resolve_anchor() 的优先级是 page_intent.focus
+            # → gravity_anchor。只写「声明重心」会让人去改 gravity_anchor，
+            # 而焦点声明存在时改它完全无效（实测为此白跑数轮迭代）。
+            _anchor_id = str(render_page.get("anchor_id") or "").strip()
+            _src = str(render_page.get("anchor_source") or "").strip()
+            _who = (f"锚点是「{_anchor_id}」（来自 {_src}）" if _anchor_id
+                    else "锚点未声明，按启发式取主视觉")
+            r.add("balance", -2,
+                  f"渲染显著性质心漂移 {drift:.2f}，与声明焦点不一致；{_who}。",
+                  "让结论真正变重（放大标题/主视觉、收短正文），或改声明 focus 到"
+                  "真正承担结论的元素；焦点已声明时改 gravity_anchor 无效，"
+                  "也不要用装饰补偿。")
         else:
             r.add("balance", +1, f"渲染质心与声明锚点基本一致（漂移 {drift:.2f} ≤ 0.28）。")
     else:

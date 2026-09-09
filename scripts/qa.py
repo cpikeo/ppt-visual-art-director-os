@@ -102,7 +102,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
            render_dir: str | Path | None = None, dpi: int = 96,
            render: bool = True, preflight_gate: bool = False,
            qa_level: int = 3, render_pages: list[int] | None = None,
-           workers: int = 2, use_cache: bool = True) -> dict:
+           workers: int = 2, use_cache: bool = True,
+           raster: str = "auto") -> dict:
     """
     完整 QA：guard + compile + render（可选）。
 
@@ -122,6 +123,10 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     use_cache=True（默认）复用渲染目录里按页内容寻址的指标：未改动的页不再重测，
     全部命中时连 LibreOffice 都不启动。判定口径不变——缓存键覆盖本页、主题、画布、
     dpi、页内图片指纹与渲染器身份；需要绝对冷测时传 use_cache=False 或 --no-cache。
+
+    raster（默认 "auto"）：光栅化格式。JPEG 快测比 PNG 快约 10×，指标偏差在远离
+    判定阈值时可忽略；"auto" 会在**指标贴着阈值**的页上自动改用无损 PNG 复测，
+    因此判定与全程 PNG 一致。传 "png" 可强制全程无损（取证/排障）。
     """
     import time
     from compiler import compile_deck
@@ -194,7 +199,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
             from render_check import render_evidence
             evidence = render_evidence(output_path, spec, render_dir, dpi,
                                        pages=wanted_pages, workers=workers,
-                                       use_cache=use_cache)
+                                       use_cache=use_cache,
+                                       raster=raster)
             evidence.setdefault("coverage", {})
             evidence["coverage"].update({"qa_level": qa_level,
                                          "total_slides": len(spec.get("slides") or []),
@@ -305,8 +311,10 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
             deduction_by_domain["render"] += pen["render_gravity"]
             items.append({"domain": "render", "level": "warn",
                           "rule": "gravity_drift", "id": p.get("slide"),
-                          "msg": (f"显著性质心偏离声明锚点 "
-                                  f"{p['gravity_drift']:.2f} > {thr['gravity_drift']}"),
+                          "msg": (f"显著性质心偏离声明焦点"
+                                  f"（{p.get('anchor_id') or '未声明'}）"
+                                  f" {p['gravity_drift']:.2f} > {thr['gravity_drift']}"
+                                  f"；锚点取 page_intent.focus，非 gravity_anchor"),
                           "penalty": pen["render_gravity"]})
         if p.get("accent_pixel_ratio", 0) > accent_max:
             deduction += pen["render_accent"]
@@ -579,7 +587,8 @@ def main(argv):
     if len(argv) < 3:
         print("usage: python qa.py <build_module.py> <output.pptx> [--json] "
               "[--no-render] [--manifest] [--fast] [--preflight] "
-              "[--quick | --key-pages | --level N] [--no-cache]")
+              "[--quick | --key-pages | --level N] [--no-cache] "
+              "[--raster auto|png|jpeg]")
         return 1
     mod_path = Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
@@ -601,9 +610,16 @@ def main(argv):
             level = 2
         elif a == "--level" and i + 1 < len(argv):
             level = int(argv[i + 1])
+    # --raster png|jpeg|auto：默认 auto（快测 + 临界页无损复检）
+    raster = "auto"
+    for i, a in enumerate(argv):
+        if a == "--raster" and i + 1 < len(argv):
+            raster = argv[i + 1].strip().lower()
+        elif a == "--lossless":
+            raster = "png"
     result = run_qa(spec, argv[2], render="--no-render" not in argv,
                     preflight_gate=gate, dpi=72 if fast else 96, qa_level=level,
-                    use_cache="--no-cache" not in argv)
+                    use_cache="--no-cache" not in argv, raster=raster)
     if "--preflight" in argv:
         for i in (result.get("preflight") or {}).get("items", []):
             print(f"  {i['slide']:>6} {i['code']:17s} {i['observation']}")

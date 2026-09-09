@@ -290,6 +290,77 @@ def _resolve_src(element: dict, base_path: str | None) -> Path:
     return (root / src).resolve()
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 图片适配缓存（性能）
+#
+# 实测：一副含 5 张 1672×941 PNG 的 deck，compile 全程 2.36s，其中 1.88s
+# （80%）花在 _fit_image 的 LANCZOS 重采样 + PNG 重编码上——**图没变也每次重算**。
+# 适配结果只取决于 (源文件指纹, 目标尺寸, fit, crop, 填充色)，因此可跨编译复用。
+# 命中缓存时返回缓存文件，调用方不得删除（from_cache=True 即表示"别删"）。
+# 环境变量 PPT_VAO_NO_IMGCACHE=1 可关闭（排障用）。
+# ─────────────────────────────────────────────────────────────────────────
+_FIT_CACHE_DIR = Path(tempfile.gettempdir()) / "ppt-vao-imagecache"
+_FIT_CACHE_MAX = 256
+
+
+def _fit_cache_disabled() -> bool:
+    import os
+    return os.environ.get("PPT_VAO_NO_IMGCACHE", "").strip() not in ("", "0", "false")
+
+
+def _fit_cache_key(src: Path, w: float, h: float, fit: str, crop, bg) -> str:
+    import hashlib
+    try:
+        st = src.stat()
+        stamp = f"{st.st_mtime_ns}:{st.st_size}"
+    except OSError:
+        stamp = "?"
+    payload = "|".join([str(src), stamp, str(int(round(float(w)))),
+                        str(int(round(float(h)))), str(fit), str(crop), str(bg)])
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:32]
+
+
+def _fit_cache_prune() -> None:
+    """条目超上限时淘汰最旧的一半，避免缓存无限增长。"""
+    try:
+        items = sorted(_FIT_CACHE_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime)
+        if len(items) > _FIT_CACHE_MAX:
+            for p in items[:len(items) - _FIT_CACHE_MAX // 2]:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        pass
+
+
+def _fit_image_cached(src: Path, w: float, h: float, fit: str, crop=None,
+                      bg: tuple | None = None) -> tuple:
+    """_fit_image 的缓存版。返回 (path, from_cache)；from_cache=True 时勿删。"""
+    import shutil as _sh
+    if _fit_cache_disabled():
+        return _fit_image(src, w, h, fit, crop, bg=bg), False
+    key = _fit_cache_key(src, w, h, fit, crop, bg)
+    hit = _FIT_CACHE_DIR / (key + ".png")
+    try:
+        if hit.exists() and hit.stat().st_size > 0:
+            return hit, True
+    except OSError:
+        pass
+    tmp = _fit_image(src, w, h, fit, crop, bg=bg)
+    try:
+        _FIT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _sh.copyfile(str(tmp), str(hit))
+        _fit_cache_prune()
+    except Exception:
+        return tmp, False          # 缓存不可写：退回临时文件，正确性优先
+    try:
+        tmp.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return hit, True
+
+
 def _fit_image(src: Path, w: float, h: float, fit: str, crop=None,
                bg: tuple | None = None) -> Path:
     from PIL import Image
@@ -341,13 +412,15 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
     fit = element.get("fit", "cover")
     crop = element.get("crop")
     temp_path = None
+    temp_from_cache = False
     path_to_use = src
     if fit in ("cover", "contain") or crop:
         try:
             # contain 留白填充主题背景色，保证暗色主题下无白边。
             bg_rgb = ctx.color("background")
             bg_tuple = tuple(bg_rgb) if bg_rgb is not None else None
-            temp_path = _fit_image(src, w, h, fit, crop, bg=bg_tuple)
+            temp_path, temp_from_cache = _fit_image_cached(
+                src, w, h, fit, crop, bg=bg_tuple)
             path_to_use = temp_path
         except Exception as exc:
             ctx.warn(f"image '{element.get('id')}': 裁切失败，按原图嵌入（{exc}）")
@@ -369,7 +442,8 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
             apply_fill(shp, overlay, ctx)
             shp.line.fill.background()
     finally:
-        if temp_path is not None:
+        # 缓存文件是共享资产，只能删临时文件
+        if temp_path is not None and not temp_from_cache:
             try:
                 temp_path.unlink(missing_ok=True)
             except Exception:
