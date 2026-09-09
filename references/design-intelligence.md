@@ -82,7 +82,7 @@ Direction 里最重要的决定，是让 `visual_world` 成为一句**可展开�
 
 路由同时给出色阶（Statement / Body / Caption 三档）、`media_budget`、`text_budget`、`empty_space_role`、`needs_pixel_evidence`，并从方向人格派生背景、材质、光线、图表风格、动效姿态与构图语法。`needs_pixel_evidence` 只有一句话的含义：**这页的判断是否必须看像素**——封面与含画心的页为真，纯文字结构页为假；QA 因此可以在迭代期只渲染这几页（Level 2），而不是每轮把整副 deck 变成图片。整副规划结果带决策缓存：同一 brief 在修订循环里重复调用直接命中（`cache_stats()` 可核对命中数），返回深拷贝，调用方改动不会污染缓存。`plan_deck` 额外产出疏密曲线（相邻页密度互斥，与 Guard `DENSITY_FLAT` / Critic rhythm 同口径）与资产清单：`assets.generate / reuse / skipped / planned_calls` 对应路径预算（Fast ≤2，Advanced ≤4）。
 
-**占用率口径**：`render_check` 的 occupancy 是渲染像素差值（96×54 采样、与角落底色比较），不是几何面积。浅色水墨画心几乎不占读数，因此声明 `balanced` / `dense` 前应以渲染值为准（±0.20 内），或在 `field()`、色带与文字块上增加真实墨迹，而不是改标签骗过节奏。
+**占用率口径**：`render_check` 的 occupancy 是渲染像素差值（96×54 采样、与角落底色比较），不是几何面积——它度量的是「墨迹率」（非背景像素占比），即 `1 - 留白率`。浅色水墨画心几乎不占读数。Critic 的 density 对照据此换算（见「留白节奏」章）：sparse = 留白 ≥40%（墨迹 ≤60%，单边，越空越 sparse）、balanced = 留白 25–35%、dense = 留白 15–25%。声明 `balanced` / `dense` 前应以渲染值为准，在 `field()`、色带与文字块上补足真实墨迹，而不是改标签骗过节奏；反之声明 `sparse` 时，留白多正是目标，不应被误判为「空挂」。
 
 ## 页面合同
 

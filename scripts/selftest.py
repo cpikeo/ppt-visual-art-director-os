@@ -1020,7 +1020,7 @@ def check_rhythm_measured():
         return crit.critique_deck(spec, ev)["slides"][1]["scores"].get("rhythm", 5)
 
     same_big = score("sparse", "sparse", 0.15, 0.45)   # 标签相同、墨迹差 0.30 → 不扣反加
-    one_label_big = score("sparse", "balanced", 0.15, 0.45)   # 只动一个标签但墨迹真动 → 加分
+    one_label_big = score("sparse", "balanced", 0.15, 0.70)   # 动一个标签且墨迹真动（balanced 墨迹带 65–75%）→ 加分
     alt_flat = score("sparse", "dense", 0.30, 0.31)    # 标签交替、墨迹不动 → 扣
     same_flat = score("sparse", "sparse", 0.30, 0.31)  # 双同且墨迹不动 → 扣更多
     # 只验序关系：实测墨迹变化必须盖过标签启发——标签相同而墨迹真变要拿到高于基线的节奏分；

@@ -681,30 +681,30 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
                                 f"跨页呼吸成立。",
                   "保持这种由内容量与留白承担的节拍。")
     # 声明 vs 渲染对照：仅当有真实渲染证据时启用。
-    # design-intelligence.md 「留白节奏三型」：sparse ≈ 0.30 / balanced ≈ 0.55
-    # / dense ≈ 0.75。声明 intent 与渲染 occupancy 偏离超过 ±0.20 视为节奏
-    # 未执行（声明 sparse + 渲染 0.70 = 节奏虚挂；声明 dense + 渲染 0.30 =
-    # 节奏空载）。这是 art_critic 节奏维度从「仅看声明值」升级为「声明 vs
-    # 渲染对照」的关键补丁——9 维度反馈闭环由此一致。
+    # design-intelligence.md「留白节奏」给的百分比是「留白率」：
+    #   大留白 ≥40% / 标准 25–35% / 紧致 15–25%。
+    # render_check.occupancy 度量的是「墨迹率」（非背景像素占比）= 1 - 留白率，
+    # 故换算为墨迹率区间：sparse ≤60%（单边——留白越多越 sparse，不罚「过空」）、
+    # balanced 65–75%、dense 75–85%。旧实现把留白率误当占用率锚点（30/55/75），
+    # 且 sparse 被做成双边锚点，导致「刻意大留白」被误判为「节奏空挂」。
+    _OCC_BAND = {"sparse": (None, 0.60), "balanced": (0.65, 0.75), "dense": (0.75, 0.85)}
     if render_page and "occupancy" in render_page:
         try:
             occ = float(render_page.get("occupancy") or 0)
         except (TypeError, ValueError):
             occ = None
-        if occ is not None and density in ("sparse", "balanced", "dense"):
-            target = {"sparse": 0.30, "balanced": 0.55, "dense": 0.75}[density]
-            if abs(occ - target) > 0.20:
-                if occ > target:
-                    r.add("rhythm", -1,
-                          f"声明 density={density} 但渲染占用 {occ:.0%}，"
-                          f"偏离目标 {target:.0%} 达 +{occ - target:.0%}，"
-                          f"页面比声明的更拥挤。",
-                          "用留白、缩字或拆页降低占用；或把 density 上调一档。")
-                else:
-                    r.add("rhythm", -1,
-                          f"声明 density={density} 但渲染占用 {occ:.0%}，"
-                          f"偏离目标 {target:.0%} 达 {occ - target:.0%}，节奏空挂。",
-                          f"补一个次级对象或图表，让占用接近 {target:.0%}。")
+        if occ is not None and density in _OCC_BAND:
+            lo, hi = _OCC_BAND[density]
+            if hi is not None and occ > hi:
+                r.add("rhythm", -1,
+                      f"声明 density={density}（留白应 ≥{1-hi:.0%}）但渲染留白仅 {1-occ:.0%}，"
+                      f"页面比声明的更拥挤。",
+                      "用留白、缩字或拆页降低密度；或把 density 上调一档。")
+            elif lo is not None and occ < lo:
+                r.add("rhythm", -1,
+                      f"声明 density={density}（留白 {1-hi:.0%}–{1-lo:.0%}）但渲染留白 {1-occ:.0%}，"
+                      f"节奏空挂。",
+                      "补次级对象或真实墨迹；或把 density 下调一档。")
 
     # ---------- 一致性（10） ----------
     fams = {str(e.get("font") or e.get("family", "")) for e in texts if e.get("font") or e.get("family")}
