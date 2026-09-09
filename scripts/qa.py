@@ -18,7 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, spec_fingerprint
+from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, spec_fingerprint,
+                         text_contrast_verdict)
 from guard import check_spec
 
 # 扣分规则（确定性，非审美判断）：
@@ -319,23 +320,13 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     readability_fail = False
     for p in evidence.get("pages", []):
         # 渲染实测「文字 vs 字下面那块底」——全页亮度一致地暗/亮都掩盖不了它。
-        tc = p.get("text_contrast_min")
-        if tc is None:
+        # 判定在 primitives.text_contrast_verdict 共享：与 art_critic 同一结论。
+        _tc = text_contrast_verdict(p, thr["text_contrast_fail"],
+                                    thr["text_contrast_warn"])
+        if _tc["level"] == "unknown":
             continue
-        try:
-            tc = float(tc)
-        except (TypeError, ValueError):
-            continue
-        worst = p.get("text_contrast_worst") or {}
-        allmin = p.get("text_contrast_all_min")
-        try:
-            allmin = float(allmin) if allmin is not None else None
-        except (TypeError, ValueError):
-            allmin = None
-        # 阻断线看含注记的最坏值：辅助文字可以低于 AA，但不能低到看不见
-        hard = tc if allmin is None else min(tc, allmin)
-        if hard < thr["text_contrast_fail"]:
-            tc = hard
+        tc, worst = _tc["value"], _tc["worst"]
+        if _tc["level"] == "fail":
             readability_fail = True
             deduction += pen["render_contrast"]
             deduction_by_domain["render"] += pen["render_contrast"]

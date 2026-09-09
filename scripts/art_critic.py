@@ -20,7 +20,9 @@ import math
 from collections import Counter
 from typing import Any
 
-from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast, spec_fingerprint
+from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast, spec_fingerprint,
+                         bg_coverage, bg_overlay_opacity, is_background_declared,
+                         rounded_containers, text_contrast_verdict)
 
 DIMENSIONS = (
     "visual_hierarchy", "balance", "alignment", "contrast",
@@ -316,26 +318,8 @@ def _memory_anchor(slide: dict) -> str | None:
 
 
 def is_background_layer(e: dict) -> bool:
-    """是否**声明**为背景层（不判断资格）。"""
-    return (str(e.get("layer", "")).lower() in {"background", "backdrop"}
-            or str(e.get("role", "")).lower() in {"background", "backdrop"})
-
-
-def _overlay_opacity(e: dict) -> float | None:
-    """取内容保护层的不透明度；未声明返回 None（视为 0，即完全没有保护）。"""
-    for src in (e.get("overlay"),
-                (e.get("content_protection") or {}).get("overlay")
-                if isinstance(e.get("content_protection"), dict) else None,
-                (e.get("content_protection") or {}).get("scrim")
-                if isinstance(e.get("content_protection"), dict) else None):
-        if isinstance(src, dict):
-            try:
-                return float(src.get("opacity", 1.0))
-            except (TypeError, ValueError):
-                return 1.0
-        if isinstance(src, str) and src:
-            return 1.0
-    return None
+    """是否**声明**为背景层（不判断资格）。判定在 primitives 共享。"""
+    return is_background_declared(e)
 
 
 def background_layer_ok(e: dict, cw: float | None = None,
@@ -348,17 +332,15 @@ def background_layer_ok(e: dict, cw: float | None = None,
     if not is_background_layer(e):
         return False, "未声明为背景层"
     if cw and ch:
-        try:
-            area = float(e.get("width", 0) or 0) * float(e.get("height", 0) or 0)
-        except (TypeError, ValueError):
-            area = 0.0
-        cover = area / max(1.0, float(cw) * float(ch))
-        if cover < BG_MIN_COVERAGE:
+        cover = bg_coverage(e, cw, ch)      # 覆盖率与保护层解析在 primitives 共享，
+        if cover < BG_MIN_COVERAGE:         # guard 的资格判定走同一实现
             return False, f"仅覆盖画布 {cover:.0%}（<{BG_MIN_COVERAGE:.0%}），不是空间层而是内容对象"
     if e.get("readability_exempt"):
         return True, None
-    op = _overlay_opacity(e)
+    op, why = bg_overlay_opacity(e)
     if op is None:
+        if why == "unparsable":             # v2.4 fail-closed：解析不出按无保护处理
+            return False, "overlay 无法解析出 opacity（解析不出即视为无保护）"
         return False, "未声明 overlay/content_protection：叠加文字的可读性无保障"
     if op < BG_MIN_PROTECT_OPACITY:
         return False, (f"内容保护层不透明度 {op:.2f} < {BG_MIN_PROTECT_OPACITY:.2f}，"
@@ -454,8 +436,7 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
         theme_accent_max = 0.05
     disguised = [e for e in images if is_background_layer(e) and not bg_exempt(e, cw, ch)]
     reading = _reading_texts(texts)
-    rounded = [e for e in elems if e.get("type") == "shape"
-               and e.get("shape") in {"rounded_rect", "round_rect"}]
+    rounded = rounded_containers(elems)   # 与 guard 预检同一计数：渲染出来是容器才算
     colors = _theme_colors(spec)
     direction = spec.get("direction") or {}
     composition = str(direction.get("composition_grammar", ""))
@@ -639,33 +620,22 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
               f"正文对比 {ink_bg:.1f}:1 且 muted ≥3:1，可读性层级健康。")
     # 渲染层实测「文字 vs 其下方像素」的最坏对比度：这是叠加可读性的唯一硬证据，
     # 全页 brightness 一致地暗或亮都掩盖不了它（深底深字曾经一路通过到发布）。
-    tcm = render_page.get("text_contrast_min") if render_page else None
-    if tcm is not None:
-        try:
-            tcm = float(tcm)
-        except (TypeError, ValueError):
-            tcm = None
-    # 阻断线看含注记的最坏值（辅助文字允许低于 AA，但不能低于 3:1）
-    tca = (render_page or {}).get("text_contrast_all_min")
-    try:
-        tca = float(tca) if tca is not None else None
-    except (TypeError, ValueError):
-        tca = None
-    tcfail = tcm if tca is None else min(tcm, tca) if tcm is not None else tca
-    if tcfail is not None and tcfail < TEXT_CONTRAST_FAIL:
-        r.add("contrast", -2, f"最坏文字对比 {tcfail:.2f}:1 < {TEXT_CONTRAST_FAIL}:1，"
+    _tc = text_contrast_verdict(render_page, TEXT_CONTRAST_FAIL, TEXT_CONTRAST_WARN)
+    _tcv, _tcw = _tc["value"], _tc["worst"]     # 与 qa.py 同一判定：同一证据同一结论
+    if _tc["level"] == "fail":
+        r.add("contrast", -2, f"最坏文字对比 {_tcv:.2f}:1 < {TEXT_CONTRAST_FAIL}:1，"
                               f"文字与其下方画心几乎同亮度（叠加不可读）。",
               "加深遮罩或改文字色：让文字与局部背景至少拉开 4.5:1。")
         gates.append({"code": "READABILITY_FAIL", "slide": slide.get("id", index + 1),
                       "severity": "BLOCKED",
-                      "reason": f"渲染实测文字对比度 {tcfail:.2f}:1 < {TEXT_CONTRAST_FAIL}:1"
-                                f"（{render_page.get('text_contrast_worst', {}).get('id', '?')}）。"})
-    elif tcm is not None and tcm < TEXT_CONTRAST_WARN:
-        r.add("contrast", -1, f"最坏文字对比 {tcm:.2f}:1 < {TEXT_CONTRAST_WARN}:1（WCAG AA），"
+                      "reason": f"渲染实测文字对比度 {_tcv:.2f}:1 < {TEXT_CONTRAST_FAIL}:1"
+                                f"（{_tcw.get('id', '?')}）。"})
+    elif _tc["level"] == "soft":
+        r.add("contrast", -1, f"最坏文字对比 {_tcv:.2f}:1 < {TEXT_CONTRAST_WARN}:1（WCAG AA），"
                               f"小字号下会吃力。",
               "提高文字与局部背景的反差，或把该段移出画心。")
-    elif tcm is not None and tcm >= TEXT_CONTRAST_WARN:
-        r.add("contrast", +1, f"叠加文字最坏对比 {tcm:.1f}:1 ≥ {TEXT_CONTRAST_WARN}:1，可读性达标。")
+    elif _tc["level"] == "pass":
+        r.add("contrast", +1, f"叠加文字最坏对比 {_tcv:.1f}:1 ≥ {TEXT_CONTRAST_WARN}:1，可读性达标。")
 
     # ---------- 节奏（10） ----------
     density = _field(slide, "density")
@@ -808,6 +778,11 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
         gates.append({"code": "CARD_WALL", "slide": slide.get("id", index + 1),
                       "severity": "REVISE",
                       "reason": f"圆角容器 {len(rounded)} 个 > 上限 {ROUNDED_MAX}。"})
+    elif len(rounded) >= 3:
+        # 未到硬门槛，但已偏离「卡片不是默认容器」：软扣分 + 与预检 CARD_DENSITY 同源提示
+        r.add("professional_quality", -1,
+              f"检测到 {len(rounded)} 个圆角容器，接近卡片墙（>{ROUNDED_MAX} 即硬门槛）。",
+              "删容器，改用空间分组、发丝线或字体层级；仅保留数据/KPI/特殊强调所需面板。")
     if len(media) > MEDIA_CHART_MAX:
         r.add("professional_quality", -1, "媒体/图表对象超过两个，页面信号密度过高。")
     if len(texts) > TEXT_MAX:
@@ -839,6 +814,93 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
         observations.append("页面结构与声明意图基本一致，继续以渲染缩略图验证记忆点。")
 
     return scores, r.evidence(), observations, fixes, gates
+
+
+# 失败码 → 总监级最小行动（一句话，不复述整条 evidence；verdict 只给方向，细节看各页 minimal_fix）
+_GATE_ACTIONS = {
+    "INTENT_UNCLEAR": "先为该页写一句 object + 变化/差异 + 含义的可复述 insight，再排版。",
+    "FOCUS_COMPETING": "确立唯一主焦点并给它尺度优势，删除或降级竞争性对象。",
+    "CARD_WALL": "删容器，改用发丝线 + 留白 + 字阶分组；只保留数据/KPI/特殊强调所需面板。",
+    "MEDIA_UNJUSTIFIED": "为图片声明 context/emotion/proof/hero 功能，或删除无法说明功能的图片。",
+    "RHYTHM_FLAT": "改动其中一页的密度或能量，恢复呼吸曲线。",
+    "CRITIC_LOW": "按该页 dimension_evidence 逐条回应，先修扣分最多的维度。",
+    "READABILITY_FAIL": "加深遮罩或改文字色：让文字与局部背景至少拉开 4.5:1。",
+    "BACKGROUND_DISGUISED": "撤掉 layer=background 标签，或扩大覆盖并声明 overlay（opacity ≥0.20）。",
+    "RENDER_UNAVAILABLE": "补真实渲染证据后重新判定（当前结论按结构证据降级）。",
+    "RENDER_INCOMPLETE": "检查渲染管线字段是否漂移，补全像素证据后重新判定。",
+    "PIXEL_COVERAGE_PARTIAL": "发布前跑 Level 3 全量像素复核。",
+}
+
+
+def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> dict:
+    """总监 verdict：deck 级单一首要判断 + 按价值排序的修正杠杆（Top 3）。
+
+    不是新评分 —— 只是把已有的 hard_gates / 维度均值 / 高频扣分 evidence 按
+    「修哪个最值」排成一条行动线。修正纪律：一次只修 primary_lever，跑完一轮
+    QA 再看下一条。这就是「在有限复杂度下创造最高视觉价值」的执行形态，也是
+    减少修正轮数（执行速度）最直接的一步：先修最重要的，而不是逐条追分。
+    纯函数、确定性：同输入必得同 verdict。
+    """
+    gates = [g for g in (hard_gates or []) if isinstance(g, dict)]
+    sev_rank = {"BLOCKED": 0, "REVISE": 1, "PREVIEW_ONLY": 2}
+    gates.sort(key=lambda g: (sev_rank.get(g.get("severity"), 3),
+                              str(g.get("code")), str(g.get("slide"))))
+    by_code: dict[str, dict] = {}
+    for g in gates:
+        code = str(g.get("code") or "UNKNOWN")
+        slot = by_code.setdefault(code, {"code": code, "severity": g.get("severity"),
+                                         "slides": [], "reasons": []})
+        if g.get("slide") is not None:
+            slot["slides"].append(g.get("slide"))
+        if g.get("reason") and g["reason"] not in slot["reasons"]:
+            slot["reasons"].append(g["reason"])
+
+    def _where(slides: list) -> str:
+        uniq = sorted({str(s) for s in slides})
+        return ("、".join(uniq[:4]) + (" 等" if len(uniq) > 4 else "")) or "整套 deck"
+
+    levers: list[dict] = []
+    for code, slot in sorted(by_code.items(),
+                             key=lambda kv: (sev_rank.get(kv[1]["severity"], 3), kv[0])):
+        levers.append({"kind": "gate", "target": code,
+                       "where": _where(slot["slides"]),
+                       "why": slot["reasons"][0] if slot["reasons"] else "",
+                       "action": _GATE_ACTIONS.get(
+                           code, "按该页 minimal_fix 逐条修正后重跑 QA。"),
+                       "severity": slot["severity"]})
+    for w in (deck_notes.get("systemic_weaknesses") or [])[:2]:
+        levers.append({"kind": "dimension", "target": w.get("dimension"),
+                       "where": "整套 deck",
+                       "why": f"该维度 deck 均值 {w.get('average')}，系统性偏弱",
+                       "action": w.get("fix_hint", ""),
+                       "severity": "REVISE"})
+    fix_pages: dict[str, list] = {}
+    for r in reports or []:
+        for f in r.get("minimal_fixes") or []:
+            fix_pages.setdefault(str(f), []).append(r.get("slide"))
+    for fix, slides in sorted(fix_pages.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if len(slides) >= 2:      # 同一修正出现在 ≥2 页：修一处赚多页，值得置顶
+            levers.append({"kind": "recurring", "target": "跨页高频问题",
+                           "where": _where(slides),
+                           "why": f"同一修正出现在 {len(slides)} 页",
+                           "action": fix, "severity": "REVISE"})
+            break
+    top = levers[:3]
+    for i, item in enumerate(top, 1):
+        item["rank"] = i
+    primary = top[0] if top else None
+    if status == "PASS":
+        headline = f"发布就绪（{deck_score:.1f} 分）：无阻断门槛，保持当前克制度即可。"
+    elif primary and primary["kind"] == "gate" and primary["severity"] == "BLOCKED":
+        headline = (f"先修 {primary['where']} 的 {primary['target']}（BLOCKED），"
+                    f"其余都是次要问题。")
+    elif primary:
+        headline = (f"首要杠杆是{primary['where']}的{primary['target']}："
+                    f"{primary['action']}")
+    else:
+        headline = "无明确杠杆：按页修 minimal_fix 后重跑 QA。"
+    return {"headline": headline, "primary_lever": primary, "levers": top,
+            "gates_by_code": sorted(by_code)}
 
 
 def critique_deck(spec: dict, render_evidence: dict | None = None,
@@ -1005,8 +1067,10 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
              "fix_hint": fix_hints.get(k, "参考 design-intelligence.md 与 references 章节。")}
             for k, v in weak if v < 3.5
         ]
+    deck_notes["director_verdict"] = _director_verdict(
+        reports, hard_gates, deck_notes, deck_score, status)
     return {
-        "critic_version": "2.1",
+        "critic_version": "2.2",
         # 自证戳：与 QA 同一算法；发布清单据此判断报告是否来自当前 spec
         "source_spec_hash": spec_fingerprint(spec),
         "deck_score": deck_score,

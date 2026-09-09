@@ -21,7 +21,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast
+from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast,
+                         bg_coverage, bg_overlay_opacity, is_background_declared,
+                         rounded_containers)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
 GRID = 8
@@ -277,9 +279,8 @@ def _preflight_gates() -> tuple[dict, str]:
 
 
 def _is_bg_layer(e: dict) -> bool:
-    """是否**声明**为背景层（只读意图，不判断资格）。"""
-    return (str(e.get("layer", "")).lower() in {"background", "backdrop"}
-            or str(e.get("role", "")).lower() in {"background", "backdrop"})
+    """是否**声明**为背景层（只读意图，不判断资格）。判定在 primitives 共享。"""
+    return is_background_declared(e)
 
 
 # 声明 layer=background 即可免检，等于给任何内容图发一张免死金牌；资格判定要求它
@@ -317,30 +318,17 @@ def _bg_qualified(e: dict, cw: float, ch: float) -> tuple[bool, str | None]:
     if not _is_bg_layer(e):
         return False, "未声明为背景层"
     th = _bg_gate()
-    try:
-        area = float(e.get("width", 0) or 0) * float(e.get("height", 0) or 0)
-    except (TypeError, ValueError):
-        area = 0.0
-    cover = area / max(1.0, float(cw) * float(ch))
-    if cover < th["BG_MIN_COVERAGE"]:
+    cover = bg_coverage(e, cw, ch)          # 覆盖率与保护层解析在 primitives 共享，
+    if cover < th["BG_MIN_COVERAGE"]:       # 与 art_critic 同一实现，不再各自算一遍
         return False, (f"仅覆盖画布 {cover:.0%}（<{th['BG_MIN_COVERAGE']:.0%}）："
                        f"这是内容对象，不是空间层")
     if e.get("readability_exempt"):
         return True, None
-    ov = e.get("overlay")
-    if ov is None:
-        cp = e.get("content_protection")
-        if isinstance(cp, dict):
-            ov = cp.get("overlay") or cp.get("scrim")
-    if ov is None:
-        return False, "未声明 overlay/content_protection：叠加文字的可读性无保障"
-    try:
-        op = 1.0 if (isinstance(ov, str) and ov) else float(
-            (ov or {}).get("opacity", 1.0)) if isinstance(ov, dict) else None
-    except (TypeError, ValueError, AttributeError):
-        op = None
+    op, why = bg_overlay_opacity(e)
     if op is None:
-        return False, "overlay 无法解析出 opacity"
+        if why == "unparsable":
+            return False, "overlay 无法解析出 opacity"
+        return False, "未声明 overlay/content_protection：叠加文字的可读性无保障"
     if op < th["BG_MIN_PROTECT_OPACITY"]:
         return False, (f"遮罩不透明度 {op:.2f} < {th['BG_MIN_PROTECT_OPACITY']:.2f}，"
                        f"形同虚设")
@@ -455,10 +443,15 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
                      f"{lm['limit']}（{'CJK' if lm['cjk_led'] else '拉丁'}行长上限）",
                      "拆成两行/短句，或把宽度收到 "
                      f"{int(lm['limit'] * (float(e.get('size') or 0)))}px 以内")
-        rounded = [e for e in elems if e.get("shape") in {"rounded_rect", "round_rect"}]
+        rounded = rounded_containers(elems)   # 与 critic 同一计数：渲染出来是容器才算
         if len(rounded) > gates["ROUNDED_MAX"]:
             flag(sid, "CARD_WALL", f"{len(rounded)} 个圆角容器（CARD_WALL 硬门槛）",
                  "删容器，改用发丝线 + 留白 + 字阶分组")
+        elif len(rounded) >= 3:
+            # 未到硬门槛，但已偏离「卡片不是默认容器」：提前提示，不与 CARD_WALL 重复点名
+            flag(sid, "CARD_DENSITY",
+                 f"{len(rounded)} 个圆角容器，接近卡片墙（>{gates['ROUNDED_MAX']} 即硬门槛）",
+                 "删容器，改用发丝线 + 留白 + 字阶分组；只保留数据/KPI/特殊强调所需面板")
         # 整幅背景层：文字可直接叠加，但必须声明内容保护（否则可读性无保障）；
         # 资格不足的「伪背景」不再免检，并作为 error 点名（它会吃回媒体预算与遮挡检查）
         for e in elems:

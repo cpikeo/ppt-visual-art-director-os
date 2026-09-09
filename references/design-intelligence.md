@@ -188,6 +188,10 @@ page_intent:
 
 Art Critic 必须同时读取 Strategy、Direction、Page Intent、spec 与渲染证据。只描述可观察问题，例如“标题、图表和右上数字同时抢第一注意点”，不要写“感觉不高级”而不给原因。每条问题至少包含 `observation / violated_intent / severity / minimal_fix / recheck`。
 
+修正时先读 `deck_notes.director_verdict`，一次只修 `primary_lever`：总监先做「修哪个最值」的判断，
+再谈「怎么修」。跑完一轮 QA 之后再看下一条杠杆；禁止把 Top3 一次全改——并行改三处，
+出问题时无法归因，多出来的轮数比省掉的多。
+
 ## Design Judgment（何时打破规则）
 
 规则是下限，不是上限。这套系统的所有约束——Accent ≤5%、一页一焦点、相邻页留白不重复、卡片 ≤4——都是「不出错」的保底，不是「出彩」的公式。世界级设计的决定性瞬间，恰恰发生在**规则互相冲突、必须做出取舍**的时候。学会在冲突中选对牺牲对象，才是从「执行规则」到「做视觉判断」的分水岭。

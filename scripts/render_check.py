@@ -108,7 +108,10 @@ def _slide_key(slide: dict | None, canvas: dict, dpi: int, theme: dict | None,
     payload = json.dumps({"slide": _pixel_view(slide, NON_PIXEL_SLIDE_KEYS),
                           "focus": str(focus or ""), "canvas": canvas, "dpi": int(dpi),
                           "theme": _pixel_view(theme, NON_PIXEL_THEME_KEYS),
-                          "media": media or [], "renderer": renderer, "v": 3},
+                          "media": media or [], "renderer": renderer,
+                          # 显著图后端进键：cv2 与回退算法的质心/分片不可互换，
+                          # 跨机器共用证据目录时必须分键存放（v4 起生效，旧键自然淘汰）
+                          "sal": _saliency_backend(), "v": 4},
                          ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
@@ -474,6 +477,7 @@ def _pdf_page_count(pdf: Path) -> int:
 # 的契约漂移。art_critic 在 _score_page 入口处会校验消费字段的存在性。
 PAGE_FIELDS = frozenset({
     "brightness", "edge", "occupancy", "margin_occupancy",
+    "saliency_method",
     "saliency_centroid", "saliency_split_lr", "saliency_split_tb",
     "edge_kurtosis_x", "edge_kurtosis_y",
     "accent_pixel_ratio", "accent_method", "saturated_pixel_ratio",
@@ -491,12 +495,28 @@ def _load_rgb(path: Path, max_side: int = 640) -> Any:
     return np.asarray(im).astype(np.float32)
 
 
-def _saliency(arr: Any, max_side: int = 256) -> Any:
-    """显著图：局部对比 + 边缘能量 + 与背景的全局对比（确定性回退，不依赖 cv2）。
+def _saliency_backend() -> str:
+    """显著图后端探测（import 级，用于缓存键）：cv2.saliency 可用即走 cv2 路径。
+    import 已缓存，开销可忽略。注意这只是「会尝试哪条路」，实际走了哪条路由
+    _saliency_with_method 如实记录在证据的 saliency_method 里。"""
+    try:
+        import cv2
+        if hasattr(cv2, "saliency") and hasattr(
+                cv2.saliency, "StaticSaliencySpectralResidual_create"):
+            return "cv2_spectral_residual"
+    except Exception:
+        pass
+    return "deterministic_fallback"
+
+
+def _saliency_with_method(arr: Any, max_side: int = 256) -> tuple:
+    """显著图 + 实际算法溯源 → (sal, method)。
 
     先降到 max_side（默认 256）再算：质心/左右上下分片是粗粒度指标，Spectral
     Residual 在 640px 全尺寸上跑几乎不改变归一化结果，却把 cv2 成本放大了
-    数倍。降采样后质心与分片逐位稳定（selftest 的 render_metrics 断言）。"""
+    数倍。降采样后质心与分片逐位稳定（selftest 的 render_metrics 断言）。
+    method 只可能是 cv2_spectral_residual / deterministic_fallback —— 有 cv2 的
+    机器与无 cv2 的机器算出的显著图不可严格对比，证据必须自带算法身份。"""
     import numpy as np
     h0, w0 = arr.shape[:2]
     if max(h0, w0) > max_side:
@@ -509,7 +529,7 @@ def _saliency(arr: Any, max_side: int = 256) -> Any:
         bgr = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_RGB2BGR)
         sal = cv2.saliency.StaticSaliencySpectralResidual_create()[1].computeSaliency(bgr)[1]
         sal = sal.astype(np.float32)
-        return sal / max(float(sal.max()), 1e-6)
+        return sal / max(float(sal.max()), 1e-6), "cv2_spectral_residual"
     except Exception:
         pass
     g = arr[..., 0] * 0.299 + arr[..., 1] * 0.587 + arr[..., 2] * 0.114
@@ -527,7 +547,13 @@ def _saliency(arr: Any, max_side: int = 256) -> Any:
     contrast = np.abs(g - bg)
     sal = local + 0.35 * edge + 0.60 * (contrast / max(np.max(contrast), 1e-6))
     p = np.percentile(sal, [5, 95])
-    return np.clip((sal - p[0]) / max(p[1] - p[0], 1e-6), 0, 1)
+    return np.clip((sal - p[0]) / max(p[1] - p[0], 1e-6), 0, 1), "deterministic_fallback"
+
+
+def _saliency(arr: Any, max_side: int = 256) -> Any:
+    """兼容壳：只要显著图不要溯源的旧调用走这里（唯一生产调用在 measure_image，
+    已改走 _saliency_with_method）。"""
+    return _saliency_with_method(arr, max_side)[0]
 
 
 def _dominant_color(patch) -> str:
@@ -637,7 +663,7 @@ def measure_image(path: Path, accent_hex: str | None = None,
                            gray[:, :5].ravel(), gray[:, -5:].ravel()])
     margin_occupancy = float(np.mean(np.abs(band - bg) > 10))
 
-    sal = _saliency(arr)
+    sal, sal_method = _saliency_with_method(arr)
     yy, xx = np.mgrid[0:sal.shape[0], 0:sal.shape[1]]
     total = float(sal.sum()) + 1e-6
     cx = float((xx * sal).sum() / total) / max(1, sal.shape[1] - 1)
@@ -700,6 +726,7 @@ def measure_image(path: Path, accent_hex: str | None = None,
         "edge": round(edge, 3),
         "occupancy": round(occupancy, 3),
         "margin_occupancy": round(margin_occupancy, 3),
+        "saliency_method": sal_method,
         "saliency_centroid": [round(cx, 3), round(cy, 3)],
         "saliency_split_lr": round((left - right) / (left + right + 1e-6), 3),
         "saliency_split_tb": round((top - bottom) / (top + bottom + 1e-6), 3),

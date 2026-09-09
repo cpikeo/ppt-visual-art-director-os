@@ -72,8 +72,8 @@ ppt-visual-art-director-os/
 │   ├── design-system.md
 │   ├── evidence-library.md
 │   ├── production-contract.md
-│   ├── themes.md
-│   └── worked-example.md
+│   ├── scoring.md
+│   └── themes.md
 ├── scripts/
 │   ├── art_critic.py
 │   ├── asset_prompt.py
@@ -93,23 +93,17 @@ ppt-visual-art-director-os/
 
 ## 推荐工作流
 
-### 1. 冻结输入
+执行顺序以 `SKILL.md` 的 Director 五步流水线为准（一句话版）：
 
-先记录受众、观看场景、目标决定、页数、交付格式、品牌限制、事实来源、时间、单位、比较口径和不确定性。不可验证的事实必须标记为 `unknown`，不得静默补全。
+| 步骤 | 做什么 |
+|---|---|
+| P1 内容理解 | 冻结输入（受众/决定/口径）+ `route.plan_deck`，不可验证标 `unknown` |
+| P2 视觉策略判断 | Strategy + Direction + Story Map + Page Intent，一页一结论 |
+| P3 布局决策 | 内容任务定家族 → 写 spec → 媒体闸门（数据页不出图） |
+| P4 关键细节优化 | 一次只修 `director_verdict.primary_lever`：删除→简化→空间→重心→媒体→装饰 |
+| P5 质量检查 | `qa.py --manifest` 统一执行 Guard→Compile→Render→QA→Critic→Revision |
 
-### 2. 建立 Strategy 与 Direction
-
-将 `claim`、`evidence`、`implication` 和 `action` 分开。然后定义 `visual_world`、`composition_grammar`、`type_voice`、`color_behavior`、`media_role`、`background_scene`、`motion_posture` 和 `forbidden_signals`，使整套 deck 共享同一视觉人格和空间假设。
-
-### 3. 编排 Story Map 与 Page Intent
-
-先安排 `opening → context → problem → insight → evidence → solution → proof → vision → closing` 的叙事阶段，再定义每页的 insight、narrative role、focus、reading order、energy、density、empty space role、page family、rhythm stage 和 continuity token。每页只保留一个可复述结论。
-
-### 4. 生成运行时 spec
-
-主题、页面、背景、图表、来源、文本和叠加层进入统一 spec。所有可见元素必须具有数值 `x`、`y`、`width`、`height`。文字元素必须使用 `text` 字段，字号、颜色、字重、行高、内边距等样式属性放在元素顶层；禁止使用未消费的 `content` 或嵌套 `style`。
-
-一个最小文字元素示例：
+一个最小文字元素示例（完整字段见 `references/production-contract.md` 的 Spec minimum）：
 
 ```python
 {
@@ -128,16 +122,6 @@ ppt-visual-art-director-os/
     "padding": 0,
 }
 ```
-
-### 5. 执行生产链
-
-生产链固定为：
-
-```text
-Guard → Compile → Render Evidence → Deterministic QA → Art Critic → Revision
-```
-
-优先使用 `qa.py` 的完整入口。仅在需要解释某一失败域时调用单独脚本。修改后先重跑受影响页面，发布前再重跑全 deck。
 
 ## 运行方式
 
@@ -194,9 +178,9 @@ python3 scripts/qa.py path/to/build_mydeck.py output.pptx --manifest    # 追加
 
 渐进层级只改变「测了多少」，不改变「放宽什么」：Level 1/2 的状态上限是 `REVISE`/`PREVIEW_ONLY`，`release_eligible=False`；`qa["performance"]` 与 `qa["render"]["coverage"]` 记录每轮实际测了什么。
 
-渲染阶段内部并行最多 2 个 worker（按 CPU 收敛，页数 <4 自动关闭），并把 poppler 转换与像素测量串成一条流水。渲染侧另有两层复用：pptx 逐字节未变就复用上一轮 PDF（省掉 1.7s 的 soffice 整份转换），「会被编译成像素的那部分 spec」没变就连 `compile_deck` 一起跳过；两层都做内容核验，`--no-cache` 既不查也不写。12 页真实 deck 实测：Level 3 冷跑 4.7s，同输入重跑 0.0s，Level 2 收口后补齐全量 2.57s → 0.82s，只改 `density`/`insight`/`focus` 标签的一轮 4.8s → 0.01s；冷热两条路径的像素质标逐位一致。
+渲染并行上限 2 worker，另有 PDF 复用与编译视图复用两层缓存（内容核验，`--no-cache` 绕过）；冷热路径像素质标逐位一致，实测数字口径见 `references/production-contract.md`。
 
-`--fast` / `--preflight` 不改变任何判定阈值，只改变采样密度与批评轮次；当静态预检已能确定渲染必然不是 `PASS` 时，跳过渲染（`performance.render_skipped`）并直接给出 `next_action`。每次运行都返回 `performance`（`guard_ms / compile_ms / render_ms / preflight_items`），使「省掉的轮次」可核对。
+`--fast` / `--preflight` 只改变采样密度与批评轮次，不改变任何阈值；每次运行返回 `performance`，使「省掉的轮次」可核对。
 
 渲染证据（Render Evidence）需要系统级依赖：LibreOffice（`soffice`）将 PPTX 转 PDF，`poppler-utils`（`pdftoppm`）将 PDF 转 PNG。缺少任一项时 `run_qa` 自动降级：不阻塞静态治理，但状态只能是 `PREVIEW_ONLY`，不能发布。`--no-render` 仅用于快速迭代布局，同样不代表发布通过。
 
@@ -228,7 +212,13 @@ Deterministic QA 只判断可编译、可渲染、可读、可编辑、无越界
 
 ## 版本与验证状态
 
-当前目录整理为 `ppt-visual-art-director-os`，基于 v9 优化版。v2.3 把「少跑一轮」做实：三处内容核验的复用（按页像素 / 整份 PDF / 编译视图）+ deck 级色彩与图表纪律（色相族预算、强调角距离、脏渐变提示、图表样式漂移）+ 焦点落位的轴线判定。评分链路已升级：Art Critic v2.0（证据驱动加减分、真实失败码、PASS 可达）、Render Evidence v1.1（声明锚点解析、主题 Accent 测量、显著图分布）、QA v1.2（分域扣分明细、可选边缘带检查）。速度与智能层：新增 `route.py` 决策层（内容类型 → 版式/风格/资产/字阶/密度）、Guard 静态预检（与 Critic 阈值同源）、QA 分阶段耗时与渲染跳过、背景层直接叠加合同（不计媒体预算、自动置底并补内容保护层）。既有 `compile_deck / run_qa / critique_deck / release_manifest / check_spec` 的参数与返回结构保持向后兼容。27 项自检全部 PASS（含渐进层级、子集证据对齐、并行上限、按页渲染缓存与内容核验、决策缓存、背景层资格、文字对比与行长门禁、报告自证戳）；实测 12 页真实 deck：预检 0.2s（等价于此前需一轮渲染才能发现的缺陷），Level 1 迭代 0.03s，Level 2 关键页冷测 3.7s／热态 0.0s，Level 3 全量冷测 4.7s，同输入复跑 0.0s，只改声明字段（density／insight／focus）的一轮 0.01s，QA 98.4 / Critic 94.2 / Manifest 全部 PASS，冷热两条路径的像素质标逐位一致。发布门本轮转为可自证：证据缓存按内容指纹核验、背景层免检需要资格、文字对比按渲染像素实测、报告与清单互相核对来源——四类曾经能蒙混通过的路径现在一律 fail closed。
+基于 v9 优化版整理为 `ppt-visual-art-director-os`：
+
+- **v2.3 少跑一轮**：PDF / 编译视图两层复用 + deck 级色彩与图表纪律（色相族预算、强调角距离、脏渐变提示、图表样式漂移）+ 焦点落位轴线判定。
+- **评分链路**：Art Critic v2.0（证据驱动加减分、真实失败码、PASS 可达）、Render Evidence v1.1、QA v1.2；`route.py` 决策层、Guard 静态预检、背景层直接叠加合同；`compile_deck / run_qa / critique_deck / release_manifest / check_spec` 向后兼容。
+- **v2.4 Director 升级**：`director_verdict` 首要杠杆（`critic_version` 2.2）、3–4 容器 `CARD_DENSITY` 软压、三处判定收敛到 `primitives.py`、证据记 `saliency_method` 且缓存键升 v4。
+- **验证**：30 项自检 PASS；12 页实测预检 0.2s，Level 1 迭代 0.03s，Level 2 冷 3.7s／热 0.0s，Level 3 冷 4.7s／复跑 0.0s，声明轮 0.01s；QA 98.4 / Critic 94.2 / Manifest 全部 PASS。
+- **发布门可自证**：缓存内容核验、背景层免检资格、像素实测对比、报告清单互核——四类蒙混路径一律 fail closed。
 
 ## 许可证
 

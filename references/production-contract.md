@@ -68,7 +68,7 @@ CLI 入口保持兼容，新增默认关闭的开关：`guard.py <module> --pref
 可执行合同（三条，全部由 Guard / Compiler / Art Critic 共享）：
 
 1. 画心承担空间时声明 `layer: background`（或 `role: background|backdrop`）。`image` 元素可占满整页，**不再被要求拆成两侧留白盒**：它免于 overlap 与 source_zone 侵入检查。
-2. 背景画心必须自带内容保护：`overlay`（Fill Contract）或 `content_protection.overlay`。缺失时 Guard 记 `BG_UNPROTECTED` warn，Critic 不给该页叠加可读性加分。
+2. 背景画心必须自带内容保护：`overlay`（Fill Contract）或 `content_protection.overlay`。缺失时 Guard 记 `BG_UNPROTECTED` warn，Critic 不给该页叠加可读性加分。声明了但解析不出不透明度的 overlay 按缺失处理（fail-closed）；覆盖率与保护层解析在 `primitives.py` 共享实现，Guard 与 Critic 同一结论。
 3. 编译器把声明为背景层的画心稳定前置绘制（z-order 在最底），并在同一盒上追加保护层，因此作者无需记忆元素顺序；背景层不计入 `MEDIA_BUDGET_MAX`，其面积也不参与焦点压制判定。
 
 `qa.py` 的渲染指标仍按像素测量：背景层允许边缘带合法不安静，但 `margin_occupancy` 只应在纯色 / 结构背景主题开启。
@@ -134,13 +134,13 @@ spec = {
 
 ## Deterministic QA
 
-继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、Accent、节奏、文本、颜色、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、saliency split、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
+继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、Accent、节奏、文本、颜色、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、saliency split、`saliency_method`（显著图实际算法：`cv2_spectral_residual` / `deterministic_fallback`，跨机器可比性的溯源）、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实，其 fail / soft / pass 判定由 QA 与 Critic 共享同一实现（`primitives.text_contrast_verdict`）；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
 
 确定性评分建议仍用 100 分制，但只记录 `guard / compile / render` 域，并在 `deduction_by_domain` 中给出分域扣分明细。`passed` 不能仅凭分数决定；硬错误、编译失败、来源缺失、渲染缺失、关键文本不可读或任何未获声明的遮挡时必须覆盖分数。报告必须返回 `failure_codes`、`blocking_items`、`affected_slides`、`next_action`、`status` 和 `elapsed_ms`，让下一次调用只处理受影响范围。`status` 的优先级固定为：阻断错误 → `BLOCKED`；无阻断但缺少真实渲染 → `PREVIEW_ONLY`；有可修复问题 → `REVISE`；全部发布条件满足 → `PASS`。
 
 ### Static Preflight（先于渲染的同一批门槛）
 
-`guard.run_preflight()` 只镜像 Art Critic 中**确定性可静态判定**的部分，阈值经懒加载直接取自 `art_critic` 导出常量（`gate_source: "art_critic"`；导入失败时用等值默认并标注 `guard`）。返回 `{slide, code, observation, minimal_fix, gate_source}`，码表：`INTENT_UNCLEAR`、`FOCUS_UNBOUND`、`FOCUS_SCALE`、`FOCUS_LEAD`、`FOCUS_DOMINATED`、`MEDIA_BUDGET`、`TEXT_BUDGET`、`CARD_WALL`、`BG_UNPROTECTED`(warn)、`ASYMMETRIC_UNDECLARED`、`DENSITY_FLAT`、`RHYTHM_FLAT`。
+`guard.run_preflight()` 只镜像 Art Critic 中**确定性可静态判定**的部分，阈值经懒加载直接取自 `art_critic` 导出常量（`gate_source: "art_critic"`；导入失败时用等值默认并标注 `guard`）。返回 `{slide, code, observation, minimal_fix, gate_source}`，码表：`INTENT_UNCLEAR`、`FOCUS_UNBOUND`、`FOCUS_SCALE`、`FOCUS_LEAD`、`FOCUS_DOMINATED`、`MEDIA_BUDGET`、`TEXT_BUDGET`、`CARD_WALL`、`CARD_DENSITY`（3–4 个圆角容器，未到硬门槛的提前提示，与 `CARD_WALL` 互斥点名）、`BG_UNPROTECTED`(warn)、`ASYMMETRIC_UNDECLARED`、`DENSITY_FLAT`、`RHYTHM_FLAT`。
 
 预检条目只用于提前修，不参与美学评分：`preflight_hint` 权重为 `0.0`，因此新增提示不会把 `PASS` 拉成 `REVISE`。命中 `PREFLIGHT_HARD_CODES`（`INTENT_UNCLEAR` → BLOCKED，`FOCUS_UNBOUND` / `CARD_WALL` / `RHYTHM_FLAT` → REVISE）时，`preflight_gate=True` 直接跳过渲染并给出 `next_action`，判定不因此放宽——被跳过的渲染永远不可能给出 PASS。
 
@@ -167,7 +167,7 @@ spec = {
 
 `render_evidence` 在 `out_dir` 里维护 `render_cache.json`：
 
-- 键 = `sha256(本页 spec + canvas + dpi + 完整 theme + 页内图片 (name,size,mtime) + 渲染器路径 + 版本)`；任何会影响本页像素的输入都进键，因此**其他页的改动不会让本页失效，而重新出图、换主题字或换 LibreOffice 一定会**。
+- 键 = `sha256(本页 spec + canvas + dpi + 完整 theme + 页内图片 (name,size,mtime) + 渲染器路径 + 显著图后端 + 版本 v4)`；任何会影响本页像素的输入都进键，因此**其他页的改动不会让本页失效，而重新出图、换主题字、换 LibreOffice 或换显著图后端一定会**（cv2 与回退算法的质心/分片不可互换，跨机器共用证据目录时必须分键存放；旧 v3 键自然淘汰）。
 - 命中还要求：条目记录的 `png` 文件仍在目录里，**且文件内容指纹 `png_sha` 一致**。只比文件名会把别页像素当本页复用（曾真实发生过：命中 12/重测 0，却返回错页指标）；旧格式（无 `png_sha`）条目一律不信任、直接重测。
 - 每轮渲染使用唯一 PNG 前缀 `page-<token>-r<idx>-<绝对页码>.png`，只按绝对页码认领文件；缺页记入 `coverage.unrendered`，绝不按结果序号回退猜页——宁缺勿错。
 - `use_cache=False` 的冷测不清空证据目录（只增加文件），因此一次冷测不会把别人的热缓存打回冷态。
@@ -209,7 +209,9 @@ spec = {
 }
 ```
 
-评分模型（v2）：每项 0–5 分，从基准分 3（「满足声明契约」）出发，凭**可观察证据**加分或扣分（delta ∈ [-2, +2]，钳制到 0–5）。每一个 delta 都必须写入 `dimension_evidence`，保证分数可逐条溯源复核；不加证据不得加分，不加观察不得扣分。v1 只扣不加导致满分被数学性封顶在 80/100、PASS(≥90) 不可达——v2 修复该缺陷，但 PASS 仍然要求 deck_score ≥ 90 且无任何硬门槛。
+评分模型（v2）：每项 0–5 分，从基准分 3（「满足声明契约」）出发，凭**可观察证据**加分或扣分（delta ∈ [-2, +2]，钳制到 0–5）。每一个 delta 都必须写入 `dimension_evidence`，保证分数可逐条溯源复核；不加证据不得加分，不加观察不得扣分。v1 只扣不加导致满分被数学性封顶在 80/100、PASS(≥90) 不可达——v2 修复该缺陷，但 PASS 仍然要求 deck_score ≥ 90 且无任何硬门槛。3–4 个圆角容器时 `professional_quality` 记一次软扣分（未到 `CARD_WALL` 硬门槛，仍可 PASS）；`>4` 的硬门槛与 `ROUNDED_MAX=4` 不变。
+
+`deck_notes.director_verdict`（加性字段，不参与评分）：`{headline, primary_lever, levers[≤3], gates_by_code}`，其中每条 lever 为 `{rank, kind, target, where, why, action, severity}`（kind ∈ gate / dimension / recurring）。它是「修哪个最值」的行动线：修正时一次只修 `primary_lever`，跑完一轮 QA 再看下一条，禁止逐条追分。纯函数、确定性，同输入必得同 verdict。
 
 建议权重为 Hierarchy 20、Balance 15、Alignment 10、Contrast 10、Rhythm 10、Consistency 10、Emotional Impact 10、Memorability 10、Professional Quality 5。Memorability 必须由可观察的视觉记忆锚点、独特构图动作或跨页连续性说明支撑。`hard_gates` 必须携带失败码表中的真实码与 `severity`：`INTENT_UNCLEAR`（BLOCKED）、`FOCUS_COMPETING` / `CARD_WALL` / `MEDIA_UNJUSTIFIED` / `RHYTHM_FLAT` / `BACKGROUND_DISGUISED`（REVISE）、`READABILITY_FAIL`（BLOCKED，渲染实测文字对比 <3:1）、`CRITIC_LOW`（任何核心维度 < 3，REVISE）、`RENDER_UNAVAILABLE`（PREVIEW_ONLY）。Art Critic 的 `status` 只表示审美批评结果：任何核心维度低于 3 或存在审美硬门槛时至少为 `REVISE`，存在 BLOCKED 级硬门槛时为 `BLOCKED`；它不替代 QA 的数据、编译、安全区和渲染发布门。最终 Release Manifest 的 `status` 必须综合 QA 与 Art Critic，只有两者都满足发布条件时才为 `PASS`。
 

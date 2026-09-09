@@ -190,6 +190,112 @@ def spec_fingerprint(spec: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+# --------------------------------------------------------------------------
+# 跨层共享判定（v2.4 Director 升级：guard / qa / art_critic 在此收敛为单一口径）
+#
+# 纯函数：只收显式参数，不读 spec 结构、不读主题 —— 因此 Layer 0 可承载。
+# 上层只保留「消息文案 + 严重级别」的呈现权，不再各自实现一遍判定逻辑。
+# 同一事实在两处判出两种结论的口径漂移，只能在这里修，不在上层打补丁。
+# --------------------------------------------------------------------------
+BACKGROUND_LAYERS = frozenset({"background", "backdrop"})
+ROUNDED_SHAPES = frozenset({"rounded_rect", "round_rect"})
+
+
+def is_background_declared(element: dict) -> bool:
+    """元素是否**声明**为背景层（只读意图，不判断资格）。"""
+    e = element or {}
+    return (str(e.get("layer", "")).lower() in BACKGROUND_LAYERS
+            or str(e.get("role", "")).lower() in BACKGROUND_LAYERS)
+
+
+def bg_overlay_opacity(element: dict) -> tuple[float | None, str | None]:
+    """背景层内容保护层的不透明度 → (opacity, 缺失原因)。
+
+    按 overlay → content_protection.overlay → content_protection.scrim 的顺序取
+    第一个可用声明；非空字符串简写视为完全不透明 1.0。
+    返回 (None, "missing") 表示未声明；(None, "unparsable") 表示声明了但解析不出
+    数值 —— fail-closed：解析不出即视为无保护（v2.4 起 guard 与 art_critic 统一，
+    此前 critic 会按 1.0 放行；见 scoring.md）。
+    """
+    e = element or {}
+    srcs = [e.get("overlay")]
+    cp = e.get("content_protection")
+    if isinstance(cp, dict):
+        srcs.append(cp.get("overlay"))
+        srcs.append(cp.get("scrim"))
+    for src in srcs:
+        if src is None:
+            continue
+        if isinstance(src, str):
+            if src.strip():
+                return 1.0, None
+            continue
+        if isinstance(src, dict):
+            try:
+                return float(src.get("opacity", 1.0)), None
+            except (TypeError, ValueError):
+                return None, "unparsable"
+    return None, "missing"
+
+
+def bg_coverage(element: dict, cw: float, ch: float) -> float:
+    """元素面积占画布比例（0–1，非法几何按 0）。背景层资格的第一道门：
+    覆盖不够的「背景层」只是内容对象，不享受任何豁免。"""
+    try:
+        area = (float((element or {}).get("width", 0) or 0)
+                * float((element or {}).get("height", 0) or 0))
+    except (TypeError, ValueError):
+        return 0.0
+    try:
+        denom = float(cw or 0) * float(ch or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, area / denom) if denom > 0 else 0.0
+
+
+def rounded_containers(elements) -> list[dict]:
+    """真正的圆角容器：type == "shape" 且 shape 为 rounded_rect / round_rect。
+
+    v2.4 收敛：guard 预检曾把任何带 shape 属性的元素都计入，与 critic 口径不一致；
+    非 shape 元素渲染出来并不是容器，计入只是误报。现统一按「渲染出来是容器」计数。
+    """
+    return [e for e in (elements or [])
+            if isinstance(e, dict) and e.get("type") == "shape"
+            and e.get("shape") in ROUNDED_SHAPES]
+
+
+def text_contrast_verdict(render_page: dict | None, fail: float = 3.0,
+                          warn: float = 4.5) -> dict:
+    """渲染实测「文字 vs 其下方像素」的最坏对比度 verdict。
+
+    返回 {"level", "value", "worst"}：level ∈ fail / soft / pass / unknown；
+    value 是触发该结论的对比度；worst 是正文级最坏框记录（id/字色/实测底色）。
+    fail 线看含注记的最坏值（注记允许低于 AA 但不能低于 3:1 —— 看不见就是看不见）；
+    soft / pass 看正文级最坏值。qa.py 与 art_critic.py 共用：同一页、同一证据，
+    永远得出同一结论（此前两处各写一遍 min() 逻辑，行为一致但无法保证永远一致）。
+    """
+    page = render_page or {}
+
+    def _f(v):
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    reading = _f(page.get("text_contrast_min"))
+    worst_all = _f(page.get("text_contrast_all_min"))
+    worst = page.get("text_contrast_worst") or {}
+    hard = (reading if worst_all is None
+            else (min(reading, worst_all) if reading is not None else worst_all))
+    if hard is not None and hard < fail:
+        return {"level": "fail", "value": hard, "worst": worst}
+    if reading is not None and reading < warn:
+        return {"level": "soft", "value": reading, "worst": worst}
+    if reading is not None:
+        return {"level": "pass", "value": reading, "worst": worst}
+    return {"level": "unknown", "value": None, "worst": worst}
+
+
 def with_alpha(hex_color: str, alpha: float) -> str:
     """生成 #RRGGBBAA（供色板推导使用）。"""
     a = max(0.0, min(1.0, alpha))

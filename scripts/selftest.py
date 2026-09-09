@@ -1069,6 +1069,79 @@ def check_manifest_attestation():
             "page_mismatch": m4["status"]}
 
 
+def check_director_upgrade():
+    """v2.4 Director 升级：verdict 存在且确定、卡片软压分级、背景层口径统一。"""
+    crit = load("art_critic", SCRIPTS / "art_critic.py")
+    guard = load("guard", SCRIPTS / "guard.py")
+    prim = load("primitives", SCRIPTS / "primitives.py")
+
+    def page(sid, n_cards):
+        els = [{"type": "text", "id": "t", "x": 48, "y": 48, "width": 720, "height": 96,
+                "text": "洞察标题", "size": 44, "color": "ink", "bold": True,
+                "line_height": 1.15, "max_lines": 2, "padding": 0}]
+        els += [{"type": "shape", "shape": "rounded_rect", "id": f"c{i}", "x": 48,
+                 "y": 300 + i * 60, "width": 400, "height": 48} for i in range(n_cards)]
+        return {"id": sid, "page_intent": {"insight": "结论", "focus": "t",
+                                          "density": "sparse", "energy": "low",
+                                          "empty_space_role": "hold",
+                                          "continuity_token": "tok"},
+                "elements": els}
+
+    spec = {"direction": {"continuity_token": "tok",
+                         "composition_grammar": "strict_grid"},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                "muted": "#555555", "accent": "#0B5FFF",
+                                "primary": "#111111", "secondary": "#666666"}},
+            "slides": [page("s01", 3), page("s02", 0)]}
+    c1 = crit.critique_deck(spec)
+    c2 = crit.critique_deck(spec)
+    import json as _json
+    v1 = (c1.get("deck_notes") or {}).get("director_verdict") or {}
+    deterministic = (_json.dumps(v1, sort_keys=True, default=str)
+                     == _json.dumps((c2.get("deck_notes") or {}).get("director_verdict"),
+                                    sort_keys=True, default=str))
+    verdict_ok = (isinstance(v1.get("headline"), str) and v1["headline"]
+                  and isinstance(v1.get("levers"), list) and len(v1["levers"]) <= 3
+                  and all(set(l) >= {"rank", "kind", "target", "where", "why", "action"}
+                          for l in v1["levers"]))
+    # 3 卡：软扣分（evidence 提到圆角容器）但无 CARD_WALL 门；非 shape 的 shape 属性不计数
+    ev3 = " ".join((c1["slides"][0].get("dimension_evidence") or {}).get(
+        "professional_quality", []))
+    gates3 = [g.get("code") for g in c1.get("hard_gates", [])]
+    fake = [{"type": "text", "id": "x", "shape": "rounded_rect"}]
+    soft_ok = ("圆角容器" in ev3 and "CARD_WALL" not in gates3
+               and prim.rounded_containers(fake) == []
+               and len(prim.rounded_containers(
+                   spec["slides"][0]["elements"])) == 3)
+    # 背景层口径统一：无法解析的 overlay 两侧都判失败；合法两侧都放行
+    bad_ov = {"type": "image", "id": "b", "x": 0, "y": 0, "width": 1280, "height": 720,
+              "layer": "background", "overlay": {"type": "solid", "color": "#000",
+                                                 "opacity": "abc"}}
+    good_ov = dict(bad_ov, overlay={"type": "solid", "color": "#000", "opacity": 0.5})
+    g_bad = guard._bg_qualified(bad_ov, 1280, 720)[0]
+    c_bad = crit.background_layer_ok(bad_ov, 1280, 720)[0]
+    g_good = guard._bg_qualified(good_ov, 1280, 720)[0]
+    c_good = crit.background_layer_ok(good_ov, 1280, 720)[0]
+    bg_ok = (not g_bad and not c_bad and g_good and c_good)
+    # verdict 首要杠杆：BLOCKED 门优先于一切
+    ev = {"rendered": True, "pages": [
+        {"slide": "s01", "index": 0, "page": 1, "gravity_drift": 0.05,
+         "accent_pixel_ratio": 0.01, "text_contrast_min": 1.2,
+         "text_contrast_all_min": 1.1,
+         "text_contrast_worst": {"id": "t", "color": "#111", "background": "#222"}},
+        {"slide": "s02", "index": 1, "page": 2, "gravity_drift": 0.05,
+         "accent_pixel_ratio": 0.01}]}
+    cb = crit.critique_deck(spec, ev)
+    pv = ((cb.get("deck_notes") or {}).get("director_verdict") or {}).get("primary_lever") or {}
+    lever_ok = pv.get("target") == "READABILITY_FAIL" and "BLOCKED" in (
+        (cb.get("deck_notes") or {}).get("director_verdict") or {}).get("headline", "")
+    ok = (deterministic and verdict_ok and soft_ok and bg_ok and lever_ok
+          and crit.__name__ == "art_critic")
+    return {"status": "PASS" if ok else "FAIL", "deterministic": deterministic,
+            "verdict_keys": sorted(v1), "soft_card_debit": "圆角容器" in ev3,
+            "bg_unified": bg_ok, "primary_lever": pv.get("target")}
+
+
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "art_critic": check_critic(), "critic_with_render": check_critic_with_render(), "critic_pass_reachable": check_critic_pass_reachable(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
             "preflight_sync": check_preflight_sync(), "background_layer": check_background_layer(),
@@ -1086,7 +1159,8 @@ def main():
             "data_governance": check_data_governance(),
             "multi_series": check_multi_series(),
             "cache_projection": check_cache_projection(),
-            "manifest_attestation": check_manifest_attestation()}
+            "manifest_attestation": check_manifest_attestation(),
+            "director_upgrade": check_director_upgrade()}
     ok = all(v["status"] == "PASS" for v in result.values())
     if "--json" in sys.argv:
         print(json.dumps(result, ensure_ascii=False, indent=2))

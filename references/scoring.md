@@ -17,184 +17,73 @@
 Release Manifest 的 `status` 由 QA 与 Critic 状态合成：任一 BLOCKED → BLOCKED；
 任一 REVISE → REVISE；两者 PASS 才 PASS；缺少真实渲染 → PREVIEW_ONLY。
 
-## v2 优化内容（本次变更）
+## 历史变更摘要（v2–v2.3，归档）
 
-### 1. Art Critic 从「只扣不加」改为「证据驱动加减分」
+- **v2 评分可用**：Critic 从「只扣不加」改为证据驱动加减分（基准 3/5，delta ±2，
+  逐条写 `dimension_evidence`，PASS 可达）；硬门槛携带真实失败码（现行码表见
+  `production-contract.md` 的 Failure codes）；渲染锚点对齐声明意图、Accent 按主题
+  色距测量；QA 分域扣分明细；Guard 加 `min_font` / `focus_scale`；预检 hint 零权重、
+  阈值以 `art_critic` 常量为唯一来源；Level 1–3 覆盖率降级（证据不足降资格不扣分）、
+  按页渲染缓存、渲染并行上限 2。
+- **v2.2 判定可信**：缓存按内容核验（串页/篡改/无指纹一律拒绝）；背景层免检需要资格
+  （覆盖 ≥60% + 保护层 ≥0.20，否则 `BACKGROUND_DISGUISED` 阻断）；文字对比按渲染像素
+  实测（<3:1 `READABILITY_FAIL` 阻断）；QA / Critic 各盖 `source_spec_hash`，
+  Manifest 交叉校验；节奏看实测墨迹（`RHYTHM_INK_DELTA` / `RHYTHM_INK_FLAT`）；
+  Guard 加行长门禁与网格 adherence 报告。
+- **v2.3 少跑一轮**：PDF 复用 + 编译视图复用（只改声明字段的一轮 4.8s → 0.01s）；
+  `page_intent.focus` 并入缓存键；`_text_contrast` 量测去重。精度侧：色相族 ≤4、
+  强调角距离 ≥12°、脏渐变提示、图表样式漂移、焦点轴线加分（常量仍在 `art_critic`，
+  Guard 预检同源读取）。
 
-- **问题**：v1 每个维度从 4 分出发只做减法，满分被数学性封顶在 80/100，
-  PASS(≥90) 永远不可达——再完美的 deck 也只会得到 REVISE。
-- **修复**：v2 从基准分 3（满足声明契约）出发，凭可观察证据加减
-  （delta ∈ [-2, +2]，钳制 0–5）。每个 delta 写入 `dimension_evidence`，
-  不加证据不得加分、不加观察不得扣分。回归自检（selftest.py
-  `critic_pass_reachable`）锁定：合规且精致的 deck 可拿到 ≥90 并 PASS；
-  卡片墙/无 insight/媒体无理由的页面会被正确拦截。
-- **证据来源**：spec 几何（焦点尺度优势、墨迹左右失衡、左缘/顶缘轴线收束、
-  8 网格吸附、字体家族/字号/对齐预算）、主题对比度（ink/muted/accent 对
-  background）、渲染证据（质心漂移、主题 Accent 像素比）与跨页节奏。
+## v2.4 Director 升级（本次变更）
 
-### 2. 硬门槛携带失败码表中的真实码
+方向：从「规则执行器」升级为「视觉总监」——**在正确的地方做正确的判断**。本轮不新增文件、不新增依赖，
+只做三件事：合并重复判定（稳定性）、给出首要杠杆（设计判断）、收敛迭代纪律（执行速度）。
 
-`hard_gates` 从笼统的 `CRITIC_LOW` 细化为：
+### 1. 总监 verdict：修正时先修最重要的（质量 + 速度）
 
-| 码 | 触发条件 | severity |
-|---|---|---|
-| `INTENT_UNCLEAR` | 页面缺少可复述的单一 insight | BLOCKED |
-| `FOCUS_COMPETING` | 无唯一焦点 / 焦点无尺度优势且存在竞争 | REVISE |
-| `CARD_WALL` | 圆角容器 > 4 或成为主要结构 | REVISE |
-| `MEDIA_UNJUSTIFIED` | 图片未声明 asset_function / 媒体角色 | REVISE |
-| `RHYTHM_FLAT` | 连续 ≥3 页密度与能量完全重复 | REVISE |
-| `CRITIC_LOW` | 任一核心维度 < 3/5（reason 附维度证据） | REVISE |
-| `RENDER_UNAVAILABLE` | 无真实渲染证据 | PREVIEW_ONLY |
+- **问题**：Critic 给出 9 维 × N 页的 evidence 与一串 hard_gates，Agent 逐条追修，轮数不可控。
+  大多数轮数浪费在「修了次要问题」上，而不是「修得不对」。
+- **修复**：`deck_notes.director_verdict = {headline, primary_lever, levers[≤3]}`——按
+  BLOCKED 门 → REVISE 门 → 系统性短板维度 → 跨页高频修正的顺序排成行动线。
+  修正纪律：**一次只修 `primary_lever`，跑完一轮 QA 再看下一条**。
+- **性质**：纯加性字段，不参与评分，不改变任何阈值与状态机；纯函数，同输入必得同 verdict。
+  `critic_version` 升为 2.2（卡片软压会改变 3–4 容器 deck 的分数，跨版本不可比）。
 
-### 3. 渲染证据对齐「声明意图」
+### 2. 克制加压：卡片提前半步拦截（可调阈值）
 
-- `render_check.resolve_anchor()` 新增：锚点解析顺序改为
-  `page_intent.focus` → `gravity_anchor` → 启发式（id 含 hero/title/kpi 或
-  首个图表/图片），并记录 `anchor_source`。此前漂移测量忽略声明焦点，
-  评分与设计意图脱节。
-- Accent 像素比改为**按主题 Accent 色距测量**（`accent_method: theme`），
-  缺失主题色时回退饱和度启发（`accent_method: saturation`）；同时输出
-  `saturated_pixel_ratio` 供对比。这使「Accent ≤5%」预算真正绑定主题，
-  而不是把任何高饱和像素都算作强调色。
-- 新增 `saliency_split_lr / saliency_split_tb`（显著图左右/上下质量分布，
-  Critic 平衡维度的像素证据）与 `margin_occupancy`（边缘带安静度，
-  安全区像素证据）。
+- 3–4 个圆角容器：Critic `professional_quality` 软扣 -1 + Guard 预检 `CARD_DENSITY` hint
+  （与 `CARD_WALL` 互斥点名，不重复）；`>4` 的 `CARD_WALL` 硬门槛与 `ROUNDED_MAX=4` 不变，
+  仍可 PASS——压力给在「接近墙」时，而不是等撞墙。
+- 回归锁定：合规 deck 分数逐位不变（`critic_pass_reachable` 仍 PASS；3 卡 deck 83.0 → 82.5，
+  干净 deck 84.5 → 84.5 零漂移）；5 卡仍触发 `CARD_WALL` 门。
 
-### 4. QA 增加分域扣分明细与可选安全区规则
+### 3. 口径收敛：三套重复判定合并到 `primitives.py`
 
-- `qa.py` 返回 `deduction_by_domain`（guard/compile/render/config 分域扣分），
-  迭代时一眼看出分数丢在哪个域。
-- 新增可选 `render_margin` 规则（thresholds `margin_occupancy`，默认关闭）：
-  纯色/结构背景主题可开启「边缘带安静度」检查；通栏图片背景主题保持关闭，
-  避免把合法的全出血背景误判为内容贴边。
+- 背景层覆盖率 + 保护层解析：Guard `_bg_qualified` 与 Critic `background_layer_ok` 此前各写一遍，
+  边缘行为不一致（无法解析的 opacity 一边放行一边拦截）。现共享 `bg_coverage` /
+  `bg_overlay_opacity`，统一为 fail-closed（解析不出视为无保护），两侧消息文案不变。
+- 文字对比 verdict：QA 与 Critic 各写一遍 `min(正文, 注记)` 逻辑，现共享
+  `text_contrast_verdict`（fail 看含注记最坏值，soft/pass 看正文级），消息与扣分逐位一致。
+- 圆角容器计数：Guard 预检曾把非 shape 元素也计入，现与 Critic 统一为
+  `rounded_containers`（渲染出来是容器才算），消除误报。
+- 以上均为 Layer 0 纯函数，不读 spec、不读主题，无循环依赖；`check_cache_projection`
+  的排除表同步扫描通过（新增 helper 不引入新的 `theme.get` 渲染输入）。
 
-### 5. Guard 增加两条可读性/焦点检查
+### 4. 渲染溯源：显著图算法进证据、进缓存键
 
-- `min_font`（warn）：caption/annotation/source/label/axis/data_label/legend/
-  metadata/method 类文字低于最小字号（默认 10px，可经 rules 覆盖）。
-- `focus_scale`（hint）：声明焦点为文字但未获得页内最大字号。
-- 节奏提示细化：声明密度变化但结构密度未变时，提示「渲染后复核真实留白」，
-  而不是笼统的「连续同密度」。
+- 认领此前「进一步优化建议 #5」：证据每页新增 `saliency_method`
+  （`cv2_spectral_residual` / `deterministic_fallback`，如实记录实际走的算法）；
+  缓存键新增显著图后端并升为 v4——有 cv2 与无 cv2 的机器算出的质心/分片不可互换，
+  跨机器共用证据目录时必须分键存放。旧 v3 键自然淘汰，无需手动清缓存。
 
-### 6. 预检提示不计分，分阶段耗时可核对
+### 5. SKILL 瘦身：十步清单收敛为 Director 五步流水线
 
-- `guard.run_preflight()` 的条目以 `hint` 级注入，并单独使用
-  `preflight_hint: 0.0` 权重：预检是「提前告诉你渲染会怎么判」，不是新的扣分项。
-  若沿用 `guard_hint` 的 0.1，12 页 deck 新增一批同口径提示就可能把 98.4 的
-  `PASS` 拉成 `REVISE`——评分口径必须随能力同步调整，而不是让新检查白拿扣分。
-- 阈值唯一来源是 `art_critic` 导出的常量（`STATEMENT_SIZE / FOCUS_LEAD /
-  MEDIA_BUDGET_MAX / TEXT_BUDGET_MAX / FOCUS_AREA_LEAD / ASYMMETRIC_GRAMMARS`），
-  Guard 懒加载读取；两侧不一致时 selftest 的 `preflight_sync` 直接 FAIL。
-- `qa["performance"]` 给出 `guard_ms / compile_ms / render_ms / preflight_items /
-  render_skipped`。实测渲染占整轮 89–96%，因此判断「是否值得再跑一轮」应由
-  静态预检负责；`preflight_gate` 命中硬码时跳过渲染，但被跳过的渲染本就
-  不可能给出 `PASS`，判定不放宽。
-- 背景层（`layer: background`）不计入 `MEDIA_BUDGET_MAX`，也不参与焦点压制：
-  它服务空间而非信息，扣分应落在「有没有内容保护」上（`BG_UNPROTECTED` warn 仍计分）。
-
-### 7. 渲染证据覆盖率决定发布资格（不扣分，但降级）
-
-- `run_qa(..., qa_level=1|2|3)`：Level 1 不渲染、Level 2 只渲染关键页（`key_pages(spec)`
-  或调用方给定页码）、Level 3 全量。三级共用同一阈值与同一 `pass` 门槛。
-- Level < 3 或子集渲染时：`release_eligible=False`，`PASS` 被降为 `REVISE`，Critic 记
-  `PIXEL_COVERAGE_PARTIAL`；**不新增扣分项**——证据不足是资格问题，扣设计分等于把
-  「测得少」误报成「设计差」，也会让快速路径的分数不可比。
-- 子集证据按 `index` 对齐（`render_evidence` 每页带绝对页码）；QA 与 Critic 都不按结果
-  数组下标取页，避免未测页继承别人的 gravity/accent。
-- 渲染证据按页缓存（`render_cache.json`）只去掉重复测量，不改变任何判定：缓存指标
-  与冷测逐位相同（selftest 的 `render_cache` 断言这件事），且命中必须同时存在证据 PNG。
-  `performance.cache_hits / cache_misses` 是「省掉了多少重复计算」的凭证。
-- 渲染内部并行上限 2（`render_check.MAX_RENDER_WORKERS`，再按 CPU 收敛，页数 <4 关闭），
-  「poppler 转换 → 像素测量」在同一 worker 内串成一条流水：实测 12 页 dpi 96 由
-  6.10s → 4.51s（−26%），QA 分数与 Critic 判定逐位不变。
-
-## v2.3 变更：一轮改稿的时间去哪了
-
-先测量，再动手。12 页旗舰每轮的真实成本是：guard 2ms · `compile_deck` 179ms ·
-`soffice` PPTX→PDF 1704ms · `pdftoppm` 80ms/页 · `measure_image` 72–75ms/页 ·
-`run_qa` 热态全命中 176ms · `render_evidence` 全命中 2.7ms。四个结论：
-
-- **重复发生在「轮与轮之间」，不在「页与页之间」**：Level 2 跑完接着跑 Level 3，会为
-  6 个新页重付一整份 soffice 转换（2.57s）；把 `density` 从 sparse 改成 dense 这种
-  不动像素的改稿，当时要重渲染 3 页。于是加了 PDF 复用与编译视图复用两段（口径见
-  `production-contract.md`），而不是去并行一条无法拆开的串行链。
-- **量测本身没有回归**：加与不加 `text_regions` 是 72ms 对 75ms——上一轮的文字对比
-  链不是速度问题，就不为此改代码。同理放弃「把证据降到 640px 再量」的想法：阈值是在
-  96dpi 上调出来的，省 250ms 换一次口径漂移不值。
-- **缓存键必须覆盖「影响量测的输入」而非「影响像素的输入」**：`page_intent.focus`
-  因此是唯一被点名单独并入键里的声明字段。这个洞是本轮自己写出来、又被自己的红队
-  脚本抓到的（改 focus 后 `gravity_drift` 停在旧值），修完补了 `cache_projection` 自检。
-- **一处去重**：`_text_contrast` 曾对同一区域取两次主色（先算对比再算最劣项），改为
-  一次量测两处复用；`_png_sha` 更名 `_file_sha`，因为它同时服务于 PNG 与 PPTX 核验。
-
-实测（2 核 / 12 页；「热」= 上一轮已记账）：
-
-| 跑法 | v2.2 | v2.3 |
-| --- | --- | --- |
-| Level 1 迭代 | 0.7s | 0.03s |
-| Level 2 关键页（冷） | 3.4s | 3.7s（未变：真冷测） |
-| Level 2 收口 → Level 3 补齐全量 | 2.57s | 0.82s |
-| 只改声明字段的一轮（QA+Critic 全链） | ~2.2–4.8s | 0.01s |
-| 改一页元素坐标的一轮 | 4.8s（12 页全重测） | 3.2s（1 页重测 + 必要的重转换） |
-| Level 3 绝对冷测 | 5.0–5.3s | 4.7s |
-
-判定没有因此变松：冷热两条路径的 24 项像素质标逐位一致，`--no-cache` 既不查也不写。
-
-## 审美判定的三处精度（同样是先测量后写规则）
-
-- **色相族预算**（`palette_discipline`，warn）：全套语义色 ≤4 个 30° 色相族，纸色与
-  灰阶不计。它管的是「每页都合规、合起来像七套主题」这种单页指标抓不到的塌法。
-- **强调角距离**（同规则，warn）：`accent` 与 `primary`/`secondary` 色相差 <12° 时点名
-  「强调色只是主色的重复」。同族深色堆叠拿不到唯一重点信号，是最常见的伪高级。
-- **渐变是否混脏**（同规则，hint）：两端色相差在 150–210° 且彩度都居中时提示中段会
-  灰成一块；`#F8F5EF → #EBE5D9` 这类同族低对比渐变是留白手法，**刻意不打击**。
-- **图表样式漂移**（`chart_style_drift`，warn/hint）：同一 `chart_kind` 出现在 ≥2 页而
-  `label_size` 相差 >1.25×，或图例开关一页开一关。
-- **焦点落位**：中心（x 或 y 任一）对齐中线 / 三分线 / 1/4 线 / 黄金分割线（±0.045）时，
-  Art Critic 给 `visual_hierarchy` 记一次加分（本轮已有正向层级证据则不叠加）；完全不上线
-  只在 guard 预检出 `FOCUS_PLACEMENT` hint，不扣分。轴线常量放在 `art_critic`，guard 经
-  `_preflight_gates()` 读取——提示与评分同源，不会长成两套标准。
-- **一处误判修正**：焦点是图表/图片时，旧版会拿 `0px` 去比字号并扣「同级竞争」。尺度
-  对比只在焦点本身是一段文字时成立，现已限定（`focus_placement` 自检覆盖该回归）。
-
-旗舰在这批规则下保持安静：12 页全部对齐左列三分线（x=0.333）因而提示为零；色相族
-4 / 上限 4；图表标签统一 13px；六处渐变是同族呼吸。QA 98.4 / Critic 94.2 /
-Manifest PASS 与上一轮逐位一致——新门槛没有把做好的东西判成做坏。
-
-## v2.2 变更：发布门完整性与审美证据
-
-上一轮（v2.2）评分审计指出四件事：缓存会复用错页指标、`layer: background` 是无条件免死金牌、
-没有任何地方实测「字压在画上能不能读」、清单承认来历不明的 PASS。它们属于**判定可信度**，
-先修完再谈审美上限。
-
-- **缓存按内容核验**：PNG 前缀带每轮唯一 token；命中条件加上 `png_sha` 一致；缺页只记缺口，
-  取消按序号回退。`render_cache` 与新增的 `cache_content_verify` 两项自检分别断言
-  「命中即同值」与「篡改像素必被拒、无指纹条目不信任」。
-- **背景层免检需要资格**：`art_critic.background_layer_ok` 是唯一口径（覆盖 ≥`BG_MIN_COVERAGE`
-  60% 画布，且 `overlay` 不透明度 ≥`BG_MIN_PROTECT_OPACITY` 0.20，或显式 `readability_exempt`）。
-  guard 的媒体预算、焦点支配、重叠、来源区四处豁免全部改走资格判定，不合格即
-  `BACKGROUND_DISGUISED`（error，阻断）+ 预检同码。
-- **文字对比按像素实测**：`measure_image(..., text_regions=)` 在每个文字框内取主色（16 级量化取
-  众数后取桶内均值：既避开字形像素，又不因量化误差把 4.27:1 报成 4.5:1），与声明字色算 WCAG
-  对比。QA 新增阈值 `text_contrast_fail` 3.0 / `text_contrast_warn` 4.5 与扣分
-  `render_contrast` 3.0 / `render_contrast_low` 1.5；低于 3:1 无论角色一律 error →
-  `READABILITY_FAIL` 阻断。注记级角色（`primitives.AUX_TEXT_ROLES`：来源 / 图例 / 轴标签 /
-  数据标注 / 方法 / 元数据 / 页码）只受 3:1 约束，免得每页那行 12px 来源标注把噪声压过真实缺陷。
-  Critic 的 contrast 维度消费同一指标，深底深字在审美侧一样掉分。
-- **清单交叉校验**：`primitives.spec_fingerprint` 统一算法；`run_qa`（v1.4）与 `critique_deck`
-  （v2.1）各盖 `source_spec_hash`；`release_manifest` 核对戳、页面集合与页数，任一条不符 →
-  `status=BLOCKED` + `validation.issues`。
-- **节奏看实测墨迹**：`_score_page` 现在拿得到上一页的实测 occupancy；差值 ≥`RHYTHM_INK_DELTA`
-  0.10 视为呼吸成立（标签相同也加回，且不再因「密度能量双同」扣分；只改了一个标签但墨迹真的
-  动了，同样按实测记加分——前提是同一事实不重复发糖），≤`RHYTHM_INK_FLAT` 0.03 视为空转标签
-  （标签变了也扣分）。这条关掉「改字段就拿节奏分」的口子，同时不再误伤真在换气的页。
-- **行长与网格可报告**：guard 新增 `typography` 规则（`line_measure()`：CJK ≤38 字/行、拉丁 ≤75、
-  超 2× 阻断；注记级角色豁免）并镜像为预检 `LINE_MEASURE` 提示；`guard` 返回新增 `grid.adherence`
-  与 `line_measure` 统计，QA 原样透传。两个比率**不新增扣分项**：`grid_adherence` 只报告，
-  `typography` 只在超限（warn）与严重超限（error）时计分。Critic 的 8 网格判定与 guard 同口径——
-  发丝线（≤2px）与通栏元素不再算偏离。
-- 成本口径：`use_cache=False` 不再清空证据目录（冷测不把热缓存打回冷态）；Level 1 的
-  `cache_hits / cache_misses` 报 0 而不是 `null`。
+- `SKILL.md` 十步强制流程收敛为「内容理解 → 视觉策略判断 → 布局决策 →
+  关键细节优化 → 质量检查」五步（所有 MUST 条款原样保留，只换组织方式，
+  每步带完成标准）；路由表只留一张，「预检不干净不渲染 / 迭代期不跑 Critic /
+  声明修改不跑全量」三条纪律收敛进 P5。LLM 侧的决策分叉是执行速度的真正瓶颈——
+  脚本侧 guard 2ms / critic 2.7ms 已无可压，省轮数比省毫秒重要两个数量级。
 
 ## 使用建议
 
@@ -232,9 +121,8 @@ Manifest PASS 与上一轮逐位一致——新门槛没有把做好的东西判
 4. **主题化 Accent 色距阈值**：`measure_image` 的色距阈值 0.30 对高饱和
    Accent（如 VP-007 蓝）与低饱和金属色（如 VP-004）灵敏度不同。建议
    将该阈值并入 `theme.constraints.accent_distance`，随主题声明。
-5. **显著图算法版本锁定**：`render_check` 在有 cv2 时用 Spectral Residual、
-   无 cv2 时用确定性回退，两者输出不可跨机器严格对比。建议在 evidence 中
-   记录 `saliency_method`，CI 中固定依赖版本或强制回退算法。
+5. **显著图算法版本锁定**（**已在 v2.4 实施**）：证据每页记录实际算法
+   `saliency_method`，缓存键纳入显著图后端（v4）。剩余可选动作：CI 中固定依赖版本。
 6. **阈值校准闭环**：所有阈值（0.28 漂移、0.08 Accent、1.25× 焦点尺度
    领先…）来自经验默认值。建议用一批人工标注的 deck（好/中/差三档）做
    回归，校准各阈值与权重，并把标注样本放入仓库外的基准集。标注规范、
@@ -245,9 +133,10 @@ Manifest PASS 与上一轮逐位一致——新门槛没有把做好的东西判
 
 ## 验证
 
-`selftest.py`（23 项）覆盖：目录/引用完整性、模块导入、Fill 契约、Critic 返回
+`selftest.py`（30 项）覆盖：目录/引用完整性、模块导入、Fill 契约、Critic 返回
 结构（含 CARD_WALL 门）、PASS 可达性回归、渲染锚点解析与主题 Accent
-测量、两页 mini deck 的 Guard → Compile → QA → Release Manifest 冒烟，以及本轮六项红队：
+测量、两页 mini deck 的 Guard → Compile → QA → Release Manifest 冒烟、Director 升级回归
+（verdict 确定性 / 卡片软压分级 / 背景层口径统一），以及六项红队：
 缓存内容核验（篡改 / 无指纹 / 串页一律拒绝）、背景层资格、文字对比门禁（深底深字 1.07:1 被阻断、
 浅底深字 14.37:1 不误伤）、行长门禁（超限提示 / 2× 阻断 / 注记豁免）、节奏以实测墨迹为准
 （标签与墨迹冲突时信墨迹）、清单自证校验（伪造、过期、无戳 PASS、幽灵页面各自 BLOCKED）。
