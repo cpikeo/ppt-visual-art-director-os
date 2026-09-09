@@ -1002,11 +1002,15 @@ def check_rhythm_measured():
                         "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
 
     def page(sid, density):
+        # 几何占用匹配 density 区间，隔离「声明 vs 几何」对照，聚焦「跨页呼吸」
+        # （几何占用由 spec 元素 bbox 得出，墨迹率 occupancy 只驱动跨页 ink_shift）。
+        area_target = {"sparse": 0.10, "balanced": 0.70, "dense": 0.80}[density]
+        h = int(area_target * 1280 * 720 / 1000)
         return {"id": sid,
                 "page_intent": {"insight": f"{sid} 结论", "focus": "st", "density": density,
                                 "energy": "medium", "empty_space_role": "hold"},
-                "elements": [{"type": "text", "id": "st", "x": 96, "y": 152, "width": 608,
-                              "height": 120, "size": 64, "text": "结论", "color": "ink",
+                "elements": [{"type": "text", "id": "st", "x": 96, "y": 96, "width": 1000,
+                              "height": h, "size": 64, "text": "结论", "color": "ink",
                               "max_lines": 1, "line_height": 1.2, "padding": 0}]}
 
     def score(d1, d2, o1, o2):

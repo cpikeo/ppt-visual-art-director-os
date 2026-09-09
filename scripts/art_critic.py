@@ -116,6 +116,18 @@ def _area(e: dict) -> float:
     return max(0.0, _num(e, "width")) * max(0.0, _num(e, "height"))
 
 
+def _content_occupancy(elems: list[dict], cw: float, ch: float) -> float:
+    """内容几何占用率 = Σ(非背景元素 bbox 面积) / 画布面积。
+
+    density 的「留白」语义是「视觉密度」——内容对象占用的视觉空间，故用几何
+    占用率（= 1 - 留白率）。不用墨迹率 occupancy：细线/细柱图表的墨迹像素
+    天然极低（一条占画布 70% 的折线，墨迹率可能只有 8%），会系统性低估图表页
+    的视觉密度。墨迹率仍由 min_whitespace / 跨页 ink_shift 各自承担。
+    """
+    area = sum(_area(e) for e in elems if not bg_exempt(e, cw, ch))
+    return min(1.0, area / max(1.0, cw * ch))
+
+
 def _ink_area(e: dict) -> float:
     """文本框≠墨迹：正文按 0.55×0.70 折算可见墨迹面积。"""
     if e.get("type") == "text":
@@ -266,6 +278,7 @@ def _memory_anchor(slide: dict) -> str | None:
     """识别页面可复现的视觉记忆锚点（可观察，不臆造）。"""
     elems = _elements(slide)
     kinds = []
+    spark_count = 0
     for e in elems:
         if e.get("type") == "text" and _num(e, "size") >= STATEMENT_SIZE:
             kinds.append(f"statement 尺度({_num(e, 'size'):.0f}px)")
@@ -273,10 +286,27 @@ def _memory_anchor(slide: dict) -> str | None:
             kind = str(e.get("chart_kind") or e.get("kind", ""))
             if kind in ("kpi", "executive_kpi", "big_number"):
                 kinds.append("big_number 数据锚点")
+            # 数据叙事锚点（design-system §图表「一眼读到结论」的可读表达，非装饰）：
+            # 只有 spec 显式声明了这些叙事动作才计，普通 bar/line 不算锚点。
+            if e.get("highlight") is not None:
+                kinds.append("高亮强调点")
+            if e.get("target") is not None or e.get("target_label"):
+                kinds.append("目标线叙事")
+            if kind in ("donut", "donut_composition") and (
+                    e.get("center_value") is not None or e.get("center_label")):
+                kinds.append("环心结论")
+            if kind == "sparkline":
+                spark_count += 1
+            data = e.get("data")
+            if isinstance(data, list) and any(
+                    isinstance(d, dict) and d.get("subtotal") for d in data):
+                kinds.append("瀑布桥接")
         if e.get("type") == "image":
             fn = e.get("asset_function") or (e.get("asset") or {}).get("function")
             if fn in ("hero", "emotion", "proof") or str(e.get("role", "")) in MEDIA_ROLES:
                 kinds.append(f"图像锚点({fn or e.get('role')})")
+    if spark_count >= 2:
+        kinds.append(f"small multiples({spark_count} 组形状对比)")
     if _field(slide, "density") == "sparse" and _field(slide, "empty_space_role") in (
             "protect_focus", "hold_emotion"):
         kinds.append("主动留白")
@@ -680,31 +710,26 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
             r.add("rhythm", +1, f"实测占用率与上一页相差 {ink_shift:.2f}（≥{RHYTHM_INK_DELTA}），"
                                 f"跨页呼吸成立。",
                   "保持这种由内容量与留白承担的节拍。")
-    # 声明 vs 渲染对照：仅当有真实渲染证据时启用。
+    # 声明 vs 几何占用对照（不依赖渲染证据——几何占用由 spec 元素 bbox 直接得出）。
     # design-intelligence.md「留白节奏」给的百分比是「留白率」：
     #   大留白 ≥40% / 标准 25–35% / 紧致 15–25%。
-    # render_check.occupancy 度量的是「墨迹率」（非背景像素占比）= 1 - 留白率，
-    # 故换算为墨迹率区间：sparse ≤60%（单边——留白越多越 sparse，不罚「过空」）、
-    # balanced 65–75%、dense 75–85%。旧实现把留白率误当占用率锚点（30/55/75），
-    # 且 sparse 被做成双边锚点，导致「刻意大留白」被误判为「节奏空挂」。
+    # density 的语义是「视觉密度」，用「内容几何占用率」= 1 - 留白率度量：
+    #   sparse ≤60%（单边——留白越多越 sparse，不罚「过空」）、
+    #   balanced 65–75%、dense 75–85%。
     _OCC_BAND = {"sparse": (None, 0.60), "balanced": (0.65, 0.75), "dense": (0.75, 0.85)}
-    if render_page and "occupancy" in render_page:
-        try:
-            occ = float(render_page.get("occupancy") or 0)
-        except (TypeError, ValueError):
-            occ = None
-        if occ is not None and density in _OCC_BAND:
-            lo, hi = _OCC_BAND[density]
-            if hi is not None and occ > hi:
-                r.add("rhythm", -1,
-                      f"声明 density={density}（留白应 ≥{1-hi:.0%}）但渲染留白仅 {1-occ:.0%}，"
-                      f"页面比声明的更拥挤。",
-                      "用留白、缩字或拆页降低密度；或把 density 上调一档。")
-            elif lo is not None and occ < lo:
-                r.add("rhythm", -1,
-                      f"声明 density={density}（留白 {1-hi:.0%}–{1-lo:.0%}）但渲染留白 {1-occ:.0%}，"
-                      f"节奏空挂。",
-                      "补次级对象或真实墨迹；或把 density 下调一档。")
+    if density in _OCC_BAND:
+        occ = _content_occupancy(elems, cw, ch)
+        lo, hi = _OCC_BAND[density]
+        if hi is not None and occ > hi:
+            r.add("rhythm", -1,
+                  f"声明 density={density}（留白应 ≥{1-hi:.0%}）但实际留白仅 {1-occ:.0%}，"
+                  f"页面比声明的更拥挤。",
+                  "用留白、缩字或拆页降低密度；或把 density 上调一档。")
+        elif lo is not None and occ < lo:
+            r.add("rhythm", -1,
+                  f"声明 density={density}（留白 {1-hi:.0%}–{1-lo:.0%}）但实际留白 {1-occ:.0%}，"
+                  f"节奏空挂。",
+                  "扩大图表/补次级对象；或把 density 下调一档。")
 
     # ---------- 一致性（10） ----------
     fams = {str(e.get("font") or e.get("family", "")) for e in texts if e.get("font") or e.get("family")}
