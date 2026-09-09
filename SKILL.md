@@ -36,10 +36,24 @@ description: >
 
 ### 快速路径与上下文预算
 
-1. **已有 spec / 只修布局**：只读取 `production-contract.md` 的 Spec、Layout Collision 和 Revision 小节，运行 `guard.py` → `compiler.py` → `qa.py`；不要读取全部主题与全部脚本。迭代期「看一眼布局方向」用 `ghost.py`（~1ms/页，不起 LibreOffice），真渲染只留给收口与发布。
+1. **已有 spec / 只修布局**：只读取 `production-contract.md` 的 Spec、Layout Collision 和 Revision 小节，运行 `qa.py`（**唯一入口**，`run_qa` 内部已按序执行 guard → compile → render，**不要**再单独串行跑 `guard.py` / `compiler.py` / `qa.py`，否则 guard 与 compile 各执行两遍；只有需要看某一阶段的独立诊断报告时才单独调用该脚本）；不要读取全部主题与全部脚本。迭代期「看一眼布局方向」用 `ghost.py`（~1ms/页，不起 LibreOffice），真渲染只留给收口与发布。
 2. **新建 deck**：先读取 `design-intelligence.md`；确定主题后，读取 `design-system.md` 与 `themes.md` 中对应主题条目，并把结果固化到 `spec.theme`；只在出现图片或图表时读取对应脚本说明。不要加载未选主题的完整内容。
 3. **发布前审校**：直接运行 `qa.py` 的完整入口；仅当 QA 有 `render_missing` 或需要解释美学问题时，再补运行 `render_check.py` / `art_critic.py`。
 4. **修改后**：只重跑受影响页面的编译、渲染与 QA；发布前必须再跑一次全 deck。任何脚本输出都保存为 JSON 摘要，避免把实现源码或重复诊断灌入上下文。
+
+**任务 → 文件 → 调用 路由表**（上下文预算的唯一执行口径；不要超出本表读取）：
+
+| 任务场景 | 读取（精确到小节） | 调用 | 渲染 | Critic |
+|---|---|---|---|---|
+| 只改文案 / 洞察 / 备注 | `production-contract.md` 的 Spec | `qa.py --quick`（不渲染） | 否 | 否 |
+| 改布局 / 文本框 / 图片 | `production-contract.md` 的 Spec + Layout Collision + Revision | 先 `ghost.py` 看方向，再 `qa.py --key-pages --fast` | 仅关键页 | 否 |
+| 改主题 | `design-system.md` + `themes.md` 对应主题条目 | `qa.py --key-pages` 复核后全量 | 关键页→全量 | 收口时关键页 |
+| 新建 deck | `route.py` + `design-intelligence.md` → 定主题后读 `design-system.md` + `themes.md` 该条目 | `route.plan_deck` → spec → `ghost.py` → `qa.py --quick` | 否 | 否 |
+| 出现图表 | 仅 `charts` 相关脚本说明 | 走当前场景的调用 | 随场景 | 随场景 |
+| 出现媒体 | `production-contract.md` 的 asset contract + `asset_prompt.py` | 走当前场景的调用 | 随场景 | 随场景 |
+| 发布审校（唯一全量） | `production-contract.md` 的 Release Manifest / Render Evidence 小节 | `qa.py --manifest`（qa_level=3 全量） | 是 | 全量 |
+
+Critic 生命周期：**迭代期不跑**（`--quick`/`--key-pages` 已跳过），**收口时对关键页跑**，**发布前全量跑**（`--manifest`）。确定性 QA 与 Art Critic 是两条职责分离的链，不要每次微小修改后都全 deck 过 Critic。
 
 ## 执行路径与验证层级
 
@@ -69,7 +83,7 @@ description: >
 5. **选页面家族**：内容任务决定 Family；主题只决定其视觉表达。先定场景，再决定对象、图片、光线与材质。
 6. **生成 spec**：主题 token 进入 `spec.theme`；页面内容、背景、图表、来源和叠加层进入 `slides[]`。先完成数据分析与洞察提取，再选择诚实的原生可编辑图表；无法表达单一关系时使用文字或表格。元素填充优先使用 `{"fill":{"type":"solid|gradient|none",...}}`；历史字符串与 `{color, opacity}` 可兼容，但无效 fill 必须按错误提示迁移，不能依赖默认蓝色。图表数据必须逐行提供 `label` 与有限数值 `value`，单位、期间、比较口径、来源和 `display` 格式分开声明；缺失、非数值、非有限值、空数据、无效高亮索引和无效构成总和必须在 Guard/Compile 阶段暴露，禁止静默补零或伪造单位。每个文本框还要声明足够的 `width / height / max_lines / line_height / padding`；不要把字号缩小当作溢出修复。行长按盒宽与字号可测：CJK 每行 ≤38 字、拉丁 ≤75，超过上限两倍按阻断处理——缩字号不算修复，拆句或收窄版心才算。
 7. **治理媒体与背景**：图片必须有功能（context / emotion / proof / hero）且通过资产闸门——只有 Hero、品牌叙事、情绪与产品页可要图，数据 / 表格 / 流程 / 结构页永远不给图；整幅背景画心声明 `layer: background` 并自带 `overlay` 内容保护，可不拆内容盒、不计入媒体预算；**免检需要资格**：覆盖 ≥60% 画布且遮罩不透明度 ≥0.20（或显式 `readability_exempt`）。面积不够、遮罩虚设的「伪背景」按普通内容对象对待，并被 `BACKGROUND_DISGUISED` 点名。每张图片仍须给出主体、镜头、构图、留白锚点与裁切要求。背景是空间与阅读引导，不是填充；默认低能量，主刺激最多一项、辅刺激最多一项。卡片不是默认容器；优先使用空间分组、发丝线、字体层级和留白关系。布局应从内容选择版式，不从模板选择内容：允许 Executive / Editorial / Data Intelligence / Comparative / Narrative / Spatial 等布局语法，但同一 deck 要共享网格、版心、来源区和安全区，仅改变重心、比例、阅读轴与留白角色。
-8. **执行生产链**：`Guard → Compile → Render Evidence → Deterministic QA → Art Critic → Revision`。最终渲染是判断依据；检查安全区、拥挤、重心、背景竞争、图表关系、低级设计错误和跨页一致性。任何修正后重新执行完整链路，并记录 observation、minimal_fix、recheck 与 revision_count（`revision_count` 必须来自真实修订流水，不是占位 0）。QA 与 Art Critic 报告各自盖 `source_spec_hash` 自证来源，Release Manifest 核对不通过就降为 `BLOCKED`：过期或旁路生成的「PASS」不能进入发布判定。
+8. **执行生产链**：`Guard → Compile → Render Evidence → Deterministic QA → Art Critic → Revision` 是**逻辑阶段顺序**，发布时由 `qa.py --manifest` 统一执行（`run_qa` 已内联 guard + compile + render），不要独立串行跑多个 CLI（见「快速路径」路由表）。最终渲染是判断依据；检查安全区、拥挤、重心、背景竞争、图表关系、低级设计错误和跨页一致性。任何修正后重新执行完整链路，并记录 observation、minimal_fix、recheck 与 revision_count（`revision_count` 必须来自真实修订流水，不是占位 0）。QA 与 Art Critic 报告各自盖 `source_spec_hash` 自证来源，Release Manifest 核对不通过就降为 `BLOCKED`：过期或旁路生成的「PASS」不能进入发布判定。
 9. **最小修正**：`删除 → 简化 → 恢复空间 → 重构重心 → 替换媒体 → 微调装饰`。不得用缩字号、堆色彩或加背景修复高层问题。
 10. **发布判断**：硬门槛优先于平均分。只有真实渲染证据存在、无阻断错误且所有必需报告完成时才可为 `PASS`；缺少真实渲染证据只能为 `PREVIEW_ONLY`；存在可修复问题为 `REVISE`，存在输入/事实/编译等阻断问题为 `BLOCKED`。状态只能使用 `PASS`、`REVISE`、`BLOCKED` 或 `PREVIEW_ONLY`。
 
