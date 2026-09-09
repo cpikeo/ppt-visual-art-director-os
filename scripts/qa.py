@@ -29,7 +29,7 @@ DEFAULT_PENALTIES = {
     "guard_hint": 0.1,         # 对齐 / 节奏提示（几乎不扣，仅留痕）
     "compile_warn": 1.5,       # 引擎编译诊断（每项，不含 [guard] 前缀）
     "render_gravity": 3.0,     # 渲染显著性质心与声明锚点漂移 > .28
-    "render_accent": 3.0,      # 渲染强调色像素比 > .08（OS §06 Accent 克制）
+    "render_accent": 3.0,      # 渲染强调色像素比 > 主题 accent_max（OS §06 Accent 克制）
     "render_occupancy": 3.0,   # 渲染占用率超过主题最小留白要求
     "render_margin": 2.0,      # 渲染边缘带不安静（内容贴近安全区边缘）
     "render_missing": 2.0,     # 无渲染环境（结构证据降级，轻微提示）
@@ -40,7 +40,8 @@ DEFAULT_PENALTIES = {
 DEFAULT_THRESHOLDS = {
     "pass": 90.0,              # passed = score >= pass
     "gravity_drift": 0.28,     # 归一化漂移上限
-    "accent_pixel": 0.08,      # 强调色像素比上限
+    # accent_pixel 缺省时回落主题 constraints.accent_max（见下方解析），
+    # 不再硬编码 0.08——与 guard/route/art_critic 同一把尺子（OS §06 Accent 克制）。
     "text_contrast_fail": 3.0,   # 实测文字对比低于此值 → 阻断（叠加不可读）
     "text_contrast_warn": 4.5,   # WCAG AA 正文门槛
     # 可选：主题 constraints.min_whitespace 或调用方 thresholds.min_whitespace
@@ -247,6 +248,17 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
                       "penalty": pen["compile_warn"]})
 
     theme_constraints = dict((spec.get("theme") or {}).get("constraints") or {})
+    accent_max = thr.get("accent_pixel", theme_constraints.get("accent_max", 0.08))
+    try:
+        accent_max = float(accent_max)
+        if not 0 < accent_max <= 1:
+            raise ValueError("accent_pixel must be between 0 and 1")
+    except (TypeError, ValueError):
+        items.append({"domain": "config", "level": "warn",
+                      "rule": "accent_budget", "id": None,
+                      "msg": f"忽略无效的 accent_max={accent_max!r}（应为 0–1），回退 0.08",
+                      "penalty": 0.0})
+        accent_max = 0.08
     min_whitespace = thr.get("min_whitespace", theme_constraints.get("min_whitespace"))
     if min_whitespace is not None:
         try:
@@ -295,13 +307,13 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
                           "msg": (f"显著性质心偏离声明锚点 "
                                   f"{p['gravity_drift']:.2f} > {thr['gravity_drift']}"),
                           "penalty": pen["render_gravity"]})
-        if p.get("accent_pixel_ratio", 0) > thr["accent_pixel"]:
+        if p.get("accent_pixel_ratio", 0) > accent_max:
             deduction += pen["render_accent"]
             deduction_by_domain["render"] += pen["render_accent"]
             items.append({"domain": "render", "level": "warn",
                           "rule": "accent_budget", "id": p.get("slide"),
                           "msg": (f"强调色像素 {p['accent_pixel_ratio']:.1%} > "
-                                  f"{thr['accent_pixel']:.0%}（OS §06）"),
+                                  f"{accent_max:.0%}（OS §06）"),
                           "penalty": pen["render_accent"]})
 
     readability_fail = False

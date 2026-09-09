@@ -857,6 +857,89 @@ def check_focus_placement():
             "credit": len(axis_credit(cr_on)), "text_scale_debit_on_chart_focus": len(size_debit(cr_on))}
 
 
+def check_data_governance():
+    """事实/口径治理：来源必填、跨页口径一致、字段名标题拦截。"""
+    guard = load("guard", SCRIPTS / "guard.py")
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#666666",
+                        "primary": "#1C1C1C", "secondary": "#5A5A5A", "accent": "#2563EB"}}
+
+    def slide(sid, insight, elements):
+        return {"id": sid, "page_intent": {"insight": insight, "focus": "x",
+                                           "density": "balanced", "energy": "low",
+                                           "empty_space_role": "hold"},
+                "elements": elements}
+
+    def chart(eid, metric=None, unit=None, period=None):
+        e = {"type": "chart", "id": eid, "chart_kind": "bar", "x": 100, "y": 100,
+             "width": 600, "height": 400,
+             "data": [{"label": "A", "value": 10}, {"label": "B", "value": 20}]}
+        if metric:
+            e["metric"] = metric
+        if unit:
+            e["unit"] = unit
+        if period:
+            e["period"] = period
+        return e
+
+    canvas = {"width": 1280, "height": 720}
+    # 1) 来源/单位/期间缺失 → data_provenance warn
+    r1 = guard.check_spec({"canvas": canvas, "theme": theme,
+                           "slides": [slide("s01", "营收增长", [chart("c1")])]})
+    prov = [c for c in r1["checks"] if c["rule"] == "data_provenance"]
+    # 2) 同一 metric 跨页单位打架 → metric_consistency error
+    r2 = guard.check_spec({"canvas": canvas, "theme": theme, "slides": [
+        slide("s01", "营收 10 亿", [chart("c1", metric="revenue", unit="亿元", period="2026")]),
+        slide("s02", "营收 120 万", [chart("c2", metric="revenue", unit="万元", period="2026")])]})
+    unit_conflict = [c for c in r2["checks"] if c["rule"] == "metric_consistency"
+                     and c["level"] == "error"]
+    # 3) 同一 metric 跨页期间打架 → warn（不 error）
+    r3 = guard.check_spec({"canvas": canvas, "theme": theme, "slides": [
+        slide("s01", "营收", [chart("c1", metric="revenue", unit="亿元", period="2026")]),
+        slide("s02", "营收", [chart("c2", metric="revenue", unit="亿元", period="FY26")])]})
+    period_conflict = [c for c in r3["checks"] if c["rule"] == "metric_consistency"
+                       and "期间" in c["msg"]]
+    # 4) 字段名标题 → title_semantics hint；结论式标题不触发
+    r4 = guard.check_spec({"canvas": canvas, "theme": theme, "slides": [
+        slide("s01", "市场分析", []),
+        slide("s02", "市场已从规模驱动转向效率驱动", [])]})
+    ts = [c for c in r4["checks"] if c["rule"] == "title_semantics"]
+    ok = (prov and unit_conflict and period_conflict
+          and len(ts) == 1 and ts[0]["id"] == "s01")
+    return {"status": "PASS" if ok else "FAIL",
+            "provenance_warns": len(prov), "unit_conflict_errors": len(unit_conflict),
+            "period_conflict_warns": len(period_conflict), "fieldname_hints": len(ts)}
+
+
+def check_multi_series():
+    """多序列图表契约：series[{name, values}] + categories 不要求 data，highlight 是序列索引。"""
+    guard = load("guard", SCRIPTS / "guard.py")
+    comp = load("compiler", SCRIPTS / "compiler.py")
+    import tempfile, pathlib
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#666666",
+                        "primary": "#1C1C1C", "secondary": "#5A5A5A", "accent": "#2563EB"}}
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+            "slides": [{"id": "s01",
+                        "page_intent": {"insight": "结论", "focus": "m1", "density": "balanced",
+                                        "energy": "low", "empty_space_role": "hold"},
+                        "elements": [{"type": "chart", "id": "m1", "chart_kind": "line",
+                                      "x": 120, "y": 120, "width": 1000, "height": 400,
+                                      "categories": ["Q1", "Q2", "Q3", "Q4"],
+                                      "series": [{"name": "A", "values": [1, 2, 3, 4]},
+                                                 {"name": "B", "values": [2, 3, 4, 5]}],
+                                      "highlight": 1}]}]}
+    g = guard.check_spec(spec)
+    codes = {c["rule"] for c in g.get("checks") or []}
+    msgs = "\n".join(g.get("warnings") or [])
+    guard_ok = ("data_integrity" not in codes and "chart_highlight" not in codes
+                and "缺少 data" not in msgs)
+    with tempfile.TemporaryDirectory() as d:
+        out = pathlib.Path(d) / "m.pptx"
+        rep = comp.compile_deck(spec, out, checks=False)
+    render_ok = rep["passed"] and "已跳过" not in "\n".join(rep["warnings"])
+    return {"status": "PASS" if (guard_ok and render_ok) else "FAIL",
+            "guard_ok": guard_ok, "render_ok": render_ok}
+
+
 def check_cache_projection():
     """缓存键的投影口径：动像素的必须进键，只动判定的不进；且排除表不得屏蔽渲染输入。"""
     import re
@@ -996,6 +1079,8 @@ def main():
             "palette_discipline": check_palette_discipline(),
             "chart_style_drift": check_chart_style_drift(),
             "focus_placement": check_focus_placement(),
+            "data_governance": check_data_governance(),
+            "multi_series": check_multi_series(),
             "cache_projection": check_cache_projection(),
             "manifest_attestation": check_manifest_attestation()}
     ok = all(v["status"] == "PASS" for v in result.values())

@@ -491,9 +491,19 @@ def _load_rgb(path: Path, max_side: int = 640) -> Any:
     return np.asarray(im).astype(np.float32)
 
 
-def _saliency(arr: Any) -> Any:
-    """显著图：局部对比 + 边缘能量 + 与背景的全局对比（确定性回退，不依赖 cv2）。"""
+def _saliency(arr: Any, max_side: int = 256) -> Any:
+    """显著图：局部对比 + 边缘能量 + 与背景的全局对比（确定性回退，不依赖 cv2）。
+
+    先降到 max_side（默认 256）再算：质心/左右上下分片是粗粒度指标，Spectral
+    Residual 在 640px 全尺寸上跑几乎不改变归一化结果，却把 cv2 成本放大了
+    数倍。降采样后质心与分片逐位稳定（selftest 的 render_metrics 断言）。"""
     import numpy as np
+    h0, w0 = arr.shape[:2]
+    if max(h0, w0) > max_side:
+        scale = max_side / max(h0, w0)
+        arr = np.asarray(Image.fromarray(arr.astype(np.uint8)).resize(
+            (max(1, int(w0 * scale)), max(1, int(h0 * scale))),
+            Image.Resampling.BILINEAR))
     try:
         import cv2
         bgr = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_RGB2BGR)

@@ -16,6 +16,7 @@ from pptx.enum.text import PP_ALIGN
 
 from primitives import (
     RenderContext, emu, pt, split_runs, is_cjk, estimate_lines,
+    insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
     ALIGN, ANCHOR, Emu,
 )
@@ -187,8 +188,10 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
         if not line:
             total += 1
             continue
-        total += estimate_lines(line, w - 2 * pad, size, wrap)
-        for rv, iscjk in split_runs(line):
+        # 中西混排间隙：估算与渲染共用同一份 gapped 文本，保证容量口径一致。
+        line_gapped = insert_script_gaps(line)
+        total += estimate_lines(line_gapped, w - 2 * pad, size, wrap)
+        for rv, iscjk in split_runs(line_gapped):
             run = p.add_run()
             run.text = rv
             set_run_font(run, cn if iscjk else latin, cn, size_pt, color,

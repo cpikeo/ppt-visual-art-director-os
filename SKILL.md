@@ -36,7 +36,7 @@ description: >
 
 ### 快速路径与上下文预算
 
-1. **已有 spec / 只修布局**：只读取 `production-contract.md` 的 Spec、Layout Collision 和 Revision 小节，运行 `guard.py` → `compiler.py` → `qa.py`；不要读取全部主题与全部脚本。
+1. **已有 spec / 只修布局**：只读取 `production-contract.md` 的 Spec、Layout Collision 和 Revision 小节，运行 `guard.py` → `compiler.py` → `qa.py`；不要读取全部主题与全部脚本。迭代期「看一眼布局方向」用 `ghost.py`（~1ms/页，不起 LibreOffice），真渲染只留给收口与发布。
 2. **新建 deck**：先读取 `design-intelligence.md`；确定主题后，读取 `design-system.md` 与 `themes.md` 中对应主题条目，并把结果固化到 `spec.theme`；只在出现图片或图表时读取对应脚本说明。不要加载未选主题的完整内容。
 3. **发布前审校**：直接运行 `qa.py` 的完整入口；仅当 QA 有 `render_missing` 或需要解释美学问题时，再补运行 `render_check.py` / `art_critic.py`。
 4. **修改后**：只重跑受影响页面的编译、渲染与 QA；发布前必须再跑一次全 deck。任何脚本输出都保存为 JSON 摘要，避免把实现源码或重复诊断灌入上下文。
@@ -100,6 +100,8 @@ input:
 颜色方向必须说明 `color_intent: [brand, emotion, hierarchy]` 中当前优先职责。卡片只允许用于数据模块、核心指标或特殊强调；圆角容器超过 4 个或成为主要结构时，必须触发 Card Wall Critic。
 
 事实与语义完整优先于构图，构图优先于风格，风格优先于装饰。默认 16:9、1280×720、8 单位网格、最多 2 个字体家族、4 个字号等级、3 个字重等级、每页一个 L4 主焦点、Accent ≤5%、图表一个强调点、来源不可省略。数据页默认低能量；连续页面不得使用相同密度与相同重心；空间不足时拆页或删减，不压缩可读性。
+
+数值图表必须显式声明 `source`（来源）、`unit`（单位）、`period`（期间）、`basis`（比较口径）；同一指标（`metric` / `series_name` 键）必须在整套 deck 中保持单位一致——Guard 的 `data_provenance` / `metric_consistency` 会确定性点名「缺来源」与「跨页单位打架」，这是比「不美观」更严重的业务错误。标题写洞察不写字段名：`title_semantics` 会把「市场分析」这类字段名标题提示改写为可复述结论。
 
 ## 质量门
 

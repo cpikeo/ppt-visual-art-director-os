@@ -67,17 +67,20 @@ ppt-visual-art-director-os/
 │   ├── bb423798bd14650761b3e744dfcd9905.png
 │   └── ffb347873654bd8176db4d7acbb3bd3d.png
 ├── references/
+│   ├── benchmark-calibration.md
 │   ├── design-intelligence.md
 │   ├── design-system.md
 │   ├── evidence-library.md
 │   ├── production-contract.md
-│   └── themes.md
+│   ├── themes.md
+│   └── worked-example.md
 ├── scripts/
 │   ├── art_critic.py
 │   ├── asset_prompt.py
 │   ├── charts.py
 │   ├── compiler.py
 │   ├── elements.py
+│   ├── ghost.py
 │   ├── guard.py
 │   ├── primitives.py
 │   ├── qa.py
@@ -153,9 +156,14 @@ python3 -m pip install -r requirements.txt
 不确定该用多大复杂度时，让决策层按内容分类，而不是先假设「最高质量」：
 
 ```bash
-python3 scripts/route.py path/to/brief.yml --json      # 内容 → 路径 / 页面家族 / 密度 / 资产预算
+python3 scripts/route.py path/to/brief.yml --json      # 内容 → 路径 / 页面家族 / 密度 / 资产预算（含主题种子色板）
 python3 scripts/guard.py path/to/build_mydeck.py --preflight   # 静态预检（0.2s 级，无需渲染）
+python3 scripts/ghost.py path/to/build_mydeck.py out_dir       # 迭代预览缩略图（~1ms/页，无需 LibreOffice）
 ```
+
+`ghost.py` 是迭代内环：不启动 LibreOffice / poppler，直接用 spec 几何 + 色板
+粗排出画布缩略图，用于「一眼确认布局 / 色块关系 / 疏密方向」。它是确定性纯函数，
+**不参与发布判定**——发布仍以 `render_check` 的真实 PPTX→PDF→PNG 像素证据为准。
 
 `route.py` 只接受 `content_type / design_direction / quality_level`，返回该页的家族、密度、能量、字阶、图像决策与派生方向（背景、材质、光线、图表风格、动效、构图语法）；数据、表格、流程、结构页在闸门上直接判为「不出图」。`guard.py --preflight` 用与 Art Critic 同一组常量提前点名确定性硬门槛，返回 `slide / code / observation / minimal_fix`，因此一轮修改从「渲染 4 秒」压缩到「静态 0.2 秒」。
 

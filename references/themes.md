@@ -79,3 +79,9 @@ theme = {
 ```
 
 换主题只应改变上述参数与页面家族的表达方式，不得改变编译器 API。运行时只读取现有 `colors`、`fonts`、`constraints` 与 `differentiation`；不得通过主题参数改写页面逻辑、数据口径或图表准确性。若主题不改变空间、媒体或图表行为，则将其视为主题变体，不新建人格。主题切换后必须保持同一安全区、标签安全、来源完整和发布门，并通过渲染结果确认背景与内容自然融合。
+
+## 主题种子（route.py 的成品锚点）
+
+`scripts/route.py` 的 `DIRECTION_PRESETS` 为每个设计方向（`quiet_minimal` / `editorial_brand` / `product_stage` / `evidence_first`）预置了一份 `theme_seed`：一组调好的 `colors`（background / surface / primary / secondary / accent / ink / muted）与 `fonts`，可直接落进 `spec.theme`。`plan_page` 与 `plan_deck` 都会返回这份种子。
+
+种子是**起点锚点，不是终点模板**：`primitives.derive_tokens` 会从种子色机械展开完整色阶（panel / hairline / track / veil / ramp / series / on_dark / on_accent…），调用方也仍可覆盖任意一项。它的作用只是消除「选了方向却还要自己手挑 hex」的空白——方向不再是一段形容词，而是一组能直接渲染的锚点色。色彩插值在 OKLab 感知空间进行，因此派生出的中档色明度均匀、不偏灰偏浊。

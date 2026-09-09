@@ -107,6 +107,27 @@ spec = {
 
 图表渲染器遇到空数据时可以跳过该图表并写入 warning；遇到不可解析数值时可以仅为防止程序崩溃按零计算并保留 warning。**这两种容错只服务调试预览，不表示数据有效；Guard 的 `DATA_INTEGRITY_FAIL` 必须使最终状态为 `BLOCKED`，不得以容错后的图表发布。**瀑布图的零轴必须根据数据域映射，而不是固定在画布某一比例位置。
 
+多序列图表走 `series` 字段（`series: [{name, values:[...]}, ...]` + `categories: [...]`），此时不需要 `data`；它与单序列 `data` 是同一 geometry 的两种数据表达，不是两种图表类型。`highlight` 在多序列下选中的是「升级为 accent + 加粗 + 末端圆点」的那个序列索引。
+
+图表仍应诚实表达单一关系，但以下字段在不改变数据口径的前提下，扩展了同一关系的**可读表达**（全部原生可编辑）：
+
+- `donut` / `donut_composition` 的 `center_value` / `center_label`：把「总数 / 结论」放进甜甜圈的洞（环心 KPI）。它不新增数据通道，只是把本应由图例承担的总读数放回视觉中心。
+- `sparkline`：去轴迷你折线 + 端点圆点，用于 small multiples（一页多组趋势的「形状对比」）。读数由相邻的直接标注承担，sparkline 本身不伪造坐标轴。
+- `waterfall` 的 `subtotal` / `is_total` / `total` 行标记：小计段从零轴起画整段累计，段间画桥接虚线。数据仍是逐行 `label` + 有限 `value`，只是「起点」语义由累计推导。
+- `ranked_bar` 的 `target` / `target_label`：在已知刻度上画一条竖向目标参考线。它是可视化标注，不改变 `value` 的诚实性。
+
+新增图表表达仍遵守同一份数据契约：负值、缺失、非有限值、空数据、无效高亮索引与无效构成总和必须在 Guard/Compile 阶段暴露，不得静默补零或伪造单位。
+
+### Fact & metric governance（事实/口径治理）
+
+「确定性」不只是数值有限、可编译，还必须是**口径可核验**。数值图表应显式声明 `source`（来源）、`unit`（单位）、`period`（期间）、`basis`（比较口径）、`data_status`（数据状态）；同一指标（用 `metric` 或 `series_name` 作跨页对齐键）必须在整套 deck 中保持单位一致。Guard 据此产出三类治理信号：
+
+- `data_provenance`（warn，`require_provenance=True` 时 error）：数值图表缺少来源/单位/期间声明。来源不可省略；单位与期间必须显式，否则「万元 vs 亿元」「2026 vs FY26」这类口径漂移无法被发现。
+- `metric_consistency`（单位不一致 = error；期间不一致 = warn；比较口径不一致 = hint）：同一 `metric` 跨页单位打架是最会「误导决策」的业务错误——同一指标必须同一单位，否则读成两套数字。
+- `title_semantics`（hint）：`page_intent.insight` 退化成「字段名标题」（如「市场分析」）时提示改写为可复述结论。
+
+本治理只验证「口径是否声明且一致」，不替调用方核验「数值是否真实」——事实真实性由责任人对照来源确认；但缺少来源、口径打架这两类问题，现在会在 Guard 阶段被确定性点名，而不是等到董事会前才发现。
+
 ## Asset Contract
 
 图像资产由 `scripts/asset_prompt.py` 生成确定性提示词：调用方传入资产卡（`CARD` 或 `build_card()`，含 `subject / color / material / lighting / composition / motion / style` 必填段与 `apc` 溯源编号）和页面参数（留白锚点、光向、能量、资产功能），脚本按固定顺序拼接并追加 Universal QC、类型后缀与透明资产对比度防护；`validate_asset_card()` 在出图前返回漏项清单。生成后的图像进入 spec 时仍须满足：`asset_function`（context / emotion / proof / hero）、主体、构图、留白锚点、裁切与溯源；Guard 对声明了 `asset` 的图像检查 `theme_ref / apc` 绑定与 negative 中的 no-text / no-logo / no-watermark 约束。图像不得烘焙文字、Logo、水印、数据或来源。

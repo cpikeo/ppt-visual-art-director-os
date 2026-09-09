@@ -62,10 +62,87 @@ def _hex(rgb) -> str:
     return "#{:02X}{:02X}{:02X}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
 
 
-def blend(a: str, b: str, t: float) -> str:
+# ---------------------------------------------------------------------------
+# OKLab 感知均匀色彩空间（Björn Ottosson 2020）
+# sRGB 是伽马编码的非线性空间：旧 blend 直接按通道线性插值，中档色会在
+# 视觉上偏灰偏浊（「脏色」）——同一份色板，浅档与深档之间的过渡会糊。
+# OKLab 的 L 轴近似感知亮度、a/b 轴近似红绿/黄蓝对立色，在 OKLab 里插值
+# 得到的中档色明度更均匀、彩度更干净，是「高级感」在色彩层的最低成本来源。
+# ---------------------------------------------------------------------------
+_OKLAB_M1 = (0.4122214708, 0.5363325363, 0.0514459929)
+_OKLAB_M2 = (0.2119034982, 0.6806995451, 0.1073969566)
+_OKLAB_M3 = (0.0883024619, 0.2817188376, 0.6299787005)
+
+
+def _srgb_to_linear(c: float) -> float:
+    c = c / 255.0
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _linear_to_srgb(c: float) -> float:
+    c = 12.92 * c if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055
+    return max(0.0, min(1.0, c)) * 255.0
+
+
+def _rgb_to_oklab(rgb: tuple) -> tuple:
+    r, g, b = (_srgb_to_linear(c) for c in rgb)
+    l = _OKLAB_M1[0] * r + _OKLAB_M1[1] * g + _OKLAB_M1[2] * b
+    m = _OKLAB_M2[0] * r + _OKLAB_M2[1] * g + _OKLAB_M2[2] * b
+    s = _OKLAB_M3[0] * r + _OKLAB_M3[1] * g + _OKLAB_M3[2] * b
+    l_, m_, s_ = l ** (1 / 3), m ** (1 / 3), s ** (1 / 3)
+    L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+    a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+    b = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+    return L, a, b
+
+
+def _oklab_to_rgb(L: float, a: float, b: float) -> tuple:
+    l_ = L + 0.3963377774 * a + 0.2158037573 * b
+    m_ = L - 0.1055613458 * a - 0.0638541728 * b
+    s_ = L - 0.0894841775 * a - 1.2914855480 * b
+    l, m, s = l_ ** 3, m_ ** 3, s_ ** 3
+    r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    b = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+    return (_linear_to_srgb(r), _linear_to_srgb(g), _linear_to_srgb(b))
+
+
+def blend(a: str, b: str, t: float, space: str = "oklab") -> str:
+    """两色混合。默认在 OKLab 感知空间插值（明度/彩度更均匀，中档不脏）；
+    space="srgb" 回退到旧的逐通道线性插值（仅当调用方确需精确直通色时使用）。
+    """
     ra, rb = _tuple(a), _tuple(b)
     t = max(0.0, min(1.0, t))
-    return _hex(tuple(ra[i] + (rb[i] - ra[i]) * t for i in range(3)))
+    if t <= 0.0:
+        return a
+    if t >= 1.0:
+        return b
+    if space == "srgb":
+        return _hex(tuple(ra[i] + (rb[i] - ra[i]) * t for i in range(3)))
+    La, aa, ba = _rgb_to_oklab(ra)
+    Lb, ab, bb = _rgb_to_oklab(rb)
+    L = La + (Lb - La) * t
+    am = aa + (ab - aa) * t
+    bm = ba + (bb - ba) * t
+    return _hex(_oklab_to_rgb(L, am, bm))
+
+
+def mix_oklab(colors: list, weights: list | None = None) -> str:
+    """多色在 OKLab 空间的加权混合（weights 归一化；缺省等权）。用于推导
+    更干净的中性/中间档色。"""
+    if not colors:
+        return "#000000"
+    if weights is None:
+        weights = [1.0] * len(colors)
+    total = sum(max(0.0, w) for w in weights) or 1.0
+    L = a = b = 0.0
+    for c, w in zip(colors, weights):
+        Lc, ac, bc = _rgb_to_oklab(_tuple(c))
+        w = max(0.0, w) / total
+        L += Lc * w
+        a += ac * w
+        b += bc * w
+    return _hex(_oklab_to_rgb(L, a, b))
 
 
 def luminance(hex_color: str) -> float:
@@ -338,6 +415,31 @@ def is_cjk(ch: str) -> bool:
     return (0x3000 <= o <= 0x9FFF) or (0xFF00 <= o <= 0xFFEF) or (0x3040 <= o <= 0x30FF)
 
 
+# 中西混排间隙：CJK 与拉丁/数字紧贴是中文排版的廉价感来源。在脚本切换处
+# 插入 U+2009 THIN SPACE（≈1/5 em），作为渲染层的排版打磨——不改变作者的
+# spec 文本（Guard 仍按原文本测行长），只改变最终落到页面上的视觉效果。
+HAIR_SPACE = "\u2009"
+
+
+def _is_latin_alnum(ch: str) -> bool:
+    return ("A" <= ch <= "Z") or ("a" <= ch <= "z") or ("0" <= ch <= "9")
+
+
+def insert_script_gaps(text: str) -> str:
+    """在 CJK 与拉丁字母/数字的边界插入细空格；空格与标点不触发。"""
+    if not text or len(text) < 2:
+        return text
+    out = []
+    for i, ch in enumerate(text):
+        if i > 0:
+            prev = text[i - 1]
+            if (_is_latin_alnum(ch) and is_cjk(prev)) or \
+                    (_is_latin_alnum(prev) and is_cjk(ch)):
+                out.append(HAIR_SPACE)
+        out.append(ch)
+    return "".join(out)
+
+
 def split_runs(text: str):
     """按 CJK / 拉丁切分，保证中英文混排各自使用正确字体。"""
     runs = []
@@ -361,8 +463,17 @@ def text_units(value: str) -> float:
     修正点：原 0.53 在大字号下偏低估，密集正文的容量估算易「乐观」，
     表现为 Guard 通过、渲染溢出。把 0.55 设为默认后，估算与渲染
     可读性复核的对齐误差更小（参见 design-intelligence.md Typography
-    Engine 的"回退顺序"）。"""
-    return sum(1.0 if ord(c) > 127 else 0.55 for c in value)
+    Engine 的"回退顺序"）。
+    中西混排细空格（HAIR_SPACE）计 0.2，使插入脚本间隙后的估算与渲染一致。"""
+    total = 0.0
+    for c in value:
+        if c == HAIR_SPACE:
+            total += 0.2
+        elif ord(c) > 127:
+            total += 1.0
+        else:
+            total += 0.55
+    return total
 
 
 def estimate_lines(text: str, width: float, size: float, wrap: bool = True) -> int:

@@ -404,9 +404,24 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
     intent = _intent(slide)
     elems = _elements(slide)
     texts = [e for e in elems if e.get("type") == "text"]
-    charts = [e for e in elems if e.get("type") in ("chart", "native_chart")]
+    _charts = [e for e in elems if e.get("type") in ("chart", "native_chart")]
+    charts = [e for e in _charts
+              if str(e.get("chart_kind") or e.get("kind", "")) != "sparkline"]
+    sparklines = [e for e in _charts
+                  if str(e.get("chart_kind") or e.get("kind", "")) == "sparkline"]
     images = [e for e in elems if e.get("type") == "image"]
     media = [e for e in charts + images if not bg_exempt(e, cw, ch)]
+    # small multiples：一组 sparkline 是「一个关系」的降噪呈现，只占一个媒体席位，
+    # 不按逐个竞争焦点计（否则 4 个迷你趋势线会被误判为 4 个争夺注意力的图表）。
+    if sparklines:
+        media.append({"_kind": "sparkline_group"})
+    # 主题化 Accent 预算：让 spec.theme.constraints.accent_max 进入全部分数维度，
+    # 不再在 visual_hierarchy 与 contrast 两处各写一个不同的硬编码阈值。
+    _theme_constraints = (spec.get("theme") or {}).get("constraints") or {}
+    try:
+        theme_accent_max = float(_theme_constraints.get("accent_max", 0.05))
+    except (TypeError, ValueError):
+        theme_accent_max = 0.05
     disguised = [e for e in images if is_background_layer(e) and not bg_exempt(e, cw, ch)]
     reading = _reading_texts(texts)
     rounded = [e for e in elems if e.get("type") == "shape"
@@ -453,7 +468,7 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
                   f"焦点文字 {fsize:.0f}px 仅领先第二大文字 {lead:.1f}×（<{FOCUS_LEAD}×），存在同级信号竞争。",
                   "拉开标题与正文的尺度比，或降级竞争性文字。")
         if len(media) <= MEDIA_BUDGET_MAX and len(reading) <= TEXT_BUDGET_MAX \
-                and (not render_page or float(render_page.get("accent_pixel_ratio", 0) or 0) <= 0.05):
+                and (not render_page or float(render_page.get("accent_pixel_ratio", 0) or 0) <= theme_accent_max):
             r.add("visual_hierarchy", +1, "媒体信号受控（≤1 个图表/图片），焦点无同级竞争者。")
         famp = _area(focus_el)
         for e in elems:
@@ -486,11 +501,11 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
               "保留承担核心叙事的一个媒体或图表，其余改为注释、拆页或删除。")
         gates.append({"code": "FOCUS_COMPETING", "slide": slide.get("id", index + 1),
                       "severity": "REVISE",
-                      "reason": f"媒体/图表对象 {len(charts) + len(images)} 个 > 上限 {MEDIA_CHART_MAX}。"})
+                      "reason": f"媒体/图表对象 {len(media)} 个 > 上限 {MEDIA_CHART_MAX}。"})
     if len(texts) > TEXT_MAX:
         r.add("visual_hierarchy", -1, "文本对象较多，页面可能依赖碎片化阅读。",
               "合并重复语句，确保一个文本框只承担一个语义角色。")
-    if render_page and float(render_page.get("accent_pixel_ratio", 0) or 0) > 0.08:
+    if render_page and float(render_page.get("accent_pixel_ratio", 0) or 0) > theme_accent_max + 0.03:
         r.add("visual_hierarchy", -1, "渲染强调色像素比例偏高，信号可能失去稀缺性。",
               "把 Accent 收束到一个关键数字、节点或下划线。")
 
@@ -584,13 +599,6 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
         r.add("contrast", -1, f"muted 对背景对比 {muted_bg:.1f}:1 < 1.8:1，刻度/注释将不可读。",
               "把 muted 加深至 ≥3:1。")
     accent_bg = _hex_contrast(colors, "accent", "background")
-    # 主题化 Accent 预算：让 spec.theme.constraints.accent_max 真正进入
-    # critic 评分（之前硬编码 0.05/0.08 会与主题"自我声明的克制"脱节）。
-    theme_constraints = (spec.get("theme") or {}).get("constraints") or {}
-    try:
-        theme_accent_max = float(theme_constraints.get("accent_max", 0.05))
-    except (TypeError, ValueError):
-        theme_accent_max = 0.05
     accent_ratio = float(render_page.get("accent_pixel_ratio", 0) or 0) if render_page else None
     if accent_ratio is not None and accent_ratio <= theme_accent_max and (accent_bg is None or accent_bg >= 3):
         r.add("contrast", +1, f"强调色像素 {accent_ratio:.1%} ≤ 主题上限 {theme_accent_max:.0%}，Accent 保持稀缺性。")

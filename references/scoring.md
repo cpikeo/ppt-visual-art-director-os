@@ -237,7 +237,8 @@ Manifest PASS 与上一轮逐位一致——新门槛没有把做好的东西判
    记录 `saliency_method`，CI 中固定依赖版本或强制回退算法。
 6. **阈值校准闭环**：所有阈值（0.28 漂移、0.08 Accent、1.25× 焦点尺度
    领先…）来自经验默认值。建议用一批人工标注的 deck（好/中/差三档）做
-   回归，校准各阈值与权重，并把标注样本放入仓库外的基准集。
+   回归，校准各阈值与权重，并把标注样本放入仓库外的基准集。标注规范、
+   反推阈值与相关性验证的完整方法见 `references/benchmark-calibration.md`。
 7. **报告版本可比性**：`critic_version` / `qa_version` 已随本次升级，
    跨版本分数不可直接比较。建议在 revision_log 中记录评分器版本，
    Release Manifest 已具备 `generated_at`，可再加 `qa_version` 字段。

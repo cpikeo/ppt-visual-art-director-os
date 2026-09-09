@@ -13,6 +13,7 @@ import math
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSITION, XL_MARKER_STYLE
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.text import PP_ALIGN
 
 from primitives import (
@@ -37,6 +38,8 @@ SHAPE_CHARTS = {
     "waterfall", "architecture", "bubble",
     # 编辑级图表：轨道 + 细线 + 直接标注，避免通用图表外观
     "ranked_bar", "progress_bar", "stacked_bar", "big_number_row",
+    # 迷你趋势：去轴的折线 + 端点，用于 small multiples（一页对比多组趋势）
+    "sparkline",
 }
 
 
@@ -134,11 +137,98 @@ def _label(shape, text, element, ctx, color, default_size=14):
 # --------------------------------------------------------------------------
 # 原生图表
 # --------------------------------------------------------------------------
+def _add_multi_series(slide, element: dict, ctx: RenderContext,
+                      kind: str, x, y, w, h) -> None:
+    """多序列原生图表（line/column/area）：categories + series[{name, values}]。
+
+    与「类型枚举」互补而非取代：同一个 line geometry，通过 series/highlight/
+    end_labels 组合出多序列趋势、末端直接标注等编辑式表达。每序列用系列色，
+    highlight 指定的序列升级为 accent + 加粗 + 末端圆点。"""
+    cn, latin = ctx.families(element)
+    primary, secondary, ink, muted = chart_colors(element, ctx)
+    eid = str(element.get("id", "chart"))
+    categories = list(element.get("categories") or [])
+    series_list = list(element.get("series") or [])
+    parsed = []
+    for s in series_list:
+        name = str(s.get("name", ""))
+        vals = s.get("values") or []
+        nums = []
+        for v in vals:
+            try:
+                n = float(v)
+                nums.append(n if math.isfinite(n) else 0.0)
+            except (TypeError, ValueError):
+                nums.append(0.0)
+                ctx.warn(f"chart '{eid}': 序列 '{name}' 含无法解析为数字的值，已按 0 计算")
+        parsed.append((name, nums))
+    if not parsed or not categories:
+        ctx.warn(f"chart '{eid}': 多序列图缺少 series 或 categories，已跳过")
+        return
+    n_cat = len(categories)
+    data = CategoryChartData()
+    data.categories = categories
+    for name, nums in parsed:
+        data.add_series(name, nums[:n_cat] + [0.0] * max(0, n_cat - len(nums)))
+    gf = slide.shapes.add_chart(
+        NATIVE_CHART_TYPES[kind], Emu(emu(x)), Emu(emu(y)), Emu(emu(w)), Emu(emu(h)), data)
+    gf.name = eid
+    chart = gf.chart
+    chart.has_legend = False
+    chart.has_title = False
+    try:
+        chart.value_axis.has_major_gridlines = False
+        chart.value_axis.format.line.fill.background()
+        chart.value_axis.tick_labels.font.size = Pt(8)
+        chart.value_axis.tick_labels.font.color.rgb = muted
+        chart.value_axis.tick_labels.font.name = latin
+        chart.category_axis.format.line.fill.background()
+        chart.category_axis.tick_labels.font.size = Pt(10)
+        chart.category_axis.tick_labels.font.color.rgb = ink
+        chart.category_axis.tick_labels.font.name = latin
+    except Exception:
+        pass
+    hl = _safe_index(element.get("highlight"), -1)
+    end_labels = bool(element.get("end_labels", True))
+    for i, series in enumerate(chart.series):
+        color = ctx.color("accent") if i == hl else ctx.series_color(i)
+        if kind in ("line", "trend", "single_trend_line"):
+            series.format.line.color.rgb = color
+            series.format.line.width = Pt(3.0 if i == hl else 1.75)
+            series.smooth = bool(element.get("smooth", False))
+            if i == hl or end_labels:
+                try:
+                    mk = series.points[-1].marker
+                    mk.style = XL_MARKER_STYLE.CIRCLE
+                    mk.size = 8 if i == hl else 6
+                    mk.format.fill.solid()
+                    mk.format.fill.fore_color.rgb = color
+                    mk.format.line.color.rgb = color
+                except Exception:
+                    pass
+        else:
+            series.format.fill.solid()
+            series.format.fill.fore_color.rgb = color
+            series.format.line.fill.background()
+    try:
+        chart.plots[0].gap_width = int(element.get("gap_width", 55))
+    except Exception:
+        pass
+
+
 def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
     x, y, w, h = ctx.bounds(element)
     kind = str(element.get("chart_kind") or element.get("kind", ""))
     cn, latin = ctx.families(element)
     primary, secondary, ink, muted = chart_colors(element, ctx)
+    eid = str(element.get("id", "chart"))
+
+    # 多序列：series[{name, values}] 存在时走多序列渲染（同一 geometry 的多序列表达）。
+    # 必须早于单序列的 rows 解析——多序列图没有 element["data"]，只有 series/categories。
+    series_list = element.get("series")
+    if isinstance(series_list, list) and series_list and isinstance(series_list[0], dict):
+        _add_multi_series(slide, element, ctx, kind, x, y, w, h)
+        return
 
     rows = _rows(element)
     if not rows:
@@ -153,7 +243,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
     gf = slide.shapes.add_chart(
         NATIVE_CHART_TYPES[kind], Emu(emu(x)), Emu(emu(y)),
         Emu(emu(w)), Emu(emu(h)), data)
-    gf.name = str(element.get("id", "chart"))
+    gf.name = eid
     chart = gf.chart
     chart.has_legend = False
     chart.has_title = False
@@ -254,6 +344,29 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                 # 多类构成会糊成同色块）；高亮点保持 accent 语义。
                 point.format.fill.fore_color.rgb = (
                     ctx.color("accent") if i == int(hl) else ctx.series_color(i))
+            # 环心 KPI：把「总数/结论」放进甜甜圈的洞（叠加可编辑文本框，
+            # 不破坏原生扇区的可编辑性）。这是高端 dashboard 的标志性动作：
+            # 洞不再空着，而是承担「这一图到底说了什么」的单一读数。
+            if kind in ("donut", "donut_composition"):
+                center_value = element.get("center_value")
+                center_label = element.get("center_label")
+                if center_value is not None or center_label:
+                    inner = min(w, h) * 0.46        # 洞可用直径（hole_size 默认 62%）
+                    cx, cy = x + w / 2, y + h / 2
+                    if center_value is not None:
+                        _textbox(slide, f"{eid}__center_value",
+                                 cx - inner / 2, cy - inner * 0.60,
+                                 inner, inner * 0.5,
+                                 str(center_value),
+                                 float(element.get("center_value_size", 30)),
+                                 ink, ctx, element, align=PP_ALIGN.CENTER, bold=True)
+                    if center_label:
+                        _textbox(slide, f"{eid}__center_label",
+                                 cx - inner / 2, cy + inner * 0.02,
+                                 inner, inner * 0.34,
+                                 str(center_label),
+                                 float(element.get("center_label_size", 12)),
+                                 muted, ctx, element, align=PP_ALIGN.CENTER)
     except Exception:
         pass
 
@@ -398,12 +511,22 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         return
 
     if kind == "waterfall":
+        # 小计段：row 带 subtotal/is_total/total 时，从零轴起画整段累计，
+        # 其余仍是浮动增减（starts=cum, ends=cum+value）。瀑布因此能表达
+        # 「明细 → 小计 → 明细」的桥接结构，而不是一列裸柱。
         cum = 0.0
-        starts, ends = [], []
+        starts, ends, is_total = [], [], []
         for r in rows:
-            starts.append(cum)
-            cum += r["value"]
-            ends.append(cum)
+            total = bool(r.get("subtotal") or r.get("is_total") or r.get("total"))
+            if total:
+                starts.append(0.0)
+                ends.append(cum)
+                is_total.append(True)
+            else:
+                starts.append(cum)
+                cum += r["value"]
+                ends.append(cum)
+                is_total.append(False)
         lo = min(0.0, *starts, *ends)
         hi = max(0.0, *starts, *ends)
         span = max(hi - lo, 1.0)
@@ -415,9 +538,31 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         ax.name = f"{eid}__axis"
         ax.line.color.rgb = muted
         ax.line.width = Emu(emu(1))
-        bw = w / max(len(rows), 1) * 0.46
+        n = max(len(rows), 1)
+        bw = w / n * 0.46
+        # 段间桥接虚线：把「上一段的末端」连到「下一段的起端」（浮动层级）。
+        # 不跨过小计段——小计从零轴起，本就无需桥接。
+        for i in range(len(rows) - 1):
+            if is_total[i] or is_total[i + 1]:
+                continue
+            lvl = ends[i]  # == starts[i+1]
+            ry = y + h * 0.82 - (lvl - lo) / span * plot_h
+            x0 = x + w * (i + 0.5) / n + bw / 2
+            x1 = x + w * (i + 1.5) / n - bw / 2
+            if x1 <= x0:
+                continue
+            conn = slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT, Emu(emu(x0)), Emu(emu(ry)),
+                Emu(emu(x1)), Emu(emu(ry)))
+            conn.name = f"{eid}__conn_{i}"
+            conn.line.color.rgb = muted
+            conn.line.width = Emu(emu(1))
+            try:
+                conn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+            except Exception:
+                pass
         for i, r in enumerate(rows):
-            left = x + w * (i + 0.5) / max(len(rows), 1) - bw / 2
+            left = x + w * (i + 0.5) / n - bw / 2
             top = max(starts[i], ends[i])
             bot = min(starts[i], ends[i])
             ry = y + h * 0.82 - (top - lo) / span * plot_h
@@ -426,7 +571,10 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                 MSO_SHAPE.RECTANGLE, Emu(emu(left)), Emu(emu(ry)), Emu(emu(bw)), Emu(emu(rh)))
             b.name = f"{eid}__bar_{i}"
             b.fill.solid()
-            b.fill.fore_color.rgb = primary if r["value"] >= 0 else secondary
+            if is_total[i]:
+                b.fill.fore_color.rgb = ctx.color("accent")   # 小计用强调色
+            else:
+                b.fill.fore_color.rgb = primary if r["value"] >= 0 else secondary
             b.line.fill.background()
             lb = slide.shapes.add_textbox(
                 Emu(emu(left - bw * 0.35)), Emu(emu(y + h * 0.82 + 10)),
@@ -435,7 +583,8 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             p = lb.text_frame.paragraphs[0]
             p.text = r["label"]
             p.alignment = PP_ALIGN.CENTER
-            set_para_font(p, latin, cn, 11 * 0.75, muted, False)
+            set_para_font(p, latin, cn, 11 * 0.75, ink if is_total[i] else muted,
+                          bool(is_total[i]))
         return
 
     if kind == "architecture":
@@ -476,6 +625,30 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         track_c, track_a = ctx.paint("track")
         hairline_c, hairline_a = ctx.paint("hairline")
         hl = _safe_index(element.get("highlight"), -1)
+        # 目标线：在已知刻度（span/maxv）上画一条竖向参考线，标注目标位置。
+        # 这是「证据叙事」的可视化语言——让「现在在哪」与「要到哪」可一眼对比。
+        target = element.get("target")
+        if target is not None:
+            try:
+                tv = float(target)
+                tx = bar_x + span * max(0.0, min(1.0, tv / maxv))
+                tl = slide.shapes.add_connector(
+                    MSO_CONNECTOR.STRAIGHT, Emu(emu(tx)), Emu(emu(y + 4)),
+                    Emu(emu(tx)), Emu(emu(y + h - 4)))
+                tl.name = f"{eid}__target"
+                tl.line.color.rgb = ctx.color("accent")
+                tl.line.width = Emu(emu(1))
+                try:
+                    tl.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+                except Exception:
+                    pass
+                tlabel = element.get("target_label")
+                if tlabel:
+                    _textbox(slide, f"{eid}__target_label", tx + 6, y - 2,
+                             value_w + 40, 20, str(tlabel), 11,
+                             ctx.color("accent"), ctx, element, align=PP_ALIGN.LEFT)
+            except (TypeError, ValueError):
+                pass
         for i, r in enumerate(data):
             cy = y + row_h * (i + 0.5)
             track = slide.shapes.add_shape(
@@ -647,6 +820,58 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             d.fill.fore_color.rgb = fill_rgb
             d.line.fill.background()
             _label(d, r["label"], element, ctx, ctx.auto_text_for(fill_rgb), 11)
+        return
+
+    if kind == "sparkline":
+        # 迷你趋势：去轴折线 + 端点圆点，用于 small multiples（一页多组趋势）。
+        # 无轴、无网格、无刻度——只保留「形状」本身，读数交给相邻的直接标注。
+        vals = [r["value"] for r in rows]
+        n = len(vals)
+        if n < 2:
+            ctx.warn(f"chart '{element.get('id')}': sparkline 至少需要 2 个数据点")
+            return
+        lo = min(vals)
+        hi = max(vals)
+        span = max(hi - lo, 1e-6)
+        pad = float(element.get("pad", 4))
+        lw = float(element.get("line_width", 2))
+        color = ctx.color(element.get("color")) or primary
+        px = [x + pad + (w - 2 * pad) * i / (n - 1) for i in range(n)]
+        py = [y + h - pad - (vals[i] - lo) / span * (h - 2 * pad) for i in range(n)]
+        base = element.get("baseline")
+        if base is not None:
+            try:
+                by = y + h - pad - (float(base) - lo) / span * (h - 2 * pad)
+                bl = slide.shapes.add_connector(
+                    MSO_CONNECTOR.STRAIGHT, Emu(emu(x + pad)), Emu(emu(by)),
+                    Emu(emu(x + w - pad)), Emu(emu(by)))
+                bl.name = f"{eid}__base"
+                bl.line.color.rgb = muted
+                bl.line.width = Emu(emu(1))
+            except (TypeError, ValueError):
+                pass
+        for i in range(n - 1):
+            c = slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT, Emu(emu(px[i])), Emu(emu(py[i])),
+                Emu(emu(px[i + 1])), Emu(emu(py[i + 1])))
+            c.name = f"{eid}__seg_{i}"
+            c.line.color.rgb = color
+            c.line.width = Emu(emu(lw))
+        # 端点圆点：强调「起点→终点」的变化量
+        for i in (0, n - 1):
+            d = slide.shapes.add_shape(
+                MSO_SHAPE.OVAL, Emu(emu(px[i] - 3)), Emu(emu(py[i] - 3)),
+                Emu(emu(6)), Emu(emu(6)))
+            d.name = f"{eid}__dot_{i}"
+            d.fill.solid()
+            d.fill.fore_color.rgb = ctx.color("accent") if i == n - 1 else color
+            d.line.fill.background()
+        if element.get("show_last", True):
+            _textbox(slide, f"{eid}__last", px[-1] + 6, py[-1] - 12,
+                     float(element.get("last_width", 80)), 20,
+                     _display(rows[-1], element),
+                     float(element.get("last_size", 13)), ink, ctx, element,
+                     align=PP_ALIGN.LEFT, bold=True)
         return
 
 

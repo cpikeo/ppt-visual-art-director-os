@@ -104,19 +104,75 @@ ROUTES: dict[str, dict] = {
 DEFAULT_ROUTE = ROUTES["business"]
 
 # 设计方向 → 视觉推导（材质 / 光线 / 图表风格 / 背景策略）。只列可执行差异，不做形容词堆叠。
+# theme_seed：该方向的「成品种子色板 + 字体」。种子不是模板——spec.theme 拿到种子后仍由
+# primitives.derive_tokens 规则展开出完整色阶（panel/hairline/ramp/series…），调用方也仍可
+# 覆盖任意一项。这里只解决「选了方向却还要自己手挑 hex」的空白，把方向落到一组调好的锚点色。
 DIRECTION_PRESETS: dict[str, dict] = {
-    "quiet_minimal": dict(background="solid_world", material="matte paper",
-                          light="flat even ambient", chart="hairline + direct label",
-                          motion="still", asym=False),
-    "editorial_brand": dict(background="atmospheric", material="paper + ink wash",
-                            light="single soft upper-left", chart="annotation field",
-                            motion="reveal", asym=True),
-    "product_stage": dict(background="dark_luminous", material="glass + metal",
-                          light="one key light", chart="minimal kpi",
-                          motion="reveal", asym=False),
-    "evidence_first": dict(background="solid_world", material="neutral surface",
-                           light="flat", chart="shared baseline + delta",
-                           motion="still", asym=False),
+    "quiet_minimal": dict(
+        background="solid_world", material="matte paper",
+        light="flat even ambient", chart="hairline + direct label",
+        motion="still", asym=False,
+        theme_seed=dict(
+            colors={"background": "#F5F4EF", "surface": "#FBFAF6",
+                    "primary": "#26251F", "secondary": "#6E6A5E",
+                    "accent": "#B3422A", "ink": "#1B1A16", "muted": "#8A857A"},
+            fonts={"cn": "PingFang SC", "latin": "Helvetica Neue",
+                   "display": "Helvetica Neue"},
+            text_default="ink",
+            chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
+            constraints={"accent_max": 0.05, "max_colors": 5, "min_whitespace": 0.35},
+            color_intent=["hierarchy", "emotion", "brand"],
+        )),
+    "editorial_brand": dict(
+        background="atmospheric", material="paper + ink wash",
+        light="single soft upper-left", chart="annotation field",
+        motion="reveal", asym=True,
+        theme_seed=dict(
+            colors={"background": "#FAF7F0", "surface": "#F4EFE6",
+                    "primary": "#2B241B", "secondary": "#9A8F7C",
+                    # 信号色用编辑红（oxblood）：与棕/沙色相区分，承担「唯一重点」；
+                    # 金属金降为 premium，仅供克制的符号性点缀（不参与强调判定）。
+                    "accent": "#8E2F28", "premium": "#A97E2F",
+                    "ink": "#191510", "muted": "#7C7468"},
+            fonts={"cn": "Songti SC", "latin": "Georgia", "display": "Georgia"},
+            text_default="ink",
+            chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
+            constraints={"accent_max": 0.04, "max_colors": 5, "min_whitespace": 0.40},
+            color_intent=["brand", "emotion", "hierarchy"],
+        )),
+    "product_stage": dict(
+        background="dark_luminous", material="glass + metal",
+        light="one key light", chart="minimal kpi",
+        motion="reveal", asym=False,
+        theme_seed=dict(
+            colors={"background": "#0B0B0F", "surface": "#15151A",
+                    "primary": "#E4E4EA", "secondary": "#3A3A42",
+                    "accent": "#3B82F6", "ink": "#F5F5F7", "muted": "#8E8E96"},
+            fonts={"cn": "PingFang SC", "latin": "Helvetica Neue",
+                   "display": "Helvetica Neue"},
+            text_default="ink",
+            chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
+            constraints={"accent_max": 0.05, "max_colors": 5, "min_whitespace": 0.40},
+            color_intent=["emotion", "brand", "hierarchy"],
+        )),
+    "evidence_first": dict(
+        background="solid_world", material="neutral surface",
+        light="flat", chart="shared baseline + delta",
+        motion="still", asym=False,
+        theme_seed=dict(
+            # 数据智能：纯中性结构（近黑墨 + 中性灰）+ 单一蓝信号。蓝是唯一的色相，
+            # 结构色保持无彩度，让「蓝色」真正成为唯一重点信号（palette_discipline
+            # 的 accent 角距离门禁因此通过，而非靠同族深浅堆出伪强调）。
+            colors={"background": "#FFFFFF", "surface": "#F4F5F6",
+                    "primary": "#1C1C1C", "secondary": "#5A5A5A",
+                    "accent": "#2563EB", "ink": "#101010", "muted": "#6E6E6E"},
+            fonts={"cn": "PingFang SC", "latin": "Helvetica Neue",
+                   "display": "Helvetica Neue"},
+            text_default="ink",
+            chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
+            constraints={"accent_max": 0.05, "max_colors": 5, "min_whitespace": 0.30},
+            color_intent=["hierarchy", "brand", "emotion"],
+        )),
 }
 
 ADVANCED_TRIGGERS = ("发布会", "品牌", "年报", "旗舰", "形象", "高端", "launch", "brand",
@@ -189,6 +245,9 @@ def plan_page(content_type: str, design_direction: str = "editorial_brand",
             "motion": d["motion"],
             "composition_grammar": "soft_asymmetry" if d["asym"] else "evidence_field",
         },
+        # 该方向的成品种子色板/字体：直接落进 spec.theme，derive_tokens 据此展开完整色阶。
+        # 种子可被调用方覆盖；它是「起点的锚点」，不是「终点的模板」。
+        "theme_seed": d.get("theme_seed", {}),
         "focus": "statement",     # 焦点恒为 Statement 级结论（≥ STATEMENT_SIZE 且领先 1.25×）
     }
 
@@ -284,10 +343,12 @@ def _plan_deck(brief: dict) -> dict:
     # 哪些页面值得付渲染成本：首尾页 + 需要画心的页（图表与遮挡由 QA 从 spec 兜底挑选）
     pixel_ids = sorted({p["id"] for p in pages if p["needs_pixel_evidence"]}
                        | ({pages[0]["id"], pages[-1]["id"]} if pages else set()))
+    seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["editorial_brand"]).get("theme_seed", {})
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
         "design_direction": direction,
+        "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可覆盖）
         "pages": pages,
         "assets": assets,
         "verification": {

@@ -382,9 +382,15 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
 
         texts = [e for e in elems if e.get("type") == "text"]
         reading = [t for t in texts if str(t.get("role", "")) not in gates["CAPTION_ROLES"]]
-        media = [e for e in elems
-                 if e.get("type") in ("chart", "native_chart", "image")
-                 and not _bg_exempt(e, cw, ch)]
+        _raw_media = [e for e in elems
+                      if e.get("type") in ("chart", "native_chart", "image")
+                      and not _bg_exempt(e, cw, ch)]
+        # small multiples：一组 sparkline 是「一个关系」的降噪呈现，只占一个媒体席位。
+        media = [e for e in _raw_media
+                 if str(e.get("chart_kind") or e.get("kind", "")) != "sparkline"]
+        if any(str(e.get("chart_kind") or e.get("kind", "")) == "sparkline"
+               for e in _raw_media):
+            media.append({"_kind": "sparkline_group"})
 
         insight = field("insight")
         if not (isinstance(insight, str) and insight.strip()):
@@ -554,6 +560,39 @@ def _hls(hexv) -> tuple[float, float, float] | None:
     return h * 360.0, l, sa
 
 
+# ---------------------------------------------------------------------------
+# 标题语义检测（title_semantics）：拦截「字段名当标题」
+# 设计哲学要求「标题写洞察，不写'市场分析''项目进展'等字段名」；但这是唯一一条
+# 至今没有确定性检查拦截的哲学。字段名标题 = 短名词短语 + 字段名后缀、且不含
+# 任何判断动词/比较词；命中时给 hint（不扣分，与预检同立场：提前告诉你会被 Art
+# Critic 判「意图不清」，而不是替你重写）。
+# ---------------------------------------------------------------------------
+FIELD_NAME_SUFFIXES = (
+    "分析", "概览", "总览", "概况", "现状", "情况", "说明", "简介", "介绍",
+    "数据", "明细", "清单", "列表", "报告", "总结", "回顾", "展望", "规划",
+    "目标", "指标", "结构", "对比", "趋势", "格局", "分布", "排名", "排行",
+    "图谱", "框架", "模型", "流程", "历程", "沿革", "全景", "全貌", "画像",
+)
+# 判断词：出现任一，说明这行字已经是一个可复述的结论，不再是字段名
+_INSIGHT_VERBS = (
+    "是", "为", "达", "超", "涨", "降", "增", "减", "领先", "落后", "占比",
+    "贡献", "驱动", "来自", "源于", "高于", "低于", "第一", "唯一", "突破",
+    "收窄", "扩大", "转", "现", "成", "应", "需", "将", "已", "最", "更",
+)
+
+
+def _looks_like_field_name(text: str) -> bool:
+    """判定一段标题/insight 是否退化成「字段名」。只做保守判定：宁漏勿错。"""
+    t = (text or "").strip()
+    if not t or len(t) > 8:            # 字段名很短；长句必然是结论
+        return False
+    if not t.endswith(FIELD_NAME_SUFFIXES):
+        return False
+    if any(v in t for v in _INSIGHT_VERBS):
+        return False                   # 含判断词 → 已是结论
+    return True
+
+
 def _hue_gap(a, b) -> float | None:
     if not a or not b:
         return None
@@ -649,6 +688,12 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
       font_families_max   : 每页字体家族引用上限（默认 2，hint）
       min_font_size       : 注释/来源/标签类文字最小字号（默认 10，warn）
       focus_scale         : 焦点文字应获得页内最大字号（默认 True，hint）
+      require_provenance  : 数值图表必须声明来源/单位/期间（默认 False=warn，True=error）
+
+    事实/口径治理（本版本新增，业务级）：
+      data_provenance  : 数值图表缺 来源/单位/期间 声明 → warn（require_provenance=True 时 error）
+      metric_consistency: 同一 metric（metric/series_name 键）跨页单位/期间/口径不一致 → error/warn/hint
+      title_semantics  : insight 退化成「字段名标题」→ hint（提示改写为可复述结论）
 
     行长（typography）不走 rules：阈值与审美同源，读自 art_critic 的
     LINE_MEASURE_CJK_MAX / LINE_MEASURE_LATIN_MAX / LINE_MEASURE_FAIL_FACTOR，
@@ -690,6 +735,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     # 可读性底线：注释/来源/标签类文字的最小字号（设计单位 px）
     min_font_size = float(rules.get("min_font_size", 10))
     focus_scale = bool(rules.get("focus_scale", True))
+    require_provenance = bool(rules.get("require_provenance", False))
 
     canvas = spec.get("canvas") or {}
     cw = float(canvas.get("width", DEFAULT_WIDTH))
@@ -725,9 +771,18 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     accent_area = 0.0
     deck_hues: set[int] = set()
     chart_styles: dict[str, dict] = {}
+    chart_meta: list[dict] = []   # 事实/口径治理：收集每张数值图表的来源/单位/期间/口径
     for si, s in enumerate(slides):
         sid = s.get("id", f"slide_{si}")
         _check_page_contract(s, sid, add, cw, ch)
+        # 标题语义：insight 若是字段名，提示改写为可复述结论（与 Art Critic 意图同源）
+        _intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
+        _insight = _intent.get("insight") or s.get("insight")
+        if isinstance(_insight, str) and _looks_like_field_name(_insight):
+            add("title_semantics", sid, "hint",
+                f"insight「{_insight}」读起来是字段名而非洞察；标题应写可复述的"
+                f"结论（对象 + 变化/差异 + 含义），例如把「市场分析」写成「市场已从"
+                f"规模驱动转向效率驱动」")
         chart_count = 0
         slide_accent_area = 0.0
         page_colors: set[str] = set()
@@ -879,12 +934,39 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 kind = str(e.get("chart_kind") or e.get("kind", ""))
                 data = e.get("data") or []
                 n = len(data) if isinstance(data, list) else 0
+                # 多序列：series[{name, values}] + categories。类别数 = len(categories)，
+                # highlight 语义是「序列索引」而非「数据行索引」；此时不再要求 data。
+                series_list = e.get("series")
+                multi = (isinstance(series_list, list) and bool(series_list)
+                         and isinstance(series_list[0], dict))
+                categories = e.get("categories") or []
+                n_cat = len(categories) if isinstance(categories, list) else 0
+                n_series = len(series_list) if multi else 0
                 limit = CHART_LIMITS.get(kind)
-                if limit is not None and n > limit:
+                if limit is not None and (n_cat if multi else n) > limit:
                     add("chart_capacity", eid, "warn",
-                        f"{kind} 类别 {n} > 上限 {limit}（OS §19.4）")
+                        f"{kind} 类别 {(n_cat if multi else n)} > 上限 {limit}（OS §19.4）")
                 if kind in NUMERIC_CHART_KINDS:
-                    if not isinstance(data, list) or not data:
+                    if multi:
+                        if n_cat == 0 or n_series == 0:
+                            add("data_integrity", eid, "error",
+                                "多序列图表缺少 categories 或 series")
+                        else:
+                            for si, s in enumerate(series_list):
+                                vals = s.get("values") if isinstance(s, dict) else None
+                                if not isinstance(vals, list) or not vals:
+                                    add("data_integrity", f"{eid}[s{si}]", "error",
+                                        f"series[{si}] 缺少 values")
+                                    continue
+                                for vi, v in enumerate(vals):
+                                    try:
+                                        value = float(v)
+                                        if not math.isfinite(value):
+                                            raise ValueError
+                                    except (TypeError, ValueError):
+                                        add("data_integrity", f"{eid}[s{si}][{vi}]", "error",
+                                            f"series[{si}] value={v!r} 不是有限数字")
+                    elif not isinstance(data, list) or not data:
                         add("data_integrity", eid, "error",
                             "数值图表缺少 data，无法验证或渲染")
                     else:
@@ -920,7 +1002,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                             except (TypeError, ValueError):
                                 add("data_integrity", eid, "error",
                                     "progress_bar 的 max 必须是正数")
-                if kind in ("donut", "donut_composition", "pie") and isinstance(data, list):
+                if not multi and kind in ("donut", "donut_composition", "pie") and isinstance(data, list):
                     try:
                         if sum(max(float(r.get("value", 0)), 0) for r in data if isinstance(r, dict)) <= 0:
                             add("data_integrity", eid, "error",
@@ -930,9 +1012,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 if "highlight" in e:
                     try:
                         hi = int(e.get("highlight"))
-                        if hi < 0 or hi >= n:
+                        # 多序列：highlight 是序列索引；单序列：数据行索引
+                        upper = n_series if multi else n
+                        if hi < 0 or hi >= upper:
                             add("chart_highlight", eid, "warn",
-                                f"highlight={hi} 超出数据范围 0–{max(n - 1, 0)}")
+                                f"highlight={hi} 超出数据范围 0–{max(upper - 1, 0)}")
                     except (TypeError, ValueError):
                         add("chart_highlight", eid, "warn",
                             "highlight 必须是整数索引")
@@ -985,6 +1069,35 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                     pass
                 if "legend" in e:
                     rec["legend"].add(bool(e.get("legend")))
+                # ---- 事实/口径治理（业务级）----
+                # 来源不可省略、单位/期间/比较口径必须分开声明：这是数据叙事的
+                # 底线（SKILL.md 硬边界）。缺省 warn（可经 rules 升 error），但一旦
+                # 声明了就必须跨页一致——口径打架是「会误导决策」的业务错误，记 error。
+                if kind in NUMERIC_CHART_KINDS:
+                    provenance = {}
+                    for meta_key, label in (("source", "来源"), ("unit", "单位"),
+                                            ("period", "期间"), ("basis", "比较口径"),
+                                            ("data_status", "数据状态")):
+                        v = e.get(meta_key)
+                        provenance[meta_key] = str(v).strip() if v not in (None, "") else None
+                    missing = [label for meta_key, label in
+                               (("source", "来源"), ("unit", "单位"), ("period", "期间"))
+                               if provenance[meta_key] is None]
+                    if missing:
+                        add("data_provenance", eid,
+                            "error" if require_provenance else "warn",
+                            f"数值图表缺少 {'/'.join(missing)} 声明；来源不可省略、"
+                            f"单位与期间必须显式（防止跨页口径漂移）")
+                    # 指标键：metric / series_name 是同一指标跨页对齐的锚
+                    metric_key = (e.get("metric") or e.get("series_name"))
+                    if isinstance(metric_key, str) and metric_key.strip():
+                        chart_meta.append({
+                            "id": eid, "slide": sid,
+                            "metric": metric_key.strip(),
+                            "unit": provenance["unit"],
+                            "period": provenance["period"],
+                            "basis": provenance["basis"],
+                        })
 
         # ---- 元素重叠（text / chart / image 之间，形状不参与）----
         # 文本框 ≠ 墨迹：text 参与重叠时按 text_ink_ratio / text_ink_v
@@ -1178,6 +1291,31 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         if len(rec["legend"]) > 1:
             add("chart_style_drift", kind, "hint",
                 f"{kind} 的图例开关在不同页不一致（{sorted(rec['legend'])}）：统一为全开或全关")
+
+    # ---- 事实/口径跨页一致性（业务级，deck 级）：同一指标的单位/期间/口径必须全 deck 一致 ----
+    # 单页各自合规、跨页口径打架，是金融/董事会材料最隐蔽也最致命的错误：
+    # 「营收 Q1 用万元、Q3 用亿元」「2026 与 FY26 混用」这类，确定性检查可以抓。
+    by_metric: dict[str, dict] = {}
+    for m in chart_meta:
+        by_metric.setdefault(m["metric"], {}).setdefault("units", set()).add(m["unit"])
+        by_metric.setdefault(m["metric"], {}).setdefault("periods", set()).add(m["period"])
+        by_metric.setdefault(m["metric"], {}).setdefault("basis", set()).add(m["basis"])
+        by_metric[m["metric"]].setdefault("slides", []).append(m["slide"])
+    for metric, rec in sorted(by_metric.items()):
+        units = {u for u in rec["units"] if u}
+        periods = {p for p in rec["periods"] if p}
+        basis = {b for b in rec["basis"] if b}
+        if len(units) > 1:
+            add("metric_consistency", f"metric:{metric}", "error",
+                f"指标「{metric}」跨页单位不一致 {sorted(units)}："
+                f"同一指标必须同一单位，否则读成两套数字")
+        if len(periods) > 1:
+            add("metric_consistency", f"metric:{metric}", "warn",
+                f"指标「{metric}」跨页期间口径不一致 {sorted(periods)}："
+                f"确认是否确实要对比不同期间（若是，应在 basis 中声明比较口径）")
+        if len(basis) > 1:
+            add("metric_consistency", f"metric:{metric}", "hint",
+                f"指标「{metric}」跨页比较口径不一致 {sorted(basis)}，建议统一或显式声明差异")
 
     # ---- 可读性底线：弱化文字（muted / secondary）对背景的对比度 ----
     # 刻度、注释、来源通常由 muted 承担；对比不足时整页"隐性不可读"，
