@@ -826,3 +826,301 @@ def main(argv):
 if __name__ == "__main__":
     import sys
     raise SystemExit(main(sys.argv))
+
+
+# ════════════════════════════════════════════════════════════════════
+# V3.0 · Visual Calibration & Judgment Layer（参考空间校准闭环）
+#
+# 证据来源：memory/calibration_space.json —— 10 套世界级设计板实测
+# （measure_references.py 切页测量：面积律 / 色相族 / 饱和 / 明度域 /
+#   负空间 / 图片占比 / 排印密度）。本层只消费「带与律」，不复制任何
+# 布局、色板、组件——参考空间用来校准判断，不是模板。
+# 与既有层关系：Pre-Critic 预测失败码，本层预测「是否达到参考空间水准」，
+# 两者都不改 Guard/Critic 的判定标准。
+# ════════════════════════════════════════════════════════════════════
+CALIBRATION_STORE = Path(__file__).resolve().parent.parent / "memory" / "calibration_space.json"
+_CAL_CACHE: dict | None = None
+
+
+def _load_calibration() -> dict:
+    global _CAL_CACHE
+    if _CAL_CACHE is None:
+        try:
+            _CAL_CACHE = json.loads(CALIBRATION_STORE.read_text(encoding="utf-8"))
+        except Exception:
+            _CAL_CACHE = {"laws": {}, "families": {}, "global": {}}
+    return _CAL_CACHE
+
+
+def calibration_laws(family: str | None = None) -> dict:
+    """全局律 + 可选家族带。家族带是证据（p10/p50/p90），不是目标模板。"""
+    cal = _load_calibration()
+    laws = dict(cal.get("laws") or {})
+    if family and (cal.get("families") or {}).get(family):
+        laws["family_bands"] = cal["families"][family]
+    laws["global_bands"] = cal.get("global") or {}
+    return laws
+
+
+# ── Adaptive Color Intelligence Engine ───────────────────────────────
+# 方向 = 行为 + 材质/光性语言 + 种子骨架；种子只是兜底骨架，
+# brand_colors 永远优先，visual_world 的材质判断永远优先于方向预设。
+COLOR_RATIO_TARGETS = {"foundation": 0.70, "supporting": 0.20,
+                       "information": 0.08, "accent": 0.02}
+COLOR_FORBIDDEN = ("high-saturation gradients", "SaaS blue-purple",
+                   "colorful card walls", "cheap tech glow", "rainbow palette")
+COLOR_DIRECTIONS = {
+    "luxury_editorial": dict(regime="light", sat="quiet", motion=("spatial",),
+        texture=("luxury", "architecture"),
+        material="warm ivory paper, travertine and bronze, soft window light",
+        seed={"foundation": "#F2EDE4", "supporting": "#9A8C74", "information": "#403B32", "accent": "#9C5A2E"}),
+    "song_elegance": dict(regime="light", sat="quiet", motion=("natural",),
+        texture=("eastern",),
+        material="rice paper, ink stone, tea-green silk, diffuse north light",
+        seed={"foundation": "#F3F1EA", "supporting": "#8B8D84", "information": "#22241F", "accent": "#5E7562"}),
+    "zen_minimal": dict(regime="light", sat="quiet", motion=("natural",),
+        texture=("eastern",),
+        material="handmade paper, mist, still water, shadowless light",
+        seed={"foundation": "#F5F4F1", "supporting": "#9A9A96", "information": "#1E1E1C", "accent": "#6E6E6A"}),
+    "nordic_quiet": dict(regime="light", sat="quiet", motion=("spatial",),
+        texture=("architecture",),
+        material="lime plaster, pale oak, ceramic, low winter sun",
+        seed={"foundation": "#EFECE6", "supporting": "#A79E90", "information": "#33302B", "accent": "#8A7A5F"}),
+    "quiet_luxury": dict(regime="light", sat="quiet", motion=("spatial",),
+        texture=("luxury",),
+        material="champagne metal hairline, taupe stone, sea light through sheer curtain",
+        seed={"foundation": "#F1EDE6", "supporting": "#A99878", "information": "#37322A", "accent": "#B08D4F"}),
+    "monochrome_noir": dict(regime="dark", sat="quiet", motion=("spatial",),
+        texture=("architecture",),
+        material="black stone, single raking light shaft, graphite dust",
+        seed={"foundation": "#101010", "supporting": "#4A4A4A", "information": "#F2F2F0", "accent": "#8C8C8C"}),
+    "cinematic_narrative": dict(regime="dark", sat="warm", motion=("spatial", "natural"),
+        texture=("luxury", "architecture"),
+        material="amber dusk, coastal air, brass light, deep shadow",
+        seed={"foundation": "#141210", "supporting": "#5C4A33", "information": "#EFE3CE", "accent": "#C08A3E"}),
+    "nature_luxury": dict(regime="dark", sat="quiet", motion=("natural", "spatial"),
+        texture=("organic", "architecture"),
+        material="deep forest green, mist over water, wet stone, cold diffuse light",
+        seed={"foundation": "#16211C", "supporting": "#4E6157", "information": "#EDEFE9", "accent": "#6FA08C"}),
+    "organic_systems": dict(regime="light", sat="quiet", motion=("natural",),
+        texture=("organic",),
+        material="oat fiber, leaf vein macro, sage clay, soft top light",
+        seed={"foundation": "#EFEBE2", "supporting": "#A8A394", "information": "#3B3A33", "accent": "#7C8B6F"}),
+    "precision_tech": dict(regime="mixed", sat="quiet", motion=("tech",),
+        texture=("technology",),
+        material="optical glass, titanium edge, controlled blue signal on graphite",
+        seed={"foundation": "#0D0F12", "supporting": "#3A4148", "information": "#F2F4F6", "accent": "#2E7BD6"}),
+    "apple_future": dict(regime="light", sat="quiet", motion=("tech", "spatial"),
+        texture=("technology",),
+        material="titanium micro-brush, mist white stage, single product light",
+        seed={"foundation": "#F6F6F7", "supporting": "#9BA0A6", "information": "#1D1D1F", "accent": "#0071E3"}),
+    "data_intelligence": dict(regime="dark", sat="quiet", motion=("tech",),
+        texture=("technology",),
+        material="dark graphite evidence field, steel gray structure, one controlled accent",
+        seed={"foundation": "#141619", "supporting": "#454B52", "information": "#EDEFF1", "accent": "#3E8E7E"}),
+    "editorial_intelligence": dict(regime="light", sat="quiet", motion=("spatial",),
+        texture=("eastern",),
+        material="newsprint white, ink black, one signal red, hard magazine grid",
+        seed={"foundation": "#F7F6F3", "supporting": "#8E8E8C", "information": "#141414", "accent": "#C8102E"}),
+}
+
+
+_DIRECTION_ALIAS = {"quiet_minimal": "zen_minimal",
+                    "editorial_brand": "luxury_editorial",
+                    "product_stage": "apple_future",
+                    "evidence_first": "data_intelligence"}
+
+
+def color_plan(direction, brief: dict | None = None) -> dict:
+    """自适应色彩智能：内容 × DNA × 情绪 → 比例目标 + 约束 + 种子骨架。
+
+    派生顺序（判断，不是模板）：brand_colors > visual_world 材质/光性 >
+    方向种子骨架。返回的约束来自参考空间实测律（色相族/饱和/明度域）。
+    """
+    brief = brief or {}
+    fam = str(brief.get("color_family") or "")
+    if not fam:
+        raw = direction if isinstance(direction, str) else str(
+            (direction or {}).get("family") or (direction or {}).get("design_direction") or "")
+        fam = _DIRECTION_ALIAS.get(raw, raw)
+    entry = COLOR_DIRECTIONS.get(fam) or COLOR_DIRECTIONS["quiet_luxury"]
+    fam_key = fam if fam in COLOR_DIRECTIONS else "quiet_luxury"
+    brief = brief or {}
+    laws = calibration_laws(fam_key)
+    personality = ((laws.get("family_personality") or {}).get(fam_key) or {})
+    sat_cap = (laws.get("sat90") or {})
+    brief = brief or {}
+    brand = brief.get("brand_colors") or {}
+    seed = dict(entry["seed"])
+    seed_source = "family_seed"
+    if isinstance(brand, dict) and brand:
+        keys = ("foundation", "supporting", "information", "accent")
+        vals = [v for v in brand.values() if isinstance(v, str)]
+        for k, v in zip(keys, vals):
+            seed[k] = v
+        seed_source = "brand_colors"
+    return {
+        "family": fam_key,
+        "ratio_targets": dict(COLOR_RATIO_TARGETS),
+        "constraints": {
+            "hue_families_page_max": laws.get("hue_families_page_max", 1),
+            "sat90_max": sat_cap.get("warm_material_max", 0.65)
+            if (personality.get("sat_class") or entry["sat"]) == "warm"
+            else sat_cap.get("quiet_max", 0.35),
+            "accent_area_max": 0.05,
+            "brightness_regime": entry["regime"],
+            "brightness_band": (laws.get("brightness_regimes") or {}).get(entry["regime"]),
+        },
+        "seed_skeleton": seed,
+        "seed_source": seed_source,
+        "material_language": entry["material"],
+        "motion_keys": list(entry["motion"]),
+        "texture_keys": list(entry["texture"]),
+        "forbidden": list(COLOR_FORBIDDEN),
+        "derivation": "brand_colors > visual_world material/light > family seed skeleton; "
+                      "ratios follow measured area law (foundation c1 p50≈0.55, accent≤8%)",
+    }
+
+
+# ── Visual Calibration Score（静态，~1ms：生成即知是否达参考空间水准）──
+_CAL_WEIGHTS = {"layout": 0.25, "typography": 0.20, "color": 0.20,
+                "image": 0.15, "information": 0.20}
+
+
+def _hue_family_of_hex(hexstr: str) -> int | None:
+    m = re.fullmatch(r"#?([0-9a-fA-F]{6})", hexstr or "")
+    if not m:
+        return None
+    r, g, b = (int(m.group(1)[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    mx, mn = max(r, g, b), min(r, g, b)
+    if mx <= 0.15 or (mx - mn) / max(mx, 1e-6) < 0.10:
+        return None
+    d = mx - mn or 1e-6
+    if mx == r:
+        h = ((g - b) / d) % 6
+    elif mx == g:
+        h = (b - r) / d + 2
+    else:
+        h = (r - g) / d + 4
+    return int(h * 60 // 30)
+
+
+def _line_measure(text: str, lines: int) -> float:
+    cjk = sum(1 for ch in text if ord(ch) > 0x2E7F)
+    latin = len(text) - cjk
+    return (cjk + latin / 2.0) / max(1, lines)
+
+
+def visual_calibration_score(spec: dict, family: str | None = None) -> dict:
+    """五维静态校准分（layout/typography/color/image/information，各 0–5）。
+
+    对照参考空间实测律：密度声明兑现与相邻差、字阶驻点与行长、
+    色相族/色彩职责、媒体闸门一致性、信息合同完整性。零渲染零编译。
+    """
+    t0 = time.time()
+    laws = calibration_laws(family)
+    slides = spec.get("slides") or []
+    theme = spec.get("theme") or {}
+    colors = theme.get("colors") or {}
+    notes: list[str] = []
+    n = max(1, len(slides))
+
+    # layout：密度声明 vs 几何带；相邻同标签需真实几何差
+    ok, prev = 0, None
+    for s in slides:
+        occ = _content_occupancy(s.get("elements") or [], DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        band = DENSITY_BANDS.get(str((s.get("page_intent") or {}).get("density") or ""))
+        hit = bool(band) and band[0] <= occ <= band[1]
+        if hit:
+            ok += 1
+        else:
+            notes.append(f"layout: {(s.get('id') or '?')} 声明密度与几何占用不兑现")
+        if prev is not None and abs(occ - prev) < 0.10:
+            notes.append(f"layout: {(s.get('id') or '?')} 与上一页几何差 <0.10（节奏趋平风险）")
+        prev = occ
+    layout = 5.0 * ok / n - (0.5 if any("节奏" in x for x in notes) else 0.0)
+
+    # typography：驻点 / 每页级数 / deck 级数 / 行长
+    deck_sizes: set[float] = set()
+    ty_ok = 0
+    for s in slides:
+        sizes = [round(float(e.get("size")), 1) for e in s.get("elements") or []
+                 if e.get("type") == "text" and e.get("size") is not None]
+        deck_sizes.update(sizes)
+        off = [z for z in sizes if all(abs(z - r) > _LADDER_TOL for r in LADDER_RUNGS)]
+        page_ok = (len(set(sizes)) <= 4 and not off)
+        for e in s.get("elements") or []:
+            if e.get("type") != "text" or not e.get("text"):
+                continue
+            lines = int(e.get("max_lines") or 1)
+            if _line_measure(str(e["text"]), lines) > 38:
+                page_ok = False
+                notes.append(f"typography: {(e.get('id') or '?')} 行长 >38（拆句或收窄版心）")
+        if page_ok:
+            ty_ok += 1
+    off_deck = [z for z in deck_sizes if all(abs(z - r) > _LADDER_TOL for r in LADDER_RUNGS)]
+    typography = 5.0 * ty_ok / n
+    if len(deck_sizes) > 6 or off_deck:
+        typography -= 1.0
+        notes.append("typography: 全 deck 字阶 >6 级或存在离驻点字号")
+
+    # color：色相族 / 色彩职责声明 / accent 约束
+    fams = {f for v in colors.values() if isinstance(v, str)
+            for f in [_hue_family_of_hex(v)] if f is not None}
+    color = 5.0
+    page_max = int(laws.get("hue_families_page_max", 1)) + 1  # 主题级比页级宽一档
+    if len(fams) > max(2, page_max):
+        color -= 2.0
+        notes.append(f"color: 主题色相族 {len(fams)} > 参考空间律")
+    elif len(fams) > 2:
+        color -= 1.0
+    if not (theme.get("color_intent") or (spec.get("direction") or {}).get("color_intent")):
+        color -= 1.0
+        notes.append("color: 未声明 color_intent（brand/emotion/hierarchy 优先职责）")
+    if float((theme.get("constraints") or {}).get("accent_max", 0.05)) > 0.05:
+        color -= 1.0
+        notes.append("color: accent 面积约束 >5%")
+
+    # image：媒体闸门一致性（数据/表格/流程/结构页不得有图；有图须有功能/层资格）
+    im_ok, im_pages = 0, 0
+    for s in slides:
+        imgs = [e for e in s.get("elements") or [] if e.get("type") == "image"]
+        if not imgs:
+            continue
+        im_pages += 1
+        dec = media_decision(s)
+        good = dec.get("decision") not in ("none", None) or any(
+            str(e.get("layer")) == "background" for e in imgs)
+        if good and all(e.get("function") or e.get("layer") for e in imgs):
+            im_ok += 1
+        else:
+            notes.append(f"image: {(s.get('id') or '?')} 图片缺功能/层资格或所在家族不应出图")
+    image = 5.0 if not im_pages else 5.0 * im_ok / im_pages
+
+    # information：insight / focus / source_zone / 叙事行数
+    info_ok = 0
+    for s in slides:
+        intent = s.get("page_intent") or {}
+        lines = sum(int(e.get("max_lines") or 1) for e in s.get("elements") or []
+                    if e.get("type") == "text" and str(e.get("role") or "") not in
+                    {"source", "method", "annotation", "axis", "label", "data_label",
+                     "legend", "metadata"})
+        good = bool(intent.get("insight")) and bool(intent.get("focus")) \
+            and isinstance(s.get("source_zone"), dict) and lines <= 6
+        if good:
+            info_ok += 1
+        else:
+            notes.append(f"information: {(s.get('id') or '?')} 信息合同缺口"
+                         "（insight/focus/source_zone/行数）")
+    information = 5.0 * info_ok / n
+
+    dims = {k: round(max(0.0, min(5.0, v)), 1) for k, v in
+            (("layout", layout), ("typography", typography), ("color", color),
+             ("image", image), ("information", information))}
+    score = round(20.0 * sum(dims[k] * w for k, w in _CAL_WEIGHTS.items()), 1)
+    return {"score": score, "dims": dims, "notes": notes[:12],
+            "family": family, "laws_used": {
+                "hue_families_page_max": laws.get("hue_families_page_max"),
+                "area_ratio": laws.get("area_ratio"),
+                "photo_share": laws.get("photo_share")},
+            "elapsed_ms": round((time.time() - t0) * 1000, 2)}

@@ -71,6 +71,13 @@ KEY_PAGE_CAP = 6   # Level 2 最多测这么多页；再多与全量无异，失
 # 与 Fast/Advanced（预算控制：资产数/dpi/Critic 时机）正交，互不替代。
 # ════════════════════════════════════════════════════════════════════════
 EXECUTION_MODES = {
+    "express": {
+        "label": "Express · 快速链",
+        "qa_level": 0, "render": False, "preflight_gate": False, "critic": "off",
+        "aim": "一次通过生成验证：只测溢出/遮挡/可读/平衡与 error 级，零渲染零 Critic "
+               "零 Pre-Critic；Visual Calibration Score 给参考空间水准线",
+        "deliver": "PPTX + lite Guard + 校准分（亚秒级；方向收敛仍走 draft/review）",
+    },
     "sketch": {
         "label": "Sketch · 草图链",
         "qa_level": 1, "render": False, "preflight_gate": False, "critic": "off",
@@ -386,6 +393,37 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     if mode == "sketch":
         guard = {**guard, "checks": [c for c in guard.get("checks", [])
                                      if c.get("level") == "error"]}
+    # express 档（V3 快速链）：Guard 只看溢出/遮挡/可读/平衡类与 error 级，
+    # 编译后直接给 Visual Calibration Score——不为 1% 的提升付渲染与 Critic 成本。
+    if mode == "express":
+        lite_warn = {"overlap", "source_zone", "text_capacity", "min_font",
+                     "safety", "safe_zone", "overlay_opacity", "contrast"}
+        checks = [c for c in guard.get("checks", [])
+                  if c.get("level") == "error"
+                  or (c.get("level") == "warn" and str(c.get("code")) in lite_warn)]
+        guard = {**guard, "checks": checks}
+        compile_report = compile_deck(spec, output_path, checks=False,
+                                      guard_rules=guard_rules)
+        import design_intelligence as _di
+        cal = _di.visual_calibration_score(spec)
+        errs = sum(1 for c in checks if c.get("level") == "error")
+        warns = sum(1 for c in checks if c.get("level") == "warn")
+        score = round(max(0.0, cal["score"] - 6.0 * errs - 2.5 * warns), 1)
+        n_slides = len(spec.get("slides") or [])
+        return {
+            "score": score, "passed": False, "threshold": 90.0,
+            "status": "BLOCKED" if errs else "PREVIEW_ONLY",
+            "qa_level": 0, "mode": mode, "release_eligible": False,
+            "items": [], "guard": guard, "compile": compile_report,
+            "calibration": cal, "pre_critic": None,
+            "critic": {"ran": False, "reason": "express_deferred", "report": None},
+            "render": {"pages": 0,
+                       "coverage": {"rendered_pages": 0, "total_pages": n_slides}},
+            "performance": {"qa_level": 0, "slides": n_slides,
+                            "guard_ms": round((time.time() - t_guard) * 1000, 1),
+                            "render_ms": 0, "render_skipped": True,
+                            "calibration_ms": cal.get("elapsed_ms")},
+        }
     t_compile = time.time()
 
     # 2) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
@@ -943,7 +981,7 @@ def main(argv):
     import json
     if len(argv) < 3:
         print("usage: python qa.py <build_module.py> <output.pptx> "
-              "[--mode sketch|draft|review|release] [--critic auto|force|off] "
+              "[--mode express|sketch|draft|review|release] [--critic auto|force|off] "
               "[--no-normalize] [--no-render] [--fast] [--preflight] "
               "[--quick | --key-pages | --manifest | --level N] [--no-cache] "
               "[--raster auto|png|jpeg] [--json]\n"

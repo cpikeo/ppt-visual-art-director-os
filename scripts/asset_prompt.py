@@ -137,6 +137,99 @@ REQUIRED_SEGMENTS = ("subject", "color", "material", "lighting", "composition")
 # --------------------------------------------------------------------------
 # 内部工具
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# V3 · 提示词智能三层：动势（Motion）/ 微浮雕（Micro Texture）/ 空间融合（Fusion）
+# 图片不是静态素材：动势给视觉方向，微浮雕给近观质感，融合消灭「贴纸感」。
+# 全部为弱描述子句；微浮雕纪律：微弱、低对比、近距可感知，禁止明显纹理。
+# --------------------------------------------------------------------------
+MOTION_LAYERS: dict[str, tuple[str, ...]] = {
+    "spatial": (
+        "leading lines drawing the eye toward the negative-space anchor",
+        "architectural perspective receding to a single vanishing point",
+        "flowing composition with deliberate asymmetric balance",
+        "directional light raking across the frame from one side"),
+    "natural": (
+        "slow flowing water with silk-like motion blur",
+        "organic curves and wind movement through foliage",
+        "layered atmosphere with aerial depth and drifting mist",
+        "gentle natural gesture implying quiet movement"),
+    "tech": (
+        "dynamic light trails with restrained velocity",
+        "subtle energy flow along precision-machined edges",
+        "spatial depth through layered translucent glass planes"),
+}
+TEXTURE_LAYERS: dict[str, tuple[str, ...]] = {
+    "eastern": ("handmade paper fiber", "rice paper texture",
+                "subtle ink diffusion at the edges", "natural mineral pigment grain"),
+    "luxury": ("fine leather grain", "brushed metal micro texture",
+               "soft stone surface", "premium packaging emboss with low relief"),
+    "architecture": ("limestone micro texture", "board-formed concrete pore",
+                     "glass reflection with faint refraction"),
+    "technology": ("titanium micro brushing", "precision machining marks",
+                   "anodized surface sheen"),
+    "organic": ("leaf vein macro structure", "woven natural fiber",
+                "moss and lichen micro detail"),
+}
+TEXTURE_DISCIPLINE: tuple[str, ...] = (
+    "texture faint and low-contrast, perceivable only at close range",
+    "no obvious pattern, no grunge, no heavy grain")
+FUSION_LAYERS: tuple[str, ...] = (
+    "negative space reserved and aligned to the text-safe area",
+    "lighting direction consistent with the page light source",
+    "depth hierarchy: foreground subject, midground material, background atmosphere",
+    "image melts into the layout background, no sticker edges, no hard rectangle",
+    "foreground and background separated by gentle defocus")
+FAMILY_MOTION: dict[str, tuple[str, ...]] = {
+    "nature_luxury": ("natural", "spatial"), "nordic_quiet": ("spatial",),
+    "monochrome_noir": ("spatial",), "zen_minimal": ("natural",),
+    "luxury_editorial": ("spatial",), "precision_tech": ("tech",),
+    "organic_systems": ("natural",), "cinematic_narrative": ("spatial", "natural"),
+    "editorial_intelligence": ("spatial",), "quiet_luxury": ("spatial",),
+    "song_elegance": ("natural",), "apple_future": ("tech", "spatial"),
+    "data_intelligence": ("tech",),
+}
+FAMILY_TEXTURE: dict[str, tuple[str, ...]] = {
+    "nature_luxury": ("organic", "architecture"), "nordic_quiet": ("architecture",),
+    "monochrome_noir": ("architecture",), "zen_minimal": ("eastern",),
+    "luxury_editorial": ("luxury", "architecture"), "precision_tech": ("technology",),
+    "organic_systems": ("organic",), "cinematic_narrative": ("luxury", "architecture"),
+    "editorial_intelligence": ("eastern",), "quiet_luxury": ("luxury",),
+    "song_elegance": ("eastern",), "apple_future": ("technology",),
+    "data_intelligence": ("technology",),
+}
+
+
+def enhance_asset_card(card: dict, family: str | None = None,
+                       motion: list | tuple | None = None,
+                       texture: list | tuple | None = None,
+                       fusion: bool = True) -> dict:
+    """纯函数：为资产卡注入动势/微浮雕/融合三层（确定性、去重、限量）。
+
+    motion ≤3 句、texture ≤2 句（+纪律 2 句）、fusion ≤4 句——
+    提示词密度也是克制的一部分；调用方显式传入时永远赢。
+    """
+    out = dict(card)
+    fam = family or str(card.get("family") or card.get("direction_family") or "")
+    m_keys = FAMILY_MOTION.get(fam, ("spatial",))
+    t_keys = FAMILY_TEXTURE.get(fam, ("luxury",))
+    if motion is None:
+        pool: list[str] = []
+        for k in m_keys:
+            pool.extend(MOTION_LAYERS.get(k, ()))
+        motion = pool[:3]
+    if texture is None:
+        pool = []
+        for k in t_keys:
+            pool.extend(TEXTURE_LAYERS.get(k, ()))
+        texture = pool[:2]
+    out["motion"] = list(motion)
+    out["texture"] = list(texture) + list(TEXTURE_DISCIPLINE)
+    if fusion:
+        out["fusion"] = list(card.get("fusion") or FUSION_LAYERS[:4])
+    return out
+
+
 def _dedup(items, *, normalize_negative: bool = False):
     """保持顺序去重，忽略空白项与重复短语。
 
@@ -224,6 +317,10 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
             segments.append(f"overlaid with {layers['overlay']}")
         if layers.get("organic_shapes"):
             segments.append(f"{layers['organic_shapes']} organic shapes")
+
+    # --- 2.5 V3 三层：动势 / 微浮雕 / 空间融合（enhance_asset_card 注入）---
+    for key in ("motion", "texture", "fusion"):
+        segments.extend(_as_list(card.get(key)))
 
     # --- 3. OS 强制三段 --------------------------------------------------
     anchor = negative_space or page.get("negative_space_anchor") or "left"

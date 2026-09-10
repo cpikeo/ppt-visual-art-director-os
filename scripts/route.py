@@ -582,3 +582,30 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def one_pass_plan(brief: dict) -> dict:
+    """Fast Visual Intelligence Pipeline · Stage 1+2 一次调用固化（带决策缓存）。
+
+    返回 {plan, deck_decision, color_plan, pages:[{family, skeleton, layout,
+    media, budget}]}。生成侧只填 insight / focus / 数据洞——
+    deck 级判断 O(1)，页面继承骨架填空，不再逐页往返推理。
+    """
+    import design_intelligence as di
+    import layout_search as ls
+    plan = plan_deck(brief)
+    card = deck_decision(brief)
+    color = di.color_plan(plan.get("design_direction"), brief)
+    dna = (plan.get("dna") or {}).get("dna")
+    pages = []
+    for pg in plan.get("pages") or []:
+        fam = pg.get("page_family")
+        intent = {"page_family": fam, "insight": "", "focus": ""}
+        pages.append({
+            "family": fam,
+            "skeleton": di.page_intent_skeleton(fam or ""),
+            "layout": ls.recommend(intent, plan, dna),
+            "media": di.media_decision(pg),
+            "budget": di.quality_budget(pg),
+        })
+    return {"plan": plan, "deck_decision": card, "color_plan": color, "pages": pages}

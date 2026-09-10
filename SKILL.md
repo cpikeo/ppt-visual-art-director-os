@@ -27,6 +27,7 @@ description: >
 
 | Mode | 链 | 流程 | Critic | 时间目标 |
 |---|---|---|---|---|
+| `--mode express`（显式 · 一次通过） | 快速链 | Normalizer → Guard(lite：溢出/遮挡/可读/平衡+error) → Compile → **Visual Calibration Score**——零渲染零 Critic 零 Pre-Critic | 恒不跑 | 亚秒级 |
 | `--mode sketch`（显式 · 结构探索） | 草图链 | Route → spec → **Normalizer（只留 error 级）→ Compile → PPTX**——颜色分析/媒体检查/文字合同全部免除，变体迭代不被契约拦截 | 恒不跑 | 秒级 |
 | `--mode draft`（默认 · 快速生成） | 创作链 | Route → P1–P3 → spec → **Normalizer → Guard → Compile → 可编辑 PPTX**，零渲染 | 恒不跑 | 秒级 |
 | `--mode review` | 审查链 | Compile → **关键页 ∪ 本轮受影响页**渲染 → QA L2 | **布局稳定后自动**（连续两轮 clean 且像素相关投影未变） | 十秒级 |
@@ -100,6 +101,10 @@ DNA+媒体模型，起草后再跑一次拿风险报告）。
 | 可读性 | 渲染实测「文字 vs 其下方底」：正文 <4.5:1 提示，任何角色 <3.0:1 阻断（READABILITY_FAIL）——色板合法 ≠ 物理可读，只有像素证据能暴露 | qa.py（`text_contrast` 域） |
 | 光学对齐 | 渲染级复核：shape/chart/image 声明边界线的视觉峰位 vs 数学坐标（±2px）；≥3 根可验证且一致率 ≥75% 记 alignment 加分，偏移线报 max_shift——数学对齐是否真的成为视觉对齐，只有像素能回答 | render_check.py（`optical_alignment`）→ art_critic.py |
 | 生成前风险 | draft/review 第一屏的 pre-critic 报告就是修单：12 类风险（17 码）各带根因/预防/预测失败码；**先修 pre-critic 再谈渲染** | design_intelligence.py（`pre_critic`） |
+| 参考空间水准 | `visual_calibration_score(spec)` 五维静态分（layout/typography/color/image/information，各 0–5）对照 10 套世界级设计板实测律（面积律 c1≈55%/色相族页≤1/饱和域/图片占比带/负空间）；~0.3ms，express 链内置 | design_intelligence.py（V3）+ memory/calibration_space.json |
+| 自适应色彩 | `color_plan(direction, brief)`：70/20/8/2 比例目标 + 实测约束（色相族/饱和/明度域）+ 种子骨架；派生序 brand_colors > visual_world 材质 > 方向种子；14 方向族（10 实测 + 4 主张） | design_intelligence.py（`COLOR_DIRECTIONS`） |
+| 一次通过规划 | `route.one_pass_plan(brief)`：Stage1+2 全决策一次固化（plan+deck_decision+color_plan+逐页 skeleton/layout/media/budget），缓存命中 0.6ms | route.py |
+| 出图三层 | 资产卡过 `enhance_asset_card(card, family)` 注入动势（leading lines/透视/光向…）+ 微浮雕（纸纤维/皮革纹/石灰岩…，纪律：微弱低对比近距可感知）+ 空间融合（text-safe 负空间/光向一致/景深层级/无贴纸边）再喂图像模型 | asset_prompt.py（V3） |
 | 设计经验 | `recall_dna(brief)`（route 内联）命中即用其设计问题/空间/色彩行为/图表人格/禁用信号做判断基线（Schema v2 判断记忆，色值在 proven）；`record_dna` 仅 PASS 后调用、拒收结果记忆 | memory/design_dna.json |
 | 版式选型 | 同页 3 候选 spec 级比较：`layout_search.search()` 五维打分（层级/留白/锚点/节奏/品牌契合），选优后起草；原型 = 构图算子的驻点，不是模板 | layout_search.py |
 | 设计理由 | 每页可选一句 `design_rationale`（选择 × 理由 × 否决项，声明层）；修正时先验「意图是否被几何兑现」，`record_dna` 时作为决策出处 | design-intelligence.md §Design Intent |
@@ -130,7 +135,7 @@ DNA+媒体模型，起草后再跑一次拿风险报告）。
 
 - 内容任务决定 Family；主题只决定其视觉表达。主题 token 进入 `spec.theme`；设计规划阶段必须读取所选主题在 `references/themes.md` 中的相关条目，运行时编译阶段不读取主题 Markdown，只消费已经完成的 `spec`。
 - spec：每个元素数值 `x / y / width / height`（8 单位网格由 **Normalizer 自动吸附**——手工对齐不是你的职责，但语义几何如黄金分割落点仍由你决定）；文本用 `text` 字段、样式放顶层（禁 `content` 与嵌套 `style`），并声明足够的 `width / height / max_lines / line_height / padding`；填充用 `{"fill":{"type":"solid|gradient|none",...}}`（无效 fill 按错误提示迁移，不依赖默认蓝色）；图表逐行 `label` + 有限数值 `value`，单位、期间、比较口径、来源和 `display` 格式分开声明，缺失/非数值/非有限值/空数据/无效高亮/无效构成总和必须在 Guard/Compile 阶段暴露，禁止静默补零或伪造单位；行长 CJK 每行 ≤38 字、拉丁 ≤75，超过上限两倍按阻断处理——缩字号不算修复，拆句或收窄版心才算。先完成数据分析与洞察提取，再选择诚实的原生可编辑图表；无法表达单一关系时使用文字或表格。
-- 媒体闸门：图片必须有功能（context / emotion / proof / hero）；只有 Hero、品牌叙事、情绪与产品页可要图，数据 / 表格 / 流程 / 结构页永远不给图。整幅背景画心声明 `layer: background` 并自带 `overlay` 内容保护，可不拆内容盒、不计入媒体预算；**免检需要资格**：覆盖 ≥60% 画布且遮罩不透明度 ≥0.20（或显式 `readability_exempt`），overlay 无法解析按缺失处理；资格不足的「伪背景」按普通内容对象对待，并被 `BACKGROUND_DISGUISED` 点名。每张图片仍须给出主体、镜头、构图、留白锚点与裁切要求。背景是空间与阅读引导，默认低能量，主刺激最多一项、辅刺激最多一项。卡片不是默认容器；优先使用空间分组、发丝线、字体层级和留白关系。布局允许 Executive / Editorial / Data Intelligence / Comparative / Narrative / Spatial 等语法，但同一 deck 共享网格、版心、来源区和安全区，仅改变重心、比例、阅读轴与留白角色。出图时序链：闸门通过后、compile 之前，只对 `route.assets.generate` 中的页面逐页调 `asset_prompt.py`（先 `validate_asset_card` 查漏项）组装提示词 → 喂图像模型 → 图落盘后才 compile；设计推导与资产两条线并行，只在 `qa.run_qa` 汇合一次。
+- 媒体闸门：图片必须有功能（context / emotion / proof / hero）；只有 Hero、品牌叙事、情绪与产品页可要图，数据 / 表格 / 流程 / 结构页永远不给图。整幅背景画心声明 `layer: background` 并自带 `overlay` 内容保护，可不拆内容盒、不计入媒体预算；**免检需要资格**：覆盖 ≥60% 画布且遮罩不透明度 ≥0.20（或显式 `readability_exempt`），overlay 无法解析按缺失处理；资格不足的「伪背景」按普通内容对象对待，并被 `BACKGROUND_DISGUISED` 点名。每张图片仍须给出主体、镜头、构图、留白锚点与裁切要求。背景是空间与阅读引导，默认低能量，主刺激最多一项、辅刺激最多一项。卡片不是默认容器；优先使用空间分组、发丝线、字体层级和留白关系。布局允许 Executive / Editorial / Data Intelligence / Comparative / Narrative / Spatial 等语法，但同一 deck 共享网格、版心、来源区和安全区，仅改变重心、比例、阅读轴与留白角色。出图时序链：闸门通过后、compile 之前，只对 `route.assets.generate` 中的页面逐页调 `asset_prompt.py`（先 `validate_asset_card` 查漏项，再 `enhance_asset_card` 注入动势/微浮雕/融合三层）组装提示词 → 喂图像模型 → 图落盘后才 compile；设计推导与资产两条线并行，只在 `qa.run_qa` 汇合一次。
 - 完成标准：spec 可独立编译；无 `TEXT_FIELD_*` / `data_integrity` error。
 
 ### P4 关键细节优化：最小修正

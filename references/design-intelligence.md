@@ -244,3 +244,63 @@ Art Critic 必须同时读取 Strategy、Direction、Page Intent、spec 与渲�
 - **它只打破一条**：一次只牺牲一个约束，用其余所有约束的「更严格」来补偿。同时打破两条以上，通常意味着你已经不知道自己在做什么。
 
 对 Art Critic 的含义：当检测到「违反某条规则」时，先问「这页是否用更明确的重心 + 更克制的其余部分做了补偿」，再决定扣分还是标记为「有意图的取舍」。规则捕获的是「没有意图的乱」，不是「有意图的破例」。
+
+## V3 视觉校准与判断（参考空间校准闭环）
+
+> 10 套世界级设计板（2026-09-10 用户提供）被**测量**而非被复制：
+> `scripts/measure_references.py` 切页（79 个页面单元）测出面积律、色相族、
+> 饱和域、明度域、负空间、图片占比与排印密度，沉淀为
+> `memory/calibration_space.json`。参考空间只校准判断阈值，
+> 任何布局/色板/组件的照抄仍按模板违规处理。
+
+### 实测律（global，p50 除非注明）
+
+| 律 | 实测 | 运行时用途 |
+|---|---|---|
+| 色彩面积律 | c1≈55% [35–85] / c2≈21% / c3≈11% / c4≈6% | 70/20/8/2 主张的实测形态：foundation 支配、accent 簇 ≤8%；`color_plan.ratio_targets` |
+| 色相族 | 页 p90 = **1**（+中性不计） | `visual_calibration_score.color`；主题级宽一档至 2 |
+| 饱和 | quiet 族 sat90 ≤0.35；warm-material 族 ≤0.65 | `color_plan.constraints.sat90_max` 按族人格切换 |
+| 明度域 | dark 0.05–0.35 / light 0.55–0.97，逐 deck 一致 | 家族人格 regime；混排需面板结构 |
+| 负空间 | 文字主导页 p50≈0.40；图片主导页可近 0（图片承担空间） | layout 维度的条件判读 |
+| 图片占比 | image-led 页 18–60%；文字页 ≤20% | 媒体闸门后的构图预算 |
+| 排印密度 | edge 0.016–0.053 | 信息维度的密度参照 |
+
+### Adaptive Color Intelligence Engine
+
+`color_plan(direction, brief)`：比例目标（70/20/8/2）+ 实测约束 + 种子骨架 +
+材质/光性语言 + 禁用清单（高饱和渐变 / SaaS 蓝紫 / 彩色卡片墙 / 廉价科技光）。
+派生顺序固定：`brief.brand_colors` > `visual_world` 的材质/光性判断 > 方向种子骨架。
+14 个方向族 = 10 个实测族（nature_luxury / nordic_quiet / monochrome_noir /
+zen_minimal / luxury_editorial / precision_tech / organic_systems /
+cinematic_narrative / editorial_intelligence / quiet_luxury）+ 4 个主张族
+（song_elegance / apple_future / data_intelligence 已实测同类并入 + 保留主张命名）。
+route 的四个方向预设经 `_DIRECTION_ALIAS` 归一（quiet_minimal→zen_minimal 等）。
+
+### Visual Calibration Score
+
+`visual_calibration_score(spec)`：五维静态分（layout .25 / typography .20 /
+color .20 / image .15 / information .20，各 0–5 → 百分制），~0.3ms。
+对照的是**带与律**（密度兑现与相邻差、字阶驻点与行长、色相族与色彩职责、
+媒体闸门一致性、信息合同完整性），不是对照某张参考图。
+express 链内置它作为「生成即知水准」的轻量验证。
+
+### 提示词智能三层（asset_prompt V3）
+
+`enhance_asset_card(card, family)` 纯函数注入：
+- **动势层**（≤3 句）：spatial（leading lines / 单灭点透视 / 非对称平衡 / 侧向掠光）、
+  natural（丝质流水 / 风动植被 / 层叠大气）、tech（克制光轨 / 精密边缘能量流 / 玻璃层纵深）；
+- **微浮雕层**（≤2 句 + 纪律 2 句）：eastern（纸纤维/宣纸/墨晕）、luxury（皮革纹/拉丝金属/
+  软石/包装浮雕）、architecture（石灰岩/清水混凝土/玻璃折射）、technology（钛拉丝/机加工纹）、
+  organic（叶脉/织物/苔藓）；纪律=微弱、低对比、近距可感知，禁明显纹理；
+- **融合层**（≤4 句）：text-safe 负空间对齐、光向与页面光源一致、前中后景深层级、
+  轻虚化分离、融入版面背景无贴纸边。
+
+族 → 动势/材质键映射在 `FAMILY_MOTION` / `FAMILY_TEXTURE`；调用方显式传入永远赢。
+
+### Fast Visual Intelligence Pipeline（速度）
+
+`route.one_pass_plan(brief)` 一次调用固化 Stage 1+2（plan + deck_decision +
+color_plan + 逐页 skeleton/layout/media/budget；冷 ~160ms、缓存 0.6ms）。
+Stage 3 生成后 Stage 4 用 `--mode express` 轻量验证（溢出/遮挡/可读/平衡 + error 级
++ 校准分，亚秒）；方向收敛仍走 draft/review，发布仍走 release——
+**快的只是验证频次，不是标准**。

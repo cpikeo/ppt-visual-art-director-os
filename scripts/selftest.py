@@ -296,7 +296,9 @@ def check_execution_modes():
     """V2 流程控制：模式档案完备、legacy 别名映射、稳定性门控状态机。"""
     qa_mod = load("qa", SCRIPTS / "qa.py")
     modes = qa_mod.EXECUTION_MODES
-    ok = (set(modes) == {"sketch", "draft", "review", "release"}
+    ok = (set(modes) == {"express", "sketch", "draft", "review", "release"}
+          and modes["express"]["render"] is False and modes["express"]["critic"] == "off"
+          and modes["express"]["qa_level"] == 0
           and modes["sketch"]["render"] is False and modes["sketch"]["critic"] == "off"
           and modes["sketch"]["preflight_gate"] is False
           and modes["draft"]["render"] is False and modes["draft"]["critic"] == "off"
@@ -1805,6 +1807,74 @@ def check_director_upgrade():
             "bg_unified": bg_ok, "primary_lever": pv.get("target")}
 
 
+def check_visual_calibration_v3():
+    """V3 校准闭环：证据可载、色彩引擎确定、校准分自洽、express 链与提示词三层生效。"""
+    import design_intelligence as di
+    import asset_prompt as ap
+    import route as rt
+    fails = []
+    cal = di._load_calibration()
+    if not cal.get("laws") or cal.get("pooled_cells", 0) < 40:
+        fails.append("calibration_space 证据不足")
+    laws = di.calibration_laws("cinematic_narrative")
+    if "family_bands" not in laws or laws.get("hue_families_page_max") != 1:
+        fails.append("laws/家族带缺失")
+    a = di.color_plan("cinematic_narrative")
+    b = di.color_plan("cinematic_narrative")
+    if a != b:
+        fails.append("color_plan 非确定")
+    if abs(sum(a["ratio_targets"].values()) - 1.0) > 1e-9:
+        fails.append("比例目标和≠1")
+    branded = di.color_plan("evidence_first", {"brand_colors": {"x": "#123456"}})
+    if branded["seed_source"] != "brand_colors" or branded["seed_skeleton"]["foundation"] != "#123456":
+        fails.append("brand_colors 未优先")
+    if di.color_plan("quiet_minimal")["family"] != "zen_minimal":
+        fails.append("direction alias 失效")
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#F5F4F1", "ink": "#1E1E1C",
+                                 "muted": "#9A9A96", "primary": "#33302B",
+                                 "secondary": "#6E6A5E", "accent": "#6FA08C"},
+                      "color_intent": ["hierarchy"], "constraints": {"accent_max": 0.05}},
+            "slides": [
+                {"id": "s1", "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 32},
+                 "page_intent": {"insight": "结论一", "focus": "t", "density": "sparse",
+                                 "energy": "high", "empty_space_role": "hold_emotion"},
+                 "elements": [{"type": "text", "id": "t", "x": 96, "y": 248, "width": 896,
+                               "height": 160, "text": "一句话结论", "size": 64, "color": "ink",
+                               "bold": True, "line_height": 1.15, "max_lines": 2, "padding": 0}]},
+                {"id": "s2", "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 32},
+                 "page_intent": {"insight": "结论二", "focus": "t2", "density": "sparse",
+                                 "energy": "low", "empty_space_role": "protect_focus"},
+                 "elements": [{"type": "text", "id": "t2", "x": 96, "y": 264, "width": 1088,
+                               "height": 160, "text": "另一句话结论", "size": 64, "color": "ink",
+                               "bold": True, "line_height": 1.15, "max_lines": 2, "padding": 0}]}]}
+    vc = di.visual_calibration_score(spec)
+    if not (0 <= vc["score"] <= 100) or set(vc["dims"]) != {"layout", "typography",
+                                                           "color", "image", "information"}:
+        fails.append("校准分结构错误")
+    import copy as _copy
+    bad = _copy.deepcopy(spec)
+    bad["slides"][0]["elements"][0]["size"] = 47          # 离驻点
+    bad["slides"][0]["page_intent"]["insight"] = ""       # 信息合同缺口
+    if di.visual_calibration_score(bad)["score"] >= vc["score"]:
+        fails.append("校准分对劣化不敏感")
+    opp = rt.one_pass_plan({"audience": "a", "decision": "d", "occasion": "o",
+                            "slides": ["封面", "结论"]})
+    if not opp.get("color_plan") or not opp["pages"] or "skeleton" not in opp["pages"][0]:
+        fails.append("one_pass_plan 结构错误")
+    card = ap.enhance_asset_card({"asset_type": "background", "subject": "x",
+                                  "family": "zen_minimal"})
+    if not card.get("motion") or not card.get("texture") or not card.get("fusion"):
+        fails.append("三层注入缺失")
+    if not any("close range" in t for t in card["texture"]):
+        fails.append("微浮雕纪律缺失")
+    prompt = ap.build_asset_prompt(card)["prompt"]
+    if "sticker" not in prompt or "text-safe" not in prompt:
+        fails.append("融合层未进提示词")
+    return {"status": "PASS" if not fails else "FAIL", "missing": fails}
+
+
+
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "art_critic": check_critic(), "critic_with_render": check_critic_with_render(), "critic_pass_reachable": check_critic_pass_reachable(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
                "normalizer": check_normalizer(),
@@ -1816,6 +1886,7 @@ def main():
                "layout_search": check_layout_search(),
                "media_budgets": check_media_and_budgets(),
                "auto_fit": check_auto_fit(),
+               "visual_calibration_v3": check_visual_calibration_v3(),
             "preflight_sync": check_preflight_sync(), "background_layer": check_background_layer(),
             "route_layer": check_route_layer(), "qa_performance": check_qa_performance_keys(),
             "progressive_qa": check_progressive_qa(), "decision_cache": check_decision_cache(),

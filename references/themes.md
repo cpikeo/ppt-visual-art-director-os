@@ -90,3 +90,25 @@ theme = {
 `scripts/route.py` 的 `DIRECTION_PRESETS` 为每个设计方向（`quiet_minimal` / `editorial_brand` / `product_stage` / `evidence_first`）预置了一份 `theme_seed`：一组调好的 `colors`（background / surface / primary / secondary / accent / ink / muted）与 `fonts`，可直接落进 `spec.theme`。`plan_page` 与 `plan_deck` 都会返回这份种子。
 
 种子是**起点锚点，不是终点模板**：`primitives.derive_tokens` 会从种子色机械展开完整色阶（panel / hairline / track / veil / ramp / series / on_dark / on_accent…），调用方也仍可覆盖任意一项。它的作用只是消除「选了方向却还要自己手挑 hex」的空白——方向不再是一段形容词，而是一组能直接渲染的锚点色。色彩插值在 OKLab 感知空间进行，因此派生出的中档色明度均匀、不偏灰偏浊。
+
+## Calibrated family seeds（v3.0 · 行为 + 种子骨架）
+
+种子只是兜底骨架：`brand_colors` 与 `visual_world` 的材质判断永远优先；
+运行时消费 `design_intelligence.COLOR_DIRECTIONS`（单一真源），本表只读不复制。
+regime/sat 人格来自 `memory/calibration_space.json` 的实测族带。
+
+| family | regime | sat | 材质/光性语言 | 种子骨架（foundation/supporting/information/accent） |
+|---|---|---|---|---|
+| luxury_editorial | light | quiet | 暖象牙纸、洞石与青铜、柔窗光 | #F2EDE4 / #9A8C74 / #403B32 / #9C5A2E |
+| song_elegance | light | quiet | 宣纸、墨石、茶绿丝、北向漫光 | #F3F1EA / #8B8D84 / #22241F / #5E7562 |
+| zen_minimal | light | quiet | 手工纸、雾、止水、无影光 | #F5F4F1 / #9A9A96 / #1E1E1C / #6E6E6A |
+| nordic_quiet | light | quiet | 石灰抹面、浅橡、陶、低冬阳 | #EFECE6 / #A79E90 / #33302B / #8A7A5F |
+| quiet_luxury | light | quiet | 香槟金属发丝、taupe 石、纱帘海光 | #F1EDE6 / #A99878 / #37322A / #B08D4F |
+| monochrome_noir | dark | quiet | 黑石、单束掠光、石墨尘 | #101010 / #4A4A4A / #F2F2F0 / #8C8C8C |
+| cinematic_narrative | dark | warm | 琥珀暮色、海岸空气、黄铜光 | #141210 / #5C4A33 / #EFE3CE / #C08A3E |
+| nature_luxury | dark | quiet | 深林绿、水面雾、湿石、冷漫光 | #16211C / #4E6157 / #EDEFE9 / #6FA08C |
+| organic_systems | light | quiet | 燕麦纤维、叶脉微距、鼠尾草陶土 | #EFEBE2 / #A8A394 / #3B3A33 / #7C8B6F |
+| precision_tech | mixed | quiet | 光学玻璃、钛边、石墨上受控蓝信号 | #0D0F12 / #3A4148 / #F2F4F6 / #2E7BD6 |
+| apple_future | light | quiet | 钛微拉丝、雾白舞台、单品光 | #F6F6F7 / #9BA0A6 / #1D1D1F / #0071E3 |
+| data_intelligence | dark | quiet | 深石墨证据场、钢灰结构、单一受控强调 | #141619 / #454B52 / #EDEFF1 / #3E8E7E |
+| editorial_intelligence | light | quiet | 新闻纸白、墨黑、单一信号红、硬杂志网格 | #F7F6F3 / #8E8E8C / #141414 / #C8102E |
