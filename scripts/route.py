@@ -331,22 +331,34 @@ def _plan_deck(brief: dict) -> dict:
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
     assets["planned_calls"] = len(assets["generate"])
     workflow = ["route → 冻结输入（受众/决定/口径）",
-                "布局迭代用 Level 1（不渲染）/ Level 2（只测关键页）；"
-                "发布必须 Level 3 全量：qa.py <build> out.pptx --quick | --key-pages | 默认",
-                f"guard 预检（静态，~0.01s/页）：python3 scripts/guard.py <build> --preflight",
-                "修完预检再编译：python3 scripts/compiler.py <build> out.pptx",
-                ("快速路径 QA：python3 scripts/qa.py <build> out.pptx --fast --manifest"
-                 if quality == "fast" else
-                 "发布 QA：python3 scripts/qa.py <build> out.pptx --manifest（含渲染证据 + Critic）")]
+                f"初稿/探索（默认）：qa.py <build> out.pptx --mode draft"
+                "（Normalizer → Guard → Compile → PPTX，零渲染零 Critic；布局方向用 ghost.py）",
+                "方向确认：qa.py <build> out.pptx --mode review"
+                "（关键页 ∪ 受影响页像素证据；布局稳定后 Critic 自动给 verdict）",
+                "发布（唯一 PASS 口径）：qa.py <build> out.pptx --mode release"
+                "（Normalizer → Guard → Compile → 全量渲染 → QA → Critic → Manifest）",
+                "guard 预检（静态，~0.01s/页）：python3 scripts/guard.py <build> --preflight",
+                "修完预检再编译：python3 scripts/compiler.py <build> out.pptx"]
     if quality == "advanced":
         workflow.append("资产：仅对 assets.generate 中的页面调用图像模型，逐页绑定留白锚点")
     # 哪些页面值得付渲染成本：首尾页 + 需要画心的页（图表与遮挡由 QA 从 spec 兜底挑选）
     pixel_ids = sorted({p["id"] for p in pages if p["needs_pixel_evidence"]}
                        | ({pages[0]["id"], pages[-1]["id"]} if pages else set()))
+    exec_mode = recommend_mode(brief)
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["editorial_brand"]).get("theme_seed", {})
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
+        "execution": {
+            "mode": exec_mode,
+            "modes": ["draft", "review", "release"],
+            "rule": ("draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX）；"
+                     "review=审查链（关键页∪受影响页像素证据，Critic 待布局稳定自动介入）；"
+                     "release=发布链（全量像素+Critic+Manifest，唯一 PASS 口径）"),
+            "escalate": {"to_review": ["用户确认方向", "改了布局/主题/图表结构"],
+                         "to_release": ["终版交付", "发布前复核"]},
+            "note": "模式是流程控制；Fast/Advanced 是预算控制——两者正交，可任意组合。",
+        },
         "design_direction": direction,
         "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可覆盖）
         "pages": pages,
@@ -406,6 +418,35 @@ def _alternate_density(pages: list[dict]) -> None:
 # --------------------------------------------------------------------------
 # CLI： python route.py brief.yml [--json]      或      python route.py --demo
 # --------------------------------------------------------------------------
+# 执行模式关键词（确定性 sniff；显式 brief.execution_mode 永远优先）
+_RELEASE_HINTS = ("终版", "发布", "定稿", "release", "final", "publish")
+_REVIEW_HINTS = ("确认", "审阅", "审查", "review", "方向确认")
+
+
+def recommend_mode(brief: dict) -> str:
+    """brief → draft | review | release。
+
+    V2 默认是 draft（创作链）：初稿/探索/多方案不该付发布级流水线的成本。
+    只有 brief 明说要终版发布、或用户已确认方向时才升档。
+    显式 brief.execution_mode 优先；关键词 sniff 只做兜底。
+    """
+    explicit = str((brief or {}).get("execution_mode") or "").strip().lower()
+    if explicit in ("draft", "creative", "a"):
+        return "draft"
+    if explicit in ("review", "design_review", "b"):
+        return "review"
+    if explicit in ("release", "final", "c"):
+        return "release"
+    occasion = " ".join(str((brief or {}).get(k) or "")
+                        for k in ("occasion", "subject", "brief", "purpose", "task"))
+    low = occasion.lower()
+    if any(h in low for h in _RELEASE_HINTS):
+        return "release"
+    if any(h in low for h in _REVIEW_HINTS):
+        return "review"
+    return "draft"
+
+
 def _load_brief(path: str) -> dict:
     from pathlib import Path
     p = Path(path)

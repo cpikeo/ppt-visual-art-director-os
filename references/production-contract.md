@@ -3,11 +3,43 @@
 ## Runtime architecture
 
 ```text
-spec → compiler.py → elements.py / charts.py → primitives.py
-     → guard.py → render_check.py → qa.py + art_critic.py
+spec → normalizer.py（V2 · 生产链第 0 级：机械归一化）
+     → compiler.py → elements.py / charts.py → primitives.py
+     → guard.py（确认器：归一化解决不了的问题）→ render_check.py
+     → qa.py + art_critic.py
 ```
 
-设计规划阶段读取参考文档并生成完整 `spec`；运行时阶段只处理 `spec`。编译器是编排层，不做设计决策，也不读取 `references/*.md`；元素与图表负责原生可编辑输出；Guard 负责静态硬约束；Render Check 负责像素证据；`qa.py` 负责确定性回归评分；`art_critic.py` 负责结构化审美判断。层间只通过 spec、RenderContext 和 JSON 报告沟通。
+设计规划阶段读取参考文档并生成完整 `spec`；运行时阶段只处理 `spec`。Normalizer 负责确定性的机械归一化（网格吸附、色彩/字体 token 规范形、微间距）；编译器是编排层，不做设计决策，也不读取 `references/*.md`；元素与图表负责原生可编辑输出；Guard 负责静态硬约束；Render Check 负责像素证据；`qa.py` 负责确定性回归评分；`art_critic.py` 负责结构化审美判断。层间只通过 spec、RenderContext 和 JSON 报告沟通。
+
+### Execution Modes（V2 · 三层执行架构：流程控制）
+
+Fast/Advanced 是**预算控制**（资产数/dpi/Critic 时机）；Execution Mode 是**流程控制**（渲染不渲染、Critic 何时介入、状态给到哪一级）。两者正交：
+
+| Mode | 链 | 流程 | Critic | 状态上限 |
+|---|---|---|---|---|
+| `draft` | 创作链（快） | Normalizer → Guard → Compile → 可编辑 PPTX（零渲染） | 恒不跑 | PREVIEW_ONLY |
+| `review` | 审查链（准） | Compile → 关键页 ∪ 受影响页渲染 → QA L2 | 稳定后自动（见下） | REVISE |
+| `release` | 发布链（严） | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | PASS |
+
+CLI：`qa.py <build> <out.pptx> --mode draft|review|release`（legacy `--quick/--key-pages/--manifest` 为别名）。`route.plan_deck(brief)["execution"]["mode"]` 给出推荐模式（默认 draft；brief 说「发布/终版」→ release，「确认方向」→ review；显式 `brief.execution_mode` 优先）。
+
+**Critic 稳定性门控（review 模式）**：连续两轮「无阻断 + 无结构性失败码」且像素相关投影（`normalizer.geometry_only_hash`，剥掉 insight/density/energy 等声明字段）未变，Critic 才介入；结果按 spec 指纹缓存在 `<out>_render/studio_state.json`（封顶 8 份）。`PIXEL_COVERAGE_PARTIAL` / `RENDER_UNAVAILABLE` 是非发布模式的预期码，不视为「布局在动」。干净且几何未变的 draft 轮同样计入稳定链（draft→review 连续两轮 clean 即稳定——省掉一轮只为攒稳定的 review）；几何一变即重置。
+
+**语义变更分类（`qa.classify_spec_change(old, new)`）**：deck 级 `identical / narrative / pages / structure / full_render`，页级 `unchanged / narrative / page_render`。review 渲染集 = key_pages ∪ page_render 页——「改了一句 insight 不必重渲染」从缓存副作用升级为显式决策。
+
+### Spec Normalizer（V2 · 生产链第 0 级契约）
+
+```python
+from normalizer import normalize_spec, geometry_only_hash
+spec, report = normalize_spec(spec)      # 纯函数：入参不动，返回深拷贝 + 报告
+```
+
+- 只做**无判断的机械对齐**：`grid_snap`（x/y 就近、w/h 向上取整到 `primitives.GRID_UNIT`，防吸附后溢出）、`grid_snap_size`、`color_token_alias` / `color_hex_case` / `color_hex_to_token`（主题色 hex → token 名，单一事实来源）、`font_token_alias`、`spacing_snap`（padding → 4 的倍数）；
+- **不碰语义**：不补数据、不改文字、不动 page_intent；unresolved 项（如未在主题声明的字体）只记录不修改；
+- **留痕**：报告含 `hash_before/hash_after/by_rule/items(封顶200)/idempotent`；幂等性内置二次校验；
+- **可退出**：元素 `grid_exempt: true`；spec 级 `normalization: {"grid": false}`；
+- **证明链**：`release_manifest` 接受 `report.normalization.hash_before == 当前 spec 指纹 && hash_after == 报告 source_spec_hash && idempotent` 的归一化证明链（归一化确定性 ⇒ 可复算 ⇒ 可追溯）；
+- `qa.run_qa(normalize=True)`（默认）入口自动归一化并出报告；`--no-normalize` 跳过（spec 已归一化时省一次深拷贝）。Guard 的角色随之改变：**确认器**——网格/token 这类机械偏差已被吸附，它只负责暴露归一化解决不了的问题（数据合同、遮挡、行长、可读性语义）。`guard.py` CLI 默认先归一化再检查（`--raw` 看原始诊断）。
 
 ### Single-entry execution
 
@@ -43,7 +75,24 @@ from guard import check_spec
 result = check_spec(spec)                    # result["preflight"] / ["preflight_codes"]
 ```
 
-CLI 入口保持兼容，新增默认关闭的开关：`guard.py <module> --preflight`；`qa.py <module> <out.pptx> --fast | --preflight | --quick | --key-pages | --level N`；`render_check.py <pptx> <module> [out_dir] --pages 1,5 --dpi N --workers N`。`run_qa` 新增 `preflight_gate / qa_level / render_pages / workers`，`release_manifest` 新增 `verification` 关键字参数；全部带默认值，未传时与旧版行为一致。返回值只增不减。
+CLI 入口保持兼容，新增默认关闭的开关：`guard.py <module> --preflight [--raw]`；`qa.py <module> <out.pptx> --mode draft|review|release | --critic auto|force|off | --no-normalize | --fast | --preflight | --quick | --key-pages | --level N`；`render_check.py <pptx> <module> [out_dir] --pages 1,5 --dpi N --workers N`。`run_qa` 新增 `preflight_gate / qa_level / render_pages / workers / mode / normalize / critic`（`render / preflight_gate / qa_level` 改为 None 哨兵：显式实参优先，None 时由 mode 档案派生，不传 mode 维持旧行为），`release_manifest` 新增 `verification` 关键字参数并接受归一化证明链；全部带默认值，未传时与旧版行为一致。返回值只增不减（新增键：`normalization` / `execution` / `critic`）。
+
+```python
+# V2 执行模式（流程控制）
+qa = run_qa(spec, "out.pptx", mode="draft")     # 零渲染：guard+compile+PPTX
+qa = run_qa(spec, "out.pptx", mode="review")    # 关键页∪受影响页；Critic 稳定后自动
+qa = run_qa(spec, "out.pptx", mode="release")   # 全量 + Critic（result["critic"]["report"]）
+qa = run_qa(spec, "out.pptx", mode="review", critic="force")   # 跳过稳定门控
+
+from qa import classify_spec_change, mode_profile, EXECUTION_MODES
+plan = classify_spec_change(old_spec, new_spec)  # deck/pages/render_needed 语义分类
+from route import recommend_mode
+mode = recommend_mode(brief)                     # draft|review|release（默认 draft）
+from normalizer import normalize_spec, geometry_only_hash
+spec, report = normalize_spec(spec)              # 见 Spec Normalizer 契约
+```
+
+**Revision Batch Intelligence（V2）**：`critic.deck_notes.director_verdict` 新增 `root_cause_groups`（门槛码/维度/复现修正 → 根因桶：theme_contrast / geometry_grid / layout_collision / focus_anchor / memory_anchor / rhythm_density / card_clutter / data_contract / …）与 `batch`：`fix_this_round` = primary 所在根因组的**全部**杠杆（同根因一次修完、一次验证），`deferred` = 其余根因组排队。修正纪律从「1 问题 = 1 轮」升级为 **「1 根因 = 1 轮」**——归因清晰与往返最少同时成立。
 
 `compile_deck` 不自动缩字号、改色、重排、删除内容或替换图片。所有 warnings 必须进入报告。`run_qa` 的 `score` 只表示确定性合规，不得冒充审美分数；`passed` 只是数值门槛结果，最终发布依据是 `status`。编译前先完成 Guard；Guard 存在 error 时仍可为调试生成预览，但发布状态必须为 `BLOCKED`，不得被编译成功覆盖。
 

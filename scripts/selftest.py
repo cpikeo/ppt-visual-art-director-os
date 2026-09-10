@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFS = ROOT / "references"
 SCRIPTS = ROOT / "scripts"
 REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "evidence-library.md", "themes.md", "production-contract.md"}
-REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py"}
+REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "normalizer.py", "route.py", "ghost.py"}
 
 
 def load(name, path):
@@ -235,6 +235,188 @@ def check_imports():
         return {"status": "PASS"}
     except Exception as exc:
         return {"status": "FAIL", "error": repr(exc)}
+
+
+def check_normalizer():
+    """V2 生产链第 0 级：网格/token 归一化确定性、幂等、可退出、留痕。"""
+    norm = load("normalizer", SCRIPTS / "normalizer.py")
+    theme = {"colors": {"background": "#FAF7F0", "accent": "#8E2F28", "ink": "#191510",
+                        "muted": "#6E675C"},
+             "fonts": {"family": "SimSun", "latin": "Georgia"}}
+    def slide(sid, el):
+        return {"id": sid, "page_intent": {"insight": "结论", "focus": el["id"]},
+                "elements": [el]}
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+            "slides": [
+                slide("s01", {"type": "text", "id": "t1", "x": 61, "y": 52,
+                              "width": 66, "height": 108, "text": "字", "size": 32,
+                              "color": "#8e2f28", "font": "simsun ", "padding": 3,
+                              "max_lines": 1}),
+                slide("s02", {"type": "text", "id": "t2", "x": 48, "y": 48,
+                              "width": 64, "height": 64, "text": "字", "size": 32,
+                              "color": "accent", "grid_exempt": True, "padding": 0,
+                              "max_lines": 1})]}
+    new, rep = norm.normalize_spec(spec)
+    t1 = new["slides"][0]["elements"][0]
+    t2 = new["slides"][1]["elements"][0]
+    ok = (t1["x"] == 64 and t1["y"] == 56 and t1["width"] == 72 and t1["height"] == 112
+          and t1["color"] == "accent" and t1["font"] == "SimSun" and t1["padding"] == 4
+          and rep["idempotent"] and rep["changed"] == 7
+          and set(rep["by_rule"]) == {"grid_snap", "grid_snap_size", "color_hex_to_token",
+                                      "font_token_alias", "spacing_snap"}
+          # 豁免与已对齐元素不动
+          and t2["x"] == 48 and t2["color"] == "accent"
+          # 纯函数：入参未被修改
+          and spec["slides"][0]["elements"][0]["x"] == 61
+          and rep["hash_before"] != rep["hash_after"]
+          and len(rep["items"]) == 7)
+    # spec 级关闭网格
+    spec2 = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+             "normalization": {"grid": False},
+             "slides": [slide("s01", {"type": "text", "id": "t", "x": 61, "y": 52,
+                                      "width": 66, "height": 108, "text": "字",
+                                      "size": 32, "color": "ink", "max_lines": 1})]}
+    _, rep2 = norm.normalize_spec(spec2)
+    ok = ok and not any(i["rule"].startswith("grid") for i in rep2["items"])
+    # geometry_only_hash：改 insight 不变，改 x 变
+    gh1 = norm.geometry_only_hash(spec)
+    spec3 = __import__("copy").deepcopy(spec)
+    spec3["slides"][0]["page_intent"]["insight"] = "新结论"
+    spec3["slides"][0]["page_intent"]["density"] = "dense"
+    gh2 = norm.geometry_only_hash(spec3)
+    spec4 = __import__("copy").deepcopy(spec)
+    spec4["slides"][0]["elements"][0]["x"] = 100
+    gh3 = norm.geometry_only_hash(spec4)
+    ok = ok and gh1 == gh2 and gh1 != gh3
+    return {"status": "PASS" if ok else "FAIL", "changed": rep["changed"],
+            "by_rule": rep["by_rule"], "idempotent": rep["idempotent"]}
+
+
+def check_execution_modes():
+    """V2 流程控制：模式档案完备、legacy 别名映射、稳定性门控状态机。"""
+    qa_mod = load("qa", SCRIPTS / "qa.py")
+    modes = qa_mod.EXECUTION_MODES
+    ok = (set(modes) == {"draft", "review", "release"}
+          and modes["draft"]["render"] is False and modes["draft"]["critic"] == "off"
+          and modes["review"]["qa_level"] == 2 and modes["review"]["critic"] == "auto"
+          and modes["release"]["qa_level"] == 3 and modes["release"]["critic"] == "full"
+          and qa_mod.mode_profile("bogus")["qa_level"] == 3)   # 未知 → 宁严勿松
+    # 稳定性门控（纯函数）：脏 → 0；干净但几何变了 → 1；连续两轮干净同几何 → stable
+    d = qa_mod._stability_decision(None, "geoA", False)
+    ok = ok and d["stable"] is False and d["consecutive_clean"] == 0
+    d1 = qa_mod._stability_decision({"last_geo": "geoA", "last_clean": True,
+                                     "consecutive_clean": 1}, "geoA", True)
+    ok = ok and d1["stable"] is True and d1["consecutive_clean"] == 2
+    d2 = qa_mod._stability_decision({"last_geo": "geoA", "last_clean": True,
+                                     "consecutive_clean": 3}, "geoB", True)
+    ok = ok and d2["stable"] is False and d2["consecutive_clean"] == 1 \
+        and d2["reason"] == "geometry_changed"
+    # route 模式推荐：默认 draft、发布词 → release
+    route_mod = load("route", SCRIPTS / "route.py")
+    ok = ok and route_mod.recommend_mode({}) == "draft" \
+        and route_mod.recommend_mode({"brief": "发布终版"}) == "release" \
+        and route_mod.recommend_mode({"brief": "方向已确认"}) == "review"
+    return {"status": "PASS" if ok else "FAIL",
+            "modes": sorted(modes), "stability_first_run_stable": d1["stable"]}
+
+
+def check_change_classifier():
+    """V2 语义缓存分类：改声明 → narrative；改几何 → page_render；改主题 → full。"""
+    import copy as _copy
+    qa_mod = load("qa", SCRIPTS / "qa.py")
+
+    def base():
+        return {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": {"ink": "#111111"}, "fonts": {"family": "SimSun"}},
+                "slides": [
+                    {"id": "s01", "page_intent": {"insight": "A", "focus": "t"},
+                     "elements": [{"type": "text", "id": "t", "x": 48, "y": 48,
+                                   "width": 400, "height": 64, "text": "字",
+                                   "size": 32, "color": "ink", "max_lines": 1}]},
+                    {"id": "s02", "page_intent": {"insight": "B", "focus": "u"},
+                     "elements": [{"type": "text", "id": "u", "x": 48, "y": 200,
+                                   "width": 400, "height": 64, "text": "字",
+                                   "size": 32, "color": "ink", "max_lines": 1}]}]}
+    old_spec = base()
+    # ① 只改声明（insight/density/notes）→ narrative，不需要渲染
+    s = base()
+    s["slides"][0]["page_intent"]["insight"] = "新结论"
+    s["slides"][0]["page_intent"]["density"] = "dense"
+    s["slides"][1]["notes"] = "备注"
+    r1 = qa_mod.classify_spec_change(old_spec, s)
+    ok = (r1["deck"] == "narrative" and r1["pages"]["s01"] == "narrative"
+          and r1["pages"]["s02"] == "narrative" and r1["render_needed"] == [])
+    # ② 改一页几何 → 仅该页 page_render
+    s = base()
+    s["slides"][1]["elements"][0]["y"] = 208
+    r2 = qa_mod.classify_spec_change(old_spec, s)
+    ok = ok and (r2["deck"] == "pages" and r2["pages"]["s01"] == "unchanged"
+                 and r2["pages"]["s02"] == "page_render" and r2["render_needed"] == [2])
+    # ③ 改主题 → full_render（全部页都要复核）
+    s = base()
+    s["theme"]["colors"]["ink"] = "#222222"
+    r3 = qa_mod.classify_spec_change(old_spec, s)
+    ok = ok and r3["deck"] == "full_render" and r3["render_needed"] == [1, 2]
+    # ④ 无上一版 → structure（全部按需渲染）
+    r4 = qa_mod.classify_spec_change(None, base())
+    ok = ok and r4["deck"] == "structure" and r4["render_needed"] == [1, 2]
+    # ⑤ 页数变化 → structure
+    s = base()
+    s["slides"].append(s["slides"][1])
+    s["slides"][2] = _copy.deepcopy(s["slides"][1]); s["slides"][2]["id"] = "s03"
+    r5 = qa_mod.classify_spec_change(old_spec, s)
+    ok = ok and r5["deck"] == "structure"
+    # ⑥ focus 变化属于像素相关（缓存键包含 focus）→ page_render 而非 narrative
+    s = base()
+    s["slides"][0]["page_intent"]["focus"] = "other"
+    r6 = qa_mod.classify_spec_change(old_spec, s)
+    ok = ok and r6["pages"]["s01"] == "page_render"
+    return {"status": "PASS" if ok else "FAIL", "cases": [r1["deck"], r2["deck"],
+            r3["deck"], r4["deck"], r5["deck"], r6["pages"]["s01"]]}
+
+
+def check_batch_verdict():
+    """V2 Revision Batch Intelligence：根因分组 + 同根因批量 + 确定性。"""
+    import json as _json
+    crit = load("art_critic", SCRIPTS / "art_critic.py")
+    spec = {"theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                 "muted": "#555555", "accent": "#0B5FFF",
+                                 "primary": "#111111", "secondary": "#666666"}},
+            "slides": [
+                {"id": "s01", "page_intent": {"insight": "A", "focus": "t1",
+                                              "density": "sparse", "energy": "low"},
+                 "elements": [{"type": "text", "id": "t1", "x": 48, "y": 48,
+                               "width": 720, "height": 96, "text": "洞察", "size": 44,
+                               "color": "ink", "bold": True, "max_lines": 2}]},
+                {"id": "s02", "page_intent": {"insight": "B", "focus": "t2",
+                                              "density": "sparse", "energy": "low"},
+                 "elements": [{"type": "text", "id": "t2", "x": 48, "y": 48,
+                               "width": 720, "height": 96, "text": "小字", "size": 20,
+                               "color": "ink", "max_lines": 2}] +
+                              [{"type": "shape", "shape": "rounded_rect",
+                                "id": f"c{i}", "x": 48, "y": 300 + i * 60,
+                                "width": 400, "height": 48} for i in range(6)]}]}
+    c1 = crit.critique_deck(spec)
+    c2 = crit.critique_deck(spec)
+    v = (c1.get("deck_notes") or {}).get("director_verdict") or {}
+    det = (_json.dumps(v, sort_keys=True, default=str)
+           == _json.dumps((c2.get("deck_notes") or {}).get("director_verdict"),
+                          sort_keys=True, default=str))
+    groups = v.get("root_cause_groups") or []
+    batch = v.get("batch") or {}
+    primary = v.get("primary_lever") or {}
+    fix = batch.get("fix_this_round") or []
+    ok = (len(groups) >= 2
+          and all(set(g) >= {"cause", "count", "pages", "severity", "targets"}
+                  for g in groups)
+          and groups[0]["cause"] == primary.get("root_cause")
+          and fix and all(l.get("root_cause") == primary.get("root_cause") for l in fix)
+          and isinstance(batch.get("deferred"), list)
+          and "1 根因 = 1 轮" in str(batch.get("discipline"))
+          and det)
+    return {"status": "PASS" if ok else "FAIL", "causes": [g["cause"] for g in groups],
+            "fix_this_round": [l.get("target") for l in fix],
+            "deterministic": det}
 
 
 def check_pipeline():
@@ -1144,6 +1326,10 @@ def check_director_upgrade():
 
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "art_critic": check_critic(), "critic_with_render": check_critic_with_render(), "critic_pass_reachable": check_critic_pass_reachable(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
+               "normalizer": check_normalizer(),
+               "modes": check_execution_modes(),
+               "classifier": check_change_classifier(),
+               "batch_verdict": check_batch_verdict(),
             "preflight_sync": check_preflight_sync(), "background_layer": check_background_layer(),
             "route_layer": check_route_layer(), "qa_performance": check_qa_performance_keys(),
             "progressive_qa": check_progressive_qa(), "decision_cache": check_decision_cache(),

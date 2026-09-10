@@ -21,12 +21,12 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast,
+from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT, contrast,
                          bg_coverage, bg_overlay_opacity, is_background_declared,
                          rounded_containers)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
-GRID = 8
+GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalizer/文档同源）
 
 # 图表容量上限（OS §19 / USAGE §5.4）
 NUMERIC_CHART_KINDS = {
@@ -1528,6 +1528,11 @@ def main(argv):
     if spec is None:
         print("build module must define build_spec() or SPEC")
         return 1
+    # V2：Guard 之前先过 Normalizer（生产链第 0 级）。默认检查的是归一化后的
+    # 规范形——Guard 只确认「归一化解决不了的问题」；--raw 看原始 spec 的诊断。
+    if "--raw" not in argv:
+        from normalizer import normalize_spec
+        spec, _norm = normalize_spec(spec)
     result = check_spec(spec)
     if "--json" in argv:
         import json

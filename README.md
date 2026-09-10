@@ -100,8 +100,8 @@ ppt-visual-art-director-os/
 | P1 内容理解 | 冻结输入（受众/决定/口径）+ `route.plan_deck`，不可验证标 `unknown` |
 | P2 视觉策略判断 | Strategy + Direction + Story Map + Page Intent，一页一结论 |
 | P3 布局决策 | 内容任务定家族 → 写 spec → 媒体闸门（数据页不出图） |
-| P4 关键细节优化 | 一次只修 `director_verdict.primary_lever`：删除→简化→空间→重心→媒体→装饰 |
-| P5 质量检查 | `qa.py --manifest` 统一执行 Guard→Compile→Render→QA→Critic→Revision |
+| P4 关键细节优化 | **1 根因 = 1 轮**：`director_verdict.batch.fix_this_round`（同根因杠杆）一次修完一次验证，`deferred` 排队下轮；顺序仍是删除→简化→空间→重心→媒体→装饰 |
+| P5 质量检查 | 按执行模式：`--mode draft`（零渲染）→ `--mode review`（关键页∪受影响页，Critic 待布局稳定）→ `--mode release`（= `--manifest` 全量） |
 
 一个最小文字元素示例（完整字段见 `references/production-contract.md` 的 Spec minimum）：
 
@@ -168,12 +168,21 @@ python3 scripts/guard.py path/to/build_mydeck.py --json
 ### 运行完整 QA
 
 ```bash
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --json       # 发布口径：dpi 96 + 全量渲染证据
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --quick       # Level 1：静态判定，不渲染
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --key-pages   # Level 2：只渲染关键页
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --fast        # 便宜的全量渲染：dpi 72 + 预检闸门
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --preflight   # 只列可执行修正项
-python3 scripts/qa.py path/to/build_mydeck.py output.pptx --manifest    # 追加 Critic + Release Manifest
+# V2 三层执行架构（主接口；流程控制，与 Fast/Advanced 预算控制正交）
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --mode draft    # 创作链：Normalizer→Guard→Compile→PPTX，零渲染零 Critic（默认推荐起步）
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --mode review   # 审查链：关键页∪受影响页像素证据；布局稳定后 Critic 自动给 verdict（--critic force 可跳过门控）
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --mode release  # 发布链：全量渲染+QA+Critic+Release Manifest（唯一 PASS 口径）
+
+# legacy 旗标仍是合法别名
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --quick         # ≡ --mode draft
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --key-pages     # ≡ --mode review
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --manifest      # ≡ --mode release
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --fast          # 便宜的全量渲染：dpi 72 + 预检闸门
+python3 scripts/qa.py path/to/build_mydeck.py output.pptx --preflight     # 只列可执行修正项
+
+# Normalizer（生产链第 0 级）：网格/token/间距机械归一化，报告留痕、幂等、可退出
+python3 scripts/normalizer.py path/to/build_mydeck.py                    # 只看报告
+python3 scripts/normalizer.py path/to/build_mydeck.py --write n.json     # 导出归一化 spec
 ```
 
 渐进层级只改变「测了多少」，不改变「放宽什么」：Level 1/2 的状态上限是 `REVISE`/`PREVIEW_ONLY`，`release_eligible=False`；`qa["performance"]` 与 `qa["render"]["coverage"]` 记录每轮实际测了什么。
@@ -217,6 +226,7 @@ Deterministic QA 只判断可编译、可渲染、可读、可编辑、无越界
 - **v2.3 少跑一轮**：PDF / 编译视图两层复用 + deck 级色彩与图表纪律（色相族预算、强调角距离、脏渐变提示、图表样式漂移）+ 焦点落位轴线判定。
 - **评分链路**：Art Critic v2.0（证据驱动加减分、真实失败码、PASS 可达）、Render Evidence v1.1、QA v1.2；`route.py` 决策层、Guard 静态预检、背景层直接叠加合同；`compile_deck / run_qa / critique_deck / release_manifest / check_spec` 向后兼容。
 - **v2.4 Director 升级**：`director_verdict` 首要杠杆（`critic_version` 2.2）、3–4 容器 `CARD_DENSITY` 软压、三处判定收敛到 `primitives.py`、证据记 `saliency_method` 且缓存键升 v4。
+- **v2.5 三层执行架构**：Execution Modes（draft/review/release 流程控制，发布级管线从默认路径降级为按需触发）；`normalizer.py` 生产链第 0 级（网格吸附/色彩字体 token 归一/间距吸附，Guard 从发现器变确认器）；SKILL.md Runtime Contract Map（字段级契约索引，从「grep 考古」到「一次定位」）；Revision Batch Intelligence（1 根因 = 1 轮批量修正）；Critic 稳定性门控（连续两轮 clean 且几何未变才介入，结果按 spec 指纹缓存）；语义变更分类器（narrative/page_render/full_render → 决定渲染集）。
 - **验证**：30 项自检 PASS；12 页实测预检 0.2s，Level 1 迭代 0.03s，Level 2 冷 3.7s／热 0.0s，Level 3 冷 4.7s／复跑 0.0s，声明轮 0.01s；QA 98.4 / Critic 94.2 / Manifest 全部 PASS。
 - **发布门可自证**：缓存内容核验、背景层免检资格、像素实测对比、报告清单互核——四类蒙混路径一律 fail closed。
 

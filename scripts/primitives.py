@@ -25,6 +25,9 @@ from pptx.oxml.ns import qn, nsdecls
 PX_TO_EMU = 9525
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 
+# 设计系统基线网格（8 单位）：guard 归一化确认、normalizer 吸附、SKILL.md 契约三方同源
+GRID_UNIT = 8
+
 ALIGN = {
     None: PP_ALIGN.LEFT, "left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
     "right": PP_ALIGN.RIGHT, "justify": PP_ALIGN.JUSTIFY,

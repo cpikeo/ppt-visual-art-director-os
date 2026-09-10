@@ -842,6 +842,66 @@ _GATE_ACTIONS = {
 }
 
 
+# ════════════════════════════════════════════════════════════════════════
+# Revision Batch Intelligence（V2）：修正纪律从「1 问题 = 1 轮」升级为
+# 「1 根因 = 1 轮」。同根因的杠杆（如主题对比度引发的 READABILITY + contrast
+# 维度 + chart_muted 提示）一次批量修复、一次验证——归因仍然清晰，因为它们
+# 本来就是同一个原因；不同根因（布局 vs 记忆锚点）严格分轮。
+# ════════════════════════════════════════════════════════════════════════
+_ROOT_CAUSE_BY_DIMENSION = {
+    "visual_hierarchy": "focus_anchor", "balance": "composition",
+    "alignment": "geometry_grid", "contrast": "theme_contrast",
+    "rhythm": "rhythm_density", "consistency": "cross_page_consistency",
+    "emotional_impact": "narrative_emotion", "memorability": "memory_anchor",
+    "professional_quality": "finish_detail",
+}
+_ROOT_CAUSE_BY_CODE = {
+    "DATA_INTEGRITY_FAIL": "data_contract", "READABILITY_FAIL": "theme_contrast",
+    "OVERLAP": "layout_collision", "SOURCE_COLLISION": "layout_collision",
+    "CHART_LABEL_COLLISION": "layout_collision", "TEXT_OVERFLOW": "layout_collision",
+    "FOCUS_UNBOUND": "focus_anchor", "FOCUS_COMPETING": "focus_anchor",
+    "FOCUS_DOMINATED": "focus_anchor", "CARD_WALL": "card_clutter",
+    "RHYTHM_FLAT": "rhythm_density", "DENSITY_FLAT": "rhythm_density",
+    "MEDIA_UNJUSTIFIED": "media_governance", "BACKGROUND_DISGUISED": "media_governance",
+    "MEDIA_BUDGET": "media_governance", "INTENT_UNCLEAR": "narrative_intent",
+    "PIXEL_COVERAGE_PARTIAL": "evidence_coverage", "RENDER_UNAVAILABLE": "evidence_coverage",
+    "RENDER_INCOMPLETE": "evidence_coverage",
+}
+_ROOT_CAUSE_KEYWORDS = (   # 复现修正（自由文本）的确定性关键词归类
+    ("对比", "theme_contrast"), ("可读", "theme_contrast"),
+    ("网格", "geometry_grid"), ("对齐", "geometry_grid"), ("坐标", "geometry_grid"),
+    ("锚", "memory_anchor"), ("记忆", "memory_anchor"),
+    ("密度", "rhythm_density"), ("节奏", "rhythm_density"), ("疏密", "rhythm_density"),
+    ("焦点", "focus_anchor"), ("层级", "focus_anchor"),
+    ("卡片", "card_clutter"), ("容器", "card_clutter"),
+    ("留白", "composition"), ("重心", "composition"), ("平衡", "composition"),
+    ("来源", "data_contract"), ("单位", "data_contract"), ("口径", "data_contract"),
+    ("图片", "media_governance"), ("资产", "media_governance"),
+)
+
+
+def _root_cause_of(lever: dict) -> str:
+    """杠杆 → 根因桶（确定性）。CRITIC_LOW 从 reason 里解析维度名再映射。"""
+    target = str(lever.get("target") or "")
+    if lever.get("kind") == "dimension":
+        return _ROOT_CAUSE_BY_DIMENSION.get(target, "finish_detail")
+    if lever.get("kind") == "gate":
+        if target == "CRITIC_LOW":
+            reason = str(lever.get("why") or "")
+            for d, cause in _ROOT_CAUSE_BY_DIMENSION.items():
+                if d in reason:
+                    return cause
+            return "finish_detail"
+        return _ROOT_CAUSE_BY_CODE.get(target, "unclassified_gate")
+    if lever.get("kind") == "recurring":
+        text = f"{lever.get('target', '')} {lever.get('why', '')} {lever.get('action', '')}"
+        for kw, cause in _ROOT_CAUSE_KEYWORDS:
+            if kw in text:
+                return cause
+        return "cross_page_recurring"
+    return "unclassified"
+
+
 def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> dict:
     """总监 verdict：deck 级单一首要判断 + 按价值排序的修正杠杆（Top 3）。
 
@@ -895,10 +955,40 @@ def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> di
                            "why": f"同一修正出现在 {len(slides)} 页",
                            "action": fix, "severity": "REVISE"})
             break
+    # V2：根因分组——同根因的杠杆归入一组，本轮只修 primary 所在组
+    for item in levers:
+        item["root_cause"] = _root_cause_of(item)
+    groups: dict[str, dict] = {}
+    for item in levers:
+        g = groups.setdefault(item["root_cause"], {
+            "cause": item["root_cause"], "levers": [], "pages": set(),
+            "max_severity": 3})
+        g["levers"].append(item)
+        for tok in str(item.get("where") or "").replace(" 等", "").split("、"):
+            if tok and tok != "整套 deck":
+                g["pages"].add(tok)
+        sev = {"BLOCKED": 0, "REVISE": 1, "PREVIEW_ONLY": 2}.get(
+            str(item.get("severity")), 3)
+        g["max_severity"] = min(g["max_severity"], sev)
+    sev_rank = {"BLOCKED": 0, "REVISE": 1, "PREVIEW_ONLY": 2}
+    _sev_name = {0: "BLOCKED", 1: "REVISE", 2: "PREVIEW_ONLY", 3: "REVISE"}
+    root_cause_groups = sorted(
+        ({"cause": g["cause"], "count": len(g["levers"]),
+          "pages": sorted(g["pages"]),
+          "severity": _sev_name[g["max_severity"]],
+          "targets": [str(l.get("target")) for l in g["levers"]]}
+         for g in groups.values()),
+        key=lambda g: (sev_rank.get(g["severity"], 3), -g["count"], g["cause"]))
+
     top = levers[:3]
     for i, item in enumerate(top, 1):
         item["rank"] = i
     primary = top[0] if top else None
+    # primary 所在根因组置顶：组序与「本轮修什么」一致，读报告不用二次对齐
+    if primary and primary.get("root_cause"):
+        rc = primary["root_cause"]
+        root_cause_groups = ([g for g in root_cause_groups if g["cause"] == rc]
+                             + [g for g in root_cause_groups if g["cause"] != rc])
     if status == "PASS":
         headline = f"发布就绪（{deck_score:.1f} 分）：无阻断门槛，保持当前克制度即可。"
     elif primary and primary["kind"] == "gate" and primary["severity"] == "BLOCKED":
@@ -909,8 +999,22 @@ def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> di
                     f"{primary['action']}")
     else:
         headline = "无明确杠杆：按页修 minimal_fix 后重跑 QA。"
+    # V2 批量修正：primary 所在根因组的全部杠杆本轮一并修（一次验证）；
+    # 其余根因组排队后续轮次。归因不破坏：同组 = 同一个「为什么」。
+    primary_cause = primary.get("root_cause") if primary else None
+    fix_this_round = [l for l in levers if l.get("root_cause") == primary_cause] \
+        if primary_cause else []
+    deferred = [{"cause": g["cause"], "count": g["count"], "pages": g["pages"]}
+                for g in root_cause_groups if g["cause"] != primary_cause]
+    batch = {
+        "fix_this_round": fix_this_round,
+        "deferred": deferred,
+        "discipline": ("1 根因 = 1 轮：同根因杠杆本轮批量修复、一次验证；"
+                       "不同根因分轮——归因清晰与往返最少同时成立。"),
+    } if primary_cause else None
     return {"headline": headline, "primary_lever": primary, "levers": top,
-            "gates_by_code": sorted(by_code)}
+            "gates_by_code": sorted(by_code),
+            "root_cause_groups": root_cause_groups, "batch": batch}
 
 
 def critique_deck(spec: dict, render_evidence: dict | None = None,

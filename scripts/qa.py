@@ -65,6 +65,178 @@ PREFLIGHT_HARD_CODES = {
 KEY_PAGE_CAP = 6   # Level 2 最多测这么多页；再多与全量无异，失去渐进意义
 
 
+# ════════════════════════════════════════════════════════════════════════
+# 三层执行架构（V2）：创作链（快）→ 审查链（准）→ 发布链（严）
+# Mode 是「流程控制」：决定渲染不渲染、Critic 何时介入、状态给到哪一级；
+# 与 Fast/Advanced（预算控制：资产数/dpi/Critic 时机）正交，互不替代。
+# ════════════════════════════════════════════════════════════════════════
+EXECUTION_MODES = {
+    "draft": {
+        "label": "Creative Draft · 创作链",
+        "qa_level": 1, "render": False, "preflight_gate": True, "critic": "off",
+        "aim": "初稿/方向探索/多方案：结构合法 + 可编译 + 可编辑 PPTX，零渲染成本",
+        "deliver": "PPTX + Guard 报告 + ghost 预览建议（ghost.py，~1ms/页）",
+    },
+    "review": {
+        "label": "Design Review · 审查链",
+        "qa_level": 2, "render": True, "preflight_gate": True, "critic": "auto",
+        "aim": "方向确认：关键页 ∪ 本轮受影响页的像素证据；Critic 待布局稳定自动介入",
+        "deliver": "关键页证据 + 稳定后 Critic verdict（根因分组批量修正）",
+    },
+    "release": {
+        "label": "Release · 发布链",
+        "qa_level": 3, "render": True, "preflight_gate": True, "critic": "full",
+        "aim": "终版发布：全量像素 + Art Critic + Release Manifest，唯一 PASS 口径",
+        "deliver": "PPTX + QA JSON + Render Evidence + Critic + Manifest（+Revision Log）",
+    },
+}
+
+
+def mode_profile(mode: str | None) -> dict:
+    """mode 名 → 执行档案（未知/None 一律回落 release：宁严勿松）。"""
+    return dict(EXECUTION_MODES.get(str(mode or "").strip().lower(), EXECUTION_MODES["release"]))
+
+
+# ── 语义变更分类：把「改了什么」翻译成「要重跑什么」───────────────────
+# 只影响声明/评分、不影响像素的页字段（render_check 页级缓存键同向排除）：
+PIXEL_NEUTRAL_PAGE_FIELDS = (
+    "insight", "narrative_role", "reading_order", "energy", "density",
+    "empty_space_role", "page_family", "rhythm_stage", "continuity_token",
+)
+
+
+def _pixel_projection(slide: dict) -> str:
+    """剥掉像素中性字段后的页投影（用于页级变更分类）。"""
+    import copy, json
+    s = copy.deepcopy(slide)
+    s.pop("notes", None)
+    s.pop("source_note", None)
+    pi = s.get("page_intent")
+    if isinstance(pi, dict):
+        for f in PIXEL_NEUTRAL_PAGE_FIELDS:
+            pi.pop(f, None)
+    return json.dumps(s, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def classify_spec_change(old_spec: dict | None, new_spec: dict) -> dict:
+    """上一版 spec → 本版 spec 的语义分类（确定性、纯函数）。
+
+    返回：
+      deck   : "identical" | "narrative" | "pages" | "structure" | "full_render"
+               （theme/canvas 变 → full_render；页数/页 ID 变 → structure）
+      pages  : {slide_id: "unchanged" | "narrative" | "page_render"}
+      render_needed : 需要像素复核的 1-based 页码（page_render 类）
+      summary: 各类计数
+    消费方：review 模式的渲染集（key_pages ∪ 受影响页）、
+    「改了一句 insight 不必重渲染」的显式化、Critic 稳定性判定的输入。
+    """
+    import copy, json
+    new_slides = new_spec.get("slides") or []
+    if not isinstance(old_spec, dict) or not old_spec:
+        return {"deck": "structure", "pages": {s.get("id"): "page_render"
+                                                for s in new_slides if isinstance(s, dict)},
+                "render_needed": [i + 1 for i in range(len(new_slides))],
+                "summary": {"reason": "no_previous_spec"}}
+
+    old_slides = old_spec.get("slides") or []
+    old_by_id = {s.get("id"): s for s in old_slides if isinstance(s, dict)}
+    new_ids = [s.get("id") for s in new_slides if isinstance(s, dict)]
+    old_ids = list(old_by_id.keys())
+    pages: dict[str, str] = {}
+    render_needed: list[int] = []
+    narrative_only = True
+    for i, s in enumerate(new_slides):
+        if not isinstance(s, dict):
+            continue
+        sid = s.get("id")
+        prev = old_by_id.get(sid)
+        if prev is None:
+            cls = "page_render"          # 新页：必须出像素
+        else:
+            if _pixel_projection(prev) == _pixel_projection(s):
+                diff = _intent_differs(prev, s)
+                cls = "narrative" if diff else "unchanged"
+            else:
+                cls = "page_render"
+        pages[str(sid)] = cls
+        if cls == "page_render":
+            render_needed.append(i + 1)
+            narrative_only = False     # 只有像素级变更才打断「纯声明修改」
+    if old_ids != new_ids:
+        deck = "structure"
+    elif json.dumps(old_spec.get("theme"), sort_keys=True, default=str) != \
+            json.dumps(new_spec.get("theme"), sort_keys=True, default=str) or \
+            json.dumps(old_spec.get("canvas"), sort_keys=True, default=str) != \
+            json.dumps(new_spec.get("canvas"), sort_keys=True, default=str):
+        deck = "full_render"            # 主题/画布：所有页的像素都可能变
+    elif not render_needed and narrative_only:
+        deck = "narrative" if any(v == "narrative" for v in pages.values()) else "identical"
+    else:
+        deck = "pages"
+    if deck in ("structure", "full_render"):
+        render_needed = [i + 1 for i in range(len(new_slides))]
+    summary = {k: sum(1 for v in pages.values() if v == k)
+               for k in ("unchanged", "narrative", "page_render")}
+    summary["deck"] = deck
+    return {"deck": deck, "pages": pages, "render_needed": sorted(render_needed),
+            "summary": summary}
+
+
+def _intent_differs(a: dict, b: dict) -> bool:
+    """两页的像素中性字段（声明/备注）是否有差异。"""
+    import copy, json
+    def keep(s: dict) -> dict:
+        c = {k: s.get(k) for k in ("notes", "source_note")}
+        pi = s.get("page_intent")
+        if isinstance(pi, dict):
+            c["page_intent"] = {k: pi.get(k) for k in PIXEL_NEUTRAL_PAGE_FIELDS}
+        return c
+    return json.dumps(keep(a), sort_keys=True, default=str) != \
+        json.dumps(keep(b), sort_keys=True, default=str)
+
+
+# ── Studio 状态机：Critic 稳定性判定（连续两次 clean 且几何未变才介入）──
+def _stability_decision(prev_state: dict | None, geo_hash: str, clean: bool) -> dict:
+    """纯函数：给定上一轮状态与本轮 (几何指纹, 是否干净) → Critic 是否值得跑。
+
+    stable 的定义（用户契约）：连续两轮 overflow/collision/阻断码为 0，
+    且两轮的像素相关投影未变——布局已经不动了，Critic 的结论才不会立刻过期。
+    """
+    prev_state = prev_state or {}
+    prev_geo = str(prev_state.get("last_geo") or "")
+    prev_clean = bool(prev_state.get("last_clean"))
+    consecutive = int(prev_state.get("consecutive_clean") or 0)
+    geo_unchanged = bool(prev_geo) and prev_geo == geo_hash
+    if not clean:
+        return {"stable": False, "consecutive_clean": 0, "geo_unchanged": geo_unchanged,
+                "reason": "layout_dirty"}
+    consecutive = (consecutive + 1) if geo_unchanged else 1
+    stable = clean and prev_clean and geo_unchanged and consecutive >= 2
+    return {"stable": stable, "consecutive_clean": consecutive,
+            "geo_unchanged": geo_unchanged,
+            "reason": "stable" if stable else
+                      ("awaiting_second_clean_run" if geo_unchanged else "geometry_changed")}
+
+
+def _load_studio_state(render_dir: Path) -> dict:
+    import json
+    f = Path(render_dir) / "studio_state.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_studio_state(render_dir: Path, state: dict) -> None:
+    import json
+    try:
+        Path(render_dir).mkdir(parents=True, exist_ok=True)
+        (Path(render_dir) / "studio_state.json").write_text(
+            json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:
+        pass     # 状态是加速器不是契约：写不进就退化为「无状态」，判定照常
+
+
 def key_pages(spec: dict) -> list[int]:
     """Progressive QA Level 2 的选页：只有这些页的判断真的需要像素证据。
 
@@ -100,10 +272,11 @@ def key_pages(spec: dict) -> list[int]:
 def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
            thresholds: dict | None = None, guard_rules: dict | None = None,
            render_dir: str | Path | None = None, dpi: int = 96,
-           render: bool = True, preflight_gate: bool = False,
-           qa_level: int = 3, render_pages: list[int] | None = None,
+           render: bool | None = None, preflight_gate: bool | None = None,
+           qa_level: int | None = None, render_pages: list[int] | None = None,
            workers: int = 2, use_cache: bool = True,
-           raster: str = "auto") -> dict:
+           raster: str = "auto", mode: str | None = None,
+           normalize: bool = True, critic: str | None = None) -> dict:
     """
     完整 QA：guard + compile + render（可选）。
 
@@ -127,6 +300,20 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     raster（默认 "auto"）：光栅化格式。JPEG 快测比 PNG 快约 10×，指标偏差在远离
     判定阈值时可忽略；"auto" 会在**指标贴着阈值**的页上自动改用无损 PNG 复测，
     因此判定与全程 PNG 一致。传 "png" 可强制全程无损（取证/排障）。
+
+    V2 三层执行架构：
+    mode（draft|review|release）= 流程控制。render/preflight_gate/qa_level 传 None
+    时由 mode 档案派生（不传 mode 则维持旧行为：全量渲染、L3）。release 模式在
+    函数内直接产出 Critic 报告（result["critic"]）；review 模式的 Critic 受
+    稳定性门控（连续两轮 clean 且像素相关投影未变才跑，结果按 spec 指纹缓存）；
+    draft 模式零渲染。
+
+    normalize=True（默认）：入口先过 Normalizer（生产链第 0 级，见 normalizer.py）。
+    归一化是确定性的，报告记录 hash_before/after——release_manifest 依此接受
+    「原始 spec ↔ 归一化 spec」的证明链。传 False 可跳过（spec 已归一化时省一次深拷贝）。
+
+    critic（None=按 mode；"auto"=稳定才跑；"force"=立即跑；"off"=不跑）：
+    仅 review 模式受门控，release 恒跑，draft 恒不跑。
     """
     import time
     from compiler import compile_deck
@@ -137,16 +324,42 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     output_path = Path(output)
     t0 = time.time()
 
+    # 0) Normalizer（生产链第 0 级）：机械偏差吸附后再进入 Guard/Compile/Render。
+    #    归一化确定性 + 报告留痕（hash_before/after），发布清单据此接受证明链。
+    norm_report = None
+    if normalize:
+        from normalizer import normalize_spec
+        spec, norm_report = normalize_spec(spec)
+
+    # 0.5) 执行模式档案：None 参数由 mode 派生；显式实参永远优先（API 兼容）
+    prof = mode_profile(mode) if mode else None
+    if prof:
+        if render is None:
+            render = prof["render"]
+        if preflight_gate is None:
+            preflight_gate = prof["preflight_gate"]
+        if qa_level is None:
+            qa_level = prof["qa_level"]
+    if render is None:
+        render = True
+    if preflight_gate is None:
+        preflight_gate = False
+    if qa_level is None:
+        qa_level = 3
+    critic_policy = (str(critic).strip().lower() if critic else
+                     (prof["critic"] if prof else "off"))
+
+    # 渲染证据目录先定下来（studio 状态与复用记录都住在这里）
+    render_dir = (Path(render_dir) if render_dir
+                  else output_path.with_name(output_path.stem + "_render"))
+    studio_state = _load_studio_state(render_dir) if use_cache else {}
+
     # 1) 静态治理（guard_rules 独立传入，qa 不解读内部结构）
     t_guard = time.time()
     guard = check_spec(spec, rules=guard_rules)
     t_compile = time.time()
 
-    # 2) 渲染证据目录先定下来：编译/PDF 的复用记录都放在这里
-    render_dir = (Path(render_dir) if render_dir
-                  else output_path.with_name(output_path.stem + "_render"))
-
-    # 3) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
+    # 2) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
     # 发布仍会在 compile_report 中保留 guard 摘要，口径由本函数唯一掌握。
     # 先问一句「像素视图变了吗」：没变就连 compile 与 soffice 都省掉（决策先于生成）。
     compile_report = None
@@ -189,11 +402,22 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
             gate_hit = list(codes.values())
             skip_render_reason = "preflight_gate"
             render = False
+    # 语义变更分类：上一轮 spec → 本轮 spec，哪些页需要像素复核。
+    # （draft 不渲染用不到；release 恒全量；只有 review 用它扩展渲染集）
+    change_classes = classify_spec_change(studio_state.get("last_spec"), spec) \
+        if (use_cache and studio_state.get("last_spec")) else None
     wanted_pages = None
     if render and qa_level == 2:
         # 调用方（或 route.plan_deck 的 verification.pixel_page_ids）给了页码就用它；
         # 否则按 spec 自己挑关键页——两条路径都能独立工作，不产生隐式依赖。
-        wanted_pages = [int(n) for n in render_pages] if render_pages else key_pages(spec)
+        base_pages = [int(n) for n in render_pages] if render_pages else key_pages(spec)
+        if change_classes and not render_pages:
+            # V2：关键页 ∪ 本轮「像素真的变了」的页。改了声明（insight/density）的页
+            # 不进渲染集——页级缓存键本来就不会失效，这里只是把这件事显式化。
+            affected = [int(n) for n in (change_classes.get("render_needed") or [])]
+            wanted_pages = sorted(set(base_pages) | set(affected)) or base_pages
+        else:
+            wanted_pages = base_pages
     if render:
         try:
             from render_check import render_evidence
@@ -443,10 +667,94 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         base = ("fix: " + ", ".join(failure_codes)) if failure_codes else "ready for Art Critic"
         next_action = (base + " · 发布前需 qa_level=3 全量像素复核"
                        if (partial_pixel or qa_level < 3) else base)
+    # ── V2：Critic 延迟执行（审查链）───────────────────────────────────
+    # draft：恒不跑。review：稳定才跑（连续两轮 clean 且像素相关投影未变），
+    # 结果按 spec 指纹缓存在 studio_state——布局再动时结论不浪费、布局不动时零重算。
+    # release：恒跑全量（发布链不省这一步）。
+    critic_block = {"ran": False, "reason": None, "policy": critic_policy,
+                    "report": None}
+    geo_hash = None
+    # 「干净」= 无阻断 + 无结构性失败码。PIXEL_COVERAGE_PARTIAL / RENDER_UNAVAILABLE
+    # 是非发布模式的预期码（review 子集渲染 / draft 不渲染），不算「布局在动」。
+    _expected_nonrelease = {"RENDER_UNAVAILABLE", "PIXEL_COVERAGE_PARTIAL"}
+    clean_now = (not blocking) and not (set(failure_codes) - _expected_nonrelease)
+    from normalizer import geometry_only_hash
+    geo_hash = geometry_only_hash(spec)
+    if mode:
+        stability = _stability_decision(
+            {"last_geo": studio_state.get("last_geo"),
+             "last_clean": studio_state.get("last_clean"),
+             "consecutive_clean": studio_state.get("consecutive_clean")},
+            geo_hash, clean=clean_now)
+        spec_hash_now = spec_fingerprint(spec)
+        cached = ((studio_state.get("critic_cache") or {}).get(spec_hash_now)
+                  if use_cache else None)
+        if critic_policy == "off":
+            critic_block["reason"] = "mode_draft_no_critic"
+        elif critic_policy == "force":
+            critic_block["reason"] = "forced"
+        elif critic_policy == "auto":
+            if cached is not None:
+                critic_block["reason"] = "cache_hit"
+            elif stability["stable"]:
+                critic_block["reason"] = "layout_stable"
+            else:
+                critic_block["reason"] = f"deferred_{stability['reason']}"
+        # release / force / 稳定 / 缓存命中 → 跑（或复用）
+        want_critic = critic_policy == "full" or critic_policy == "force" or (
+            critic_policy == "auto" and critic_block["reason"] in
+            ("cache_hit", "layout_stable"))
+        if want_critic:
+            if cached is not None and critic_block["reason"] == "cache_hit":
+                critic_block["report"] = cached
+                critic_block["ran"] = True
+            else:
+                from art_critic import critique_deck
+                critic_block["report"] = critique_deck(spec, evidence)
+                critic_block["ran"] = True
+                if use_cache:
+                    cache = dict(studio_state.get("critic_cache") or {})
+                    cache[spec_hash_now] = critic_block["report"]
+                    # 缓存封顶：只留最近 8 份，避免状态文件无限增长
+                    if len(cache) > 8:
+                        cache = dict(sorted(cache.items(),
+                                            key=lambda kv: str(kv[0]))[-8:])
+                    studio_state["critic_cache"] = cache
+        critic_block["stability"] = stability
+
+    # ── V2：studio 状态写回（加速器，不是契约；--no-cache 不读不写）─────
+    if use_cache:
+        prev_geo = studio_state.get("last_geo")
+        consec = studio_state.get("consecutive_clean") or 0
+        if clean_now and prev_geo and prev_geo == geo_hash:
+            consec = consec + 1
+        else:
+            consec = 1 if clean_now else 0
+        _save_studio_state(render_dir, {
+            "last_geo": geo_hash, "last_clean": clean_now,
+            "consecutive_clean": consec,
+            "last_spec": spec,          # 供下一轮语义变更分类（旧 spec → 新 spec）
+            "updated_at": int(t0 * 1000),
+            "critic_cache": studio_state.get("critic_cache") or {},
+        })
+
+    exec_block = {
+        "mode": mode,
+        "profile": prof["label"] if prof else None,
+        "change_classes": change_classes,
+        "render_plan_pages": wanted_pages,
+        "stability": critic_block.get("stability"),
+        "critic": {k: v for k, v in critic_block.items()
+                   if k != "report"} | {"ran": critic_block["ran"]},
+    }
+
     return {
-        "qa_version": "1.4",
+        "qa_version": "1.5",
         # 自证戳：报告属于哪一份 spec。清单会核对，防止拿旧报告/旁路产物冒充新结果
         "source_spec_hash": spec_fingerprint(spec),
+        "normalization": norm_report,
+        "execution": exec_block,
+        "critic": critic_block if critic_block["ran"] or mode else None,
         "score": round(score, 1),
         "passed": passed,
         "status": status,
@@ -505,8 +813,17 @@ def release_manifest(spec: dict, qa_report: dict, critic_report: dict | None = N
         claims_pass = str(report.get("status", "")).upper() == "PASS"
         got = report.get("source_spec_hash")
         if got and got != spec_hash:
-            issues.append(f"{name} 的 source_spec_hash={got} 与当前 spec {spec_hash} 不符"
-                          f"（报告来自另一版 spec，已过期或被替换）")
+            # V2：归一化是确定性纯函数——报告盖的是「归一化 spec」的戳时，
+            # 用报告内留痕的 hash_before 建立原始 spec → 归一化 spec 的证明链。
+            norm = report.get("normalization") or {}
+            if norm.get("hash_before") == spec_hash and norm.get("hash_after") == got \
+                    and norm.get("idempotent"):
+                notes.append(f"{name} 验证的是当前 spec 的归一化形态"
+                             f"（normalizer 确定性吸附 {norm.get('changed', 0)} 处），"
+                             f"证明链成立")
+            else:
+                issues.append(f"{name} 的 source_spec_hash={got} 与当前 spec {spec_hash} 不符"
+                              f"（报告来自另一版 spec，已过期或被替换）")
         elif not got:
             if claims_pass:
                 issues.append(f"{name} 声称 PASS 却没有 source_spec_hash，无法证明它由当前 spec "
@@ -585,10 +902,16 @@ def main(argv):
     import importlib.util
     import json
     if len(argv) < 3:
-        print("usage: python qa.py <build_module.py> <output.pptx> [--json] "
-              "[--no-render] [--manifest] [--fast] [--preflight] "
-              "[--quick | --key-pages | --level N] [--no-cache] "
-              "[--raster auto|png|jpeg]")
+        print("usage: python qa.py <build_module.py> <output.pptx> "
+              "[--mode draft|review|release] [--critic auto|force|off] "
+              "[--no-normalize] [--no-render] [--fast] [--preflight] "
+              "[--quick | --key-pages | --manifest | --level N] [--no-cache] "
+              "[--raster auto|png|jpeg] [--json]\n"
+              "  三层执行架构：draft=创作链（零渲染，初稿探索）· "
+              "review=审查链（关键页+受影响页，Critic 待布局稳定）· "
+              "release=发布链（全量+Manifest，唯一 PASS 口径）\n"
+              "  legacy：--quick≡--mode draft · --key-pages≡--mode review · "
+              "--manifest≡--mode release")
         return 1
     mod_path = Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
@@ -601,15 +924,26 @@ def main(argv):
     fast = "--fast" in argv
     # --preflight 即启用闸门：静态可判定的硬门槛命中时直接跳过渲染
     gate = fast or "--preflight" in argv
-    # Progressive QA：--quick=L1（不渲染）· --key-pages=L2（只测关键页）· 默认 L3 全量
-    level = 3
+    # 执行模式（V2 主接口）：legacy 旗标映射为模式别名；--level N 可在模式内微调
+    mode = None
     for i, a in enumerate(argv):
-        if a in ("--quick", "--level1"):
-            level = 1
+        if a == "--mode" and i + 1 < len(argv):
+            mode = argv[i + 1].strip().lower()
+        elif a in ("--quick", "--level1"):
+            mode = mode or "draft"
         elif a in ("--key-pages", "--key", "--level2"):
-            level = 2
-        elif a == "--level" and i + 1 < len(argv):
+            mode = mode or "review"
+        elif a == "--manifest":
+            mode = mode or "release"
+    level = None
+    for i, a in enumerate(argv):
+        if a == "--level" and i + 1 < len(argv):
             level = int(argv[i + 1])
+    critic_flag = None
+    for i, a in enumerate(argv):
+        if a == "--critic" and i + 1 < len(argv):
+            critic_flag = argv[i + 1].strip().lower()
+    do_normalize = "--no-normalize" not in argv
     # --raster png|jpeg|auto：默认 auto（快测 + 临界页无损复检）
     raster = "auto"
     for i, a in enumerate(argv):
@@ -617,9 +951,26 @@ def main(argv):
             raster = argv[i + 1].strip().lower()
         elif a == "--lossless":
             raster = "png"
-    result = run_qa(spec, argv[2], render="--no-render" not in argv,
-                    preflight_gate=gate, dpi=72 if fast else 96, qa_level=level,
-                    use_cache="--no-cache" not in argv, raster=raster)
+    # 生产链第 0 级：Normalizer 在一切之前（Guard 只确认，不负责发现机械偏差）。
+    # CLI 只归一化一次，后续 run_qa/critic/manifest 共用同一份归一化 spec。
+    if do_normalize:
+        from normalizer import normalize_spec
+        spec, norm = normalize_spec(spec)
+        # 摘要只进人类输出；--json 必须保持纯净（机器消费契约）
+        if norm["changed"] and "--json" not in argv:
+            rules = "、".join(f"{k}×{v}" for k, v in sorted(norm["by_rule"].items()))
+            print(f"normalizer: {norm['changed']} 处机械偏差已吸附（{rules}）"
+                  + ("" if norm["idempotent"] else " · 幂等校验失败！"))
+    else:
+        norm = None
+    prof = mode_profile(mode) if mode else None
+    result = run_qa(spec, argv[2],
+                    render=False if "--no-render" in argv else None,
+                    preflight_gate=gate if gate else None, dpi=72 if fast else 96,
+                    qa_level=level, use_cache="--no-cache" not in argv,
+                    raster=raster, mode=mode, normalize=False, critic=critic_flag)
+    if norm and result.get("normalization") is None:
+        result["normalization"] = norm      # CLI 已归一化：报告仍要留痕（证明链）
     if "--preflight" in argv:
         for i in (result.get("preflight") or {}).get("items", []):
             print(f"  {i['slide']:>6} {i['code']:17s} {i['observation']}")
@@ -631,14 +982,42 @@ def main(argv):
               + (f" (skipped: {result['performance']['render_skipped']})"
                  if result['performance']['render_skipped'] else ""))
         return 0
-    if "--manifest" in argv:
-        from art_critic import critique_deck
-        critic = critique_deck(spec, result.get("render_evidence"))
+    want_manifest = "--manifest" in argv or (mode == "release")
+    if want_manifest:
+        # release 模式下 critic 已在 run_qa 内跑过（同一份渲染证据、同一份 spec）；
+        # legacy --manifest（无 --mode）为兼容仍在此处现算。
+        critic = ((result.get("critic") or {}).get("report")
+                  if (result.get("critic") or {}).get("ran") else None)
+        if critic is None:
+            from art_critic import critique_deck
+            critic = critique_deck(spec, result.get("render_evidence"))
         manifest = release_manifest(spec, result, critic)
         manifest_path = Path(argv[2]).with_suffix(".manifest.json")
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
         print(f"manifest: {manifest_path} (status={manifest['status']})")
+        # 修订流水提示：占位 0 不再静默通过——发布链要求真实流水
+        if not manifest.get("revision_count"):
+            print("hint: revision_count=0（发布清单应携带真实修订流水："
+                  "observation → minimal_fix → recheck × N 轮）")
+    # review 模式：Critic 稳定介入时打印总监 verdict（含根因分组批量修正）
+    # （人类输出；--json 保持纯净——critic 结果在 JSON 的 execution/critic 键里）
+    if mode == "review" and "--json" not in argv:
+        cb = result.get("critic") or {}
+        if cb.get("ran"):
+            rep = cb.get("report") or {}
+            verdict = (rep.get("deck_notes") or {}).get("director_verdict") or {}
+            print(f"critic: {rep.get('deck_score')}/100 {rep.get('status')} "
+                  f"({cb.get('reason')})")
+            if verdict.get("headline"):
+                print(f"  verdict: {verdict['headline']}")
+            batch = verdict.get("batch") or {}
+            if batch.get("fix_this_round"):
+                causes = "、".join(str(l.get("root_cause") or l.get("target"))
+                                   for l in batch["fix_this_round"])
+                print(f"  本轮批量修复（同根因）: {causes}")
+        else:
+            print(f"critic: deferred（{cb.get('reason')}）——布局稳定后自动介入")
     if "--json" in argv:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
