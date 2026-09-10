@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Layer -1 · Design Intelligence（V3 · 设计智能层——所有流程的大脑）
+Layer -1 · Design Intelligence（设计智能层——所有流程的大脑）
 
 职责：把「生成 → 检查 → 发现问题 → 修复 → 再生成」升级为
     「理解 → 预测 → 决策 → 生成 → 一次通过」。
@@ -14,18 +14,21 @@ Layer -1 · Design Intelligence（V3 · 设计智能层——所有流程的大�
                           的布尔值）。「数据页不出图」从禁令变成可解释的判断。
   ③ Page Quality Budget  页面质量预算：不同页面家族追求不同的好——Hero 页允许
                           高复杂度换情绪，数据页把清晰与准确放第一位。
-  ④ Pre-Critic Engine    生成前风险预测：用与 Critic/QA 同一套常量，在渲染之前
-                          估计 accent 超载、锚点缺失、对比度、焦点冲突、文本溢出、
-                          节奏趋平、密度失配、媒体误用——每条风险标注根因（与 V2
-                          Revision Batch Intelligence 同一分类法），修正建议直连
-                          「1 根因 = 1 轮」。
+  ④ Risk Prediction Engine 风险预测（**不是独立审查环节，是本层内部的预测子模块**）：
+                          `pre_critic(spec)` 用与 Critic/QA 同一套常量在渲染之前估计
+                          accent 超载、锚点缺失、对比度、焦点冲突、文本溢出、节奏趋平、
+                          密度失配、媒体误用；`risk_strategy(spec)` 把预测**翻译成生成
+                          策略**（逐页媒体/文本/字阶/图表/构图调整 + 整套 deck 政策），
+                          在起草之前消费。每条风险标注根因（与 Critic verdict 同一分类法）。
 
-analyze(brief, spec) 把三条智能线（内容/视觉/风险）汇合成一次调用——对应 V3 的
-Parallel Intelligence：内容分析、视觉分析、风险分析互不依赖，无需串行等待。
+analyze(brief, spec) 把三条智能线（内容/视觉/风险与策略）汇合成一次调用——
+内容分析、视觉分析、风险分析互不依赖，无需串行等待。
 
-与既有层的关系：Normalizer 吸附机械偏差（无判断），Guard 确认合同（当前事实），
-Pre-Critic 预测下游失败（未来风险）——三者互补，阈值全部同源于
-art_critic.py / qa.py 导出常量：V3 只加预测，不改任何判定标准。
+与既有层的关系（**职责边界，不重叠**）：本层负责「设计判断 + 未来风险」；
+`guard.py` / `qa.py` 负责工程正确性（溢出、越界、重叠、数据合同、渲染完整性），
+`art_critic.py` 负责设计价值（层级、空间节奏、信息焦点、审美一致性、品牌气质）。
+预测阈值同源于 art_critic.py / qa.py 导出常量：本层只加预测与策略，
+不改任何判定标准，也不替代渲染证据。
 """
 from __future__ import annotations
 
@@ -449,12 +452,17 @@ def page_intent_skeleton(family: str, rhythm_stage: str = "body",
 
 
 def pre_critic(spec: dict) -> dict:
-    """spec → 生成前风险报告（确定性，~10ms/页，零渲染零编译）。
+    """spec → 风险报告 + 生成策略（确定性，~10ms/页，零渲染零编译）。
+
+    本函数是 **Design Intelligence 内部的预测子模块**，不是生产链上的独立审查
+    环节：它的产物是「下一步该怎么设计」，不是「这一版能不能过」。因此
+    ① 不阻断任何阶段（异常由调用方兜底）；② 与 Critic 的关系是时间差而非
+    重复层——Critic 用真实渲染证据评「已经发生的」，本模块用几何/声明估计评
+    「将要发生的」，同一套常量，跑在时间前面；③ 输出携带 `strategy`
+    （`risk_strategy(spec, report)` 的结果），起草/修订时直接消费。
 
     每条风险：{code, level(high/med/low), slides, why, prevention,
-    predicted(下游失败码), root_cause(与 V2 批量修订同分类法), confidence}。
-    与 Critic 的关系：Critic 用真实渲染证据评「已经发生的」；Pre-Critic 用几何/
-    声明估计评「将要发生的」——同一套常量，跑在时间前面。
+    predicted(下游失败码), root_cause(与 Critic director_verdict 同分类法), confidence}。
     """
     t0 = time.time()
     colors = _theme_colors(spec)
@@ -717,6 +725,200 @@ def pre_critic(spec: dict) -> dict:
             "elapsed_ms": int((time.time() - t0) * 1000)}
 
 
+def forecast_risk(brief: dict) -> dict:
+    """起草之前：brief → 风险预测（0–1 向量）→ 生成政策。
+
+    这是「Risk Prediction 在 Design Intelligence 内部」的落点——不是生成前审核
+    一次 spec，而是在**还没有 spec** 时就按内容路由预判该 deck 会在哪里出问题，
+    并把结论变成预算：文本密度风险高 → 收紧 text_budget / 全局 auto_fit；
+    图片不足风险高 → 提高 generate 预算；布局复杂风险高 → 降低并行构图算子。
+
+    纯函数、零渲染、~0.1ms（复用 route 的决策缓存）。任何异常都返回「零风险 + 空政策」，
+    绝不阻断生成（预测是加速器，不是门槛）。
+    """
+    out = {"risks": {}, "policies": {}, "notes": []}
+    try:
+        import route as _route
+        plan = _route.plan_deck(brief if isinstance(brief, dict) else {})
+    except Exception as exc:                       # 预测失败不阻断主链
+        out["error"] = str(exc)
+        out["notes"].append("route 不可用：跳过预测，按默认骨架起草")
+        return out
+    pages = plan.get("pages") or []
+    n = max(1, len(pages))
+    text_dense = sum(1 for p in pages
+                     if str(p.get("density")) == "dense"
+                     or int(p.get("text_budget") or 0) >= 4) / n
+    media_short = sum(1 for p in pages
+                      if str((p.get("asset") or {}).get("decision")) == "none") / n
+    complex_layout = sum(1 for p in pages
+                         if str(p.get("family")) in
+                         ("FRAMEWORK", "COMPARISON", "TIMELINE", "NARRATIVE",
+                          "PROCESS", "EXECUTIVE_SUMMARY")) / n
+    mono = 0.0
+    fams = [str(p.get("family")) for p in pages]
+    streak = 1
+    for i in range(1, len(fams)):
+        streak = streak + 1 if fams[i] == fams[i - 1] else 1
+        mono = max(mono, 1.0 if streak >= 3 else 0.0)
+    flat = 0.0
+    dens = [str(p.get("density")) for p in pages]
+    for i in range(1, len(dens)):
+        flat = max(flat, 0.8 if dens[i] == dens[i - 1] else 0.0)
+    out["risks"] = {"hero_visual": round(min(1.0, media_short * 0.6 + 0.15), 3),
+                    "text_density": round(min(1.0, text_dense), 3),
+                    "media_shortage": round(min(1.0, media_short), 3),
+                    "layout_complexity": round(min(1.0, complex_layout), 3),
+                    "rhythm_flat": round(min(1.0, flat), 3),
+                    "layout_monotony": round(mono, 3)}
+    pol: dict[str, list[str]] = {}
+
+    def _on(key, thr, *actions):
+        if out["risks"][key] >= thr:
+            pol.setdefault(key, []).extend(a for a in actions if a)
+
+    _on("text_density", 0.34, "逐页 text_budget -1，正文统一声明 auto_fit:true",
+        "行长上限收到 32 字（CJK），超出即拆句")
+    _on("media_shortage", 0.5, "媒体政策：只在 cover/brand/product/closing 生成图片",
+        "数据/结构页明确 zero-image，并把省下的预算换成锚点尺度")
+    _on("hero_visual", 0.4, "含图页 ≤1 张且必须声明功能（context/emotion/proof/hero）")
+    _on("layout_complexity", 0.4, "复杂家族一页只承担一个关系：优先分层/路径，放弃并列卡片",
+        "构图算子先定（切分/轴/尺度对偶）再填内容")
+    _on("rhythm_flat", 0.5, "疏密曲线重排：相邻页 density 互斥，能量至少一处随之变化")
+    _on("layout_monotony", 0.99, "同家族连续 ≥3 页换构图语法，或在 design_rationale 声明品牌连续性")
+    out["policies"] = pol
+    out["planned_mode"] = (plan.get("execution") or {}).get("mode")
+    out["notes"].append(f"{n} 页 · 预测来自内容路由（无渲染）；落 spec 后跑 pre_critic 复核")
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════
+# ④b Risk → Strategy：把预测翻译成**生成策略**（vNext：预测层的出口是决策，不是审核）
+#     原则：风险不是要「过一遍审核」，而是要在起草之前改掉生成参数。
+#     纯函数、零改动 spec、零渲染；输出是给 AI 的决策块 + 可机读的逐页预算。
+# ════════════════════════════════════════════════════════════════════════
+_STRATEGY_BY_RISK = {
+    # code → (策略键, 逐页动作, deck 级政策)
+    "ACCENT_OVERFLOW": ("color_policy",
+                        "本页 accent 只留 1 处（焦点数字或一个节点），其余回退主/辅色",
+                        "accent_area_max 收紧一档，构成类关系改 ranked_bar/大数字"),
+    "ACCENT_TIGHT_RISK": ("color_policy",
+                          "贴线页把第二个强调元素改主色，留 20% 预算余量",
+                          "accent_area_max 收紧一档"),
+    "NO_MEMORY_ANCHOR": ("focus_anchor",
+                         "焦点文字给到 ≥40px（Statement 级）或声明图表 highlight/center_value",
+                         "每页至少一个可指认锚点，写进页面骨架"),
+    "CONTRAST_FAIL_RISK": ("type_color_policy",
+                           "把该文字 token 换成 primary/ink，或换更浅的底色",
+                           "正文 token 只允许 ≥4.5:1 的组合（工程下限由 QA 兜底）"),
+    "CONTRAST_WARN_RISK": ("type_color_policy",
+                           "小字号正文改用对比 ≥4.5:1 的 token",
+                           "淡墨只用于装饰与注释，不承担正文"),
+    "FOCUS_SCALE_RISK": ("hierarchy_policy",
+                         "拉开尺度比：焦点 ≥1.25× 第二大文字，或降级竞争文字",
+                         "一页只允许一个层级顶点"),
+    "FOCUS_AREA_RISK": ("hierarchy_policy",
+                        "焦点做大或收窄竞争对象面积；焦点改声明真实锚点",
+                        "媒体预算 ≤1/页，非焦点对象面积 ≤max(2×焦点,25%画布)"),
+    "TEXT_OVERFLOW_RISK": ("text_policy",
+                           "声明 auto_fit:true 让阶梯自动吸附，或先拆句/收窄版心",
+                           "text_budget 收紧一档，行长上限 38 字（CJK）"),
+    "MEDIA_MISUSE_RISK": ("media_policy",
+                          "删除本页图片（数据/表格/流程/结构页不出图），或改叙事/情绪定位",
+                          "媒体政策：图片只在 cover/brand/product/closing 生成"),
+    "MEDIA_BUDGET_RISK": ("media_policy",
+                          "一页一锚点：保留功能最强的一张图",
+                          "每页注意力媒体 ≤1"),
+    "DENSITY_MISMATCH_RISK": ("rhythm_policy",
+                              "按真实占用重新声明 density（标签必须兑现）",
+                              "疏密曲线重排：相邻页密度互斥"),
+    "RHYTHM_FLAT_RISK": ("rhythm_policy",
+                         "改动其中一页的内容量或留白，恢复呼吸",
+                         "疏密曲线重排：相邻页密度互斥"),
+    "RHYTHM_FAKE_RISK": ("rhythm_policy",
+                         "标签变化必须伴随真实墨迹差 ≥0.10",
+                         "疏密曲线重排：相邻页密度互斥"),
+    "BALANCE_SKEW_RISK": ("composition_policy",
+                          "配平视觉重量（成组/加锚/镜像留白），或在 design_rationale 写明刻意偏轴",
+                          "构图算子：连续页至少换一个"),
+    "TYPE_LADDER_RISK": ("type_policy",
+                         "并级：同层信息同字号，层次交给字重/墨色",
+                         "字阶锁在驻点 64/44/32/22/17/12.5，页内 ≤4 级"),
+    "TYPE_SCALE_DRIFT_RISK": ("type_policy",
+                              "全 deck 归并到驻点字阶",
+                              "字阶锁在驻点，页内 ≤4 级"),
+    "LAYOUT_MONOTONE_RISK": ("composition_policy",
+                             "相邻页至少改一个构图算子（切分/轴/尺度对偶）",
+                             "同家族连续 ≥3 页必须换构图语法或声明品牌连续性"),
+    "CONTINUITY_BROKEN_RISK": ("continuity_policy",
+                               "让该记忆线在 ≥2 个关键位置复现（章节转场/收尾呼应），或撤掉声明",
+                               "记忆线成线：token 至少出现两次"),
+}
+
+
+def risk_strategy(spec: dict, report: dict | None = None) -> dict:
+    """风险 → 生成策略（生成前消费的决策块；纯函数，不改 spec）。
+
+    返回：
+      adjusted      : 每条策略键的「当前值 → 建议值」，AI 起草/修订时直接采用
+      pages         : 逐页调整清单（该页要改什么，为什么）
+      generation    : 一句话生成指令（本轮起草的最小决策集）
+      risk_scores   : 归一化风险向量（0–1，供对比不同方向/候选骨架）
+      predicted     : 若不调整将命中的下游失败码（QA/Critic 侧）
+    """
+    report = report or pre_critic(spec)
+    slides = [s for s in (spec.get("slides") or []) if isinstance(s, dict)]
+    ids = [str(s.get("id") or f"page_{i + 1}") for i, s in enumerate(slides)]
+    by_page: dict[str, list[dict]] = {sid: [] for sid in ids}
+    policies: dict[str, dict] = {}
+    predicted: set[str] = set()
+    per_page_score: dict[str, float] = {sid: 0.0 for sid in ids}
+    for r in report.get("risks") or []:
+        weight = {"high": 1.0, "med": 0.5, "low": 0.25}.get(r.get("level"), 0.25)
+        hit = [s for s in (r.get("slides") or []) if str(s) in by_page] or ids
+        for sid in hit:
+            by_page[sid].append(r)
+            per_page_score[sid] += weight
+        if r.get("predicted"):
+            predicted.add(str(r["predicted"]).split("(")[0])
+        key, page_action, deck_policy = _STRATEGY_BY_RISK.get(
+            str(r.get("code")), ("general_policy", str(r.get("prevention") or ""), ""))
+        slot = policies.setdefault(key, {"risk": str(r.get("code")), "page_actions": [],
+                                         "deck_policies": []})
+        if page_action and page_action not in slot["page_actions"]:
+            slot["page_actions"].append(page_action)
+        if deck_policy and deck_policy not in slot["deck_policies"]:
+            slot["deck_policies"].append(deck_policy)
+
+    n = max(1, len(ids))
+    top_score = max(list(per_page_score.values()) + [0.0])
+    pages = [{"slide": sid, "risk_weight": round(per_page_score[sid], 2),
+              "risks": sorted({str(r.get("code")) for r in by_page[sid]}),
+              "fix_first": (by_page[sid][0].get("prevention") if by_page[sid] else None)}
+             for sid in ids if by_page[sid]]
+    order = {"color_policy": 0, "text_policy": 1, "type_policy": 2, "media_policy": 3,
+             "hierarchy_policy": 4, "focus_anchor": 5, "rhythm_policy": 6,
+             "composition_policy": 7, "type_color_policy": 8, "continuity_policy": 9,
+             "general_policy": 99}
+    adjusted = {k: policies[k] for k in sorted(policies, key=lambda x: (order.get(x, 98), x))}
+    summary = report.get("summary") or {}
+    first = summary.get("high", 0)
+    generation = (
+        "按策略起草，不要先出稿再等检查：" + "；".join(
+            f"{k}→{'、'.join(v['deck_policies'])}" for k, v in adjusted.items()
+            if v["deck_policies"])[:600]
+        if adjusted else "无预测风险：按页面骨架直接起草，一次通过")
+    return {"adjusted": adjusted, "pages": pages,
+            "generation": generation,
+            "risk_scores": {sid: round(v / max(1e-6, top_score), 3)
+                            for sid, v in per_page_score.items() if v},
+            "predicted": sorted(predicted),
+            "applied_before": "spec 起草/修订（不是渲染前的审核闸）",
+            "summary": {"policies": len(adjusted), "pages_adjusted": len(pages),
+                        "high": first, "total_pages": n}}
+
+
+
 def _overlap(a: dict, b: dict) -> bool:
     try:
         return (float(a["x"]) < float(b["x"]) + float(b["width"])
@@ -772,21 +974,26 @@ def apply_fit_ladder(spec: dict) -> tuple[dict, dict]:
 # Parallel Intelligence：一次调用汇合三条智能线
 # ════════════════════════════════════════════════════════════════════════
 def analyze(brief: dict, spec: dict | None = None) -> dict:
-    """内容线（brief）/ 视觉线（DNA）/ 风险线（Pre-Critic）单次汇合。
+    """内容线（brief）/ 视觉线（DNA）/ 风险线（预测 + 策略）单次汇合。
 
-    对应 V3 Parallel Intelligence：三条判断互不依赖——不再「P1 完成才 P2、
-    P2 完成才 P3」的串行等待；spec 已存在时风险线立即运行，否则返回 DNA+
-    媒体模型供 spec 起草（起草后再跑一次 analyze 拿风险报告）。
+    Parallel Intelligence：三条判断互不依赖——不要「P1 完成才 P2、P2 完成才 P3」
+    的串行等待。**spec 起草之前**就该拿到 `strategy`：无 spec 时用 `risk_strategy`
+    的同类目（媒体/字阶/构图政策）从 brief 直接推导，有 spec 时按真实几何预测。
     """
     out = {"dna": recall_dna(brief)}
     if spec:
-        out["pre_critic"] = pre_critic(spec)
+        rep = pre_critic(spec)
+        out["pre_critic"] = rep
+        out["strategy"] = risk_strategy(spec, rep)
         out["media"] = [{"slide": s.get("id"), **media_decision(s)}
                         for s in (spec.get("slides") or []) if isinstance(s, dict)]
         out["budgets"] = [{"slide": s.get("id"), **quality_budget(s)}
                           for s in (spec.get("slides") or []) if isinstance(s, dict)]
     else:
-        out["note"] = "spec 未提供：先用 dna + brief 起草，再跑 analyze(brief, spec) 拿风险报告"
+        out["forecast"] = forecast_risk(brief or {})
+        out["note"] = ("spec 未提供：先按 forecast 的风险政策起草"
+                       "（media/hierarchy/rhythm/typography 四条先定，再落 spec），"
+                       "落稿后跑 analyze(brief, spec) 拿逐页预测与策略")
     return out
 
 
@@ -795,7 +1002,7 @@ def main(argv):
     import importlib.util
     if len(argv) < 2:
         print("usage: python design_intelligence.py <build_module.py> "
-              "[--risks|--analyze|--record-dna id]")
+              "[--forecast|--risks|--analyze|--record-dna id]")
         return 1
     mod_path = Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
@@ -805,12 +1012,21 @@ def main(argv):
     if spec is None:
         print("build module must define build_spec() or SPEC")
         return 1
+    if "--forecast" in argv:
+        brief = getattr(mod, "BRIEF", {}) or {}
+        fc = forecast_risk(brief if isinstance(brief, dict) else {})
+        print(json.dumps(fc, ensure_ascii=False, indent=2))
+        return 0
     if "--json" not in argv:
-        # 摘要输出
+        # 摘要输出：风险 + 生成策略（策略先读，风险单是清单）
         rep = pre_critic(spec)
+        strat = risk_strategy(spec, rep)
         s = rep["summary"]
-        print(f"pre-critic: {s['high']} high / {s['med']} med · "
+        print(f"risk-prediction: {s['high']} high / {s['med']} med · "
               f"{s['pages_at_risk']}/{s['total_pages']} 页有风险 · {rep['elapsed_ms']}ms")
+        for key, val in strat["adjusted"].items():
+            for d in val["deck_policies"]:
+                print(f"  [{key}] 政策 → {d}")
         for r in rep["risks"]:
             if r["level"] == "high":
                 pages = "、".join(r["slides"])
@@ -829,37 +1045,58 @@ if __name__ == "__main__":
 
 
 # ════════════════════════════════════════════════════════════════════
-# V3.0 · Visual Calibration & Judgment Layer（参考空间校准闭环）
+# 参考空间律（Calibration Laws · 判断阈值，不是模板）
 #
-# 证据来源：memory/calibration_space.json —— 10 套世界级设计板实测
-# （measure_references.py 切页测量：面积律 / 色相族 / 饱和 / 明度域 /
-#   负空间 / 图片占比 / 排印密度）。本层只消费「带与律」，不复制任何
-# 布局、色板、组件——参考空间用来校准判断，不是模板。
-# 与既有层关系：Pre-Critic 预测失败码，本层预测「是否达到参考空间水准」，
-# 两者都不改 Guard/Critic 的判定标准。
+# 这些「带与律」原先来自外部实测存储（一个校准数据文件 + 一个测量脚本），
+# 两者都不在本包内 —— 一个引用不到的证据文件只是装饰，还会让自检/文档
+# 出现悬空指针。vNext 把律**内联为常量**：
+# 判断阈值直接可读、可改、可核对，不再有第二套缓存/迁移层。
+# 想恢复实测闭环：把测量结果写进 memory/calibration_space.json 即可被
+# `calibration_laws()` 覆盖（文件存在才读；不存在零成本、零告警）。
 # ════════════════════════════════════════════════════════════════════
+CALIBRATION_LAWS = {
+    "area_ratio": {"c1": 0.55, "c1_band": (0.35, 0.85), "c2": 0.21,
+                   "c3": 0.11, "c4": 0.06},
+    "hue_families_page_max": 1,          # 页级（主题级宽一档 → 2）
+    "sat90": {"quiet_max": 0.35, "warm_material_max": 0.65},
+    "brightness_regimes": {"dark": (0.05, 0.35), "light": (0.55, 0.97)},
+    "negative_space_text_led": (0.40, 1.0),
+    "photo_share": (0.18, 0.60),
+    "type_edge_density": (0.016, 0.053),
+}
+CALIBRATION_FAMILIES: dict[str, dict] = {}
 CALIBRATION_STORE = Path(__file__).resolve().parent.parent / "memory" / "calibration_space.json"
 _CAL_CACHE: dict | None = None
 
 
 def _load_calibration() -> dict:
+    """可选覆盖：文件存在才读（不存在 = 用内联律，不是缺失、不报错）。"""
     global _CAL_CACHE
     if _CAL_CACHE is None:
         try:
             _CAL_CACHE = json.loads(CALIBRATION_STORE.read_text(encoding="utf-8"))
         except Exception:
-            _CAL_CACHE = {"laws": {}, "families": {}, "global": {}}
+            _CAL_CACHE = {}
     return _CAL_CACHE
 
 
 def calibration_laws(family: str | None = None) -> dict:
-    """全局律 + 可选家族带。家族带是证据（p10/p50/p90），不是目标模板。"""
+    """全局律（内联常量）+ 可选家族带（来自可选覆盖文件）。
+
+    家族带是证据（p10/p50/p90），不是目标模板；缺失时按全局律判读。
+    """
     cal = _load_calibration()
-    laws = dict(cal.get("laws") or {})
-    if family and (cal.get("families") or {}).get(family):
-        laws["family_bands"] = cal["families"][family]
-    laws["global_bands"] = cal.get("global") or {}
+    laws = dict(CALIBRATION_LAWS)
+    laws.update({k: v for k, v in (cal.get("laws") or {}).items() if v is not None})
+    fams = dict(CALIBRATION_FAMILIES)
+    fams.update(cal.get("families") or {})
+    if family and fams.get(family):
+        laws["family_bands"] = fams[family]
+        laws.update({k: v for k, v in fams[family].items() if k not in laws})
+    laws["family_personality"] = fams
+    laws["source"] = "inline" if not cal else "inline+override"
     return laws
+
 
 
 # ── Adaptive Color Intelligence Engine ───────────────────────────────
@@ -1122,5 +1359,6 @@ def visual_calibration_score(spec: dict, family: str | None = None) -> dict:
             "family": family, "laws_used": {
                 "hue_families_page_max": laws.get("hue_families_page_max"),
                 "area_ratio": laws.get("area_ratio"),
-                "photo_share": laws.get("photo_share")},
+                "photo_share": laws.get("photo_share"),
+                "source": laws.get("source")},
             "elapsed_ms": round((time.time() - t0) * 1000, 2)}

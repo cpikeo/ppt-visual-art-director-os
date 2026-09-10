@@ -216,20 +216,15 @@ def _pdf_record(pptx: Path, work: Path, pdf: Path, renderer: str | None) -> None
 def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
     """本轮像素视图与已编译产物一致 → 返回上次编译报告，跳过 compile_deck。
 
-    复用条件是三重的：视图指纹一致、产物仍在原位、产物内容指纹未变。因此手动改过
-    PPTX、换过图片或删过文件都不会命中；`use_cache=False` 时调用方直接跳过本函数。
+    复用条件就是「编译的两项输入都没变」：spec 的像素视图指纹一致 + 磁盘上的
+    PPTX 内容指纹未变。因此手动改过 PPTX、换过图片或删过文件都不会命中；
+    编译器行为变了 → 产物字节变了 → 第二道关自动失效（vNext 起不再需要
+    COMPILER_VERSION 之类的版本闸：视图 + 内容核验已经覆盖同一件事）。
+    `use_cache=False` 时调用方直接跳过本函数。
     """
     rec = _load_meta(work).get("compile") or {}
     if rec.get("view") != view or not rec.get("report"):
         return None
-    # 编译行为版本闸：编译器行为变了（哪怕 spec 未变），旧报告作废——
-    # 否则 v2.10 修过的「跨算法陈旧判定」会在编译层复活。
-    try:
-        from compiler import COMPILER_VERSION
-        if rec.get("compiler") != COMPILER_VERSION:
-            return None
-    except Exception:
-        pass
     if _file_sha(pptx) != rec.get("pptx_sha"):
         return None
     if not Path(pptx).exists():
@@ -240,15 +235,8 @@ def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
 
 
 def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
-    compiler_ver = None
-    try:
-        from compiler import COMPILER_VERSION
-        compiler_ver = COMPILER_VERSION
-    except Exception:
-        pass
     _patch_meta(work, compile={
         "view": view, "pptx_sha": _file_sha(pptx), "pptx_name": Path(pptx).name,
-        "compiler": compiler_ver,
         "report": {k: v for k, v in (report or {}).items() if k != "guard"}})
 
 
@@ -268,7 +256,7 @@ def _save_cache(work: Path, entries: dict[str, dict]) -> None:
     try:
         import json
         (work / RENDER_CACHE_NAME).write_text(
-            json.dumps({"cache_version": 1, "renderer": str(find_renderer() or ""),
+            json.dumps({"renderer": str(find_renderer() or ""),
                         "entries": entries}, ensure_ascii=False, indent=1),
             encoding="utf-8")
     except Exception:

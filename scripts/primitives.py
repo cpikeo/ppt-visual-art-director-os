@@ -15,11 +15,29 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from pptx.util import Emu, Pt
-from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from pptx.oxml import parse_xml
-from pptx.oxml.ns import qn, nsdecls
+# ── python-pptx 延迟加载（v3.2 契约，别改回顶层 import）────────────────────
+# 本层被 guard / normalizer / qa 复用，而它们**只处理 spec 数据**：draft 一轮
+# 真正的判断成本是 2.8ms，pptx 的 import 却要 152ms（pptx.api → opc → oxml →
+# xml.sax → urllib.request）。把整套 Presentation API 拖进「读数据」的路径是
+# 架构错误，所以这里只在真的要用 pptx 对象时才解析（`_p()`，进程内缓存一次）。
+# 自检 `check_draft_import_contract` 会断言 draft 进程内不得出现 pptx / lxml /
+# compiler —— 谁把 `from pptx import ...` 放回本层顶部，立刻失败。
+_PPTX: dict | None = None
+
+
+def _p() -> dict:
+    """pptx 符号表的延迟入口：只在编译/渲染路径被调用。"""
+    global _PPTX
+    if _PPTX is None:
+        from pptx.util import Emu, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+        from pptx.oxml import parse_xml
+        from pptx.oxml.ns import qn, nsdecls
+        _PPTX = {"Emu": Emu, "Pt": Pt, "RGBColor": RGBColor,
+                 "PP_ALIGN": PP_ALIGN, "MSO_ANCHOR": MSO_ANCHOR,
+                 "parse_xml": parse_xml, "qn": qn, "nsdecls": nsdecls}
+    return _PPTX
 
 # 1280 design px -> 13.333 in (12192000 EMU)
 PX_TO_EMU = 9525
@@ -28,27 +46,73 @@ DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 # 设计系统基线网格（8 单位）：guard 归一化确认、normalizer 吸附、SKILL.md 契约三方同源
 GRID_UNIT = 8
 
-ALIGN = {
-    None: PP_ALIGN.LEFT, "left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
-    "right": PP_ALIGN.RIGHT, "justify": PP_ALIGN.JUSTIFY,
-}
-ANCHOR = {
-    None: MSO_ANCHOR.TOP, "top": MSO_ANCHOR.TOP,
-    "middle": MSO_ANCHOR.MIDDLE, "bottom": MSO_ANCHOR.BOTTOM,
-}
+_ALIGN_KEYS = {"left", "center", "right", "justify"}
+_ANCHOR_KEYS = {"top", "middle", "bottom"}
+_ALIGN_FALLBACK = {None: "left", "": "left"}
+_ANCHOR_FALLBACK = {None: "top", "": "top"}
+
+
+_ALIGN_ATTR = {"left": "LEFT", "center": "CENTER", "right": "RIGHT",
+               "justify": "JUSTIFY"}
+_ANCHOR_ATTR = {"top": "TOP", "middle": "MIDDLE", "bottom": "BOTTOM"}
+
+
+def align_of(value, fallback=None):
+    """文本对齐：名字 → pptx 枚举（延迟解析）。未识别的名字交给 fallback。"""
+    key = _ALIGN_FALLBACK.get(value, value)
+    if key not in _ALIGN_KEYS:
+        return fallback
+    return getattr(_p()["PP_ALIGN"], _ALIGN_ATTR[key])
+
+
+def anchor_of(value, fallback=None):
+    """垂直锚点：名字 → pptx 枚举（延迟解析）。"""
+    key = _ANCHOR_FALLBACK.get(value, value)
+    if key not in _ANCHOR_KEYS:
+        return fallback
+    return getattr(_p()["MSO_ANCHOR"], _ANCHOR_ATTR[key])
+
+
 # 渲染级安全回落（不是设计观点）：主题未声明字体时保证文件可渲染。
 FALLBACK_CN = "Microsoft YaHei"
 FALLBACK_LATIN = "Arial"
-FALLBACK_INK = RGBColor(0x20, 0x20, 0x20)
+
+
+def color_to_hex(value) -> str | None:
+    """RGBColor / #RRGGBB / "RRGGBB" → 六位大写 HEX；解析不出来返回 None。
+
+    与 pptx 类型解耦：既接受真实的 RGBColor（可迭代/str()），也接受纯字符串，
+    这样「取对比度」这类判断不依赖 pptx 是否已被加载。
+    """
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            h = value.lstrip("#").upper()
+            return h if len(h) == 6 else None
+        if all(isinstance(x, int) for x in value):        # RGBColor 是 int 三元组
+            return "".join(f"{c:02X}" for c in value)
+    except Exception:
+        pass
+    try:
+        h = str(value).lstrip("#").upper()
+        return h if len(h) == 6 else None
+    except Exception:
+        return None
+
+
+def fallback_ink():
+    """未声明墨色时的安全值（RGBColor，需要 pptx → 延迟构造）。"""
+    return _p()["RGBColor"](0x20, 0x20, 0x20)
 
 
 def emu(px) -> int:
     return int(round(float(px) * PX_TO_EMU))
 
 
-def pt(px) -> Pt:
+def pt(px):
     # design px -> points（1 design px = 0.75 pt）
-    return Pt(float(px) * 0.75)
+    return _p()["Pt"](float(px) * 0.75)
 
 
 # --------------------------------------------------------------------------
@@ -319,12 +383,12 @@ def parse_token(value):
         h = "".join(c * 2 for c in h)
     if len(h) == 8:
         try:
-            return RGBColor.from_string(h[0:6].upper()), int(h[6:8], 16) / 255.0
+            return _p()["RGBColor"].from_string(h[0:6].upper()), int(h[6:8], 16) / 255.0
         except Exception:
             return None, None
     if len(h) == 6:
         try:
-            return RGBColor.from_string(h.upper()), None
+            return _p()["RGBColor"].from_string(h.upper()), None
         except Exception:
             return None, None
     return None, None
@@ -435,18 +499,19 @@ def derive_tokens(base: dict) -> dict:
 # 填充 / 描边（支持透明度与渐变）
 # --------------------------------------------------------------------------
 def _append_alpha(clr_el, alpha: float) -> None:
+    qn = _p()["qn"]
     for old in clr_el.findall(qn("a:alpha")):
         clr_el.remove(old)
     el = clr_el.makeelement(qn("a:alpha"), {"val": str(int(round(alpha * 100000)))})
     clr_el.append(el)
 
 
-def solid_fill(fill, color: RGBColor, alpha=None) -> None:
+def solid_fill(fill, color, alpha=None) -> None:
     fill.solid()
     fill.fore_color.rgb = color
     if alpha is not None and alpha < 1.0:
         xfill = fill.fore_color._xFill
-        clr = xfill.find(qn("a:srgbClr")) if xfill is not None else None
+        clr = xfill.find(_p()["qn"]("a:srgbClr")) if xfill is not None else None
         if clr is not None:
             _append_alpha(clr, alpha)
 
@@ -460,6 +525,7 @@ def _insert_fill_in_order(parent, fill_el) -> None:
     对于 `<p:spPr>` 需要跳过 xfrm/prstGeom/custGeom。
     这样才能避免「effectLst 排在 gradFill 前面」导致的渲染器忽略渐变。
     """
+    qn = _p()["qn"]
     pre_fill = {qn("a:xfrm"), qn("a:custGeom"), qn("a:prstGeom")}
     for i, child in enumerate(parent):
         if child.tag in pre_fill:
@@ -486,30 +552,31 @@ def gradient_fill(fill, stops, angle=90.0) -> None:
             f'<a:gs pos="{int(round(max(0.0, min(1.0, pos)) * 100000))}">'
             f'<a:srgbClr val="{rgb}">{alpha_xml}</a:srgbClr></a:gs>')
     if len(parts) < 2:
-        solid_fill(fill, parse_token(stops[0][1])[0] or FALLBACK_INK,
+        solid_fill(fill, parse_token(stops[0][1])[0] or fallback_ink(),
                    stops[0][2] if len(stops[0]) > 2 else None)
         return
-    xml = (f'<a:gradFill {nsdecls("a")} rotWithShape="1">'
+    P = _p()
+    xml = (f'<a:gradFill {P["nsdecls"]("a")} rotWithShape="1">'
            f'<a:gsLst>{"".join(parts)}</a:gsLst>'
            f'<a:lin ang="{int(round(angle * 60000))}" scaled="1"/>'
            f'</a:gradFill>')
     spPr = fill._xPr
     for tag in ("a:noFill", "a:solidFill", "a:gradFill", "a:blipFill",
                 "a:pattFill", "a:grpFill"):
-        for el in spPr.findall(qn(tag)):
+        for el in spPr.findall(P["qn"](tag)):
             spPr.remove(el)
-    _insert_fill_in_order(spPr, parse_xml(xml))
+    _insert_fill_in_order(spPr, P["parse_xml"](xml))
 
 
-def stroke_color(line, color: RGBColor, alpha=None, width=None) -> None:
+def stroke_color(line, color, alpha=None, width=None) -> None:
     line.color.rgb = color
     if alpha is not None and alpha < 1.0:
         xfill = line.color._xFill
-        clr = xfill.find(qn("a:srgbClr")) if xfill is not None else None
+        clr = xfill.find(_p()["qn"]("a:srgbClr")) if xfill is not None else None
         if clr is not None:
             _append_alpha(clr, alpha)
     if width is not None:
-        line.width = Emu(emu(width))
+        line.width = _p()["Emu"](emu(width))
 
 
 def no_line(line) -> None:
@@ -602,7 +669,9 @@ def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,
     if uppercase:
         text = text.upper()
         run.text = text
-    run.font.size = Pt(size_pt)
+    P = _p()
+    qn = P["qn"]
+    run.font.size = P["Pt"](size_pt)
     run.font.bold = bool(bold)
     run.font.italic = bool(italic)
     if color is not None:
@@ -616,7 +685,7 @@ def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,
         if sf is None:
             sf = rPr.makeelement(qn("a:solidFill"), {})
             rPr.append(sf)
-            sf.append(rPr.makeelement(qn("a:srgbClr"), {"val": str(color or FALLBACK_INK)}))
+            sf.append(rPr.makeelement(qn("a:srgbClr"), {"val": str(color or fallback_ink())}))
         clr = sf.find(qn("a:srgbClr"))
         if clr is not None:
             _append_alpha(clr, alpha)
@@ -672,7 +741,7 @@ class RenderContext:
     def color(self, value):
         return self.paint(value)[0]
 
-    def text_color(self, value=None) -> RGBColor:
+    def text_color(self, value=None):
         c = self.color(value)
         if c is not None:
             return c
@@ -681,7 +750,7 @@ class RenderContext:
                 c = self.color(role)
                 if c is not None:
                     return c
-        return FALLBACK_INK
+        return fallback_ink()
 
     def paint_or(self, value, fallback_role=None):
         """取色，取不到时回落到某个角色。"""
@@ -743,27 +812,17 @@ class RenderContext:
         """
         if fill_ref is None:
             return self.text_color()
-        if hasattr(fill_ref, "__class__") and fill_ref.__class__.__name__ == "RGBColor":
-            try:
-                fill_hex = "".join(f"{c:02X}" for c in fill_ref)
-            except Exception:
-                return self.text_color()
-        else:
-            color, _ = self.paint(fill_ref)
-            if color is None:
-                return self.text_color()
-            try:
-                fill_hex = "".join(f"{c:02X}" for c in color)
-            except Exception:
-                return self.text_color()
+        color = fill_ref if color_to_hex(fill_ref) else (self.paint(fill_ref)[0])
+        fill_hex = color_to_hex(color)
+        if not fill_hex:
+            return self.text_color()
         candidates = []
         for role in ("ink", "on_dark", "primary", "background", "surface", "muted", "secondary", "accent"):
             c = self.color(role)
             if c:
-                try:
-                    candidates.append((role, "".join(f"{v:02X}" for v in c)))
-                except Exception:
-                    pass
+                hex_val = color_to_hex(c)
+                if hex_val:
+                    candidates.append((role, hex_val))
         candidates.append(("white", "FFFFFF"))
         candidates.append(("black", "111111"))
         best_role, best_c = None, 0.0
@@ -775,8 +834,8 @@ class RenderContext:
             if k > best_c:
                 best_c, best_role = k, role
         if best_role in ("white", "black"):
-            from pptx.dml.color import RGBColor
-            return RGBColor(0xFF, 0xFF, 0xFF) if best_role == "white" else RGBColor(0x11, 0x11, 0x11)
+            rgb = _p()["RGBColor"]
+            return rgb(0xFF, 0xFF, 0xFF) if best_role == "white" else rgb(0x11, 0x11, 0x11)
         return self.color(best_role) or self.text_color()
 
     # -- 字体 -------------------------------------------------------------

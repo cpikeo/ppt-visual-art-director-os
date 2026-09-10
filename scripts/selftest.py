@@ -114,7 +114,10 @@ def check_references():
     refs = set()
     # 同时扫描文档与脚本（docstring/注释里的引用同样必须可解析）
     docs = list(ROOT.rglob("*.md")) + sorted(SCRIPTS.glob("*.py"))
-    allow_missing = {"build_mydeck.py", "build_module.py", "build_card.py", "build_page.py"}
+    # 不随包分发的引用：用户的构建模块占位名，以及工作区基准/尚未实现的路线图条目
+    allow_missing = {"build_mydeck.py", "build_module.py", "build_card.py",
+                     "build_page.py", "build_probe.py", "build_bench_deck.py",
+                     "qa_worker.py"}
     for doc in docs:
         refs.update(re.findall(r"[\w./-]+\.(?:md|py)", doc.read_text(encoding="utf-8")))
     missing = sorted({r.split("/")[-1] for r in refs if ".." not in r and r.split("/")[-1] not in names and r.split("/")[-1] not in allow_missing})
@@ -122,18 +125,28 @@ def check_references():
 
 
 def check_critic():
+    """职责分离：卡片墙仍是设计扣分（写进 observations），但**不再是 Critic 的发布门槛**；
+    工程类失败码被显式移交给 QA，报告里可核对 `delegated_to_qa`。"""
     mod = load("art_critic", SCRIPTS / "art_critic.py")
     spec = {"slides": [{"id": "s01", "page_intent": {"insight": "A", "focus": "title", "density": "sparse"}, "elements": [{"type": "text", "id": "title"}]}]}
     spec["slides"][0]["elements"] += [{"type": "shape", "shape": "rounded_rect", "id": f"card{i}"} for i in range(5)]
     out = mod.critique_deck(spec, {"rendered": True, "pages": [{"gravity_drift": 0.0, "accent_pixel_ratio": 0.01}]})
-    required = {"critic_version", "deck_score", "status", "slides", "hard_gates", "deck_notes"}
+    required = {"critic_version", "deck_score", "status", "slides", "hard_gates", "deck_notes",
+                "domain", "delegated_to_qa"}
     observations = " ".join(out["slides"][0]["observations"])
+    gate_codes = {g.get("code") for g in out["hard_gates"]}
     ok = required <= set(out) and len(out["slides"]) == 1 and "卡片墙" in observations
     ok = ok and "dimension_evidence" in out["slides"][0]
-    ok = ok and any(g.get("code") == "CARD_WALL" for g in out["hard_gates"])
+    ok = ok and out["domain"] == "design_value"
+    # QA 专属码不得出现在 Critic 门控里；出现了即为职责污染
+    ok = ok and "CARD_WALL" not in gate_codes
+    ok = ok and not (gate_codes & set(out["delegated_to_qa"]))
+    ok = ok and {"READABILITY_FAIL", "TEXT_OVERFLOW", "OVERLAP", "MEDIA_UNJUSTIFIED",
+                 "BACKGROUND_DISGUISED", "RHYTHM_FLAT"} <= set(out["delegated_to_qa"])
     return {"status": "PASS" if ok else "FAIL", "status_value": out.get("status"),
             "card_wall_detected": "卡片墙" in observations,
-            "gates": [g.get("code") for g in out["hard_gates"]]}
+            "gates": sorted(str(c) for c in gate_codes),
+            "delegated": len(out["delegated_to_qa"])}
 
 
 def check_critic_pass_reachable():
@@ -293,35 +306,77 @@ def check_normalizer():
 
 
 def check_execution_modes():
-    """V2 流程控制：模式档案完备、legacy 别名映射、稳定性门控状态机。"""
+    """流程控制：模式档案完备、legacy 别名映射、Critic 介入策略一句话（无门控）。"""
     qa_mod = load("qa", SCRIPTS / "qa.py")
     modes = qa_mod.EXECUTION_MODES
-    ok = (set(modes) == {"express", "sketch", "draft", "review", "release"}
-          and modes["express"]["render"] is False and modes["express"]["critic"] == "off"
-          and modes["express"]["qa_level"] == 0
+    ok = (set(modes) == {"spec", "sketch", "draft", "review", "release"}
+          and modes["spec"]["render"] is False and modes["spec"]["critic"] == "off"
+          and modes["spec"].get("compile") is False
+          and modes["draft"].get("compile", True) is True
           and modes["sketch"]["render"] is False and modes["sketch"]["critic"] == "off"
-          and modes["sketch"]["preflight_gate"] is False
+          and modes["sketch"]["qa_level"] == 1
           and modes["draft"]["render"] is False and modes["draft"]["critic"] == "off"
-          and modes["review"]["qa_level"] == 2 and modes["review"]["critic"] == "auto"
-          and modes["release"]["qa_level"] == 3 and modes["release"]["critic"] == "full"
+          and modes["review"]["qa_level"] == 2 and modes["review"]["critic"] == "on"
+          and modes["release"]["qa_level"] == 3 and modes["release"]["critic"] == "on"
+          # 模式档案里不再有 preflight_gate / 稳定性字段
+          and all("preflight_gate" not in m and "stability" not in m
+                  for m in modes.values())
           and qa_mod.mode_profile("bogus")["qa_level"] == 3)   # 未知 → 宁严勿松
-    # 稳定性门控（纯函数）：脏 → 0；干净但几何变了 → 1；连续两轮干净同几何 → stable
-    d = qa_mod._stability_decision(None, "geoA", False)
-    ok = ok and d["stable"] is False and d["consecutive_clean"] == 0
-    d1 = qa_mod._stability_decision({"last_geo": "geoA", "last_clean": True,
-                                     "consecutive_clean": 1}, "geoA", True)
-    ok = ok and d1["stable"] is True and d1["consecutive_clean"] == 2
-    d2 = qa_mod._stability_decision({"last_geo": "geoA", "last_clean": True,
-                                     "consecutive_clean": 3}, "geoB", True)
-    ok = ok and d2["stable"] is False and d2["consecutive_clean"] == 1 \
-        and d2["reason"] == "geometry_changed"
+    # 已被删除的机制不得复活（Stability Gate / Studio 状态机 / Critic 结果缓存）
+    ok = ok and not hasattr(qa_mod, "_stability_decision") \
+        and not hasattr(qa_mod, "_load_studio_state") \
+        and not hasattr(qa_mod, "PREFLIGHT_HARD_CODES")
     # route 模式推荐：默认 draft、发布词 → release
     route_mod = load("route", SCRIPTS / "route.py")
     ok = ok and route_mod.recommend_mode({}) == "draft" \
         and route_mod.recommend_mode({"brief": "发布终版"}) == "release" \
         and route_mod.recommend_mode({"brief": "方向已确认"}) == "review"
-    return {"status": "PASS" if ok else "FAIL",
-            "modes": sorted(modes), "stability_first_run_stable": d1["stable"]}
+    # QA 对外判定只有三个词：PASS / FAIL / WARNING
+    v_pass = qa_mod.verdict_of("PASS", 98.0, [], [])
+    v_warn = qa_mod.verdict_of("REVISE", 88.0, [{"level": "warn"}], ["X"])
+    v_fail = qa_mod.verdict_of("BLOCKED", 70.0, [{"level": "error"}], ["GUARD_FAIL"])
+    ok = ok and (v_pass["verdict"], v_warn["verdict"], v_fail["verdict"]) == (
+        "PASS", "WARNING", "FAIL")
+    return {"status": "PASS" if ok else "FAIL", "modes": sorted(modes),
+            "verdicts": [v_pass["verdict"], v_warn["verdict"], v_fail["verdict"]]}
+
+
+def check_state_footprint():
+    """跨轮状态必须只剩一样：上一版 spec（用于「只渲染变化页」）。"""
+    import tempfile
+    qa_mod = load("qa", SCRIPTS / "qa.py")
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+                        "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
+
+    def page(sid, y):
+        return {"id": sid, "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
+                "page_intent": {"insight": f"{sid} 结论", "focus": "st", "density": "sparse",
+                                "energy": "high", "empty_space_role": "hold_emotion"},
+                "elements": [{"type": "text", "id": "st", "x": 400, "y": y, "width": 480,
+                              "height": 120, "size": 48, "text": f"{sid} statement",
+                              "color": "ink", "max_lines": 1, "line_height": 1.2,
+                              "padding": 0}]}
+
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+            "slides": [page("s01", 300), page("s02", 300)]}
+    with tempfile.TemporaryDirectory() as d:
+        out = pathlib.Path(d) / "st.pptx"
+        work = pathlib.Path(d) / "render"
+        qa_mod.run_qa(spec, out, mode="draft", render_dir=work, dpi=60)
+        allowed = {"last_spec.json", "render_meta.json", "render_cache.json"}
+        files = sorted(f.name for f in work.iterdir()) if work.exists() else []
+        first = set(files) <= allowed and "last_spec.json" in files
+        # 第二轮（改一句声明）：仍不产生 studio_state / critic 缓存 / 几何状态文件
+        import copy
+        spec2 = copy.deepcopy(spec)
+        spec2["slides"][0]["page_intent"]["insight"] = "换一句说法"
+        r2 = qa_mod.run_qa(spec2, out, mode="draft", render_dir=work, dpi=60)
+        files2 = sorted(f.name for f in work.iterdir()) if work.exists() else []
+        leaked = [f for f in files2 if f not in allowed]
+        ok = (first and not leaked and r2["execution"]["change_classes"]["deck"]
+              == "narrative" and r2["critic"]["ran"] is False
+              and r2["execution"]["critic"]["reason"] == "mode_draft_no_critic")
+    return {"status": "PASS" if ok else "FAIL", "files": files2, "leaked": leaked}
 
 
 def check_change_classifier():
@@ -759,7 +814,8 @@ def check_qa_performance_keys():
             "render_skipped"}
     ok = (keys <= set(perf) and (r.get("preflight") or {}).get("items") is not None
           and qa.DEFAULT_PENALTIES.get("preflight_hint") == 0.0
-          and "preflight_gate" in r and perf["slides"] == 1)
+          and "preflight_gate" not in r        # vNext：预检只诊断，不拦渲染
+          and perf["slides"] == 1)
     return {"status": "PASS" if ok else "FAIL",
             "perf": {k: perf.get(k) for k in ("guard_ms", "compile_ms", "render_ms")}}
 
@@ -1018,14 +1074,24 @@ def check_text_contrast_gate():
                                       "line_height": 1.2, "padding": 0}]}]}
     ev = {"rendered": True, "pages": [dict(m_bad, slide="s01", index=0, page=1)]}
     c = crit.critique_deck(spec, ev)
-    gate = [g for g in c["hard_gates"] if g["code"] == "READABILITY_FAIL"]
+    # 同一份证据只有一个出口：QA 判 fail/error（READABILITY_FAIL），Critic 不重复立案
+    prim = load("primitives", SCRIPTS / "primitives.py")
+    qa_verdict = prim.text_contrast_verdict(
+        dict(m_bad, slide="s01"), qa.DEFAULT_THRESHOLDS["text_contrast_fail"],
+        qa.DEFAULT_THRESHOLDS["text_contrast_warn"])
+    critic_evidence = " ".join(
+        x for x in (c["slides"][0].get("dimension_evidence") or {}).get("contrast", []))
     ok = (tc_bad is not None and tc_bad < 1.5 and tc_good is not None and tc_good > 10
-          and bool(gate) and gate[0]["severity"] == "BLOCKED"
+          and qa_verdict["level"] == "fail"
+          and not [g for g in c["hard_gates"] if g["code"] == "READABILITY_FAIL"]
+          and "READABILITY_FAIL" in c["delegated_to_qa"]
+          and "QA" in critic_evidence      # 证据仍被引用，只是记分出口写明归 QA
           and qa.DEFAULT_THRESHOLDS["text_contrast_fail"] == 3.0
           and qa.DEFAULT_THRESHOLDS["text_contrast_warn"] == 4.5
           and "render_contrast" in qa.DEFAULT_PENALTIES)
     return {"status": "PASS" if ok else "FAIL", "dark_ratio": tc_bad,
-            "light_ratio": tc_good, "gate": bool(gate)}
+            "light_ratio": tc_good, "critic_gate": False,
+            "qa_level_verdict": qa_verdict["level"]}
 
 
 def check_line_measure():
@@ -1055,17 +1121,19 @@ def check_line_measure():
                         "elements": [text("a", 60, 20, 1088), text("b", 200, 10, 1088),
                                      text("c", 200, 10, 1088, role="source")]}]}
     g = guard.check_spec(spec)
-    typo_err = [c for c in g["checks"] if c["rule"] == "typography" and c["level"] == "error"]
+    # 行长「建议值」是编辑观点（typography / advisory）；超出 fail factor 是内容被切断
+    # 的事实 → 归 text_capacity，可阻断（v3.2 重定性）。
+    cap_err = [c for c in g["checks"] if c["rule"] == "text_capacity" and c["level"] == "error"]
     typo_warn = [c for c in g["checks"] if c["rule"] == "typography" and c["level"] == "warn"]
     pre = [i for i in (g.get("preflight") or []) if i["code"] == "LINE_MEASURE"]
     lm_stats = g.get("line_measure") or {}
     ok = (over and over["over"] and not over["fatal"] and fatal and fatal["fatal"]
           and aux is None and ok_case and not ok_case["over"]
-          and len(typo_err) == 1 and "b" in typo_err[0]["id"] and len(typo_warn) == 1
+          and len(cap_err) == 1 and "b" in cap_err[0]["id"] and len(typo_warn) == 1
           and bool(pre) and lm_stats.get("checked") == 2 and lm_stats.get("over") == 2
           and (g.get("grid") or {}).get("adherence") is not None)
     return {"status": "PASS" if ok else "FAIL", "over": bool(over and over["over"]),
-            "fatal_blocked": len(typo_err), "warn": len(typo_warn),
+            "fatal_blocked": len(cap_err), "warn": len(typo_warn),
             "preflight": len(pre), "grid_adherence": (g.get("grid") or {}).get("adherence")}
 
 
@@ -1686,11 +1754,11 @@ def check_deck_decision():
 
 
 def check_compile_version_gate():
-    """v2.12 编译缓存版本闸：编译器行为变更后，spec 未变也必须重编译。"""
+    """编译缓存的失效判据 = 内容核验（视图指纹 + 产物字节），不再需要版本闸。"""
     import tempfile
     rc = load("render_check", SCRIPTS / "render_check.py")
     comp = load("compiler", SCRIPTS / "compiler.py")
-    ok = isinstance(getattr(comp, "COMPILER_VERSION", None), str)
+    ok = True
     with tempfile.TemporaryDirectory() as d:
         work = pathlib.Path(d)
         pptx = work / "a.pptx"
@@ -1698,11 +1766,17 @@ def check_compile_version_gate():
         rc.record_compile(work, pptx, "view1", {"passed": True, "warnings": []})
         rep = rc.compile_reuse(work, pptx, "view1")
         ok = ok and rep is not None and rep.get("reused") is True
-        # 编译行为版本不一致 → 缓存作废（旧报告不得复活）
-        rc._patch_meta(work, compile={"compiler": "0.0-fossil"})
-        ok = ok and rc.compile_reuse(work, pptx, "view1") is None
-        # 视图变化 → 作废（原语义回归）
+        # vNext：不再读 COMPILER_VERSION——编译器行为变了产物字节就变了，
+        # 下面的内容核验（pptx_sha）已经覆盖同一件事，版本闸是重复设计。
+        rc._patch_meta(work, compile={**json.loads((work / "render_meta.json")
+                                                    .read_text(encoding="utf-8"))["compile"],
+                                      "compiler": "0.0-fossil"})
+        ok = ok and rc.compile_reuse(work, pptx, "view1") is not None
+        # 视图变化 → 作废
         ok = ok and rc.compile_reuse(work, pptx, "view2") is None
+        # 产物被改（哪怕视图没变）→ 作废：内容核验是唯一也是足够的失效判据
+        pptx.write_bytes(b"tampered")
+        ok = ok and rc.compile_reuse(work, pptx, "view1") is None
     return {"status": "PASS" if ok else "FAIL",
             "compiler_version": getattr(comp, "COMPILER_VERSION", None)}
 
@@ -1727,7 +1801,10 @@ def check_sketch_mode():
         exists = out.exists()
     # muted #CCCCCC 对白底 <1.8:1 → draft 应有 warn；sketch 只留 error 级
     ok = (sk["status"] == "SKETCH" and dr["status"] == "PREVIEW_ONLY"
-          and sk.get("pre_critic") is None and dr.get("pre_critic") is not None
+          and dr.get("pre_critic") is dr.get("risk")          # 别名同对象，不复制
+          and dr.get("risk") is not None
+          and isinstance((dr["risk"].get("strategy") or {}).get("adjusted"), dict)
+          and "strategy" in (sk["risk"] or {})
           and sk["guard"]["checks"] < dr["guard"]["checks"]
           and sk.get("release_eligible") is False and exists)
     return {"status": "PASS" if ok else "FAIL", "sketch_status": sk["status"],
@@ -1797,9 +1874,14 @@ def check_director_upgrade():
         {"slide": "s02", "index": 1, "page": 2, "gravity_drift": 0.05,
          "accent_pixel_ratio": 0.01}]}
     cb = crit.critique_deck(spec, ev)
-    pv = ((cb.get("deck_notes") or {}).get("director_verdict") or {}).get("primary_lever") or {}
-    lever_ok = pv.get("target") == "READABILITY_FAIL" and "BLOCKED" in (
-        (cb.get("deck_notes") or {}).get("director_verdict") or {}).get("headline", "")
+    verdict = (cb.get("deck_notes") or {}).get("director_verdict") or {}
+    pv = verdict.get("primary_lever") or {}
+    # 叠加不可读的像素证据**不再**由 Critic 立案（QA 负责）；Critic 的杠杆
+    # 只能来自设计域：维度名 / FOCUS_ / INTENT_ / CRITIC_LOW
+    design_levers = set(crit.DIMENSIONS) | {"CRITIC_LOW", "FOCUS_COMPETING", "INTENT_UNCLEAR"}
+    lever_ok = pv.get("target") in design_levers and bool(verdict.get("headline"))
+    gates_cb = {g.get("code") for g in cb.get("hard_gates", [])}
+    lever_ok = lever_ok and "READABILITY_FAIL" not in gates_cb
     ok = (deterministic and verdict_ok and soft_ok and bg_ok and lever_ok
           and crit.__name__ == "art_critic")
     return {"status": "PASS" if ok else "FAIL", "deterministic": deterministic,
@@ -1808,17 +1890,21 @@ def check_director_upgrade():
 
 
 def check_visual_calibration_v3():
-    """V3 校准闭环：证据可载、色彩引擎确定、校准分自洽、express 链与提示词三层生效。"""
+    """V3 校准闭环：证据可载、色彩引擎确定、校准分自洽、草稿链与提示词三层生效。"""
     import design_intelligence as di
     import asset_prompt as ap
     import route as rt
     fails = []
-    cal = di._load_calibration()
-    if not cal.get("laws") or cal.get("pooled_cells", 0) < 40:
-        fails.append("calibration_space 证据不足")
+    # 参考空间律是**内联常量**（vNext：不再有外部存储与测量脚本的悬空依赖）
     laws = di.calibration_laws("cinematic_narrative")
-    if "family_bands" not in laws or laws.get("hue_families_page_max") != 1:
-        fails.append("laws/家族带缺失")
+    if di.CALIBRATION_LAWS.get("hue_families_page_max") != 1 \
+            or laws.get("hue_families_page_max") != 1:
+        fails.append("内联律缺失或被覆盖异常")
+    if not (di.CALIBRATION_LAWS.get("area_ratio") or {}).get("c1"):
+        fails.append("面积律缺失")
+    # 可选覆盖文件缺失 = 正常状态（零成本、零告警），不得抛异常
+    if di._load_calibration() is None:
+        fails.append("覆盖文件缺失时不应报错")
     a = di.color_plan("cinematic_narrative")
     b = di.color_plan("cinematic_narrative")
     if a != b:
@@ -1875,10 +1961,180 @@ def check_visual_calibration_v3():
 
 
 
+def check_design_advisory():
+    """v3.2 契约：guard 里的设计契约条目是「观察」，不扣分、不阻断、不参与判定。
+
+    Guard 是 PPT 的 compiler linter。高级感由 Design Intelligence / Art Critic 判。
+    """
+    guard = load("guard", SCRIPTS / "guard.py")
+    from qa import EXECUTION_MODES as M, mode_profile
+    design = guard.DESIGN_RULES
+    ok = (isinstance(design, frozenset) and len(design) >= 17
+          and {"palette_discipline", "rhythm", "focus", "type_budget",
+               "accent_budget", "asset_contract", "chart_style_drift"} <= design)
+    ok = ok and "spec" in M and M["spec"]["render"] is False \
+        and M["spec"].get("compile") is False
+    ok = ok and mode_profile("spec").get("compile") is False \
+        and mode_profile("draft").get("compile", True) is True
+    # 造一条只会触发设计契约（warn）的 deck：不得被扣分、不得 passed=False
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+                        "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
+
+    def el(eid, x, color, etype="text"):
+        d = {"type": etype, "id": eid, "x": x, "y": 200, "width": 400, "height": 120,
+             "size": 20, "color": color}
+        if etype == "text":
+            d.update(text="内容" * 4, max_lines=2, line_height=1.4, padding=0)
+        return d
+
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+            "slides": [
+                {"id": "s01",
+                 "page_intent": {"insight": "结论一", "focus": "a", "density": "dense",
+                                 "energy": "high", "empty_space_role": "hold"},
+                 "elements": [el("a", 96, "accent"), el("b", 560, "accent"),
+                              el("c", 96, "ink", "rounded_rect"),
+                              el("d", 560, "ink", "rounded_rect"),
+                              el("e", 960, "ink", "rounded_rect")]},
+                {"id": "s02",
+                 "page_intent": {"insight": "结论二", "focus": "a", "density": "dense",
+                                 "energy": "high", "empty_space_role": "hold"},
+                 "elements": [el("a", 96, "accent"), el("b", 560, "accent")]}]}
+    g = guard.check_spec(spec)
+    adv = [c for c in g["checks"] if c.get("advisory")]
+    scored = [c for c in g["checks"] if not c.get("advisory") and c["level"] in ("error", "warn")]
+    ok = ok and (len(adv) > 0 and all(c["score_weight"] == 0.0 for c in adv))
+    ok = ok and (g["score"] == 100 - sum(4 if c["level"] == "error" else 2 for c in scored))
+    # 设计条目可以 warn，但绝不允许以 error 出现（error = 阻断 = 把审美写成了门槛）
+    ok = ok and all(not c.get("advisory") for c in g["checks"] if c["level"] == "error")
+    # 只有 advisory 命中时，guard 仍 passed（设计问题不得阻断发布判定）
+    only_design = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                   "slides": [{"id": "s01",
+                               "page_intent": {"insight": "市场分析", "focus": "a",
+                                               "density": "sparse", "energy": "low",
+                                               "empty_space_role": "hold"},
+                               "elements": [el("a", 400, "ink")]}]}
+    g2 = guard.check_spec(only_design)
+    ok = ok and g2["passed"] is True and all(
+        c.get("advisory") for c in g2["checks"] if c["rule"] in design)
+    return {"status": "PASS" if ok else "FAIL", "design_rules": len(design),
+            "advisory_hits": len(adv), "scored_hits": len(scored),
+            "design_only_score": g2["score"]}
+
+
+def check_draft_import_contract():
+    """Spec runtime contract（v3.2）：判「spec 是否合理」不该把 python-pptx 拖进来。
+
+    spec 档 = Normalizer + Guard + 风险预测与策略，实测一轮 6ms；而 pptx 的 import 链
+    （pptx.api → opc → oxml → xml.sax → urllib.request）要 152ms。谁把
+    `from pptx import ...` 放回 primitives 顶部、或让 spec 档偷偷编译，立刻失败。
+    另锁两件事：② release 必须真的把 pptx 拉起来（防止靠「删掉编译路径」骗过 ①）；
+    ③ 同一 render 目录跨模式复用（review 接着 release 的证据跑，不再起 LibreOffice）。
+    """
+    import subprocess
+    import tempfile
+    # art_critic 不在禁止名单里：它是纯数据打分（只 import primitives，实测与 guard
+    # 同量级），design_intelligence 会复用它的一小组常量——禁它等于逼着再加一层
+    # 惰性 import 的胶水，那是新的浪费。真正的红线是 pptx / lxml / 编译 / 渲染。
+    banned = ("pptx", "lxml", "compiler", "elements", "charts",
+              "render_check", "numpy", "cv2")
+    probe_tmpl = (
+        "import sys, importlib.util\n"
+        "sys.path.insert(0, %s)\n"
+        "import qa\n"
+        "m = importlib.util.spec_from_file_location('b', %s)\n"
+        "mod = importlib.util.module_from_spec(m); m.loader.exec_module(mod)\n"
+        "spec = mod.build_spec() if hasattr(mod, 'build_spec') else mod.SPEC\n"
+        "r = qa.run_qa(spec, %s, mode=%s, render_dir=%s)\n"
+        "bad = sorted({n for n in sys.modules for b in %s if n == b or n.startswith(b + '.')})\n"
+        "print('RESULT', bad, r['status'], r['execution']['compiled'])\n"
+    )
+
+    def probe_for(scripts, build, out, mode, work, banned_list):
+        args = [repr(str(x)) for x in (scripts, build, out, mode, work)]
+        args.append(repr(list(banned_list)))
+        return probe_tmpl % tuple(args)
+
+    def _page(sid):
+        return {"id": sid,
+                "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
+                "page_intent": {"insight": f"{sid} 结论", "focus": "st", "density": "sparse",
+                                "energy": "high", "empty_space_role": "hold_emotion"},
+                "elements": [{"type": "text", "id": "st", "x": 400, "y": 300, "width": 480,
+                              "height": 120, "size": 48, "text": f"{sid} statement",
+                              "color": "ink", "max_lines": 1, "line_height": 1.2,
+                              "padding": 0}]}
+
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                 "muted": "#777777", "primary": "#222222",
+                                 "secondary": "#333333", "accent": "#AA0000"}},
+            "slides": [_page("s01"), _page("s02")]}
+    fails = {}
+    with tempfile.TemporaryDirectory() as d:
+        build = pathlib.Path(d) / "build_probe.py"
+        build.write_text("SPEC = " + repr(spec) + "\n", encoding="utf-8")
+        work = pathlib.Path(d) / "render"
+        # ① spec 档：零编译 + 零 pptx/lxml/compiler import
+        out = pathlib.Path(d) / "spec.pptx"
+        code = probe_for(SCRIPTS, build, out, "spec", work, banned)
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                           text=True, cwd=str(ROOT), timeout=300)
+        line = [l for l in (r.stdout or "").splitlines() if l.startswith("RESULT")]
+        if r.returncode or not line:
+            fails["spec"] = f"exit {r.returncode} {(r.stderr or '')[-160:]}"
+        else:
+            body = line[-1][len("RESULT"):].strip()
+            loaded_s, _, rest = body.partition("]")
+            loaded = eval(loaded_s + "]") if loaded_s.strip() else []
+            if loaded:
+                fails["spec"] = f"loaded {loaded}"
+            elif not rest.split()[-1:] == ["False"]:
+                fails["spec"] = f"compiled flag: {rest.strip()}"
+            elif out.exists():
+                fails["spec"] = "spec 档不应产出 PPTX"
+        # ② release：pptx 必须被加载（编译路径没被误删）
+        out2 = pathlib.Path(d) / "rel.pptx"
+        code = probe_for(SCRIPTS, build, out2, "release", work, ["pptx"])
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                           text=True, cwd=str(ROOT), timeout=600)
+        if "pptx" not in (r.stdout or ""):
+            fails["release_loads_pptx"] = "release 未加载 pptx：" + ((r.stdout or r.stderr)[-160:])
+        # ③ 跨模式复用同一 render 目录：release 已渲染 → review 不再起 soffice
+        qa_mod = load("qa", SCRIPTS / "qa.py")
+        r_rel = qa_mod.run_qa(spec, pathlib.Path(d) / "shared.pptx", mode="release",
+                              render_dir=work, dpi=60)
+        r_rev = qa_mod.run_qa(spec, pathlib.Path(d) / "shared.pptx", mode="review",
+                              render_dir=work, dpi=60)
+        pp, pr = r_rel["performance"], r_rev["performance"]
+        reuse = (pr.get("cache_hits", 0) > 0
+                 and pr.get("render_ms", 10 ** 9) < max(400, pp.get("render_ms", 0) // 2))
+        if not reuse:
+            fails["render_dir_reuse"] = {"release_render_ms": pp.get("render_ms"),
+                                        "review_render_ms": pr.get("render_ms"),
+                                        "review_cache_hits": pr.get("cache_hits")}
+        allowed = {"last_spec.json", "render_meta.json", "render_cache.json"}
+        state_leak = []
+        if work.exists():
+            for f in sorted(x.name for x in work.iterdir()):
+                if f in allowed or f.endswith((".tif", ".png", ".jpg", ".pdf", ".pptx")):
+                    continue
+                if f.startswith(("page-", "slide-")):
+                    continue
+                state_leak.append(f)
+        if state_leak:
+            fails["extra_state_files"] = state_leak
+    return ({"status": "PASS", "banned": list(banned), "probe": "spec/release/render-reuse"}
+            if not fails else {"status": "FAIL", "violations": fails})
+
+
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "art_critic": check_critic(), "critic_with_render": check_critic_with_render(), "critic_pass_reachable": check_critic_pass_reachable(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
                "normalizer": check_normalizer(),
                "modes": check_execution_modes(),
+               "state_footprint": check_state_footprint(),
+               "design_advisory": check_design_advisory(),
+               "draft_import_contract": check_draft_import_contract(),
                "classifier": check_change_classifier(),
                "batch_verdict": check_batch_verdict(),
                "pre_critic": check_pre_critic(),

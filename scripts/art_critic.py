@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Structured, read-only art criticism for PPT specs (v2.0).
+"""Structured, read-only art criticism for PPT specs (v3).
 
-v2 评分模型（与 v1 的关键差异）：
+**职责边界（vNext）：Critic 只回答「这套设计有没有高级价值」，不回答
+「这份 PPT 能不能正确交付」。** 后者是 QA（工程验证层）的唯一职责。
+
+  管：视觉层级 · 空间节奏 · 信息焦点 · 审美一致性 · 品牌气质 · 记忆点
+  不管（一律交给 QA）：overflow · 重叠 · 越界 · 安全区 · 字体大小/字阶数量 ·
+        对比度硬底线 · 圆角容器计数 · 渲染完整性
+  因此这些**不再出现在 Critic 的 hard_gates 里**：READABILITY_FAIL /
+  BACKGROUND_DISGUISED / MEDIA_UNJUSTIFIED / CARD_WALL / RHYTHM_FLAT。
+  它们仍作为「设计扣分证据」存在（卡片墙、图无功能、伪背景都伤审美），
+  但发布判定只由 QA 的失败码决定——同一件事不由两层各判一次。
+  渲染像素证据只用于**加分**（做对了才承认）：Critic 不用像素做工程扣罚，
+  那是 QA 的确定性判据；两套口径互相拆台是上一版的主要复杂度来源。
+
+评分模型（相对 v1）：
   * 每个维度从基准分 3（「达到声明契约」）出发，凭**可观察证据**加/扣分
     （delta ∈ [-2, +2]，最终钳制到 0–5）。v1 只扣不加，满分被数学性封顶
     在 80/100，PASS(≥90) 永远不可达——v2 修复了该缺陷。
   * 每个 delta 都写入 dimension_evidence，评分可逐条溯源复核。
-  * hard_gates 携带 production-contract.md 失败码表中的真实码
-    （INTENT_UNCLEAR / FOCUS_COMPETING / CARD_WALL / MEDIA_UNJUSTIFIED /
-    RHYTHM_FLAT / CRITIC_LOW），不再只报笼统的 CRITIC_LOW。
+  * hard_gates 只保留设计判断类的真实码：FOCUS_COMPETING / INTENT_UNCLEAR /
+    CRITIC_LOW（维度 <3/5），并携带 production-contract.md 失败码表口径。
 
 本模块依然是启发式：审美判断不能化简为像素分数。它只把可观察结构、
 页面意图契约和可选渲染证据转成可追踪的批评。
@@ -36,7 +48,10 @@ WEIGHTS = {
 }
 BASELINE = 3          # 基准分：满足「声明契约」的最低审美合格线
 PASS_SCORE = 90       # deck_score >= 90 才允许 PASS（与 production-contract 一致）
-CRITIC_VERSION = "2.3"  # 评分行为版本：2.3 新增渲染级光学对齐加分（跨版本分数不可比）
+# 评分行为版本：3.0 = 职责分离（工程判定交还 QA、像素证据只做加分、门控瘦身）。
+# 跨版本分数不可比；它只是报告上的戳，不再参与任何缓存失效逻辑
+# （vNext 已删除 Critic 结果缓存，因此不需要版本闸）。
+CRITIC_VERSION = "3.1"
 CAPTION_ROLES = {"caption", "annotation", "source", "label", "axis",
                  "data_label", "legend", "metadata", "method"}
 MEDIA_ROLES = {"hero", "emotion", "proof", "context"}
@@ -470,15 +485,13 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
         # 会算出一条不存在的同级竞争，扣分点到的根本不是同一件事。
         lead = (fsize / other_sizes[0] if fsize is not None and other_sizes
                 and other_sizes[0] > 0 else None)
+        # 尺度比只做**正向**证据：字阶是否够大是工程可读性问题（QA 的
+        # min_font / text_capacity 负责），Critic 只承认「层级被做出来了」。
         if (fsize is not None and fsize >= STATEMENT_SIZE
                 and (lead is None or lead >= FOCUS_LEAD)):
             r.add("visual_hierarchy", +1,
                   f"焦点「{focus}」拥有 Statement 级尺度优势（{fsize:.0f}px"
                   + (f"，领先第二大文字 {lead:.1f}×" if lead else "，且无同级文字") + "）。")
-        elif lead is not None and lead < FOCUS_LEAD:
-            r.add("visual_hierarchy", -1,
-                  f"焦点文字 {fsize:.0f}px 仅领先第二大文字 {lead:.1f}×（<{FOCUS_LEAD}×），存在同级信号竞争。",
-                  "拉开标题与正文的尺度比，或降级竞争性文字。")
         if len(media) <= MEDIA_BUDGET_MAX and len(reading) <= TEXT_BUDGET_MAX \
                 and (not render_page or float(render_page.get("accent_pixel_ratio", 0) or 0) <= theme_accent_max):
             r.add("visual_hierarchy", +1, "媒体信号受控（≤1 个图表/图片），焦点无同级竞争者。")
@@ -505,18 +518,9 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
               + f"声明为背景层但不具备空间层资格（需覆盖 ≥{BG_MIN_COVERAGE:.0%} 画布"
                 f"且带 ≥{BG_MIN_PROTECT_OPACITY:.2f} 不透明度保护层），按内容对象计入媒体预算。",
               "要么真正整幅承载空间并叠加保护层，要么改回普通媒体并让出预算与遮挡检查。")
-        gates.append({"code": "BACKGROUND_DISGUISED", "slide": slide.get("id", index + 1),
-                      "severity": "REVISE",
-                      "reason": f"{len(disguised)} 个内容对象伪装成背景层以规避媒体预算与遮挡检查。"})
     if len(media) > MEDIA_CHART_MAX:
         r.add("visual_hierarchy", -1, "媒体/图表对象超过两个，存在竞争性视觉信号。",
               "保留承担核心叙事的一个媒体或图表，其余改为注释、拆页或删除。")
-        gates.append({"code": "FOCUS_COMPETING", "slide": slide.get("id", index + 1),
-                      "severity": "REVISE",
-                      "reason": f"媒体/图表对象 {len(media)} 个 > 上限 {MEDIA_CHART_MAX}。"})
-    if len(texts) > TEXT_MAX:
-        r.add("visual_hierarchy", -1, "文本对象较多，页面可能依赖碎片化阅读。",
-              "合并重复语句，确保一个文本框只承担一个语义角色。")
     if render_page and float(render_page.get("accent_pixel_ratio", 0) or 0) > theme_accent_max + 0.03:
         r.add("visual_hierarchy", -1, "渲染强调色像素比例偏高，信号可能失去稀缺性。",
               "把 Accent 收束到一个关键数字、节点或下划线。")
@@ -575,15 +579,10 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
     if stats["top_cluster"] >= 2:
         r.add("alignment", +1, f"{stats['top_cluster']} 个内容对象共享同一顶缘基线。")
     ok_grid, total = _grid_bias_stats(elems, cw, ch)
+    # 网格是 Normalizer 的职责（机械吸附），贴合与否不在审美维度里扣分；
+    # 全部命中只说明「版面有秩序」，记一次正向证据即可。
     if total >= 3 and ok_grid == total:
         r.add("alignment", +1, f"全部 {total} 个内容对象落在 8 单位网格（偏差 ≤1px）。")
-    elif total >= 3 and ok_grid == total - 1:
-        r.add("alignment", 0, f"网格贴合率 {ok_grid}/{total}（{ok_grid / total:.0%}），"
-                              f"仅 1 个对象偏离 ≤1px 容差之外。")
-    elif total >= 3 and ok_grid < total - 1:
-        r.add("alignment", -1, f"网格贴合率 {ok_grid}/{total}（{ok_grid / total:.0%}），"
-                               f"{total - ok_grid} 个对象偏离 8 单位网格超过 1px。",
-              "将坐标/尺寸吸附到 8 的倍数。")
     aligns = {str(e.get("align", "left")) for e in texts}
     if len(aligns) > 2:
         r.add("alignment", -1, f"页面混用 {len(aligns)} 种文本对齐方式，轴向不稳定。",
@@ -596,17 +595,12 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
         kx = float(render_page.get("edge_kurtosis_x", 0) or 0)
         ky = float(render_page.get("edge_kurtosis_y", 0) or 0)
         k_avg = (kx + ky) / 2 if (kx or ky) else 0.0
+        # 像素级「对齐松散」只作参考，不作扣分：装订线失焦在结构证据（左缘轴线
+        # 统计）里已经判过；同一事实扣两次是旧版最大的重复。
         if k_avg >= 4.0:
             r.add("alignment", +1,
                   f"渲染边缘投影峰度 {k_avg:.1f}（x={kx:.1f}, y={ky:.1f}），"
                   f"视觉对齐形成清晰轴线。")
-        elif k_avg >= 1.5:
-            r.add("alignment", 0, "")  # 中性：可记录但不写观察
-        elif k_avg > 0:
-            r.add("alignment", -1,
-                  f"渲染边缘投影峰度 {k_avg:.1f}（x={kx:.1f}, y={ky:.1f}），"
-                  f"视觉对齐松散，缺少统一装订线/基线。",
-                  "把元素左缘/顶缘吸附到少数轴线；删除不影响阅读的次级元素。")
         # 渲染级光学对齐复核：验证「数学对齐」是否成为「视觉对齐」——每根
         # 声明轴线（shape/chart/image 边界）的视觉峰位与 spec 坐标偏差 ≤2px。
         # 纯加分项：一致率高证明数学对齐即视觉对齐；图像页内部边缘天然离轴，
@@ -631,8 +625,9 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
             r.add("contrast", -1, f"正文 ink 对背景对比 {ink_bg:.1f}:1 偏弱（建议 ≥7:1）。")
     muted_bg = _hex_contrast(colors, "muted", "background")
     if muted_bg is not None and muted_bg < 1.8:
-        r.add("contrast", -1, f"muted 对背景对比 {muted_bg:.1f}:1 < 1.8:1，刻度/注释将不可读。",
-              "把 muted 加深至 ≥3:1。")
+        r.add("contrast", -1, f"muted 对背景对比 {muted_bg:.1f}:1 < 1.8:1，"
+                              f"次级信息与底糊成一片，版面失去层次气质。",
+              "把 muted 与背景拉开（≥3:1），或让次级信息改用更重的 token。")
     accent_bg = _hex_contrast(colors, "accent", "background")
     accent_ratio = float(render_page.get("accent_pixel_ratio", 0) or 0) if render_page else None
     if accent_ratio is not None and accent_ratio <= theme_accent_max and (accent_bg is None or accent_bg >= 3):
@@ -642,24 +637,17 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
     if ink_bg is not None and ink_bg >= 7 and (muted_bg is None or muted_bg >= 3):
         r.add("contrast", +1,
               f"正文对比 {ink_bg:.1f}:1 且 muted ≥3:1，可读性层级健康。")
-    # 渲染层实测「文字 vs 其下方像素」的最坏对比度：这是叠加可读性的唯一硬证据，
-    # 全页 brightness 一致地暗或亮都掩盖不了它（深底深字曾经一路通过到发布）。
+    # 渲染层实测文字对比：**只加分不扣分**。低于工程底线的情况由
+    # qa.text_contrast 域以 READABILITY_FAIL 阻断（同一份证据，一个出口）；
+    # Critic 在这里的角色是「反差是否被当成表达手段用」，不是复测可读性。
     _tc = text_contrast_verdict(render_page, TEXT_CONTRAST_FAIL, TEXT_CONTRAST_WARN)
-    _tcv, _tcw = _tc["value"], _tc["worst"]     # 与 qa.py 同一判定：同一证据同一结论
-    if _tc["level"] == "fail":
-        r.add("contrast", -2, f"最坏文字对比 {_tcv:.2f}:1 < {TEXT_CONTRAST_FAIL}:1，"
-                              f"文字与其下方画心几乎同亮度（叠加不可读）。",
-              "加深遮罩或改文字色：让文字与局部背景至少拉开 4.5:1。")
-        gates.append({"code": "READABILITY_FAIL", "slide": slide.get("id", index + 1),
-                      "severity": "BLOCKED",
-                      "reason": f"渲染实测文字对比度 {_tcv:.2f}:1 < {TEXT_CONTRAST_FAIL}:1"
-                                f"（{_tcw.get('id', '?')}）。"})
-    elif _tc["level"] == "soft":
-        r.add("contrast", -1, f"最坏文字对比 {_tcv:.2f}:1 < {TEXT_CONTRAST_WARN}:1（WCAG AA），"
-                              f"小字号下会吃力。",
-              "提高文字与局部背景的反差，或把该段移出画心。")
-    elif _tc["level"] == "pass":
-        r.add("contrast", +1, f"叠加文字最坏对比 {_tcv:.1f}:1 ≥ {TEXT_CONTRAST_WARN}:1，可读性达标。")
+    _tcv = _tc["value"]
+    if _tc["level"] in ("pass", "soft") and _tcv >= TEXT_CONTRAST_WARN:
+        r.add("contrast", +1, f"叠加文字最坏对比 {_tcv:.1f}:1 ≥ {TEXT_CONTRAST_WARN}:1，"
+                              f"明暗关系在像素层兑现了。")
+    elif _tc["level"] in ("fail", "soft"):
+        r.add("contrast", 0, f"叠加文字最坏对比 {_tcv:.2f}:1 偏软"
+                             f"（工程底线由 QA 判定，此处不重复记分）")
 
     # ---------- 节奏（10） ----------
     density = _field(slide, "density")
@@ -678,20 +666,17 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
                                 - float(prev_render_page["occupancy"]))
             except (TypeError, ValueError):
                 ink_shift = None
-        if density and density == prev_density and (ink_shift is None or ink_shift < RHYTHM_INK_DELTA):
-            r.add("rhythm", -1, "与上一页密度相同，跨页节奏可能趋平。",
-                  "在不破坏叙事的前提下降低或提高空间密度，形成呼吸变化。")
-        elif density and density == prev_density and ink_shift is not None:
+        # 「同密度同能量」不再逐条扣分——它已经在预测层（pre_critic 的
+        # RHYTHM_FLAT_RISK）变成了生成策略；Critic 只对**实测**负责：
+        # 墨迹真的动了 = 呼吸成立（加分）；标签变了而墨迹不动 = 空转（扣分）。
+        if density and density == prev_density and ink_shift is not None \
+                and ink_shift >= RHYTHM_INK_DELTA:
             r.add("rhythm", +1, f"密度标签相同但实测占用率相差 {ink_shift:.2f}，"
                                 f"呼吸变化真实存在。",
                   "保持这种由墨迹承担的节拍，而不是只改标签。")
-        if density and prev_density and density != prev_density \
+        elif density and prev_density and density != prev_density \
                 and energy and prev_energy and energy != prev_energy:
             r.add("rhythm", +1, f"密度 {prev_density}→{density} 且能量 {prev_energy}→{energy}，节奏变化明确。")
-        if (density == prev_density and energy == prev_energy and energy
-                and (ink_shift is None or ink_shift < RHYTHM_INK_DELTA)):
-            r.add("rhythm", -1, f"密度与能量均与上一页相同（{density}/{energy}）。",
-                  "至少让密度或能量之一随叙事阶段变化。")
         if ink_shift is not None and density != prev_density and ink_shift <= RHYTHM_INK_FLAT:
             r.add("rhythm", -1, f"密度标签从 {prev_density} 改为 {density}，但实测占用率只差 "
                                 f"{ink_shift:.2f}（≤{RHYTHM_INK_FLAT}），节奏是虚挂的。",
@@ -704,26 +689,9 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
             r.add("rhythm", +1, f"实测占用率与上一页相差 {ink_shift:.2f}（≥{RHYTHM_INK_DELTA}），"
                                 f"跨页呼吸成立。",
                   "保持这种由内容量与留白承担的节拍。")
-    # 声明 vs 几何占用对照（不依赖渲染证据——几何占用由 spec 元素 bbox 直接得出）。
-    # design-intelligence.md「留白节奏」给的百分比是「留白率」：
-    #   大留白 ≥40% / 标准 25–35% / 紧致 15–25%。
-    # density 的语义是「视觉密度」，用「内容几何占用率」= 1 - 留白率度量：
-    #   sparse ≤60%（单边——留白越多越 sparse，不罚「过空」）、
-    #   balanced 65–75%、dense 75–85%。
-    _OCC_BAND = {"sparse": (None, 0.60), "balanced": (0.65, 0.75), "dense": (0.75, 0.85)}
-    if density in _OCC_BAND:
-        occ = _content_occupancy(elems, cw, ch)
-        lo, hi = _OCC_BAND[density]
-        if hi is not None and occ > hi:
-            r.add("rhythm", -1,
-                  f"声明 density={density}（留白应 ≥{1-hi:.0%}）但实际留白仅 {1-occ:.0%}，"
-                  f"页面比声明的更拥挤。",
-                  "用留白、缩字或拆页降低密度；或把 density 上调一档。")
-        elif lo is not None and occ < lo:
-            r.add("rhythm", -1,
-                  f"声明 density={density}（留白 {1-hi:.0%}–{1-lo:.0%}）但实际留白 {1-occ:.0%}，"
-                  f"节奏空挂。",
-                  "扩大图表/补次级对象；或把 density 下调一档。")
+    # 「density 声明是否兑现」属于预测层的策略调整（pre_critic 的
+    # DENSITY_MISMATCH_RISK），不在审美评分里重复扣一次；这里只在有实测证据时
+    # 看跨页呼吸（上方 ink_shift 分支）。
 
     # ---------- 一致性（10） ----------
     fams = {str(e.get("font") or e.get("family", "")) for e in texts if e.get("font") or e.get("family")}
@@ -797,28 +765,18 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
 
     # ---------- 专业完成度（5） ----------
     if len(rounded) > ROUNDED_MAX:
-        r.add("professional_quality", -1, f"检测到 {len(rounded)} 个圆角容器，存在卡片墙或网页 UI 化风险。",
+        r.add("professional_quality", -2, f"检测到 {len(rounded)} 个圆角容器，已成卡片墙（网页 UI 化）。",
               "将容器改为空间分组、发丝线或字体层级；仅保留数据/KPI/特殊强调所需面板。")
-        gates.append({"code": "CARD_WALL", "slide": slide.get("id", index + 1),
-                      "severity": "REVISE",
-                      "reason": f"圆角容器 {len(rounded)} 个 > 上限 {ROUNDED_MAX}。"})
     elif len(rounded) >= 3:
         # 未到硬门槛，但已偏离「卡片不是默认容器」：软扣分 + 与预检 CARD_DENSITY 同源提示
         r.add("professional_quality", -1,
               f"检测到 {len(rounded)} 个圆角容器，接近卡片墙（>{ROUNDED_MAX} 即硬门槛）。",
               "删容器，改用空间分组、发丝线或字体层级；仅保留数据/KPI/特殊强调所需面板。")
-    if len(media) > MEDIA_CHART_MAX:
-        r.add("professional_quality", -1, "媒体/图表对象超过两个，页面信号密度过高。")
-    if len(texts) > TEXT_MAX:
-        r.add("professional_quality", -1, "文本对象较多，页面可能依赖碎片化阅读。")
     unjustified = [i for i in images if not _image_justified(i)]
     if unjustified:
         r.add("professional_quality", -1,
               f"{len(unjustified)} 张图片未声明资产功能（asset_function/role），媒体缺乏存在理由。",
               "声明图片的 context/emotion/proof/hero 功能，或删除无法说明功能的图片。")
-        gates.append({"code": "MEDIA_UNJUSTIFIED", "slide": slide.get("id", index + 1),
-                      "severity": "REVISE",
-                      "reason": f"{len(unjustified)} 张图片未声明 asset_function / 媒体角色。"})
     decoration = sum(_area(e) for e in elems
                      if e.get("role") == "decoration" or e.get("decorative") is True)
     if cw * ch > 0 and decoration / (cw * ch) > 0.10:
@@ -839,6 +797,22 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
 
     return scores, r.evidence(), observations, fixes, gates
 
+
+# ── 职责移交表（vNext）：这些码**只属于 QA**，Critic 不再重复判罚 ──────────
+# 列在这里是给自己看的纪律，也是给下游可核对的契约：报告里以 `delegated_to_qa`
+# 原样输出，任何人质疑「Critic 为什么不管溢出/对比度」都能一眼看到答案。
+DELEGATED_TO_QA = (
+    "READABILITY_FAIL",        # 实测文字对比 <3:1 阻断 → qa.text_contrast 域
+    "TEXT_OVERFLOW",           # 文本溢出 → guard.text_capacity / 编译器 warning
+    "OVERLAP", "SOURCE_COLLISION", "CHART_LABEL_COLLISION",   # 几何层 → guard
+    "DATA_INTEGRITY_FAIL",     # 数据合同 → guard.data_integrity
+    "COMPILE_FAIL", "GUARD_FAIL",
+    "BACKGROUND_DISGUISED",    # 伪背景按普通对象计入媒体/遮挡检查 → guard + QA
+    "MEDIA_UNJUSTIFIED",       # 媒体功能缺失 → guard.asset_contract（Critic 仍作设计扣分）
+    "CARD_WALL",               # 容器密度 → 计分 + 预测层策略，不设为发布门槛
+    "RHYTHM_FLAT",             # 跨页趋平 → 预测层策略（pre_critic），不设为发布门槛
+    "RENDER_UNAVAILABLE", "RENDER_INCOMPLETE", "PIXEL_COVERAGE_PARTIAL",
+)
 
 # 失败码 → 总监级最小行动（一句话，不复述整条 evidence；verdict 只给方向，细节看各页 minimal_fix）
 _GATE_ACTIONS = {
@@ -1031,6 +1005,55 @@ def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> di
             "root_cause_groups": root_cause_groups, "batch": batch}
 
 
+def _diagnosis(reports: list[dict], hard_gates: list[dict], deck_notes: dict,
+               director: dict, deck_score: float, status: str) -> dict:
+    """设计诊断（v3.2）：Critic 的主输出是「判断」，分数只是置信度。
+
+    纯重排已有证据——不新增任何测量。四条：
+      strengths 这条 deck 已经做对的设计决策（值得保留）
+      risks     正在损害层级 / 节奏 / 记忆点的模式
+      evidence  指到页码与实测数字（可复核，不是形容词）
+      advice    下一步的设计杠杆（来自 director_verdict，不来自阈值差值）
+    """
+    avg = deck_notes.get("dimension_averages") or {}
+
+    def _note(dim: str, pick: str = "last") -> str:
+        """引用已有的证据条目（不新算）：优势取最后一次正证据，风险取第一条负证据。"""
+        notes = []
+        for rp in reports:
+            ev = (rp.get("dimension_evidence") or {}).get(dim) or []
+            if ev:
+                notes.append(str(ev[0] if pick == "first" else ev[-1]))
+        return (notes[-1 if pick == "last" else 0] if notes else "")[:160]
+
+    ranked = sorted(avg.items(), key=lambda kv: -kv[1])
+    strengths = [{"dimension": d, "average": round(v, 2), "basis": _note(d, "last")}
+                 for d, v in ranked[:3] if v >= 3.5]
+    risks = [{"dimension": d, "average": round(v, 2), "basis": _note(d, "first")}
+             for d, v in ranked[-2:] if v < 3.5]
+    for g in hard_gates:
+        risks.append({"gate": g.get("code"), "where": g.get("slide") or "整套 deck",
+                      "basis": str(g.get("reason") or "")[:160]})
+    advice = []
+    for lever in (director.get("levers") or [])[:3]:
+        advice.append({"lever": lever.get("target") or lever.get("kind"),
+                       "where": lever.get("where"), "action": lever.get("action")})
+    if not advice and director.get("primary_lever"):
+        pl = director["primary_lever"]
+        advice.append({"lever": pl.get("target") or pl.get("kind"),
+                       "where": pl.get("where"), "action": pl.get("action")})
+    return {
+        "question": "这套设计有没有高级价值？（工程正确性由 QA 判：见 qa.verdict）",
+        "assessment": director.get("headline") or f"{status}（置信度 {deck_score}）",
+        "strengths": strengths,
+        "risks": risks,
+        "advice": advice,
+        "score_semantics": ("deck_score 是**置信度**：证据条数与维度均值有多可信，"
+                             "不是质量目标。不得把分数调到某个数当作修订理由——"
+                             "理由只能是 evidence 里的具体事实。"),
+    }
+
+
 def critique_deck(spec: dict, render_evidence: dict | None = None,
                   evidence_cards: list[dict] | None = None) -> dict:
     """Return a read-only structured critique; never mutates spec.
@@ -1044,8 +1067,6 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
     reports = []
     total_weighted = 0.0
     hard_gates: list[dict] = []
-    flat_streak = 0
-    flat_prev: tuple | None = None
     # 证据按 index 对齐：子集渲染（Progressive QA Level 2）时位置对齐会把指标串到
     # 别的页面上；旧证据没有 index 时才退回位置对齐。
     by_index: dict[int, dict] = {}
@@ -1076,22 +1097,11 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
         hard_gates.extend(g for g in gates
                           if not any(h.get("code") == g.get("code") and
                                      h.get("slide") == g.get("slide") for h in hard_gates))
-        # RHYTHM_FLAT：连续 ≥3 页密度与能量完全重复
-        stamp = (_field(slide, "density"), _field(slide, "energy"))
-        if stamp == flat_prev and stamp != (None, None):
-            flat_streak += 1
-        else:
-            flat_streak = 1
-        flat_prev = stamp
-        if flat_streak >= 3:
-            hard_gates.append({"code": "RHYTHM_FLAT", "slide": slide.get("id", i + 1),
-                               "severity": "REVISE",
-                               "reason": f"连续 {flat_streak} 页密度/能量重复（{stamp[0]}/{stamp[1]}）。"})
         reports.append({"slide": slide.get("id", i + 1), "scores": scores,
                         "score": round(weighted, 1), "observations": observations,
                         "minimal_fixes": fixes,
                         "dimension_evidence": evidence,
-                        "recheck": ["Guard", "Compile", "Render Evidence", "QA"]})
+                        "recheck": ["QA（工程判定）", "Critic（设计判定）"]})
     count = max(1, len(slides))
     deck_score = round(total_weighted / count, 1)
     if not rendered:
@@ -1140,7 +1150,17 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
                                       f"发布需 Level 3 全量复核。")})
         if status == "PASS":
             status = "REVISE"
+    _curves = [(_field(x, "density"), _field(x, "energy")) for x in slides]
+    _streak = _max_streak = 1
+    for _i in range(1, len(_curves)):
+        _streak = _streak + 1 if (_curves[_i] == _curves[_i - 1]
+                                 and _curves[_i] != (None, None)) else 1
+        _max_streak = max(_max_streak, _streak)
     deck_notes = {
+        "rhythm_streak": ({"pages": _max_streak, "note":
+                            "连续同密度同能量的最长段；是否要改由策略层决定"
+                            "（预测层的 RHYTHM_FLAT_RISK），Critic 不判罚"}
+                           if _max_streak >= 3 else None),
         "pixel_coverage": coverage or None,
         "density_curve": [_field(s, "density") for s in slides],
         "energy_curve": [_field(s, "energy") for s in slides],
@@ -1197,10 +1217,16 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
         ]
     deck_notes["director_verdict"] = _director_verdict(
         reports, hard_gates, deck_notes, deck_score, status)
+    diagnosis = _diagnosis(reports, hard_gates, deck_notes,
+                           deck_notes["director_verdict"], deck_score, status)
     return {
+        # v3.2：主输出是诊断（assessment/strengths/risks/advice），分数降为置信度
+        "diagnosis": diagnosis,
         "critic_version": CRITIC_VERSION,
         # 自证戳：与 QA 同一算法；发布清单据此判断报告是否来自当前 spec
         "source_spec_hash": spec_fingerprint(spec),
+        "domain": "design_value",             # 工程正确性（engineering_correctness）属 QA
+        "delegated_to_qa": list(DELEGATED_TO_QA),
         "deck_score": deck_score,
         "status": status,
         "hard_gates": hard_gates,

@@ -247,11 +247,13 @@ Art Critic 必须同时读取 Strategy、Direction、Page Intent、spec 与渲�
 
 ## V3 视觉校准与判断（参考空间校准闭环）
 
-> 10 套世界级设计板（2026-09-10 用户提供）被**测量**而非被复制：
-> `scripts/measure_references.py` 切页（79 个页面单元）测出面积律、色相族、
-> 饱和域、明度域、负空间、图片占比与排印密度，沉淀为
-> `memory/calibration_space.json`。参考空间只校准判断阈值，
-> 任何布局/色板/组件的照抄仍按模板违规处理。
+> 10 套世界级设计板（2026-09-10 用户提供）被**测量**而非被复制：切页
+> （79 个页面单元）测出面积律、色相族、饱和域、明度域、负空间、图片占比
+> 与排印密度。vNext 把这些实测律**内联为 `design_intelligence.CALIBRATION_LAWS`
+> 常量**（原先存放在一个外部 JSON 里，连同测量脚本一起被删——引用不到的
+> 证据文件既不参与任何判定，又制造悬空指针；想恢复实测闭环，把测量结果
+> 写进 `memory/calibration_space.json` 就会被 `calibration_laws()` 覆盖）。
+> 参考空间只校准判断阈值，任何布局/色板/组件的照抄仍按模板违规处理。
 
 ### 实测律（global，p50 除非注明）
 
@@ -282,7 +284,7 @@ route 的四个方向预设经 `_DIRECTION_ALIAS` 归一（quiet_minimal→zen_m
 color .20 / image .15 / information .20，各 0–5 → 百分制），~0.3ms。
 对照的是**带与律**（密度兑现与相邻差、字阶驻点与行长、色相族与色彩职责、
 媒体闸门一致性、信息合同完整性），不是对照某张参考图。
-express 链内置它作为「生成即知水准」的轻量验证。
+`draft` / `review` 轮内置它作为「生成即知水准」的轻量验证（`qa["calibration"]`）。
 
 ### 提示词智能三层（asset_prompt V3）
 
@@ -301,6 +303,59 @@ express 链内置它作为「生成即知水准」的轻量验证。
 
 `route.one_pass_plan(brief)` 一次调用固化 Stage 1+2（plan + deck_decision +
 color_plan + 逐页 skeleton/layout/media/budget；冷 ~160ms、缓存 0.6ms）。
-Stage 3 生成后 Stage 4 用 `--mode express` 轻量验证（溢出/遮挡/可读/平衡 + error 级
-+ 校准分，亚秒）；方向收敛仍走 draft/review，发布仍走 release——
-**快的只是验证频次，不是标准**。
+Stage 3 生成后 Stage 4 用 `--mode draft` 轻量验证（零渲染：guard 契约 + 结构/容量
+判定 + 风险预测与策略 + 校准分，12 页 0.3s）；方向收敛走 review（只渲染变化页 +
+Critic），发布走 release（全量 + Manifest）——**快的只是验证频次，不是标准**。
+
+---
+
+## 附录 A：引擎与模式细则（v3.2 从 SKILL.md 移入）
+
+> 这些是**实现层细则**，写 spec 时不需要读；只在调引擎/排查行为时查。
+> 判据没变，只是不再占用 SKILL 的首屏注意力。
+
+**风险预测纪律（关键：出口是决策，不是审核）**：
+- **先政策后稿**：起草之前读 `forecast_risk(brief)["policies"]`——文本密度高 → 先收紧
+  `text_budget` 并全局 `auto_fit: true`；媒体不足 → 把省下的预算换成锚点尺度；构图复杂 →
+  一页只承担一个关系。这些决定写进策略再生成，不要生成后靠 QA 反推；
+- **风险即修单**：`risk_strategy(spec)["adjusted"]` 按策略键给出 `deck_policies`（整套政策）
+  与 `page_actions`（逐页动作），`pages[]` 按 `risk_weight` 排序——一轮批量改完再验证；
+- 每条风险带 `root_cause`（与 `director_verdict` 同一分类法）+ `prevention` +
+  `predicted`（下游失败码）——直接对接「1 根因 = 1 轮」；
+- 它用与 Critic/QA **同一套常量**做静态估计（不渲染）：预估是保守方向
+  （宁可轻微高估不可漏报），`confidence` 标注可信度；
+- 预测**从不阻断**任何阶段：不通过 ≠ 不许渲染，只是「先按策略改更划算」；
+  异常时只记 `error`，主链照常跑。release 也跑预测（预测 vs 实测的差值本身是校准证据）。
+
+**Design DNA 纪律（Schema v2：判断记忆，不是结果记忆）**：DNA 存「为什么这样设计」（design_problem + judgment：hierarchy/space/media/color_behavior/charts/anchor_rule/structure），不存「用了什么颜色/版式」（palette/font/色值字段一律拒收；实测色值与占比是证据，放 proven.measurements）。结果记忆会让 AI 变模板——科技=蓝、金融=黑金就是这么来的；判断记忆才跨主题迁移。DNA 不是模板/组件/固定页面——它是
+「看到需求就知道该怎么做」的可复用判断（空间/版式语法/色板策略/字声/媒体处理/
+图表人格/禁用信号）。`record_dna()` **只在上游校验 PASS 后调用**（真实发布过的
+经验才值得记忆）；recall 命中时按当前内容重组，禁止照抄。
+
+**Layout Search 纪律**：Layout Grammar 四要素（支配性/负空间/视觉锚点/阅读路径）
+参数化生成几何，按信息重量、焦点、数据关系合成——不是 Hero01/Chart02 组件库。
+候选只在 **spec 级**比较（不生成三份 PPT），选优后进入 spec 起草。原型只是构图算子
+的常用驻点（算子语法见 `design-intelligence.md`「构图算子」）：相邻两页不复用同一
+算子组合；连续 deck 同家族同原型时，第三副须换构图语法，或在 `design_rationale`
+声明品牌连续性。
+
+**Smart Fit Resolver（auto_fit）**：文本溢出在 spec 层按阶梯吸附——
+`padding→0 → line_height→1.05 → 字号 -2px 递降（下限 12）→ needs_rewrite`。
+**显式 opt-in**（元素 `auto_fit: true`），未声明零改动；编译器行为不变（仍只警告）。
+
+### 执行模式细则（从 SKILL 移入，v3.2 减载）
+
+- **渲染分级**：draft 完全不渲染（Guard + 几何 + 文本，<500ms）；review 只渲染 `classify_spec_change` 判定的变化页（改了 1 页就出 1 张 PNG，不是 12 张全量）；release 全量渲染 + 像素 QA。
+- **语义变更分类**：`qa.classify_spec_change(old, new)` 把修改分为 `narrative`（只改声明/备注 → 不渲染）/ `page_render`（改了像素相关字段 → 只渲染该页）/ `full_render`（主题/画布 → 全量）/ `structure`（页数变了）。「改一句 insight 不必重渲染」是显式决策，不是缓存副作用；上一版 spec 存在 `<out>_render/last_spec.json`，是**唯一**保留的跨轮状态。
+
+## Design Intelligence Layer（生成之前消灭设计错误）
+
+> 执行链解决了「验证的重复」；本层解决「设计的重复」：**AI 不应该设计一次、验证很多次，
+> 而应该在生成之前，大部分设计错误已被预测和消除。** 流程从
+> 「生成→检查→发现→修复→再生成」升级为 **「理解 → 预测 → 决策 → 生成 → 一次通过」**。
+
+### 渲染/复用/并行的实现口径（v3.2 从 SKILL 移入）
+
+- **不重复计算**：两处复用只认一个判据——「会不会改变量到的数字」。① 编译产物复用（`spec_view` 编译视图指纹 + PPTX 字节核验 + PDF 归属）；② 页级像素缓存（键 = 本页投影 + 主题投影 + 画布 + dpi + 页内图片指纹 + 渲染器身份）。`page_intent` 的叙述字段 / `source_zone` / 备注既不产出像素也不参与量测，所以编译视图一致时 `compile_deck` 也跳过。`--no-cache` 一律绕过两处复用，也不写回任何记录。**没有第三种缓存**：Critic 结果缓存、语义投影缓存、版本闸与 `cache_version` 迁移已删。
+- **并行硬上限 2**：渲染阶段 poppler 转换与像素测量串成一条流水、块间最多 2 worker（按 CPU 收敛，页数 <4 关闭）。设计推导与资产/渲染两条线只在 `qa.run_qa` 汇合一次，禁止逐页往返通信与循环等待。
+- **色彩与图表纪律（deck 级）**：Guard 另核三件——全套色相族 ≤4（30° 一档，纸色与灰阶不计）、Accent 与主/辅色色相差 ≥12°、同一图表类型跨页共用一套标签规格（>1.25× 判漂移）。互补且等彩度的两色渐变提示「混成脏灰」，同族低对比渐变是留白手法、不打击。焦点落位任一轴线（中线/三分线/黄金分割线）时 Critic 记一次层级加分，完全不上线只在预检提示、不判罚。

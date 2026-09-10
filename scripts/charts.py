@@ -15,9 +15,10 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSI
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.text import PP_ALIGN
+from pptx.util import Emu, Pt
 
 from primitives import (
-    RenderContext, emu, pt, set_para_font, solid_fill, ALIGN, ANCHOR, Emu, Pt,
+    RenderContext, emu, pt, set_para_font, solid_fill, align_of, anchor_of,
 )
 
 NATIVE_CHART_TYPES = {
@@ -51,7 +52,7 @@ def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
     tb.name = name
     tf = tb.text_frame
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
-    tf.vertical_anchor = ANCHOR["middle"]
+    tf.vertical_anchor = anchor_of("middle")
     p = tf.paragraphs[0]
     p.text = str(text)
     p.alignment = align
@@ -158,7 +159,7 @@ def _display(row, element, fallback=""):
 def _label(shape, text, element, ctx, color, default_size=14):
     tf = shape.text_frame
     tf.word_wrap = True
-    tf.vertical_anchor = ANCHOR["middle"]
+    tf.vertical_anchor = anchor_of("middle")
     p = tf.paragraphs[0]
     p.text = str(text)
     p.alignment = PP_ALIGN.CENTER
@@ -947,7 +948,7 @@ def add_kpi(slide, element: dict, ctx: RenderContext) -> None:
     vb.name = f"{eid}__value"
     p = vb.text_frame.paragraphs[0]
     p.text = str(element.get("value", ""))
-    p.alignment = ALIGN.get(align, ALIGN[None])
+    p.alignment = align_of(align, PP_ALIGN.LEFT)
     set_para_font(p, latin, cn, float(element.get("value_size", 56)) * 0.75, primary, True)
 
     lb = slide.shapes.add_textbox(
@@ -955,5 +956,5 @@ def add_kpi(slide, element: dict, ctx: RenderContext) -> None:
     lb.name = f"{eid}__label"
     p2 = lb.text_frame.paragraphs[0]
     p2.text = str(element.get("label", ""))
-    p2.alignment = ALIGN.get(align, ALIGN[None])
+    p2.alignment = align_of(align, PP_ALIGN.LEFT)
     set_para_font(p2, latin, cn, float(element.get("label_size", 16)) * 0.75, muted, False)

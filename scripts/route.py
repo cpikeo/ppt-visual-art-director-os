@@ -354,13 +354,15 @@ def _plan_deck(brief: dict) -> dict:
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
     assets["planned_calls"] = len(assets["generate"])
     workflow = ["route → 冻结输入（受众/决定/口径）",
-                f"初稿/探索（默认）：qa.py <build> out.pptx --mode draft"
+                "预测与策略：design_intelligence.forecast_risk(brief) → 生成政策"
+                "（媒体/文本/字阶/构图四条在起草之前定，不靠渲染试错）",
+                "初稿/探索（默认）：qa.py <build> out.pptx --mode draft"
                 "（Normalizer → Guard → Compile → PPTX，零渲染零 Critic；布局方向用 ghost.py）",
                 "方向确认：qa.py <build> out.pptx --mode review"
-                "（关键页 ∪ 受影响页像素证据；布局稳定后 Critic 自动给 verdict）",
-                "发布（唯一 PASS 口径）：qa.py <build> out.pptx --mode release"
-                "（Normalizer → Guard → Compile → 全量渲染 → QA → Critic → Manifest）",
-                "guard 预检（静态，~0.01s/页）：python3 scripts/guard.py <build> --preflight",
+                "（只渲染变化页 ∪ 关键页；Critic 直接给 verdict）",
+                "发布（唯一给发布资格的一档）：qa.py <build> out.pptx --mode release"
+                "（全量渲染 → QA → Critic → Manifest）",
+                "guard 预检（静态诊断，~0.01s/页）：python3 scripts/guard.py <build> --preflight",
                 "修完预检再编译：python3 scripts/compiler.py <build> out.pptx"]
     if quality == "advanced":
         workflow.append("资产：仅对 assets.generate 中的页面调用图像模型，逐页绑定留白锚点")
@@ -398,9 +400,10 @@ def _plan_deck(brief: dict) -> dict:
             "mode": exec_mode,
             "modes": ["sketch", "draft", "review", "release"],
             "rule": ("sketch=草图链（结构探索，只守数据诚实性与结构合法性，契约免除）；"
-                     "draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX）；"
-                     "review=审查链（关键页∪受影响页像素证据，Critic 待布局稳定自动介入）；"
-                     "release=发布链（全量像素+Critic+Manifest，唯一 PASS 口径）"),
+                     "draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX，Critic 恒不跑）；"
+                     "review=审查链（只渲染变化页 ∪ 关键页，Critic 跑）；"
+                     "release=发布链（全量像素+Critic+Manifest，唯一给发布资格的一档）；"
+                     "规则一句话：draft 不跑 Critic，review/release 跑"),
             "escalate": {"to_review": ["用户确认方向", "改了布局/主题/图表结构"],
                          "to_release": ["终版交付", "发布前复核"]},
             "note": "模式是流程控制；Fast/Advanced 是预算控制——两者正交，可任意组合。",
@@ -608,4 +611,11 @@ def one_pass_plan(brief: dict) -> dict:
             "media": di.media_decision(pg),
             "budget": di.quality_budget(pg),
         })
-    return {"plan": plan, "deck_decision": card, "color_plan": color, "pages": pages}
+    forecast = None
+    try:
+        forecast = di.forecast_risk(brief)
+    except Exception as exc:
+        forecast = {"error": str(exc), "policies": {}}
+    return {"plan": plan, "deck_decision": card, "color_plan": color,
+            "forecast": forecast, "pages": pages,
+            "policy": (forecast or {}).get("policies") or {}}

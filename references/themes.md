@@ -95,7 +95,8 @@ theme = {
 
 种子只是兜底骨架：`brand_colors` 与 `visual_world` 的材质判断永远优先；
 运行时消费 `design_intelligence.COLOR_DIRECTIONS`（单一真源），本表只读不复制。
-regime/sat 人格来自 `memory/calibration_space.json` 的实测族带。
+regime/sat 人格来自参考空间实测族带（vNext 起内联在 `design_intelligence.CALIBRATION_LAWS`；
+可选 `memory/calibration_space.json` 覆盖）。
 
 | family | regime | sat | 材质/光性语言 | 种子骨架（foundation/supporting/information/accent） |
 |---|---|---|---|---|

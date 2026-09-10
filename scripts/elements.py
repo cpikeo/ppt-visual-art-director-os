@@ -12,13 +12,14 @@ import tempfile
 from pathlib import Path
 
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.util import Emu
 
 from primitives import (
     RenderContext, emu, pt, split_runs, is_cjk, estimate_lines,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
-    ALIGN, ANCHOR, Emu,
+    align_of, anchor_of,
 )
 
 SHAPE_TYPES = {
@@ -158,14 +159,14 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
     italic = bool(element.get("italic", False))
     spacing = float(element.get("char_spacing", 0) or 0)
     uppercase = bool(element.get("uppercase", False))
-    align = ALIGN.get(element.get("align"), PP_ALIGN.LEFT)
+    align = align_of(element.get("align"), PP_ALIGN.LEFT)
 
     tb = slide.shapes.add_textbox(Emu(emu(x)), Emu(emu(y)), Emu(emu(w)), Emu(emu(h)))
     tb.name = str(element.get("id", "text"))
     tf = tb.text_frame
     tf.clear()
     tf.word_wrap = wrap
-    tf.vertical_anchor = ANCHOR.get(element.get("anchor"), ANCHOR[None])
+    tf.vertical_anchor = anchor_of(element.get("anchor"), MSO_ANCHOR.TOP)
     tf.margin_left = Emu(emu(pad))
     tf.margin_right = Emu(emu(pad))
     tf.margin_top = Emu(emu(pad))
@@ -213,7 +214,7 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     """形状内文字：默认垂直居中。"""
     tf = shape.text_frame
     tf.word_wrap = bool(element.get("text_wrap", True))
-    tf.vertical_anchor = ANCHOR.get(element.get("text_anchor", "middle"), ANCHOR["middle"])
+    tf.vertical_anchor = anchor_of(element.get("text_anchor", "middle"), MSO_ANCHOR.MIDDLE)
     cn, latin = ctx.families(element)
     color = ctx.text_color(element.get("text_color"))
     alpha = element.get("text_opacity")
@@ -221,7 +222,7 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     spacing = float(element.get("char_spacing", 0) or 0)
     p = tf.paragraphs[0]
     p.text = str(element.get("text", ""))
-    p.alignment = ALIGN.get(element.get("align"), PP_ALIGN.CENTER)
+    p.alignment = align_of(element.get("align"), PP_ALIGN.CENTER)
     p.line_spacing = pt(size * float(element.get("text_line_height", 1.25)))
     for run in p.runs:
         set_run_font(run, cn if is_cjk(run.text[:1] or " ") else latin, cn,

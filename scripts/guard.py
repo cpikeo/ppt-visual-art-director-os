@@ -2,8 +2,11 @@
 """
 Layer 0.5 · Guard（静态治理层）
 
-职责：把 SKILL.md 与 references/production-contract.md 的硬约束**自动化断言**——
-网格、安全区、元素重叠、图表容量、Accent 面积、跨页节奏。
+职责：**工程正确性的静态层**——回答「这份 PPT 能不能正确交付」的前半段。
+  error（阻断）：数据合同、结构合法性、文本溢出、越界、未声明遮挡、来源区冲突
+  warn / hint（记分为提示，不阻断）：网格贴合、Accent 面积、行长、圆角容器密度、
+        跨页节奏——这些是「设计契约」，过度自动化会把创造力关进规则里，
+        因此只作提醒；审美判断本身归 art_critic，生成前策略归 design_intelligence。
 本层是只读的：不修改 spec、不生成任何元素，
 只返回「检查结果 + 扣分建议」，供 QA 评分与 Release Gate 使用。
 
@@ -27,6 +30,21 @@ from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT, contrast,
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
 GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalizer/文档同源）
+
+# ── 设计契约 = 观察，不扣分、不阻断（v3.2）────────────────────────────────
+# Guard 是 PPT 的 compiler linter：它只回答「这份 spec 是不是合法、数据是不是真的、
+# 文件能不能渲染、内容有没有被切掉」。「高级感」不在它的管辖范围——那属于
+# Design Intelligence / Art Critic（`art_critic.py` 的设计价值维度）。
+# 下面这些规则名保留在这里，只是为了让 Critic 与风险预测更快定位证据（同一份事实
+# 不重算第二次），它们**不参与 guard.score、不构成任何门槛**；阈值是参考刻度，
+# 不是及格线。新增判断请先问一句：它能被一个固定阈值完全描述吗？
+# 能 → 那是工程约束，放这里；不能 → 那是设计判断，去 design-craft.md + Critic 证据。
+DESIGN_RULES = frozenset({
+    "accent_budget", "alignment_budget", "animation_budget", "chart_highlight",
+    "color_budget", "decoration_budget", "focus", "focus_scale", "icon_consistency",
+    "organic_layer", "palette_discipline", "preflight", "rhythm", "type_budget",
+    "typography", "asset_contract", "chart_style_drift",
+})
 
 # 图表容量上限（OS §19 / USAGE §5.4）
 NUMERIC_CHART_KINDS = {
@@ -445,7 +463,7 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
                      f"{int(lm['limit'] * (float(e.get('size') or 0)))}px 以内")
         rounded = rounded_containers(elems)   # 与 critic 同一计数：渲染出来是容器才算
         if len(rounded) > gates["ROUNDED_MAX"]:
-            flag(sid, "CARD_WALL", f"{len(rounded)} 个圆角容器（CARD_WALL 硬门槛）",
+            flag(sid, "CARD_WALL", f"{len(rounded)} 个圆角容器（卡片墙：Critic 记设计扣分）",
                  "删容器，改用发丝线 + 留白 + 字阶分组")
         elif len(rounded) >= 3:
             # 未到硬门槛，但已偏离「卡片不是默认容器」：提前提示，不与 CARD_WALL 重复点名
@@ -458,7 +476,7 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
             if e.get("type") == "image" and _is_bg_layer(e):
                 ok, why = _bg_qualified(e, cw, ch)
                 if not ok:
-                    add("preflight", f"{sid}:BACKGROUND_DISGUISED", "error",
+                    add("background_layer", f"{sid}:BACKGROUND_DISGUISED", "error",
                         f"「{e.get('id', '?')}」声明 layer=background 但不具备空间层资格：{why} "
                         f"→ 改回普通媒体（计入预算与遮挡），或真的整幅承载并叠加遮罩")
                     items.append({"slide": sid, "code": "BACKGROUND_DISGUISED",
@@ -466,7 +484,7 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
                                   "minimal_fix": "撤掉 layer=background 标签，或扩大覆盖并声明"
                                                  " overlay（opacity ≥0.20）/content_protection"})
                 elif not (e.get("content_protection") or e.get("overlay")):
-                    add("preflight", f"{sid}:BG_UNPROTECTED", "warn",
+                    add("background_layer", f"{sid}:BG_UNPROTECTED", "warn",
                         "整幅背景图未声明 content_protection/overlay：文字叠加后对比不可控 "
                         "→ 为画心叠加低能量遮罩（solid #000000, opacity 0.35）或改用分幅画心")
                     items.append({"slide": sid, "code": "BG_UNPROTECTED",
@@ -517,8 +535,9 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
         prev_stamp = stamp
         if streak == 3:
             flag(s.get("id", f"slide_{si}"), "RHYTHM_FLAT",
-                 f"连续 3 页 density/energy 相同 {stamp}（Art Critic 硬门槛）",
-                 "改动其中一页的密度或能量，恢复呼吸曲线")
+                 f"连续 3 页 density/energy 相同 {stamp}（跨页节奏趋平；预测层已给策略，"
+                 f"Critic 只在实测墨迹不动时扣分）",
+                 "改动其中一页的内容量/留白恢复呼吸，或在 design_rationale 说明刻意平铺")
 
     for it in items:
         it["gate_source"] = gate_source
@@ -979,7 +998,9 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                     measure_stats["worst_id"] = eid
                 if lm["fatal"]:
                     measure_stats["over"] += 1      # 超限含被阻断的那些：比率要能对上
-                    add("typography", eid, "error",
+                    # 行长的「建议值」是编辑观点（typography，advisory）；但超出 3× 意味着
+                    # 文本被切断——那是内容完整性事实，归 text_capacity，可以阻断。
+                    add("text_capacity", eid, "error",
                         f"每行约 {lm['per_line']:.0f} 字 > 上限 {lm['limit']} 的 "
                         f"{lm_limits['LINE_MEASURE_FAIL_FACTOR']:.1f}×"
                         f"（{'CJK' if lm['cjk_led'] else '拉丁'}行长失控，眼跳回失准 → 拆句或加宽盒）")
@@ -1492,12 +1513,19 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             preflight_items = []
             warnings.append(f"[preflight] skipped: {exc}")
 
+    # 设计契约条目：标为 advisory（权重 0）——它们进报告、进证据，不进分数与门槛。
+    for c in checks:
+        if c.get("rule") in DESIGN_RULES:
+            c["advisory"] = True
+            c["score_weight"] = 0.0
     score = max(0, 100 - sum(
-        4 if c["level"] == "error" else (2 if c["level"] == "warn" else 0)
+        (0.0 if c.get("advisory")
+         else (4 if c["level"] == "error" else (2 if c["level"] == "warn" else 0)))
         for c in checks))
     return {
         "passed": not any(c["level"] == "error" for c in checks),
         "checks": checks,
+        "advisory_rules": sorted(DESIGN_RULES),
         "warnings": warnings,
         "score": score,
         # 可报告的对齐/行长事实：比率本身不扣分（新提示族不得计分），供人复核

@@ -11,21 +11,41 @@ spec → normalizer.py（生产链第 0 级：机械归一化）
 
 设计规划阶段读取参考文档并生成完整 `spec`；运行时阶段只处理 `spec`。Normalizer 负责确定性的机械归一化（网格吸附、色彩/字体 token 规范形、微间距）；编译器是编排层，不做设计决策，也不读取 `references/*.md`；元素与图表负责原生可编辑输出；Guard 负责静态硬约束；Render Check 负责像素证据；`qa.py` 负责确定性回归评分；`art_critic.py` 负责结构化审美判断。层间只通过 spec、RenderContext 和 JSON 报告沟通。
 
-### Execution Modes（三层执行架构：流程控制）
+### Responsibility Boundary（先分层，再谈门数）
 
-Fast/Advanced 是**预算控制**（资产数/dpi/Critic 时机）；Execution Mode 是**流程控制**（渲染不渲染、Critic 何时介入、状态给到哪一级）。两者正交：
-
-| Mode | 链 | 流程 | Critic | 状态上限 |
+| 层 | 唯一问题 | 管 | 不管 | 输出 |
 |---|---|---|---|---|
-| `draft` | 创作链（快） | Normalizer → Guard → Compile → 可编辑 PPTX（零渲染） | 恒不跑 | PREVIEW_ONLY |
-| `review` | 审查链（准） | Compile → 关键页 ∪ 受影响页渲染 → QA L2 | 稳定后自动（见下） | REVISE |
-| `release` | 发布链（严） | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | PASS |
+| `qa.py`（工程验证） | 这份 PPT 能不能正确交付？ | 内容（溢出/缺失/数据/图表）、几何（越界/重叠/安全区/对齐）、渲染（字体/图片/PDF·像素） | 审美价值 | `verdict`: **PASS / FAIL / WARNING**（+ 状态机细分） |
+| `art_critic.py`（设计批评） | 这套设计有没有高级价值？ | 视觉层级、空间节奏、信息焦点、审美一致性、品牌气质、记忆点 | overflow / contrast / overlap / font-size / 圆角计数 / 渲染完整性（见 `delegated_to_qa`） | 9 维证据化评分 + `director_verdict` |
+| `design_intelligence.py`（设计智能） | 该怎么做？会挂在哪里？ | DNA 召回、媒体决策、质量预算、**风险预测 → 生成策略** | 判定发布（不阻断任何阶段） | `forecast_risk` / `risk_strategy` |
 
-CLI：`qa.py <build> <out.pptx> --mode sketch|draft|review|release`（legacy `--quick/--key-pages/--manifest` 为别名；**不传 `--mode` 默认 draft 快速生成**，显式 `--level N` / `--fast` 维持 legacy 全量；`sketch` 为显式草图链——结构探索期只守 error 级（数据诚实性/结构合法性），warn/hint 设计契约免除，状态 `SKETCH` 不可发布）。`route.plan_deck(brief)["execution"]["mode"]` 给出推荐模式（默认 draft；brief 说「发布/终版」→ release，「确认方向」→ review；显式 `brief.execution_mode` 优先）。
+同一事实只判一次：工程判定从 Critic 的 `hard_gates` 里移出（`READABILITY_FAIL` / `BACKGROUND_DISGUISED` /
+`MEDIA_UNJUSTIFIED` / `CARD_WALL` / `RHYTHM_FLAT`），它们在 Critic 侧只留**设计扣分证据**，
+发布阻断权统一归 QA。
 
-**Critic 稳定性门控（review 模式）**：连续两轮「无阻断 + 无结构性失败码」且像素相关投影（`normalizer.geometry_only_hash`，剥掉 insight/density/energy 等声明字段）未变，Critic 才介入；结果按 spec 指纹缓存在 `<out>_render/studio_state.json`（封顶 8 份；命中还需 `critic_version` 一致——评分行为变更后旧判定自动作废）。编译缓存同构设闸：命中还需 `compiler.COMPILER_VERSION` 一致——编译器/图表渲染行为变更后，spec 未变也强制重编译`PIXEL_COVERAGE_PARTIAL` / `RENDER_UNAVAILABLE` 是非发布模式的预期码，不视为「布局在动」。干净且几何未变的 draft 轮同样计入稳定链（draft→review 连续两轮 clean 即稳定）；几何一变即重置。
+### Execution Modes（流程控制）
 
-**语义变更分类（`qa.classify_spec_change(old, new)`）**：deck 级 `identical / narrative / pages / structure / full_render`，页级 `unchanged / narrative / page_render`。review 渲染集 = key_pages ∪ page_render 页——「改了一句 insight 不必重渲染」从缓存副作用升级为显式决策。
+Fast/Advanced 是**预算控制**（资产数/dpi）；Execution Mode 是**流程控制**（渲染不渲染、Critic 何时介入、状态给到哪一级）。两者正交：
+
+| Mode | 链 | 流程 | Critic | 状态与发布资格 |
+|---|---|---|---|---|
+| `spec` | 零成本档 | python 启动 → Normalizer → Guard → 风险预测，**到此为止**（不 import `pptx`/`lxml`/`compiler`、不写文件） | 恒不跑 | PREVIEW_ONLY（`execution.compiled=false`） |
+| `sketch` | 草图链 | Normalizer（只留 error）→ Compile → PPTX | 恒不跑 | SKETCH（不可发布） |
+| `draft` | 创作链（快） | Normalizer → Guard → Compile → 可编辑 PPTX（零渲染） | 恒不跑 | PREVIEW_ONLY（零渲染 → 必然 `PIXEL_COVERAGE_PARTIAL`） |
+| `review` | 审查链（准） | Compile → **只渲染变化页**（首轮无对照时用关键页）→ QA L2 | **恒跑**（无门控、无结果缓存；页级渲染缓存照用） | 判据与 release 同源：证据齐则 status 可为 PASS，但 `release_eligible=False`（发布资格属发布链） |
+| `release` | 发布链（严） | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | 唯一可写 Manifest、唯一给发布资格的一档 |
+
+CLI：`qa.py <build> <out.pptx> --mode spec|sketch|draft|review|release [--critic on|off]`
+（`--no-compile` 可在任何模式下退化为 `spec` 档行为。）（legacy `--quick/--key-pages/--manifest` 为别名；`--critic auto` 等价于 `on`，门控语义已废弃；**不传 `--mode` 默认 draft 快速生成**，显式 `--level N` / `--fast` 维持 legacy 全量；`sketch` 为显式草图链——结构探索期只守 error 级（数据诚实性/结构合法性），warn/hint 设计契约免除，状态 `SKETCH` 不可发布）。`route.plan_deck(brief)["execution"]["mode"]` 给出推荐模式（默认 draft；brief 说「发布/终版」→ release，「确认方向」→ review；显式 `brief.execution_mode` 优先）。
+
+**Critic 介入规则（vNext，就一句话）**：`draft`/`sketch` 不跑，`review`/`release` 跑。
+已删除（vNext）：`two-clean-round` 触发器、`critic stability state`、`studio_state.json`、Critic 结果缓存、`critic_version` 版本闸、`preflight_gate`——Critic 成本 ~10ms，不是瓶颈；
+省时的正确手段是「少渲染几页 + 页级缓存」，不是把批评藏进状态机。`PIXEL_COVERAGE_PARTIAL` / `RENDER_UNAVAILABLE` 仍是非发布模式的预期码。
+
+**语义变更分类（`qa.classify_spec_change(old, new)`）**：deck 级 `identical / narrative / pages / structure / full_render`，页级 `unchanged / narrative / page_render`。**review 渲染集 = page_render 页**（有上一版可比时）；首轮/冷跑无对照才回落 key_pages——「改了一句 insight 不必重渲染」是显式决策，不是缓存副作用。上一版 spec 存在 `<out>_render/last_spec.json`（唯一保留的跨轮状态）。
+
+**跨轮状态与缓存清单（vNext 的全部家当）**：
+`<out>_render/` 下只有三个文件——`last_spec.json`（变更分类用）、`render_meta.json`（编译视图 + PDF 归属核验）、`render_cache.json`（页级指标）。失效判据只有一个：**内容核验**（`spec_view` 指纹 + 产物字节 sha + 页内图片指纹 + 渲染器身份）；不再有版本号闸（`COMPILER_VERSION` 已退出缓存判定，`cache_version` 迁移层已删）、不再有语义哈希与多版本并存。规模到「每天 1000+ deck」再谈第二层缓存。
 
 ### Design Intelligence Layer（生成前契约）
 
@@ -48,8 +68,13 @@ card = deck_decision(brief)             # Deck Decision Card：deck 级判断一
 skel = page_intent_skeleton("DATA_STORY", insight=…, focus="c1")
                                         # 家族 → 意图骨架（能量/密度/负空间职责
                                         #   确定性给出；显式覆盖永远赢）
-risks = pre_critic(spec)                # 12 类风险（17 码）× {level, why, prevention,
+risks = pre_critic(spec)                # 12 类风险（18 码）× {level, why, prevention,
                                         #   predicted(下游失败码), root_cause, confidence}
+risks["strategy"] = risk_strategy(spec, risks)   # 风险 → 生成策略（唯一输出）：
+                                        #   adjusted(修正后的设计政策)/pages/generation/
+                                        #   risk_scores/summary —— 不改 spec、不阻断
+policies = forecast_risk(brief)          # 起草前风险预测（12 页启发式 → 5 条政策）
+                                        #   生成期当设计约束用，替代「先生成再被提醒」
 rec = recommend(intent, profile, dna)       # 两层布局决策：标准家族直达原型
                                            #   （tier="family"，零搜索成本）；
                                            #   未分类/多焦点才 tier="search"
@@ -61,10 +86,12 @@ new, fit = apply_fit_ladder(spec)       # auto_fit:true 元素的阶梯吸附（
 out = analyze(brief, spec)              # 三线一次汇合（DNA + 媒体 + 预算 + 风险）
 ```
 
-- **Pre-Critic**：与 Critic 同一套常量的静态估计（零渲染零编译，~1ms/页）；
-  跑在 draft/review（release 有真实 Critic 不跑预测）；报告键 `qa.pre_critic`。
-  accent 估算按图表物理形态校准（构成图扇区实心 / 条形族细轨道 / 点缀类小面积），
-  方向保守（宁高估不漏报）；每条风险直连 `director_verdict` 的根因分类法。
+- **Risk Prediction（vNext：已并入 Design Intelligence，是它的预测层，不再叫 Pre-Critic）**：
+  与 Critic 同一套常量的静态估计（零渲染零编译，~1ms/页），跑在所有模式（含 release：
+  预测值与实测值的差就是下一轮校准的证据）；报告键 `qa["risk"]`（`qa["pre_critic"]` 为兼容别名）。
+  输出**只有两样**：`{findings, hard_gates, blocking}` 供 Generator 提前规避 + `strategy`（生成策略）。
+  accent 估算按图表物理形态校准（构成图扇区实心 / 条形族细轨道 / 点缀类小面积），方向保守。
+  **它不阻断、不缓存、不设门控**（原「只提前发现、不改设计」已废弃——不产出行动的风险预测等于白算）。
 - **Design DNA**（`memory/design_dna.json`）：`record_dna` 只允许在上游 PASS 后调用
   （真实发布过的经验才值得记忆）；`recall_dna` 确定性关键词打分，命中给 confidence，
   无命中返回最近邻 + adapt 提示。DNA 是经验不是模板——照抄即违规。
@@ -76,7 +103,11 @@ out = analyze(brief, spec)              # 三线一次汇合（DNA + 媒体 + �
 - **auto_fit**：元素级显式 opt-in；阶梯 `padding→0 → line_height→1.05 →
   size -2px（下限 12）→ needs_rewrite`；报告键 `qa.auto_fit`（每步留痕）；
   未声明元素零改动，编译器行为不变（仍只警告不修改）。
-- **失效安全**：预测层异常不阻断主链（`pre_critic` 失败 → 报告记 error，QA 照常）。
+- **失效安全**：预测层异常不阻断主链（`forecast_risk` / `risk_strategy` / `pre_critic` 失败 →
+  报告记 error，QA 与渲染照常）；策略只在「确实有风险可防」时产生，无风险返回 `{}`。
+- **Critic 反馈 → 升级设计杠杆**：`art_critic.recommendation_plan(report)` 把每条 finding 映射到
+  设计域杠杆（`DIMENSIONS` 九维 + 意图/焦点类）并附 `action`；工程手段（改字阶/行高/页边距等）
+  已从映射表移除——那类问题归 QA 修。
 
 ### Spec Normalizer（生产链第 0 级契约）
 
@@ -95,6 +126,39 @@ spec, report = normalize_spec(spec)      # 纯函数：入参不动，返回深�
 ### Single-entry execution
 
 优先调用 `qa.run_qa()` 完成一次性流水线：它只加载并调用所需模块、复用同一份 `guard_rules`，并返回 guard / compile / render 的摘要；不要在代理上下文中逐个读取脚本全文，也不要重复运行 `guard` 与 `compile`。仅在调试对应失败域时调用单模块 CLI。所有 CLI 支持 `--json` 时应优先使用 JSON 输出；日志只保留摘要、失败码、页面 ID 和修复建议。`render=False` 或 `--no-render` 只允许快速迭代，不代表发布通过；在没有其他阻断错误时状态为 `PREVIEW_ONLY`，若同时存在阻断错误则按状态优先级返回 `BLOCKED`。
+
+## Runtime Contract Map（字段级契约索引 · 权威表）
+
+写 spec 前查这一张表就够了；细节再按「读」列精确到小节取。**禁止靠 grep 全库找规则。**
+
+| 任务 | 关键规则（80% 情况到此为止） | 读（仅超纲时） |
+|---|---|---|
+| 文本元素 | 用 `text` 字段放内容，样式平铺顶层（`size/color/bold/align/max_lines/line_height/padding`）；禁 `content`、禁嵌套 `style`；框高 ≥ 字号×行高×行数（40px×1.15×2 行需 ≥92px）；行长 CJK ≤38 字/拉丁 ≤75，超 2× 阻断——缩字号不算修复，拆句或收窄版心才算 | production-contract.md §Spec |
+| 填充 | `{"fill": {"type": "solid\|gradient\|none", ...}}`；无效 fill 按编译错误迁移，不会默认变蓝 | production-contract.md §Fill Contract |
+| 图表数据 | 每行 `label` + 有限数值 `value`；`source/unit/period/basis` 分开声明、缺一即 error；同 metric 全 deck 单位一致；总和≤0 的构成图、非正进度上限、负值冒充正值都是 error；标题写洞察不写字段名 | production-contract.md §Chart data contract |
+| focus | 每页唯一 `page_intent.focus`（绑定元素 id）；焦点文字需 ≥40px 或领先第二大文字 ≥1.25×；其他元素面积 ≤ max(2×焦点, 25%画布)；落任一版面轴线（1/4、1/3、1/2、2/3、3/4、0.382/0.618）记加分 | art_critic.py（`STATEMENT_SIZE/FOCUS_LEAD/FOCUS_AREA_LEAD/AXIS_LINES`） |
+| 密度与节奏 | 占用带：sparse ≤0.60 / balanced 0.65–0.75 / dense 0.75–0.85（`_content_occupancy`）；相邻同密度页需实测墨迹差 ≥0.10，标签变了差 ≤0.03 判空转；连续三页同密度同能量 = RHYTHM_FLAT | art_critic.py（`RHYTHM_*`） |
+| 记忆锚点 | 每页一个机器可指认锚点：≥40px 文本 / 图表 `highlight` / 环心 KPI / `target` 线 / sparkline / 瀑布小计 / image hero；图表内部大数值**不算**（检测器只看声明） | art_critic.py（`_memory_anchor`） |
+| 色彩 | `color_intent: [brand, emotion, hierarchy]` 必须声明；Accent ≤5%（渲染实测）；色相族 ≤4（30° 一档）；Accent 与主/辅色相差 ≥12°；同图表类型跨页标签规格一致（>1.25× 判漂移） | guard.py 色彩纪律 + themes.md |
+| 网格 | 1280×720，8 单位（`primitives.GRID_UNIT`）；**Normalizer 自动吸附**（x/y 就近、w/h 向上），手工对齐不再是你的职责；`grid_exempt: true` 可豁免 | normalizer.py + production-contract.md §Spec Normalizer |
+| 媒体 | 图片须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页永不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；每页媒体 ≤1、阅读文本 ≤4、圆角容器 ≤4（超即 Card Wall） | SKILL.md 媒体闸门 + asset_prompt.py |
+| 可读性 | 渲染实测「文字 vs 其下方底」：正文 <4.5:1 提示，任何角色 <3.0:1 阻断（READABILITY_FAIL）——色板合法 ≠ 物理可读，只有像素证据能暴露 | qa.py（`text_contrast` 域） |
+| 光学对齐 | 渲染级复核：shape/chart/image 声明边界线的视觉峰位 vs 数学坐标（±2px）；≥3 根可验证且一致率 ≥75% 记 alignment 加分，偏移线报 max_shift——数学对齐是否真的成为视觉对齐，只有像素能回答 | render_check.py（`optical_alignment`）→ art_critic.py |
+| 风险预测与策略 | 起草前 `forecast_risk(brief)` 给政策（媒体/文本/字阶/构图/节奏），落稿后 `risk_strategy(spec)` 给逐页修单（12 类风险 18 码，各带根因/预防/预测失败码）；它是**建议不是闸门**，异常零阻断 | design_intelligence.py（`forecast_risk` / `pre_critic` / `risk_strategy`） |
+| 职责分工（防重复劳动） | QA 唯一负责：溢出 / 重叠 / 越界 / 安全区 / 数据合同 / 渲染完整性 / 对比度底线（READABILITY_FAIL）——输出 PASS·FAIL·WARNING。Critic 唯一负责：视觉层级 / 空间节奏 / 信息焦点 / 审美一致性 / 品牌气质 / 记忆点——**不再对上述工程项立案**（报告里的 `delegated_to_qa` 就是移交清单）。同一事实只判一次 | `qa.verdict_of` / `art_critic.DELEGATED_TO_QA` |
+| 参考空间水准 | `visual_calibration_score(spec)` 五维静态分（layout/typography/color/image/information，各 0–5）对照参考空间律（面积律 c1≈55% / 色相族页 ≤1 / 饱和域 / 图片占比带 / 负空间）；~0.3ms，**判断辅助分，不参与任何发布判定**；律以 `CALIBRATION_LAWS` 内联为常量（可选 `memory/calibration_space.json` 覆盖） | design_intelligence.py |
+| 自适应色彩 | `color_plan(direction, brief)`：70/20/8/2 比例目标 + 实测约束（色相族/饱和/明度域）+ 种子骨架；派生序 brand_colors > visual_world 材质 > 方向种子；14 方向族（10 实测 + 4 主张） | design_intelligence.py（`COLOR_DIRECTIONS`） |
+| 一次通过规划 | `route.one_pass_plan(brief)`：Stage1+2 全决策一次固化（plan+deck_decision+color_plan+逐页 skeleton/layout/media/budget），缓存命中 0.6ms | route.py |
+| 出图三层 | 资产卡过 `enhance_asset_card(card, family)` 注入动势（leading lines/透视/光向…）+ 微浮雕（纸纤维/皮革纹/石灰岩…，纪律：微弱低对比近距可感知）+ 空间融合（text-safe 负空间/光向一致/景深层级/无贴纸边）再喂图像模型 | asset_prompt.py（V3） |
+| 设计经验 | `recall_dna(brief)`（route 内联）命中即用其设计问题/空间/色彩行为/图表人格/禁用信号做判断基线（Schema v2 判断记忆，色值在 proven）；`record_dna` 仅 PASS 后调用、拒收结果记忆 | memory/design_dna.json |
+| 版式选型 | 同页 3 候选 spec 级比较：`layout_search.search()` 五维打分（层级/留白/锚点/节奏/品牌契合），选优后起草；原型 = 构图算子的驻点，不是模板 | layout_search.py |
+| 设计理由 | 每页可选一句 `design_rationale`（选择 × 理由 × 否决项，声明层）；修正时先验「意图是否被几何兑现」，`record_dna` 时作为决策出处 | design-intelligence.md §Design Intent |
+| 文本溢出 | 预防优于警告：`auto_fit: true` 按阶梯吸附（padding→行高→字号→重写）；未声明者编译器仍只警告 | design_intelligence.py（`apply_fit_ladder`） |
+| 修订 | 读 `director_verdict.primary_lever`；**1 根因 = 1 轮**：`batch.fix_this_round`（同根因杠杆）一次修完一次验证，`batch.deferred` 排队下轮；修完跑一轮 QA 再看下一条 | art_critic.py（`_director_verdict`） |
+| 发布 | `qa.py --mode release`（= --manifest）：QA ≥90 **且** Critic ≥90 **且** 0 硬门槛 **且** 全量像素；revision_count 必须来自真实修订流水；报告盖 `source_spec_hash`，对不上 → BLOCKED | production-contract.md §Release Manifest |
+
+> 这张表是**字段级契约的唯一权威位置**（v3.2 起从 SKILL.md 移入）：SKILL 只负责让你"
+> 知道往哪走"，精确语义在这里。改字段语义 = 改这张表 + 对应 selftest，两处一起改。
 
 ## Stable API
 
@@ -126,15 +190,17 @@ from guard import check_spec
 result = check_spec(spec)                    # result["preflight"] / ["preflight_codes"]
 ```
 
-CLI 入口保持兼容，新增默认关闭的开关：`guard.py <module> --preflight [--raw]`；`qa.py <module> <out.pptx> --mode draft|review|release | --critic auto|force|off | --no-normalize | --fast | --preflight | --quick | --key-pages | --level N`；`render_check.py <pptx> <module> [out_dir] --pages 1,5 --dpi N --workers N`。`run_qa` 新增 `preflight_gate / qa_level / render_pages / workers / mode / normalize / critic`（`render / preflight_gate / qa_level` 改为 None 哨兵：显式实参优先，None 时由 mode 档案派生，不传 mode 维持旧行为），`release_manifest` 新增 `verification` 关键字参数并接受归一化证明链；全部带默认值，未传时与旧版行为一致。返回值只增不减（新增键：`normalization` / `execution` / `critic`）。
+CLI 入口保持兼容：`guard.py <module> --preflight [--raw]`（诊断用，拦渲染的开关已删）；`qa.py <module> <out.pptx> --mode sketch|draft|review|release [--critic on|off] [--no-normalize] [--no-cache] [--fast] [--preflight] [--quick] [--key-pages] [--level N]`；`render_check.py <pptx> <module> [out_dir] --pages 1,5 --dpi N --workers N`。`run_qa` 参数：`qa_level / render_pages / workers / mode / normalize / critic`（`render / qa_level` 为 None 哨兵：显式实参优先，None 时由 mode 档案派生，不传 mode 维持 legacy 全量），`release_manifest` 新增 `verification` 关键字参数并接受归一化证明链；全部带默认值，未传时与旧版行为一致。返回值只增不减（新增键：`normalization` / `execution` / `critic` / `risk` / `verdict`）；返回值新增 `verdict`（PASS/FAIL/WARNING）与 `risk`（`pre_critic` 保留为其别名）；已删除的键：`preflight_gate`、`stability`。
 
 ```python
 # 执行模式（流程控制）
 qa = run_qa(spec, "out.pptx", mode="sketch")    # 草图链：只守 error 级，契约免除
 qa = run_qa(spec, "out.pptx", mode="draft")     # 零渲染：guard+compile+PPTX
-qa = run_qa(spec, "out.pptx", mode="review")    # 关键页∪受影响页；Critic 稳定后自动
+qa = run_qa(spec, "out.pptx", mode="review")    # 只渲染变化页（首轮=关键页）+ Critic
 qa = run_qa(spec, "out.pptx", mode="release")   # 全量 + Critic（result["critic"]["report"]）
-qa = run_qa(spec, "out.pptx", mode="review", critic="force")   # 跳过稳定门控
+qa = run_qa(spec, "out.pptx", mode="review", critic="off")   # 显式跳过 Critic（临时）
+from qa import verdict_of
+v = verdict_of(qa)          # {verdict, status, score, blocking, warnings, codes, question}
 
 from qa import classify_spec_change, mode_profile, EXECUTION_MODES
 plan = classify_spec_change(old_spec, new_spec)  # deck/pages/render_needed 语义分类
@@ -241,7 +307,7 @@ spec = {
 
 | 层 | 模块 | 分数语义 | 是否审美 |
 |---|---|---|---|
-| 静态治理 | `guard.py` | 内部 `score`（100 减扣），仅用于编译报告摘要 | 否（规则合规） |
+| 静态治理 | `guard.py` | 内部 `score`（100 减扣），仅用于编译报告摘要；**设计契约条目权重 0（`advisory`）** | 否（规则合规） |
 | 编译诊断 | `compiler.py` | passed/warnings，不计分 | 否 |
 | 渲染证据 | `render_check.py` | 像素指标（占用率、质心、Accent 像素比…），供 QA/Critic 消费 | 否（测量） |
 | 确定性 QA | `qa.py` | 100 分制，guard/compile/render 三域扣分 + 阻断性失败码 | 否（合规 + 渲染完整性） |
@@ -251,7 +317,7 @@ spec = {
 
 **调参**：全部经 `penalties / thresholds / rules` 传入，不改脚本默认值。常用：无 LibreOffice 环境 `penalties={"render_missing": 0}`（环境问题已由 PREVIEW_ONLY 状态表达）；纯色背景主题 `thresholds={"margin_occupancy": 0.05}` 开启边缘检查。路径（Fast/Advanced）与模式（draft/review/release）只改预算与验证深度，不改任何阈值；Level 1/2 的分数只用于看趋势，不能引用为发布结论。阈值校准方法论见 `references/benchmark-calibration.md`。
 
-继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、Accent、节奏、文本、颜色、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、saliency split、`saliency_method`、渲染级光学对齐 `optical_alignment`（声明轴线视觉峰位一致性：带内有真实边缘=对齐、窗口内有带内无=偏移、无边缘=不可验证不计入）（显著图实际算法：`cv2_spectral_residual` / `deterministic_fallback`，跨机器可比性的溯源）、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实，其 fail / soft / pass 判定由 QA 与 Critic 共享同一实现（`primitives.text_contrast_verdict`）；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
+继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、文本、颜色（其中 Accent、节奏一类属 `DESIGN_RULES`，只作观察不扣分）、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、saliency split、`saliency_method`、渲染级光学对齐 `optical_alignment`（声明轴线视觉峰位一致性：带内有真实边缘=对齐、窗口内有带内无=偏移、无边缘=不可验证不计入）（显著图实际算法：`cv2_spectral_residual` / `deterministic_fallback`，跨机器可比性的溯源）、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实，其 fail / soft / pass 判定由 QA 与 Critic 共享同一实现（`primitives.text_contrast_verdict`）；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
 
 确定性评分建议仍用 100 分制，但只记录 `guard / compile / render` 域，并在 `deduction_by_domain` 中给出分域扣分明细。`passed` 不能仅凭分数决定；硬错误、编译失败、来源缺失、渲染缺失、关键文本不可读或任何未获声明的遮挡时必须覆盖分数。报告必须返回 `failure_codes`、`blocking_items`、`affected_slides`、`next_action`、`status` 和 `elapsed_ms`，让下一次调用只处理受影响范围。`status` 的优先级固定为：阻断错误 → `BLOCKED`；无阻断但缺少真实渲染 → `PREVIEW_ONLY`；有可修复问题 → `REVISE`；全部发布条件满足 → `PASS`。
 
@@ -259,11 +325,32 @@ spec = {
 
 `guard.run_preflight()` 只镜像 Art Critic 中**确定性可静态判定**的部分，阈值经懒加载直接取自 `art_critic` 导出常量（`gate_source: "art_critic"`；导入失败时用等值默认并标注 `guard`）。返回 `{slide, code, observation, minimal_fix, gate_source}`，码表：`INTENT_UNCLEAR`、`FOCUS_UNBOUND`、`FOCUS_SCALE`、`FOCUS_LEAD`、`FOCUS_DOMINATED`、`MEDIA_BUDGET`、`TEXT_BUDGET`、`CARD_WALL`、`CARD_DENSITY`（3–4 个圆角容器，未到硬门槛的提前提示，与 `CARD_WALL` 互斥点名）、`BG_UNPROTECTED`(warn)、`ASYMMETRIC_UNDECLARED`、`DENSITY_FLAT`、`RHYTHM_FLAT`。
 
-预检条目只用于提前修，不参与美学评分：`preflight_hint` 权重为 `0.0`，因此新增提示不会把 `PASS` 拉成 `REVISE`。命中 `PREFLIGHT_HARD_CODES`（`INTENT_UNCLEAR` → BLOCKED，`FOCUS_UNBOUND` / `CARD_WALL` / `RHYTHM_FLAT` → REVISE）时，`preflight_gate=True` 直接跳过渲染并给出 `next_action`，判定不因此放宽——被跳过的渲染永远不可能给出 PASS。
+预检条目只用于提前修，不参与美学评分：`preflight_hint` 权重为 `0.0`，新增提示不会把 `PASS` 拉成 `REVISE`。
+
+### Design Contract = Advisory（v3.2：Guard 是 compiler linter，不是审美委员会）
+
+`guard.DESIGN_RULES`（17 项）列出的规则——`palette_discipline / rhythm / focus / focus_scale /
+type_budget / accent_budget / alignment_budget / animation_budget / chart_highlight / color_budget /
+decoration_budget / icon_consistency / organic_layer / typography / asset_contract /
+chart_style_drift / preflight`——是**观察**：条目带 `advisory: true` + `score_weight: 0.0`，
+不进 `guard.score`、不进 QA 扣分、不构成 error（设计条目出现 error 直接算 bug，
+`selftest [design_advisory]` 会拦住）。它们留在报告里只服务两件事：让 Critic 与风险预测
+不必重算同一份事实；让你在起草时知道「评审会往哪儿看」。
+
+**Guard 仍然阻断的（工程事实，与美学无关）**：结构合法性（`INVALID_SPEC`/
+`ILLEGAL_STRUCTURE`）、几何与容量（`ELEMENT_OUTSIDE_SAFE_AREA`、`TEXT_OVERFLOW`、
+`LINE_MEASURE` 超出 fail factor → `text_capacity`）、资产与数据真实性（`MISSING_ASSET`/
+`INVALID_DATA`/`BROKEN_REFERENCE`/`FACT_*`）、可编辑性与安全（`EDITABILITY_LOSS`、
+`SENSITIVE_CONTENT`、`UNSAFE_*`）、背景层声明一致（`background_layer`）。判据只有一句：
+**能被固定阈值完全描述 → 归 Guard；不能 → 归 design-craft.md + Critic 的证据**。
+
+「高级感」不由 QA 决定，因此 QA 报告里的 `design_quality` 域只保留渲染实测的
+**物理底线**（文字被切断、文字压在图上不可读），审美维度全部由 Critic 以诊断文字
+表达（见下节），不参与 QA 分数。**vNext：预检不再拦渲染**（`PREFLIGHT_HARD_CODES` 与 `preflight_gate` 已删）——「不干净不渲染」换来的只是一条与「Critic 是否稳定」并列的门控分支，同一件事在 QA 的渲染判定里已经算过一次；现在预检是纯诊断，是否值得付渲染成本由执行模式决定（draft 根本不渲染）。
 
 ### Performance
 
-`qa["performance"] = {total_ms, guard_ms, compile_ms, render_ms, slides, preflight_items, render_skipped, qa_level, render_workers, rendered_pages, requested_pages, cache_hits, cache_misses, cache_enabled, compile_reused}`；`qa["preflight_gate"] = {enabled, triggered, hits}`。渲染通常占整轮 90% 以上成本，因此这三项就是“少跑一轮”的可核对证据。性能数据只用于说明与调参，不参与发布状态。
+`qa["performance"] = {total_ms, guard_ms, compile_ms, render_ms, slides, preflight_items, render_skipped, qa_level, render_workers, rendered_pages, requested_pages, cache_hits, cache_misses, cache_enabled, compile_reused}`（`preflight_gate` 键已随闸门删除）。渲染通常占整轮 90% 以上成本，因此这几项就是「少跑一轮」的可核对证据。性能数据只用于说明与调参，不参与发布状态。
 
 ## Progressive QA 与并行渲染
 
@@ -280,26 +367,14 @@ spec = {
 - 证据对齐：子集渲染的每页结果带绝对 `page` 与 `index`，QA 与 Critic 按 `index` 匹配（无 `index` 的旧证据退回位置匹配）。**禁止**按结果数组下标对齐——那会把已测页的指标串到未测页上。
 - `PIXEL_COVERAGE_PARTIAL`（REVISE）：证据不全时无论分数高低都记入 `hard_gates`，并把 `PASS` 降级；覆盖全量后自动消失。
 
-### 复用三段重复劳动（去掉重复渲染 / 重复转换 / 重复编译）
+### 复用三段重复劳动（判据，一句话版）
 
-`render_evidence` 在 `out_dir` 里维护 `render_cache.json`：
-
-- 键 = `sha256(本页 spec + canvas + dpi + 完整 theme + 页内图片 (name,size,mtime) + 渲染器路径 + 显著图后端 + 键代次标识)`；任何会影响本页像素的输入都进键，因此**其他页的改动不会让本页失效，而重新出图、换主题字、换 LibreOffice 或换显著图后端一定会**（cv2 与回退算法的质心/分片不可互换，跨机器共用证据目录时必须分键存放；旧代次键自然淘汰）。
-- 命中还要求：条目记录的 `png` 文件仍在目录里，**且文件内容指纹 `png_sha` 一致**。只比文件名会把别页像素当本页复用（曾真实发生过：命中 12/重测 0，却返回错页指标）；旧格式（无 `png_sha`）条目一律不信任、直接重测。
-- 每轮渲染使用唯一 PNG 前缀 `page-<token>-r<idx>-<绝对页码>.png`，只按绝对页码认领文件；缺页记入 `coverage.unrendered`，绝不按结果序号回退猜页——宁缺勿错。
-- `use_cache=False` 的冷测不清空证据目录（只增加文件），因此一次冷测不会把别人的热缓存打回冷态。
-- `out_dir` 一律先 `resolve()`：相对目录会拼成非法 LibreOffice profile URI，`soffice` 将卡在 profile 锁上直至超时。
-- 全部页命中时直接返回，不启动 LibreOffice/pdftoppm；写缓存时只保留当前 deck 的键（自动裁剪，不会长胖）。
-- `coverage` 增加 `cache_hits / cache_misses`，`qa["performance"]` 透传同名两项，作为“这一轮省掉了多少”的凭证。
-- 键的口径：页级投影按**排除法**取字段——`NON_PIXEL_SLIDE_KEYS`（`page_intent` / `source_zone` / 备注 / 评论）与 `NON_PIXEL_THEME_KEYS`（`constraints` / `notes` / `description` …）之外的全部字段都进键。排除法保证将来新增的视觉字段自动进键、不会漏测；唯一被点名保留的是 `page_intent.focus`：它不产出像素，却决定量哪个元素的墨量占比，所以必须进键，否则改 focus 会拿到上一版的 `coverage_ink`。`selftest.check_cache_projection` 会扫描 `compiler.py` 实际读取的 slide 键与 `primitives/charts/elements` 读取的 theme 键，任何被排除表屏蔽的渲染输入都会让自检失败。
-- **PPTX→PDF 整份复用**：soffice 只能整份转换（实测 1.70s），而 Level 2→Level 3、改 dpi 抽查、只改声明的修订都不改变 pptx 字节。`render_meta.json` 记下 `pdf = {name, pptx_sha, renderer}`，命中条件仍是内容核验（pptx 逐字节一致 + 渲染器路径一致 + PDF 仍在且页数 > 0）。Level 2 后补齐全量：2.57s → 0.82s。
-- **编译复用**：`spec_view(spec)` = 会被编译成像素的那部分（canvas + theme 投影 + 每页 background/elements/id + 图片 size·mtime）。它与磁盘上 pptx 的内容指纹双重核验后才允许跳过 `compile_deck`，跳过后 `file_bytes` 按磁盘实际值刷新，`compile_reused=True` 进 performance。只改 `density` / `insight` / `focus` / 备注的一轮：4.8s → 0.01s，且像素质标与独立冷测逐位相同。
-- 冷测（`use_cache=False`）既不查也不写：不查以免读到旧值，不写以免一次「隔离测试」改变别人的热态；`--no-cache` 之后紧跟的一轮会照常重编译（0.7s），再往后才是 0.0s。
-- 关闭：`run_qa(..., use_cache=False)` 或 `qa.py --no-cache`；换渲染器、怀疑陈旧时用它做绝对冷测。
-
-**为什么不再加一条线程**：一轮全量实测成本 = guard 2ms · 编译 179ms · soffice 1704ms · pdftoppm 241ms(1 页)/1002ms(12 页) · 像素量测 75ms/页 · 批评 2.7ms。复用把「重复」拿掉之后，剩下的是无法拆开的串行重流，再加线程只增同步成本。因此「设计推导 / 资产·渲染」两线由 `route.py` 的 `pipelines` 分工表达（互不通信、在 `run_qa` 汇合一次），`run_qa` 内部只保留下述一处并行：
-
-并行只发生在渲染阶段内部：`_plan_jobs()` 把请求页压成连续区间并按 worker 数二分（避免一核空转），每个 worker 内「poppler 转换 → 像素测量」串行执行、块与块之间并行（去掉两次全局栅栏）。`MAX_RENDER_WORKERS = 2` 且再按 `os.cpu_count()` 收敛；页数 < 4 时自动降为串行（单次 pdftoppm ≈ 117ms，调度成本同量级）。不做无界并发、不做多进程池、不引入新依赖。
+缓存只有一个判据：**这一轮的输入会不会改变量到的数字**。页级键 = 本页 spec 投影 + canvas +
+dpi + 完整 theme + 页内图片身份 + 渲染器路径；命中还要求 PNG 仍在目录内且 `png_sha` 一致。
+`use_cache=False` / `--no-cache` = 冷测：不查也不写，不清空别人的热缓存。`out_dir` 必须先
+`resolve()`（相对路径会拼成非法 LibreOffice profile URI，`soffice` 卡死）。
+`coverage.cache_hits / cache_misses` 透传到 `qa["performance"]`，用来判断「这轮省掉了什么」。
+**实现细节、条目结构与「为什么只有 2 个 worker」的实测分解：见 `OPTIMIZATION.md`。**
 
 ## Art Critic contract
 
@@ -325,6 +400,13 @@ spec = {
   }]
 }
 ```
+
+**主输出是诊断，分数是置信度（v3.2）**：`critique_deck()` 返回 `diagnosis`
+= `{question, assessment, strengths[], risks[], advice[], score_semantics}`，全部由已有证据
+重排而来（不新增任何测量）。`strengths` 记「这条 deck 已经做对了什么、值得保留」，
+`risks` 记「哪个维度/门槛正在损害层级、节奏、记忆点」并指到页码与实测数字，
+`advice` 直接取 `director_verdict.levers` 的下一步。`deck_score` 保留但降级为**置信度**：
+分数变化本身**不得**作为修订理由，修订理由只能是 `evidence` 里的具体事实。
 
 评分模型：每项 0–5 分，从基准分 3（「满足声明契约」）出发，凭**可观察证据**加分或扣分（delta ∈ [-2, +2]，钳制到 0–5）。渲染级光学对齐复核为 alignment 纯加分项（≥3 根可验证声明轴线且一致率 ≥75% 时 +1；低一致率不扣分，图像页内部边缘天然离轴）。每一个 delta 都必须写入 `dimension_evidence`，保证分数可逐条溯源复核；不加证据不得加分，不加观察不得扣分。只扣不加的模型会把满分数学性封顶在 80/100、PASS 不可达——证据驱动加减分正是为修复该缺陷；PASS 仍然要求 deck_score ≥ 90 且无任何硬门槛。3–4 个圆角容器时 `professional_quality` 记一次软扣分（未到 `CARD_WALL` 硬门槛，仍可 PASS）；`>4` 的硬门槛与 `ROUNDED_MAX=4` 不变。
 
