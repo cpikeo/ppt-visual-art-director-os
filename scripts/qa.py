@@ -331,6 +331,11 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         from normalizer import normalize_spec
         spec, norm_report = normalize_spec(spec)
 
+    # 0.2) Smart Fit Resolver（V3 · 显式 opt-in）：auto_fit:true 的文本按阶梯
+    #      吸附（padding→line_height→字号），留痕；未声明者零改动（编译器仍只警告）。
+    from design_intelligence import apply_fit_ladder
+    spec, fit_report = apply_fit_ladder(spec)
+
     # 0.5) 执行模式档案：None 参数由 mode 派生；显式实参永远优先（API 兼容）
     prof = mode_profile(mode) if mode else None
     if prof:
@@ -348,6 +353,17 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         qa_level = 3
     critic_policy = (str(critic).strip().lower() if critic else
                      (prof["critic"] if prof else "off"))
+
+    # 0.4) Pre-Critic（V3 · 生成前风险预测）：draft/review 内联运行——
+    #      用与 Critic 同一套常量在渲染之前预测 accent 超载/锚点缺失/对比度/
+    #      焦点冲突/溢出/节奏趋平（~1ms/页）。release 有真实 Critic，不跑预测。
+    pre_critic_report = None
+    if mode in ("draft", "review"):
+        try:
+            from design_intelligence import pre_critic
+            pre_critic_report = pre_critic(spec)
+        except Exception as exc:      # 预测层失败不阻断主链（它是大脑不是门槛）
+            pre_critic_report = {"error": str(exc), "risks": [], "summary": {}}
 
     # 渲染证据目录先定下来（studio 状态与复用记录都住在这里）
     render_dir = (Path(render_dir) if render_dir
@@ -753,6 +769,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         # 自证戳：报告属于哪一份 spec。清单会核对，防止拿旧报告/旁路产物冒充新结果
         "source_spec_hash": spec_fingerprint(spec),
         "normalization": norm_report,
+        "auto_fit": fit_report,
+        "pre_critic": pre_critic_report,
         "execution": exec_block,
         "critic": critic_block if critic_block["ran"] or mode else None,
         "score": round(score, 1),
@@ -910,6 +928,7 @@ def main(argv):
               "  三层执行架构：draft=创作链（零渲染，初稿探索）· "
               "review=审查链（关键页+受影响页，Critic 待布局稳定）· "
               "release=发布链（全量+Manifest，唯一 PASS 口径）\n"
+              "  默认：不传 --mode 即 draft（快速生成，零渲染秒级）；--level N / --fast 维持 legacy 全量\n"
               "  legacy：--quick≡--mode draft · --key-pages≡--mode review · "
               "--manifest≡--mode release")
         return 1
@@ -939,6 +958,11 @@ def main(argv):
     for i, a in enumerate(argv):
         if a == "--level" and i + 1 < len(argv):
             level = int(argv[i + 1])
+    # 默认生成走快速生成模式（draft 创作链）：不传 mode 即零渲染秒级产出可编辑
+    # PPTX + pre-critic 风险首屏。显式 --level N / --fast 是「明确要测」的信号，
+    # 维持 legacy 全量行为，不因默认值被降级。
+    if mode is None and level is None and not fast:
+        mode = "draft"
     critic_flag = None
     for i, a in enumerate(argv):
         if a == "--critic" and i + 1 < len(argv):
@@ -1000,6 +1024,24 @@ def main(argv):
         if not manifest.get("revision_count"):
             print("hint: revision_count=0（发布清单应携带真实修订流水："
                   "observation → minimal_fix → recheck × N 轮）")
+    # V3：Pre-Critic 摘要（draft/review）——生成前风险，修在渲染之前
+    if mode in ("draft", "review") and "--json" not in argv:
+        pc = result.get("pre_critic") or {}
+        s = pc.get("summary") or {}
+        if s:
+            print(f"pre-critic: {s.get('high', 0)} high / {s.get('med', 0)} med · "
+                  f"{s.get('pages_at_risk', 0)}/{s.get('total_pages', '?')} 页有风险"
+                  f"（生成前预测，修复优先级高于一切渲染验证）")
+            for r in (pc.get("risks") or []):
+                if r.get("level") == "high":
+                    print(f"  [{r['code']:22s}] {'、'.join(r['slides'])}: {r['why'][:80]}")
+                    print(f"      prevent → {r['prevention'][:86]}")
+        fit = result.get("auto_fit") or {}
+        if fit.get("applied"):
+            print(f"auto-fit: {fit['applied']} 处按阶梯吸附"
+                  + (f"（{len(fit.get('needs_rewrite', []))} 处需重写文案）"
+                     if fit.get("needs_rewrite") else ""))
+
     # review 模式：Critic 稳定介入时打印总监 verdict（含根因分组批量修正）
     # （人类输出；--json 保持纯净——critic 结果在 JSON 的 execution/critic 键里）
     if mode == "review" and "--json" not in argv:

@@ -23,18 +23,62 @@ description: >
 
 ## 三层执行架构：创作链（快）→ 审查链（准）→ 发布链（严）
 
-**默认路径是创作链，不是发布链。** 发布级流水线（全量渲染 + Critic + Manifest）只在终版交付时触发——初稿、方向探索、多方案对比永远不该付它的成本。Fast/Advanced 是**预算控制**（资产数/dpi/Critic 时机），Execution Mode 是**流程控制**（渲染不渲染、Critic 何时介入、状态给到哪一级），两者正交：
+**默认路径是创作链，不是发布链。** 发布级流水线（全量渲染 + Critic + Manifest）只在终版交付时触发——初稿、方向探索、多方案对比永远不该付它的成本。CLI 不传 `--mode` 即为快速生成（零渲染、秒级、pre-critic 首屏）；显式 `--level N` / `--fast` 是「明确要测」的信号，维持 legacy 全量行为。Fast/Advanced 是**预算控制**（资产数/dpi/Critic 时机），Execution Mode 是**流程控制**（渲染不渲染、Critic 何时介入、状态给到哪一级），两者正交：
 
 | Mode | 链 | 流程 | Critic | 时间目标 |
 |---|---|---|---|---|
-| `--mode draft`（默认） | 创作链 | Route → P1–P3 → spec → **Normalizer → Guard → Compile → 可编辑 PPTX**，零渲染 | 恒不跑 | 秒级 |
+| `--mode draft`（默认 · 快速生成） | 创作链 | Route → P1–P3 → spec → **Normalizer → Guard → Compile → 可编辑 PPTX**，零渲染 | 恒不跑 | 秒级 |
 | `--mode review` | 审查链 | Compile → **关键页 ∪ 本轮受影响页**渲染 → QA L2 | **布局稳定后自动**（连续两轮 clean 且像素相关投影未变） | 十秒级 |
 | `--mode release` | 发布链 | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | 分钟级 |
 
 - 升档条件：`to_review` = 用户确认方向 / 改了布局、主题、图表结构；`to_release` = 终版交付、发布前复核。`route.plan_deck(brief)["execution"]` 给出推荐模式与升档规则（默认 draft）。
 - **状态上限**：draft ≤ PREVIEW_ONLY，review ≤ REVISE，只有 release 可 PASS（`release_eligible` 仅认 Level 3 全量像素证据）——阈值一个不降，只是把发布级验证留给发布时刻。
-- **Critic 生命周期（V2 精化）**：迭代期不跑（draft）；review 模式待布局稳定自动介入（结果按 spec 指纹缓存，布局再动不浪费、布局不动零重算）；发布前全量跑（release）。稳定 = 连续两轮无阻断且 `geometry_only_hash` 未变（干净且几何未变的 draft 轮同样计入，draft→review 可直通）；`PIXEL_COVERAGE_PARTIAL`/`RENDER_UNAVAILABLE` 是非发布模式预期码，不算「布局在动」。
+- **Critic 生命周期**：迭代期不跑（draft）；review 模式待布局稳定自动介入（结果按 spec 指纹缓存，布局再动不浪费、布局不动零重算）；发布前全量跑（release）。稳定 = 连续两轮无阻断且 `geometry_only_hash` 未变（干净且几何未变的 draft 轮同样计入，draft→review 可直通）；`PIXEL_COVERAGE_PARTIAL`/`RENDER_UNAVAILABLE` 是非发布模式预期码，不算「布局在动」。
 - **语义变更分类**：`qa.classify_spec_change(old, new)` 把修改分为 `narrative`（只改声明/备注 → 不渲染）/ `page_render`（改了像素相关字段 → 渲染该页）/ `full_render`（主题/画布 → 全量）/ `structure`（页数变了）。review 渲染集 = key_pages ∪ 受影响页——「改一句 insight 不必重渲染」是显式决策，不是缓存副作用。
+
+## Design Intelligence Layer（生成之前消灭设计错误）
+
+> 执行链解决了「验证的重复」；本层解决「设计的重复」：**AI 不应该设计一次、验证很多次，
+> 而应该在生成之前，大部分设计错误已被预测和消除。** 流程从
+> 「生成→检查→发现→修复→再生成」升级为 **「理解 → 预测 → 决策 → 生成 → 一次通过」**。
+
+### 四个引擎 + 一次汇合（Parallel Intelligence）
+
+内容线（route）、视觉线（DNA）、风险线（Pre-Critic）互不依赖——不要串行等待；
+`design_intelligence.analyze(brief, spec)` 一次调用汇合三线（spec 未起草时先拿
+DNA+媒体模型，起草后再跑一次拿风险报告）。
+
+| 引擎 | 回答的问题 | 入口 | 成本 |
+|---|---|---|---|
+| **Design DNA Memory** | 这类需求之前怎么做成功的？ | `recall_dna(brief)`（route 已内联，P1 即得） | ~0ms |
+| **Media Decision Model** | 这页要不要图？（置信度+理由，不是布尔闸门） | `media_decision(page)` | ~0ms |
+| **Page Quality Budget** | 这页追求什么样的好？（Hero 换情绪 / Data 求清晰） | `quality_budget(page)` | ~0ms |
+| **Pre-Critic Engine** | 这个 spec 将会挂在哪里？（accent 超载/锚点缺失/对比度/焦点冲突/溢出/节奏趋平/密度失配/媒体误用） | `pre_critic(spec)`（draft/review 已内联） | ~1ms/页 |
+| **Layout Search** | 这页的三种结构候选谁最优？（Grammar 生成 + 五维打分，不是模板） | `layout_search.search(intent, profile, dna, n=3)` | ~1ms/候选 |
+
+**Pre-Critic 纪律（关键）**：
+- 风险报告在 draft 模式第一屏输出——**修复它的优先级高于一切渲染验证**；
+- 每条风险带 `root_cause`（与 `director_verdict` 同一分类法）+ `prevention` +
+  `predicted`（下游失败码）——直接对接「1 根因 = 1 轮」批量修正；
+- 它用与 Critic/QA **同一套常量**做静态估计（不渲染）：预估是保守方向
+  （宁可轻微高估不可漏报），`confidence` 标注可信度；
+- release 模式不跑预测（有真实 Critic）——预测是给创作链和审查链用的。
+
+**Design DNA 纪律**：DNA 是**设计经验记忆**，不是模板/组件/固定页面——它是
+「看到需求就知道该怎么做」的可复用判断（空间/版式语法/色板策略/字声/媒体处理/
+图表人格/禁用信号）。`record_dna()` **只在上游校验 PASS 后调用**（真实发布过的
+经验才值得记忆）；recall 命中时按当前内容重组，禁止照抄。
+
+**Layout Search 纪律**：Layout Grammar 四要素（支配性/负空间/视觉锚点/阅读路径）
+参数化生成几何，按信息重量、焦点、数据关系合成——不是 Hero01/Chart02 组件库。
+候选只在 **spec 级**比较（不生成三份 PPT），选优后进入 spec 起草。原型只是构图算子
+的常用驻点（算子语法见 `design-intelligence.md`「构图算子」）：相邻两页不复用同一
+算子组合；连续 deck 同家族同原型时，第三副须换构图语法，或在 `design_rationale`
+声明品牌连续性。
+
+**Smart Fit Resolver（auto_fit）**：文本溢出在 spec 层按阶梯吸附——
+`padding→0 → line_height→1.05 → 字号 -2px 递降（下限 12）→ needs_rewrite`。
+**显式 opt-in**（元素 `auto_fit: true`），未声明零改动；编译器行为不变（仍只警告）。
 
 ### Runtime Contract Map（字段级契约索引 · 先定位再动手）
 
@@ -52,6 +96,11 @@ description: >
 | 网格 | 1280×720，8 单位（`primitives.GRID_UNIT`）；**Normalizer 自动吸附**（x/y 就近、w/h 向上），手工对齐不再是你的职责；`grid_exempt: true` 可豁免 | normalizer.py + production-contract.md §Spec Normalizer |
 | 媒体 | 图片须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页永不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；每页媒体 ≤1、阅读文本 ≤4、圆角容器 ≤4（超即 Card Wall） | SKILL.md 媒体闸门 + asset_prompt.py |
 | 可读性 | 渲染实测「文字 vs 其下方底」：正文 <4.5:1 提示，任何角色 <3.0:1 阻断（READABILITY_FAIL）——色板合法 ≠ 物理可读，只有像素证据能暴露 | qa.py（`text_contrast` 域） |
+| 生成前风险 | draft/review 第一屏的 pre-critic 报告就是修单：8 类风险各带根因/预防/预测失败码；**先修 pre-critic 再谈渲染** | design_intelligence.py（`pre_critic`） |
+| 设计经验 | `recall_dna(brief)`（route 内联）命中即用其空间/色板/图表人格/禁用信号做基线；`record_dna` 仅 PASS 后调用 | memory/design_dna.json |
+| 版式选型 | 同页 3 候选 spec 级比较：`layout_search.search()` 五维打分（层级/留白/锚点/节奏/品牌契合），选优后起草；原型 = 构图算子的驻点，不是模板 | layout_search.py |
+| 设计理由 | 每页可选一句 `design_rationale`（选择 × 理由 × 否决项，声明层）；修正时先验「意图是否被几何兑现」，`record_dna` 时作为决策出处 | design-intelligence.md §Design Intent |
+| 文本溢出 | 预防优于警告：`auto_fit: true` 按阶梯吸附（padding→行高→字号→重写）；未声明者编译器仍只警告 | design_intelligence.py（`apply_fit_ladder`） |
 | 修订 | 读 `director_verdict.primary_lever`；**1 根因 = 1 轮**：`batch.fix_this_round`（同根因杠杆）一次修完一次验证，`batch.deferred` 排队下轮；修完跑一轮 QA 再看下一条 | art_critic.py（`_director_verdict`） |
 | 发布 | `qa.py --mode release`（= --manifest）：QA ≥90 **且** Critic ≥90 **且** 0 硬门槛 **且** 全量像素；revision_count 必须来自真实修订流水；报告盖 `source_spec_hash`，对不上 → BLOCKED | production-contract.md §Release Manifest |
 
@@ -71,7 +120,7 @@ description: >
 ### P2 视觉策略判断：Direction + 叙事编排
 
 - 定义 visual_world（可展开的视觉隐喻：材质、光影、空间三语言）、composition_grammar、type_voice、color_behavior、media_role、background_scene、motion_posture 与 forbidden_signals；把光线、材质、透视、层级和对比关系作为全 deck 的统一空间假设。不要把风格参考名当作模板或事实。`color_intent: [brand, emotion, hierarchy]` 声明当前优先职责。
-- 先建立整套 deck 的 `opening → context → problem → insight → evidence → solution → proof → vision → closing` 阶段序列，再为每页写 `insight`（一页一句可复述结论：object + 变化/差异 + 含义）、`narrative_role`、`focus`（唯一）、`reading_order`、`energy`、`density`、`empty_space_role`、`page_family`、`rhythm_stage` 和 `continuity_token`。一页只保留一个可复述结论；每个页面家族声明使用场景、内容结构、视觉重点和禁用情况。
+- 先建立整套 deck 的 `opening → context → problem → insight → evidence → solution → proof → vision → closing` 阶段序列，再为每页写 `insight`（一页一句可复述结论：object + 变化/差异 + 含义）、`narrative_role`、`focus`（唯一）、`reading_order`、`energy`、`density`、`empty_space_role`、`page_family`、`rhythm_stage` 和 `continuity_token`；关键页补一句 `design_rationale`（为什么这样摆——选择 × 理由 × 否决项；声明层字段，修正时验证意图兑现，`record_dna` 沉淀时引用）。一页只保留一个可复述结论；每个页面家族声明使用场景、内容结构、视觉重点和禁用情况。
 - 完成标准：每页 insight 可脱离页面复述；相邻页疏密/能量互斥。
 
 ### P3 布局决策：家族 + spec + 媒体治理
@@ -84,7 +133,7 @@ description: >
 ### P4 关键细节优化：最小修正
 
 - 顺序：`删除 → 简化 → 恢复空间 → 重构重心 → 替换媒体 → 微调装饰`。不得用缩字号、堆色彩或加背景修复高层问题。
-- 修正纪律（V2）：**1 根因 = 1 轮**。读 `director_verdict.primary_lever` 与 `verdict.batch`——`fix_this_round` 是 primary 同根因的全部杠杆（如主题对比度引发的 READABILITY + contrast 维度 + chart_muted 提示），一次修完、一次验证；`deferred` 是不同根因，严格排队下轮。归因不破坏：同组 = 同一个「为什么」。声明字段（density / insight / focus / 备注）修改不触发重渲染（`classify_spec_change` 判 narrative），批量改完再验证。
+- 修正纪律：**1 根因 = 1 轮**。读 `director_verdict.primary_lever` 与 `verdict.batch`——`fix_this_round` 是 primary 同根因的全部杠杆（如主题对比度引发的 READABILITY + contrast 维度 + chart_muted 提示），一次修完、一次验证；`deferred` 是不同根因，严格排队下轮。归因不破坏：同组 = 同一个「为什么」。声明字段（density / insight / focus / 备注）修改不触发重渲染（`classify_spec_change` 判 narrative），批量改完再验证。
 
 ### P5 质量检查：生产链 + 发布判断
 
@@ -99,7 +148,7 @@ description: >
 | 新建或重构 deck | `scripts/route.py`（先分类）+ `references/design-intelligence.md` | 执行路径、页面家族与密度曲线、Strategy、Direction、Story Map、Page Intent |
 | 落地视觉系统 | `references/design-system.md`、`references/themes.md` | Theme DNA、页面 spec、媒体 brief |
 | 参考案例校准 | `references/evidence-library.md` | Evidence Cards、可执行规则、反例边界 |
-| 评分与阈值调优 | `references/scoring.md`、`references/production-contract.md` | 评分口径、penalties/thresholds 调参、分域扣分明细 |
+| 评分与阈值调优 | `references/production-contract.md`（评分体系总览与调参）、`references/benchmark-calibration.md`（阈值校准方法） | 评分口径、penalties/thresholds 调参、系统性短板、阈值校准 |
 | 编译与发布 | `references/production-contract.md` | PPTX、Render Evidence、QA、Release Manifest |
 | 图像资产 | `scripts/asset_prompt.py` 与生产契约中的 asset contract | 资产提示词、安全区、溯源 |
 
@@ -109,7 +158,7 @@ description: >
 
 | 任务场景 | 读取（精确到小节；80% 情况查 Runtime Contract Map 即可） | 调用 | 渲染 | Critic |
 |---|---|---|---|---|
-| 初稿 / 探索 / 多方案 | `route.py` + `design-intelligence.md`（+ Runtime Contract Map） | `route.plan_deck` → spec → `qa.py --mode draft`（零渲染） | 否（方向用 `ghost.py`） | 否 |
+| 初稿 / 探索 / 多方案 | Runtime Contract Map + `design-intelligence.md` | `route.plan_deck`（含 DNA 召回）→ `layout_search.search` 选版式 → spec（可 `auto_fit`）→ `qa.py --mode draft`（零渲染，**第一屏读 pre-critic 风险并先修**） | 否（方向用 `ghost.py`） | 否 |
 | 只改文案 / 洞察 / 备注 | Runtime Contract Map「文本元素」行 | `qa.py --mode draft`（classifier 判 narrative，编译渲染全跳过） | 否 | 否 |
 | 方向确认 / 改布局、主题、图表 | 对应 Map 行 + `production-contract.md` 的 Layout Collision + Revision | 先 `ghost.py` 看方向，再 `qa.py --mode review` | 关键页 ∪ 受影响页 | 稳定后自动 |
 | 出现图表 | Map「图表数据」行 | 走当前场景的调用 | 随场景 | 随场景 |
@@ -163,7 +212,7 @@ input:
 
 颜色方向必须说明 `color_intent: [brand, emotion, hierarchy]` 中当前优先职责。卡片只允许用于数据模块、核心指标或特殊强调；3–4 个圆角容器时预检提示 `CARD_DENSITY` 且 Critic 软扣分，超过 4 个或成为主要结构时触发 Card Wall Critic。
 
-事实与语义完整优先于构图，构图优先于风格，风格优先于装饰。默认 16:9、1280×720、8 单位网格、最多 2 个字体家族、4 个字号等级、3 个字重等级、每页一个 L4 主焦点、Accent ≤5%、图表一个强调点、来源不可省略。数据页默认低能量；连续页面不得使用相同密度与相同重心；空间不足时拆页或删减，不压缩可读性。
+事实与语义完整优先于构图，构图优先于风格，风格优先于装饰。默认 16:9、1280×720、8 单位网格、最多 2 个字体家族、字号阶梯每页 ≤4 级（唯一真源见 `design-intelligence.md`）、3 个字重等级、每页唯一焦点层主焦点、Accent ≤5%、图表一个强调点、来源不可省略。数据页默认低能量；连续页面不得使用相同密度与相同重心；空间不足时拆页或删减，不压缩可读性。
 
 数值图表必须显式声明 `source`（来源）、`unit`（单位）、`period`（期间）、`basis`（比较口径）；同一指标（`metric` / `series_name` 键）必须在整套 deck 中保持单位一致。标题写洞察不写字段名。
 

@@ -62,7 +62,7 @@ Direction 里最重要的决定，是让 `visual_world` 成为一句**可展开�
 | 高端品牌/发布 | 建立期待与记忆 | 单一 Hero、尺度张力、克制光线 | 金色铺满、产品堆叠 |
 | 行动建议 | 让下一步明确 | 结论式标题、行动动词、限定条件 | 把建议做成装饰性标语 |
 
-### 内容类型 → 路由（Layer 0.7）
+### 内容类型 → 路由（route.py）
 
 `scripts/route.py` 把内容分类变成一次可复算的查表，不再靠调用方逐项传参。输入只有 `content_type / design_direction / quality_level`，输出一页的完整设计决策；缺省值即“未指定 = 由内容判断”，同输入必得同输出。
 
@@ -99,16 +99,33 @@ page_intent:
   energy: "low | medium | high"
   density: "sparse | balanced | dense"
   empty_space_role: "protect_focus | create_authority | separate_chapter | hold_emotion"
+  design_rationale: "可选·声明层：一句「为什么这样摆」——选择 × 理由 × 否决了什么"
   page_family: "COVER | HERO | EXECUTIVE_SUMMARY | EDITORIAL | NARRATIVE | DATA_STORY | COMPARISON | FRAMEWORK | TIMELINE | DASHBOARD | MINIMAL_STATEMENT | CASE_STUDY | CLOSING"
 ```
 
 页面家族路由为：`establish → COVER/HERO`，`context → EXECUTIVE_SUMMARY`，`explain → FRAMEWORK/TIMELINE`，`compare → COMPARISON`，`prove → DATA_STORY/DASHBOARD`，`case → CASE_STUDY`，`recommend/close → CLOSING`。布局表达可映射为 `Executive Strategy → EXECUTIVE_SUMMARY/DATA_STORY`、`Editorial Luxury → EDITORIAL/CASE_STUDY`、`Data Intelligence → DATA_STORY/DASHBOARD`、`Comparative Analysis → COMPARISON`、`Narrative Flow → NARRATIVE/TIMELINE`；这只是内容到空间的路由，不是新增模板。每个页面仍复用同一安全区、来源区、字阶和色彩语义。一张图只回答一个关系；没有诚实图表映射时使用文字或表格。图表先完成 `data analysis → insight extraction → visual encoding → chart design → reading optimization`，再进入生产；它必须表达一个可复述的数据关系，而不是作为装饰性对象填充页面。
+
+### Design Intent（决策理由层）
+
+`design_rationale` 是可选的声明字段，不参与渲染与评分；它回答「**为什么这样摆**」——采用的选择、理由、以及被否决的替代方案（例：「证据偏右置：延续上一页阅读轴；否决居中——会打断叙事动线」）。两个消费点：修正时先检查**意图是否被几何兑现**（声明的重心、轴线与 spec 是否一致），`record_dna` 沉淀时引用它作为决策出处。写不出 rationale 的页面，说明布局是排列，还不是设计。
 
 ## Composition Engine
 
 先声明视觉重心，再分配空间。使用 **12 列逻辑网格 + 8 单位基线网格**：12 列用于决定栏宽和比例，8 单位用于坐标与间距落地；不要把网格当作审美本身。构图判断依次检查：主焦点是否可在缩略图找到；重心是否与 page intent 一致；留白是否有职责；信息密度是否服务于叙事阶段；相邻页面是否形成疏密与重心变化；是否存在可解释的比例关系（黄金比例可作为候选构图启发，不得强行套用）。
 
 建议记录 `gravity_anchor: {x, y, radius}`、`occupancy_target`、`reading_path` 和 `continuity_token`。跨页连续性应保持同一组字体、线宽、来源位置和色彩语义，同时允许封面、证据页、结论页拥有不同能量。
+
+### 构图算子（Composition Operators）
+
+版式原型（Layout Search 的候选）只是算子组合的常用驻点，不是版式的边界。从意图推导构图时，先组合算子，再看结果落在哪个原型附近：
+
+- **轴**：对称轴 / 错位轴（左右错半格）/ 偏置轴（0.382、1/3）——决定重心的「被决定感」。
+- **切分**：不等分（黄金 / 三分 / 2:1）优先于等分；等分只在对比页（同坐标系 A/B）使用。
+- **尺度对偶**：极大 × 极小（64px 宣言 × 12px 来源）是比「中字号群」更强的层级语言。
+- **叠压**：背景画心与前景内容的层叠建立纵深——比并列摆放更像「同一个世界」，而不是「贴上去的元素」。
+- **动线**：水平（叙事）/ 垂直（庄重）/ 对角（张力）——阅读路径的方向本身携带情绪。
+
+两条反模板纪律：同一 deck 内相邻两页不复用同一算子组合（轴 × 切分 × 动线至少一项变化）；连续服务同一客户/系列的 deck，若与前一副同家族同原型，第三副应更换构图语法——品牌连续性例外，但须在 `design_rationale` 里声明。
 
 ### 光学对齐
 
@@ -133,22 +150,37 @@ page_intent:
 
 ## Typography Engine
 
-先选字体人格，再选字号。默认最多两族：一族承担 display/editorial，一族承担正文与数据。标题优先表达洞察，1–2 行；正文短句 2–4 行；来源 1–2 行。标题短句行高 1.05–1.15，正文 1.3–1.5；中文正文不加装饰性字距，拉丁眉标可使用 0.4–1.2pt。中英混排分别调用 CJK 与 Latin 字体，避免仅靠同一字体覆盖所有字符。
+先选字体人格，再选字号。默认最多两族：一族承担 display/editorial，一族承担正文与数据。标题优先表达洞察，1–2 行；正文短句 2–4 行；来源 1–2 行。中文正文不加装饰性字距，拉丁眉标可使用 0.4–1.2pt（行高与字号阶梯见下）。
 
 回退顺序固定为：缩短标题 → 改变文本框宽度 → 改变构图 → 拆页；不得先缩小字号。文字框必须同时声明 `max_lines`、`line_height`、`padding` 和必要时的 `ink_anchor`，渲染后以实际可读性复核。若字体不可用，保持 x-height、笔画密度、衬线/无衬线人格与字重关系，不追求字面字体名一致。
 
-### 字号阶梯（建议）
+### 字号阶梯（全库唯一真源）
 
-| 角色 | 设计单位 px | 适用 |
-|---|---|---|
-| L4 Statement | 52–80 | 封面/章节扉页单句主张 |
-| L3 Display | 42–64 | Hero 标题、关键结论 |
-| L2 Title | 30–42 | 页面主标题、Section H1 |
-| L1 Lead | 22–28 | Lead 段、图表标签 |
-| L0 Body | 16–20 | 正文、说明文字 |
-| L-1 Caption | 12–14 | 来源、注释、图例 |
+字号不是区间堆叠，而是**带驻点的比例系统**：相邻级差 ≥1.25×（最小可感差异），每级有驻点与容许区间。design-system / themes / SKILL 一律引用本表，不再各自声明字号。
 
-跨页字号等级数 ≤ 4。同一页内字号等级数 ≤ 4（OS §07）。任何尺寸变化都应回应「视觉权重」的差异，不因「刚好放下」而缩字。
+| 级 | 驻点 px | 区间 px | 典型角色 |
+|---|---|---|---|
+| L4 Statement | 64 | 40–80 | 宣言、封面主张、章节扉页、KPI 主数字 |
+| L3 Display | 44 | 40–56 | 页面主标题、Hero 结论 |
+| L2 Title | 32 | 28–36 | 小节标题、图表标题 |
+| L1 Lead | 22 | 20–24 | 导语、图表直接标注 |
+| L0 Body | 17 | 16–20 | 正文、说明文字 |
+| L-1 Caption | 12.5 | 11–14 | 来源、注释、图例、眉标 |
+
+四条纪律：
+
+1. **Statement 是角色，不是字号**：承担页面唯一主张的元素即 Statement；机器锚点阈值为 40px（`STATEMENT_SIZE`），40–51px 的 Statement 只用于 dense 页，sparse 页的宣言应 ≥52px。
+2. **每页 ≤4 级、全 deck ≤6 级**，取值优先落在驻点；任何偏离驻点的取值都必须能回答「这一级在强调什么」——不为「刚好放下」而设中间字号。
+3. **行高**：L4/L3 1.05–1.15、L2 1.15–1.25、L1/L0 1.3–1.5（中文正文取上限，给字腔呼吸）、Caption 1.2–1.3。
+4. **字重与墨色先于字号**：两级层级优先用「同字号 × Regular/Bold」或墨色/淡墨对比表达，再动字号——字号差是层级语言中最贵的一种，滥用会把阶梯顶穿。
+
+### 中文排印（CJK Craft）
+
+- **避头尾**：行首不得出现 `，。、；：？！》」』）` 等收尾标点，行尾不得出现 `《「『（` 等起始标点；spec 文本按此断行，不依赖渲染器默认行为。
+- **标点策略**：中文标点全角、数字与拉丁半角；行尾长标点可悬挂或挤压（省略半角宽）；禁止两端对齐把字距拉开。
+- **中西混排**：CJK 与拉丁/数字之间留 1/8–1/4 em 间隙（微距规则 1）；中文语境括号用全角，内嵌纯英文短语时可用半角但全页一致。
+- **竖排**：仅东方语汇主题（VP-002 一系）且仅限短题（≤8 字）、右起；与横排的混用必须整页声明，不做半竖半横。
+- **双轨字体**：中英分别声明 `fonts.cn` 与 `fonts.latin`；回退时保持 x-height、笔画密度与衬线人格一致，不追求字面字体名。
 
 ## Deck Rhythm Model
 

@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "entries": [
+  {
+   "id": "consulting_evidence",
+   "signature": {
+    "keywords": [
+     "咨询",
+     "麦肯锡",
+     "mckinsey",
+     "board",
+     "董事会",
+     "汇报",
+     "report",
+     "证据",
+     "evidence",
+     "决策",
+     "strategy",
+     "战略"
+    ]
+   },
+   "dna": {
+    "space": "occupancy 0.55–0.80：证据密度是可信度；留白服务于结论先行",
+    "layout_grammar": "action title（结论即标题）+ exhibit（一页一图）+ source line 三段式；左上结论、右下来源",
+    "palette": "白底 + 深藏青/炭黑 + 一至两个分类 accent；禁大面积饱和色",
+    "type_voice": "无衬线正文 14–18px；标题为完整判断句（洞察不写字段名）；注脚 10–12px",
+    "media": "几乎不用图；图表就是证据",
+    "charts": "麦肯锡 exhibit 纪律：瀑布/桥图做归因，堆叠做构成，排序条做对比；零轴对齐，单位期间口径齐备",
+    "anchor_rule": "action title 即锚点（加粗 20–24px）+ 图表单一强调元素",
+    "when_not_to": "情绪导向的品牌宣言与发布会（会杀死叙事留白）；非决策型分享（证据密度成为负担）",
+    "forbidden": [
+     "装饰图片",
+     "情绪化文案",
+     "无来源数字",
+     "双 Y 轴误导",
+     "截断轴"
+    ]
+   },
+   "proven": {
+    "source": "咨询报告 exhibit 纪律的可观察行为提炼（非模板）",
+    "qa": null,
+    "critic": null,
+    "revisions": null,
+    "lessons": "问题：标题不承载判断时，读者要自己拼装结论 → 决策：action title 承担结论、exhibit 只证一件事、每个数字可追溯 source/unit/period/basis → 规律：可信度来自「证据密度 × 口径可核验」，不是来自更多数据或更强色彩。"
+   }
+  },
+  {
+   "id": "keynote_minimal",
+   "signature": {
+    "keywords": [
+     "发布会",
+     "launch",
+     "keynote",
+     "产品",
+     "product",
+     "极简",
+     "minimal",
+     "科技感",
+     "stage",
+     "演讲"
+    ]
+   },
+   "dna": {
+    "space": "70%+ 留白；一页一句话；occupancy 0.08–0.30",
+    "layout_grammar": "cinematic stage：单一焦点居中或黄金分割，背景画心 + overlay ≥0.20",
+    "palette": "近黑底 #0D0D0D 或纯白 + 单一 accent（≤5%）+ 灰阶层次；双色即全部",
+    "type_voice": "无衬线大字（56–96px）宣言级；正文 20–24px；最多 2 字族",
+    "media": "产品大图/暗场舞台画心；每页 ≤1",
+    "charts": "大数字 + 单线趋势；坐标轴隐藏，直接标注；一图一关系",
+    "anchor_rule": "每页一个 Statement（≥48px）或 hero 画心",
+    "when_not_to": "证据密集的管理层汇报与归因分析（一页一句话装不下论证）；需要跨页对比口径的 deck",
+    "forbidden": [
+     "多焦点",
+     "数据密度",
+     "边框卡片",
+     "装饰渐变",
+     "小字注解群"
+    ]
+   },
+   "proven": {
+    "source": "Keynote 式发布会语法的可观察行为提炼（非模板）",
+    "qa": null,
+    "critic": null,
+    "revisions": null,
+    "lessons": "问题：信息越多，记住的越少 → 决策：一页一句话，删到不能再删，尺度对比承担全部层级 → 视觉结果：occupancy 0.08–0.30 依然成立 → 规律：高级感来自尺度对比与克制，不来自元素数量。"
+   }
+  },
+  {
+   "id": "quiet_documentary",
+   "signature": {
+    "keywords": [
+     "品牌故事",
+     "story",
+     "叙事",
+     "人文",
+     "documentary",
+     "杂志",
+     "kinfolk",
+     "画册",
+     "安静",
+     "自然"
+    ]
+   },
+   "dna": {
+    "space": "occupancy 0.15–0.45：图像与留白共同叙事",
+    "layout_grammar": "杂志式非对称：大幅画心 + 小幅文字栏；连续页做 film-strip 节奏（图-文-图）",
+    "palette": "米白/暖灰底 + 自然色阶 + 无 accent 或极小 accent（一枚印章式）",
+    "type_voice": "衬线标题 + 衬线正文；字距放宽；kicker 用小型大写",
+    "media": "自然光、低饱和、材质细节；负空间构图是硬要求（出图时声明留白锚点）",
+    "charts": "几乎无图表；有则手绘感单线 + 极简标注",
+    "anchor_rule": "画心即锚点（hero/emotion 功能声明）",
+    "when_not_to": "数据叙事与决策汇报（图表几乎缺席）；需要精确对齐口径的对比页",
+    "forbidden": [
+     "科技渐变",
+     "图标",
+     "数据密度",
+     "强对比色块"
+    ]
+   },
+   "proven": {
+    "source": "编辑/画册语法的可观察行为提炼（非模板）",
+    "qa": null,
+    "critic": null,
+    "revisions": null,
+    "lessons": "问题：排版技巧会抢图像的戏 → 决策：字退后（衬线、宽字距、小字号群），图承担叙事，负空间构图成为出图硬要求 → 规律：安静的力量——图像质量 > 排版技巧，留白承担情绪节奏。"
+   }
+  },
+  {
+   "id": "song_elegance_editorial",
+   "signature": {
+    "keywords": [
+     "年度总结",
+     "年终",
+     "annual",
+     "东方",
+     "宋氏",
+     "song",
+     "editorial",
+     "留白",
+     "水墨",
+     "宣纸",
+     "高级",
+     "品牌",
+     "brand",
+     "科技"
+    ]
+   },
+   "dna": {
+    "space": "65% 留白阶梯：章节/宣言页 occupancy 0.19–0.34，数据页 0.65–0.72；连续页不得同密度同重心",
+    "layout_grammar": "editorial asymmetric（左文右证/上下呼吸）+ statement stage（章节页 40px 宣言居轴线）；禁对称网格",
+    "palette": "纸白 #FAF7F0 底 + 松烟墨 #191510/#2B241B 正文 + 单点朱砂 #8E2F28（实测 ≤3.4%）；淡墨 #9A8F7C 只作装饰不作正文（纸底 2.98:1 不可读）",
+    "type_voice": "衬线标题 SimSun/Georgia 双轨；正文 muted ≥4.5:1；字号阶梯 64/40/32/22/16/12 六级封顶",
+    "media": "自然光、低饱和、负空间水墨（封面/故事/留白/收尾四点布局）；数据/结构页永不出图",
+    "charts": "FT editorial 风：细线轨道 ranked_bar + 圆头端点 + 直接标注；单线折线 2026 高亮；对比条留白分隔；禁 dashboard 感",
+    "anchor_rule": "每页一个机器可指认锚点：40px 宣言文本或图表声明 highlight（图表内部大数值不算）",
+    "when_not_to": "科技产品发布会（水墨语汇与产品舞台冲突）；信息密度高的运营复盘（留白阶梯装不下高密度证据）",
+    "forbidden": [
+     "dashboard",
+     "卡片墙",
+     "渐变科技蓝",
+     "对称网格",
+     "图标堆砌",
+     "强调色大面积铺底"
+    ]
+   },
+   "proven": {
+    "source": "观澜科技 2026 年度总结（11 页，起承转合）",
+    "qa": 99.5,
+    "critic": 90.9,
+    "revisions": 6,
+    "lessons": "问题：V1 首轮 6 类失败——accent 9.1% 超载、节奏双平（Δ0.021）、淡墨 2.98:1 不可读、锚点缺失、焦点压制、对比风险 → 原因：图表选型与阈值边际意识，不是「色彩感觉」→ 决策：环图改 ranked_bar（accent 6.7%→3.0%）、节奏修出余量、淡墨降级为装饰色、每页声明机器可指认锚点 → 视觉结果：QA 99.5 / Critic 90.9 / 6 轮收敛 → 规律：强调色超载的根因常是图表选型（物理形态决定墨迹面积）；阈值边际值（差 0.001）要修出余量；权威感来自克制，不来自装饰。"
+   }
+  }
+ ]
+}

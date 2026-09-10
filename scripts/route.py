@@ -345,10 +345,27 @@ def _plan_deck(brief: dict) -> dict:
     pixel_ids = sorted({p["id"] for p in pages if p["needs_pixel_evidence"]}
                        | ({pages[0]["id"], pages[-1]["id"]} if pages else set()))
     exec_mode = recommend_mode(brief)
+    # V3：P1 就召回 Design DNA（视觉线与内容线并行，不串行等待）
+    try:
+        from design_intelligence import recall_dna, media_decision, quality_budget
+        dna_hit = recall_dna(brief)
+    except Exception:
+        dna_hit = {"matched": None, "confidence": 0.0, "dna": None,
+                   "note": "design_intelligence 不可用，按主题种子起步"}
+    for pg in pages:
+        # 媒体决策模型：置信度 + 理由（与 asset 闸门互补——闸门管预算，模型管判断）
+        try:
+            md = media_decision({"page_intent": pg})
+            pg["media_confidence"] = md["confidence"]
+            pg["media_reason"] = md["reason"]
+            pg["quality_budget"] = quality_budget({"page_intent": pg})
+        except Exception:
+            pass
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["editorial_brand"]).get("theme_seed", {})
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
+        "dna": dna_hit,
         "execution": {
             "mode": exec_mode,
             "modes": ["draft", "review", "release"],

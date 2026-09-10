@@ -217,8 +217,8 @@ def bg_overlay_opacity(element: dict) -> tuple[float | None, str | None]:
     按 overlay → content_protection.overlay → content_protection.scrim 的顺序取
     第一个可用声明；非空字符串简写视为完全不透明 1.0。
     返回 (None, "missing") 表示未声明；(None, "unparsable") 表示声明了但解析不出
-    数值 —— fail-closed：解析不出即视为无保护（v2.4 起 guard 与 art_critic 统一，
-    此前 critic 会按 1.0 放行；见 scoring.md）。
+    数值 —— fail-closed：解析不出即视为无保护（guard 与 art_critic 口径统一，
+    此前 critic 会按 1.0 放行）。
     """
     e = element or {}
     srcs = [e.get("overlay")]

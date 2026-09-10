@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFS = ROOT / "references"
 SCRIPTS = ROOT / "scripts"
 REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "evidence-library.md", "themes.md", "production-contract.md"}
-REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "normalizer.py", "route.py", "ghost.py"}
+REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "normalizer.py", "route.py", "ghost.py", "design_intelligence.py", "layout_search.py"}
 
 
 def load(name, path):
@@ -417,6 +417,163 @@ def check_batch_verdict():
     return {"status": "PASS" if ok else "FAIL", "causes": [g["cause"] for g in groups],
             "fix_this_round": [l.get("target") for l in fix],
             "deterministic": det}
+
+
+def check_pre_critic():
+    """V3 Pre-Critic：六类历史失败在渲染前被预测；好 spec 零误报。"""
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    theme = {"colors": {"background": "#FAF7F0", "primary": "#2B241B",
+                        "secondary": "#9A8F7C", "accent": "#8E2F28",
+                        "ink": "#191510", "muted": "#6E675C"},
+             "constraints": {"accent_max": 0.05}}
+
+    def pi(insight, focus, family="DATA", density="sparse", role="protect_focus"):
+        return {"insight": insight, "focus": focus, "reading_order": [focus],
+                "energy": "medium", "density": density, "empty_space_role": role,
+                "page_family": family, "rhythm_stage": "context",
+                "continuity_token": "t"}
+
+    bad = {"canvas": {"width": 1280, "height": 720}, "theme": theme, "slides": [
+        {"id": "b1", "page_intent": pi("对比", "t", "STATEMENT"), "elements": [
+            {"type": "text", "id": "t", "x": 48, "y": 104, "width": 880, "height": 64,
+             "text": "标题", "size": 34, "color": "ink", "max_lines": 1},
+            {"type": "text", "id": "lead", "x": 48, "y": 184, "width": 600, "height": 64,
+             "text": "淡墨正文", "size": 16, "color": "secondary", "max_lines": 2}]},
+        {"id": "b2", "page_intent": pi("构成", "c", "DATA", "balanced"), "elements": [
+            {"type": "chart", "id": "c", "chart_kind": "donut", "x": 328, "y": 168,
+             "width": 624, "height": 416, "highlight": 1,
+             "data": [{"label": "A", "value": 52}, {"label": "B", "value": 48}],
+             "source": "s", "unit": "%", "period": "2026", "basis": "x"}]},
+        {"id": "b3", "page_intent": pi("溢出", "t3", "STATEMENT"), "elements": [
+            {"type": "text", "id": "t3", "x": 48, "y": 108, "width": 488, "height": 64,
+             "text": "一行肯定放不下的很长很长的标题文字要换行", "size": 40,
+             "color": "ink", "line_height": 1.15, "max_lines": 2}]},
+        {"id": "b4", "page_intent": pi("无锚", "t4", "SECTION", role="separate_chapter"),
+         "elements": [
+            {"type": "text", "id": "t4", "x": 48, "y": 108, "width": 880, "height": 56,
+             "text": "小标题", "size": 34, "color": "ink", "max_lines": 1},
+            {"type": "chart", "id": "lanes", "chart_kind": "steps", "x": 48, "y": 264,
+             "width": 1184, "height": 320,
+             "data": [{"label": "一", "value": 1}, {"label": "二", "value": 2}],
+             "source": "s", "unit": "条", "period": "2027", "basis": "x"}]},
+        {"id": "b5", "page_intent": pi("平A", "t5", "SECTION"), "elements": [
+            {"type": "text", "id": "t5", "x": 48, "y": 104, "width": 880, "height": 64,
+             "text": "静一", "size": 40, "color": "ink", "max_lines": 1}]},
+        {"id": "b6", "page_intent": pi("平B", "t6", "SECTION"), "elements": [
+            {"type": "text", "id": "t6", "x": 48, "y": 104, "width": 880, "height": 64,
+             "text": "静二", "size": 40, "color": "ink", "max_lines": 1}]},
+    ]}
+    rep = di.pre_critic(bad)
+    codes = {r["code"] for r in rep["risks"]}
+    want = {"CONTRAST_FAIL_RISK", "ACCENT_OVERFLOW", "TEXT_OVERFLOW_RISK",
+            "NO_MEMORY_ANCHOR", "FOCUS_AREA_RISK", "RHYTHM_FLAT_RISK"}
+    ok = want <= codes and rep["summary"]["high"] >= 6
+    ok = ok and all(r.get("root_cause") and r.get("prevention") for r in rep["risks"])
+    ok = ok and rep["first_fix"]["root_cause"] in {
+        r["root_cause"] for r in rep["risks"] if r["level"] == "high"}
+    # 好 spec（单一 40px 锚点 + muted 正文 + 无图表）→ 0 high
+    good = {"canvas": {"width": 1280, "height": 720}, "theme": theme, "slides": [
+        {"id": "g1", "page_intent": pi("好页", "st", "STATEMENT"), "elements": [
+            {"type": "text", "id": "st", "x": 240, "y": 312, "width": 800, "height": 96,
+             "text": "静水深流", "size": 64, "color": "ink", "align": "center",
+             "max_lines": 1}]}]}
+    rep2 = di.pre_critic(good)
+    ok = ok and rep2["summary"]["high"] == 0
+    return {"status": "PASS" if ok else "FAIL",
+            "predicted": sorted(want & codes), "false_alarms_good_spec": rep2["summary"]["high"]}
+
+
+def check_design_dna():
+    """V3 Design DNA：召回命中、置信度、record 沉淀回路（自清理）。"""
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    hit = di.recall_dna({"subject": "2026 企业年度总结", "brief": "东方高级 宋氏美学 留白 董事会"})
+    ok = (hit["matched"] == "song_elegance_editorial" and hit["confidence"] > 0
+          and "朱砂" in json.dumps(hit["dna"], ensure_ascii=False))
+    miss = di.recall_dna({"subject": "完全无关的火星探测任务简报"})
+    ok = ok and miss["matched"] is None
+    rec = di.record_dna({"id": "__selftest_dna__", "signature": {"keywords": ["__t__"]},
+                         "dna": {"space": "test"}, "proven": {"qa": 99.0}})
+    ok = ok and rec["ok"]
+    hit2 = di.recall_dna({"subject": "__t__ 项目"})
+    ok = ok and hit2["matched"] == "__selftest_dna__"
+    # 清理自测条目
+    store = json.loads(di.DNA_STORE.read_text(encoding="utf-8"))
+    store["entries"] = [e for e in store["entries"] if e["id"] != "__selftest_dna__"]
+    di.DNA_STORE.write_text(json.dumps(store, ensure_ascii=False, indent=1),
+                            encoding="utf-8")
+    ok = ok and not any(e["id"] == "__selftest_dna__"
+                        for e in json.loads(di.DNA_STORE.read_text(encoding="utf-8"))["entries"])
+    return {"status": "PASS" if ok else "FAIL", "matched": hit["matched"],
+            "confidence": hit["confidence"]}
+
+
+def check_layout_search():
+    """V3 Layout Search：确定性、排序合理、几何 8 网格对齐。"""
+    ls = load("layout_search", SCRIPTS / "layout_search.py")
+    intent = {"page_family": "CLOSING", "energy": "high", "density": "sparse"}
+    c1 = ls.search(intent, {"title": True, "lead": False, "chart": False}, n=3)
+    c2 = ls.search(intent, {"title": True, "lead": False, "chart": False}, n=3)
+    ok = (len(c1) == 3 and c1[0]["score"] >= c1[1]["score"] >= c1[2]["score"]
+          and c1[0]["archetype"] == "statement_center_stage"
+          and c1[0]["rank"] == 1
+          and all(set(c) >= {"archetype", "grammar", "score", "breakdown",
+                             "elements", "rationale"} for c in c1)
+          and json.dumps([{k: v for k, v in c.items() if k != "elapsed_ms"} for c in c1],
+                         sort_keys=True, default=str)
+          == json.dumps([{k: v for k, v in c.items() if k != "elapsed_ms"} for c in c2],
+                        sort_keys=True, default=str))
+    grid_ok = all(int(e["x"]) % 8 == 0 and int(e["width"]) % 8 == 0
+                  for c in c1 for e in c["elements"])
+    ok = ok and grid_ok
+    # 数据页：full_width_evidence 应进前三（family fit 加分）
+    d = ls.search({"page_family": "DATA", "energy": "medium", "density": "balanced"},
+                  {"title": True, "lead": True, "chart": True, "stats": True}, n=3)
+    ok = ok and any(c["archetype"] == "full_width_evidence" for c in d)
+    return {"status": "PASS" if ok else "FAIL",
+            "top_closing": c1[0]["archetype"], "top_closing_score": c1[0]["score"],
+            "data_top3": [c["archetype"] for c in d]}
+
+
+def check_media_and_budgets():
+    """V3 媒体决策模型 + 页面质量预算：置信度、理由、route 家族别名。"""
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    hero = di.media_decision({"page_intent": {"page_family": "COVER"}})
+    data = di.media_decision({"page_intent": {"page_family": "DATA_STORY"}})
+    data_chart = di.media_decision({"page_intent": {"page_family": "DATA_STORY"},
+                                    "elements": [{"type": "chart", "id": "c"}]})
+    ok = (hero["need_media"] and hero["confidence"] >= 0.9
+          and not data["need_media"] and data["confidence"] <= 0.1
+          and "图表" in data_chart["reason"] and data_chart["confidence"] <= 0.1)
+    b_data = di.quality_budget({"page_intent": {"page_family": "DATA_STORY"}})
+    b_hero = di.quality_budget({"page_intent": {"page_family": "COVER"}})
+    ok = ok and ("contrast" in b_data["primary"] and "emotional_impact" in b_hero["primary"]
+                 and b_data["media"] == "禁止" and b_hero["complexity"] == "high")
+    return {"status": "PASS" if ok else "FAIL",
+            "hero": (hero["need_media"], hero["confidence"]),
+            "data": (data["need_media"], data["confidence"])}
+
+
+def check_auto_fit():
+    """V3 Smart Fit Resolver：opt-in 阶梯吸附、未声明零改动、needs_rewrite。"""
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}}, "slides": [
+        {"id": "s1", "elements": [
+            {"type": "text", "id": "opt", "x": 48, "y": 48, "width": 488, "height": 64,
+             "text": "一行肯定放不下的很长很长的标题文字要换行两次", "size": 40,
+             "line_height": 1.15, "max_lines": 2, "padding": 8, "auto_fit": True},
+            {"type": "text", "id": "noopt", "x": 48, "y": 200, "width": 488, "height": 64,
+             "text": "一行肯定放不下的很长很长的标题文字要换行两次", "size": 40,
+             "line_height": 1.15, "max_lines": 2, "padding": 8}]}]}
+    new, rep = di.apply_fit_ladder(spec)
+    opt = new["slides"][0]["elements"][0]
+    noopt = new["slides"][0]["elements"][1]
+    ok = (rep["applied"] == 1 and opt["padding"] == 0 and opt["line_height"] == 1.05
+          and opt["size"] < 40
+          and noopt["size"] == 40 and noopt.get("padding") == 8   # 未声明零改动
+          and len(rep["items"][0]["steps"]) >= 2)
+    # 入参未被修改（纯函数）
+    ok = ok and spec["slides"][0]["elements"][0]["size"] == 40
+    return {"status": "PASS" if ok else "FAIL", "steps": rep["items"][0]["steps"]}
 
 
 def check_pipeline():
@@ -1330,6 +1487,11 @@ def main():
                "modes": check_execution_modes(),
                "classifier": check_change_classifier(),
                "batch_verdict": check_batch_verdict(),
+               "pre_critic": check_pre_critic(),
+               "design_dna": check_design_dna(),
+               "layout_search": check_layout_search(),
+               "media_budgets": check_media_and_budgets(),
+               "auto_fit": check_auto_fit(),
             "preflight_sync": check_preflight_sync(), "background_layer": check_background_layer(),
             "route_layer": check_route_layer(), "qa_performance": check_qa_performance_keys(),
             "progressive_qa": check_progressive_qa(), "decision_cache": check_decision_cache(),
