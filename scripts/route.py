@@ -275,6 +275,29 @@ def clear_cache() -> None:
     _CACHE_STATS["hits"] = _CACHE_STATS["misses"] = 0
 
 
+def _seed_from_brand(preset: dict, brand: dict | None) -> dict:
+    """品牌色优先：brief.brand_colors（{token: #HEX}）覆盖方向预设色板。
+
+    方向预设只保留结构与未覆盖的灰阶骨架；主色/accent/secondary 一旦品牌给出
+    立即让位。只接受 #HEX 值（防把 token 名当色值写）；空 brand 原样返回。
+    """
+    if not isinstance(brand, dict) or not brand:
+        return preset
+    valid = {str(k).strip(): str(v).strip() for k, v in brand.items()
+             if isinstance(v, str) and str(v).strip().startswith("#")
+             and len(v.strip()) in (4, 7)}
+    if not valid:
+        return preset
+    seed = dict(preset)
+    colors = dict(seed.get("colors") or {})
+    colors.update(valid)
+    seed["colors"] = colors
+    seed["brand_derived"] = True
+    seed["seed_note"] = ("色板由 brief.brand_colors 品牌优先派生；方向预设仅保留"
+                         "结构与未覆盖的灰阶骨架——色值永远跟随品牌，不跟随方向标签")
+    return seed
+
+
 def plan_deck(brief: dict) -> dict:
     """整副 deck 的路径判定 + 逐页规划 + 素材预算 + 建议执行链（带决策缓存）。
 
@@ -362,14 +385,20 @@ def _plan_deck(brief: dict) -> dict:
         except Exception:
             pass
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["editorial_brand"]).get("theme_seed", {})
+    # Color Intelligence 入口：品牌色一到，方向预设立即让位。「科技=蓝」这类
+    # 方向→色值的模板映射在入口处被切断；派生色阶由 RenderContext 的 OKLab
+    # derive_tokens 从覆盖后的种子派生。
+    seed = _seed_from_brand(seed, brief.get("brand_colors")
+                            if isinstance(brief, dict) else None)
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
         "dna": dna_hit,
         "execution": {
             "mode": exec_mode,
-            "modes": ["draft", "review", "release"],
-            "rule": ("draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX）；"
+            "modes": ["sketch", "draft", "review", "release"],
+            "rule": ("sketch=草图链（结构探索，只守数据诚实性与结构合法性，契约免除）；"
+                     "draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX）；"
                      "review=审查链（关键页∪受影响页像素证据，Critic 待布局稳定自动介入）；"
                      "release=发布链（全量像素+Critic+Manifest，唯一 PASS 口径）"),
             "escalate": {"to_review": ["用户确认方向", "改了布局/主题/图表结构"],
@@ -480,6 +509,56 @@ def _load_brief(path: str) -> dict:
         spec.loader.exec_module(mod)
         return mod.BRIEF if hasattr(mod, "BRIEF") else mod.build_brief()
     raise ValueError("brief 需为 yml / json 数据文件或定义 BRIEF 的模块")
+
+
+def deck_decision(brief: dict) -> dict:
+    """Deck Decision Card（v2.12）：全 deck 判断一次，页面继承。
+
+    生成速度的大头是「每页重新想」。这张卡把 deck 级判断（叙事弧线/方向/
+    密度曲线/媒体政策/色彩行为/执行模式）一次固化，页面只做适配——
+    意图用 design_intelligence.page_intent_skeleton 继承骨架后按内容覆写，
+    布局用 layout_search.recommend 直达家族原型。
+    纯确定性派生；卡上留的洞（visual_world / type_voice / 每页 insight）
+    是内容级判断，仍是 Art Director 的职责。
+    """
+    from collections import Counter
+    plan = plan_deck(brief)
+    pages = plan.get("pages") or []
+    n = len(pages)
+    if n <= 3:
+        arc = ["establish", "close"]
+    elif n <= 6:
+        arc = ["establish", "explain", "prove", "close"]
+    elif n <= 10:
+        arc = ["establish", "context", "explain", "prove", "recommend", "close"]
+    else:
+        arc = ["establish", "context", "explain", "explain", "prove", "prove",
+               "recommend", "close"]
+    density = [str(p.get("density") or "balanced") for p in pages]
+    assets = plan.get("assets") or {}
+
+    def _n(x):
+        return len(x) if isinstance(x, (list, tuple, dict)) else 0
+
+    return {
+        "narrative_arc": arc,
+        "visual": {"direction": plan.get("design_direction"),
+                   "visual_world": None,      # 洞：一句话隐喻（材质/光影/空间）
+                   "type_voice": None},       # 洞
+        "composition": {"rule": "页面用 layout_search.recommend 直达家族原型；"
+                                "相邻页至少换一个构图算子"},
+        "density_curve": density,
+        "density_profile": dict(sorted(Counter(density).items())),
+        "media_policy": {"generate": _n(assets.get("generate")),
+                         "reuse": _n(assets.get("reuse")),
+                         "skipped": _n(assets.get("skipped"))},
+        "color": {"brand_derived": bool((plan.get("theme") or {}).get("brand_derived")),
+                  "behavior": "color_behavior 判断（非色值）；图表走 chart_palette 角色"},
+        "execution": plan.get("execution"),
+        "theme": plan.get("theme"),
+        "slots": ["visual_world", "type_voice", "每页 insight / focus"],
+        "note": "卡是判断的锚点不是答案：页面意图用 page_intent_skeleton 继承后再按内容覆写",
+    }
 
 
 def main(argv=None) -> int:

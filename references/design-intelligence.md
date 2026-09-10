@@ -32,6 +32,8 @@ direction:
   forbidden_signals: ["无关图库", "卡片墙", "竞争性强调"]
 ```
 
+**色彩派生顺序（判断，不是模板）**：`brief.brand_colors`（品牌色，route 入口即覆盖方向预设）> `visual_world` 的材质/光性判断（graphite+cold white 还是 warm white+organic gray，由内容决定，不由「科技=蓝」这类标签决定）> 方向预设种子（仅兜底骨架）。`color_behavior` 是行为判断（单一信号色 ≤5%、结构色无彩度……），永远不是具体色值；图表色走 `chart_palette` 语义角色（primary/secondary/neutral/accent/negative），由主题映射派生。
+
 Direction 不是装饰偏好，而是对受众心理的假设。例如技术决策使用 `technical_clarity + evidence_field + direct_label`；品牌宣言可以使用 `calm_authority + cinematic_stage`，但数据页仍必须回退到低能量证据场。图片不是默认背景，图表不是默认组件，文字不是覆盖层；三者只有在承担明确的信息、情绪或证据功能时才进入 spec。
 
 ### Visual Concept（核心视觉隐喻）

@@ -27,12 +27,13 @@ description: >
 
 | Mode | 链 | 流程 | Critic | 时间目标 |
 |---|---|---|---|---|
+| `--mode sketch`（显式 · 结构探索） | 草图链 | Route → spec → **Normalizer（只留 error 级）→ Compile → PPTX**——颜色分析/媒体检查/文字合同全部免除，变体迭代不被契约拦截 | 恒不跑 | 秒级 |
 | `--mode draft`（默认 · 快速生成） | 创作链 | Route → P1–P3 → spec → **Normalizer → Guard → Compile → 可编辑 PPTX**，零渲染 | 恒不跑 | 秒级 |
 | `--mode review` | 审查链 | Compile → **关键页 ∪ 本轮受影响页**渲染 → QA L2 | **布局稳定后自动**（连续两轮 clean 且像素相关投影未变） | 十秒级 |
 | `--mode release` | 发布链 | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | 分钟级 |
 
 - 升档条件：`to_review` = 用户确认方向 / 改了布局、主题、图表结构；`to_release` = 终版交付、发布前复核。`route.plan_deck(brief)["execution"]` 给出推荐模式与升档规则（默认 draft）。
-- **状态上限**：draft ≤ PREVIEW_ONLY，review ≤ REVISE，只有 release 可 PASS（`release_eligible` 仅认 Level 3 全量像素证据）——阈值一个不降，只是把发布级验证留给发布时刻。
+- **状态上限**：sketch ≤ SKETCH，draft ≤ PREVIEW_ONLY，review ≤ REVISE，只有 release 可 PASS（`release_eligible` 仅认 Level 3 全量像素证据）——阈值一个不降，只是把发布级验证留给发布时刻。
 - **Critic 生命周期**：迭代期不跑（draft）；review 模式待布局稳定自动介入（结果按 spec 指纹缓存，布局再动不浪费、布局不动零重算）；发布前全量跑（release）。稳定 = 连续两轮无阻断且 `geometry_only_hash` 未变（干净且几何未变的 draft 轮同样计入，draft→review 可直通）；`PIXEL_COVERAGE_PARTIAL`/`RENDER_UNAVAILABLE` 是非发布模式预期码，不算「布局在动」。
 - **语义变更分类**：`qa.classify_spec_change(old, new)` 把修改分为 `narrative`（只改声明/备注 → 不渲染）/ `page_render`（改了像素相关字段 → 渲染该页）/ `full_render`（主题/画布 → 全量）/ `structure`（页数变了）。review 渲染集 = key_pages ∪ 受影响页——「改一句 insight 不必重渲染」是显式决策，不是缓存副作用。
 
@@ -53,7 +54,8 @@ DNA+媒体模型，起草后再跑一次拿风险报告）。
 | **Design DNA Memory** | 这类需求之前怎么做成功的？ | `recall_dna(brief)`（route 已内联，P1 即得） | ~0ms |
 | **Media Decision Model** | 这页要不要图？（置信度+理由，不是布尔闸门） | `media_decision(page)` | ~0ms |
 | **Page Quality Budget** | 这页追求什么样的好？（Hero 换情绪 / Data 求清晰） | `quality_budget(page)` | ~0ms |
-| **Pre-Critic Engine** | 这个 spec 将会挂在哪里？（accent 超载/锚点缺失/对比度/焦点冲突/溢出/节奏趋平/密度失配/媒体误用） | `pre_critic(spec)`（draft/review 已内联） | ~1ms/页 |
+| **Pre-Critic Engine** | 这个 spec 将会挂在哪里？（accent 超载/锚点缺失/对比度/焦点冲突/溢出/节奏趋平/密度失配/媒体误用/**视觉失衡/字阶破环/布局单调/记忆线断裂**） | `pre_critic(spec)`（draft/review 已内联） | ~1ms/页 |
+| **Deck Decision + Intent Skeleton** | deck 级判断一次固化（弧线/密度曲线/媒体政策），页面骨架继承只填洞——AI 推理从 O(页数) 降到 O(1)+填空 | `route.deck_decision(brief)` + `design_intelligence.page_intent_skeleton(family, …)` | ~0ms |
 | **Layout Search** | 这页的三种结构候选谁最优？（Grammar 生成 + 五维打分，不是模板） | `layout_search.search(intent, profile, dna, n=3)` | ~1ms/候选 |
 
 **Pre-Critic 纪律（关键）**：
@@ -64,7 +66,7 @@ DNA+媒体模型，起草后再跑一次拿风险报告）。
   （宁可轻微高估不可漏报），`confidence` 标注可信度；
 - release 模式不跑预测（有真实 Critic）——预测是给创作链和审查链用的。
 
-**Design DNA 纪律**：DNA 是**设计经验记忆**，不是模板/组件/固定页面——它是
+**Design DNA 纪律（Schema v2：判断记忆，不是结果记忆）**：DNA 存「为什么这样设计」（design_problem + judgment：hierarchy/space/media/color_behavior/charts/anchor_rule/structure），不存「用了什么颜色/版式」（palette/font/色值字段一律拒收；实测色值与占比是证据，放 proven.measurements）。结果记忆会让 AI 变模板——科技=蓝、金融=黑金就是这么来的；判断记忆才跨主题迁移。DNA 不是模板/组件/固定页面——它是
 「看到需求就知道该怎么做」的可复用判断（空间/版式语法/色板策略/字声/媒体处理/
 图表人格/禁用信号）。`record_dna()` **只在上游校验 PASS 后调用**（真实发布过的
 经验才值得记忆）；recall 命中时按当前内容重组，禁止照抄。
@@ -96,8 +98,9 @@ DNA+媒体模型，起草后再跑一次拿风险报告）。
 | 网格 | 1280×720，8 单位（`primitives.GRID_UNIT`）；**Normalizer 自动吸附**（x/y 就近、w/h 向上），手工对齐不再是你的职责；`grid_exempt: true` 可豁免 | normalizer.py + production-contract.md §Spec Normalizer |
 | 媒体 | 图片须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页永不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；每页媒体 ≤1、阅读文本 ≤4、圆角容器 ≤4（超即 Card Wall） | SKILL.md 媒体闸门 + asset_prompt.py |
 | 可读性 | 渲染实测「文字 vs 其下方底」：正文 <4.5:1 提示，任何角色 <3.0:1 阻断（READABILITY_FAIL）——色板合法 ≠ 物理可读，只有像素证据能暴露 | qa.py（`text_contrast` 域） |
-| 生成前风险 | draft/review 第一屏的 pre-critic 报告就是修单：8 类风险各带根因/预防/预测失败码；**先修 pre-critic 再谈渲染** | design_intelligence.py（`pre_critic`） |
-| 设计经验 | `recall_dna(brief)`（route 内联）命中即用其空间/色板/图表人格/禁用信号做基线；`record_dna` 仅 PASS 后调用 | memory/design_dna.json |
+| 光学对齐 | 渲染级复核：shape/chart/image 声明边界线的视觉峰位 vs 数学坐标（±2px）；≥3 根可验证且一致率 ≥75% 记 alignment 加分，偏移线报 max_shift——数学对齐是否真的成为视觉对齐，只有像素能回答 | render_check.py（`optical_alignment`）→ art_critic.py |
+| 生成前风险 | draft/review 第一屏的 pre-critic 报告就是修单：12 类风险（17 码）各带根因/预防/预测失败码；**先修 pre-critic 再谈渲染** | design_intelligence.py（`pre_critic`） |
+| 设计经验 | `recall_dna(brief)`（route 内联）命中即用其设计问题/空间/色彩行为/图表人格/禁用信号做判断基线（Schema v2 判断记忆，色值在 proven）；`record_dna` 仅 PASS 后调用、拒收结果记忆 | memory/design_dna.json |
 | 版式选型 | 同页 3 候选 spec 级比较：`layout_search.search()` 五维打分（层级/留白/锚点/节奏/品牌契合），选优后起草；原型 = 构图算子的驻点，不是模板 | layout_search.py |
 | 设计理由 | 每页可选一句 `design_rationale`（选择 × 理由 × 否决项，声明层）；修正时先验「意图是否被几何兑现」，`record_dna` 时作为决策出处 | design-intelligence.md §Design Intent |
 | 文本溢出 | 预防优于警告：`auto_fit: true` 按阶梯吸附（padding→行高→字号→重写）；未声明者编译器仍只警告 | design_intelligence.py（`apply_fit_ladder`） |
@@ -158,6 +161,7 @@ DNA+媒体模型，起草后再跑一次拿风险报告）。
 
 | 任务场景 | 读取（精确到小节；80% 情况查 Runtime Contract Map 即可） | 调用 | 渲染 | Critic |
 |---|---|---|---|---|
+| 纯结构探索（多变体快比） | Map「执行模式」节 | `layout_search.recommend`（标准家族直达）→ spec → `--mode sketch`（契约免除，秒级）；比完升 draft 过契约 |
 | 初稿 / 探索 / 多方案 | Runtime Contract Map + `design-intelligence.md` | `route.plan_deck`（含 DNA 召回）→ `layout_search.search` 选版式 → spec（可 `auto_fit`）→ `qa.py --mode draft`（零渲染，**第一屏读 pre-critic 风险并先修**） | 否（方向用 `ghost.py`） | 否 |
 | 只改文案 / 洞察 / 备注 | Runtime Contract Map「文本元素」行 | `qa.py --mode draft`（classifier 判 narrative，编译渲染全跳过） | 否 | 否 |
 | 方向确认 / 改布局、主题、图表 | 对应 Map 行 + `production-contract.md` 的 Layout Collision + Revision | 先 `ghost.py` 看方向，再 `qa.py --mode review` | 关键页 ∪ 受影响页 | 稳定后自动 |

@@ -21,9 +21,9 @@ Fast/Advanced 是**预算控制**（资产数/dpi/Critic 时机）；Execution M
 | `review` | 审查链（准） | Compile → 关键页 ∪ 受影响页渲染 → QA L2 | 稳定后自动（见下） | REVISE |
 | `release` | 发布链（严） | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | PASS |
 
-CLI：`qa.py <build> <out.pptx> --mode draft|review|release`（legacy `--quick/--key-pages/--manifest` 为别名；**不传 `--mode` 默认 draft 快速生成**，显式 `--level N` / `--fast` 维持 legacy 全量）。`route.plan_deck(brief)["execution"]["mode"]` 给出推荐模式（默认 draft；brief 说「发布/终版」→ release，「确认方向」→ review；显式 `brief.execution_mode` 优先）。
+CLI：`qa.py <build> <out.pptx> --mode sketch|draft|review|release`（legacy `--quick/--key-pages/--manifest` 为别名；**不传 `--mode` 默认 draft 快速生成**，显式 `--level N` / `--fast` 维持 legacy 全量；`sketch` 为显式草图链——结构探索期只守 error 级（数据诚实性/结构合法性），warn/hint 设计契约免除，状态 `SKETCH` 不可发布）。`route.plan_deck(brief)["execution"]["mode"]` 给出推荐模式（默认 draft；brief 说「发布/终版」→ release，「确认方向」→ review；显式 `brief.execution_mode` 优先）。
 
-**Critic 稳定性门控（review 模式）**：连续两轮「无阻断 + 无结构性失败码」且像素相关投影（`normalizer.geometry_only_hash`，剥掉 insight/density/energy 等声明字段）未变，Critic 才介入；结果按 spec 指纹缓存在 `<out>_render/studio_state.json`（封顶 8 份）。`PIXEL_COVERAGE_PARTIAL` / `RENDER_UNAVAILABLE` 是非发布模式的预期码，不视为「布局在动」。干净且几何未变的 draft 轮同样计入稳定链（draft→review 连续两轮 clean 即稳定）；几何一变即重置。
+**Critic 稳定性门控（review 模式）**：连续两轮「无阻断 + 无结构性失败码」且像素相关投影（`normalizer.geometry_only_hash`，剥掉 insight/density/energy 等声明字段）未变，Critic 才介入；结果按 spec 指纹缓存在 `<out>_render/studio_state.json`（封顶 8 份；命中还需 `critic_version` 一致——评分行为变更后旧判定自动作废）。编译缓存同构设闸：命中还需 `compiler.COMPILER_VERSION` 一致——编译器/图表渲染行为变更后，spec 未变也强制重编译`PIXEL_COVERAGE_PARTIAL` / `RENDER_UNAVAILABLE` 是非发布模式的预期码，不视为「布局在动」。干净且几何未变的 draft 轮同样计入稳定链（draft→review 连续两轮 clean 即稳定）；几何一变即重置。
 
 **语义变更分类（`qa.classify_spec_change(old, new)`）**：deck 级 `identical / narrative / pages / structure / full_render`，页级 `unchanged / narrative / page_render`。review 渲染集 = key_pages ∪ page_render 页——「改了一句 insight 不必重渲染」从缓存副作用升级为显式决策。
 
@@ -32,11 +32,31 @@ CLI：`qa.py <build> <out.pptx> --mode draft|review|release`（legacy `--quick/-
 ```python
 from design_intelligence import (recall_dna, record_dna, media_decision,
                                   quality_budget, pre_critic, apply_fit_ladder, analyze)
-from layout_search import search
+from layout_search import search, recommend      # recommend：两层决策（家族直达/复杂才搜）
+from design_intelligence import page_intent_skeleton
+from asset_prompt import recall_prompt_dna, record_prompt_dna
+# DNA Schema v2（判断记忆，非结果记忆）：record_dna 拒收结果字段——
+#   entry = {id, signature, design_problem, judgment:{hierarchy|space|media|
+#   color_behavior|charts|anchor_rule|structure|type_voice ≥2 项}, avoid, when_not_to,
+#   proven}；色值/实测是证据放 proven.measurements，进 judgment 即被拒收。
+# 品牌色优先：brief.brand_colors（{token:#HEX}）在 route 入口覆盖方向预设种子
+#   ——「科技=蓝」式的方向→色值映射在入口处被切断。
 dna = recall_dna(brief)                 # P1 视觉线（route.plan_deck 已内联）
-risks = pre_critic(spec)                # 8 类风险 × {level, why, prevention,
+card = deck_decision(brief)             # Deck Decision Card：deck 级判断一次固化
+                                        #   （叙事弧线/密度曲线/媒体政策/执行模式），
+                                        #   页面用 page_intent_skeleton 继承骨架只填洞
+skel = page_intent_skeleton("DATA_STORY", insight=…, focus="c1")
+                                        # 家族 → 意图骨架（能量/密度/负空间职责
+                                        #   确定性给出；显式覆盖永远赢）
+risks = pre_critic(spec)                # 12 类风险（17 码）× {level, why, prevention,
                                         #   predicted(下游失败码), root_cause, confidence}
-cands = search(intent, profile, dna, n=3)   # Layout Grammar 三候选（spec 级）
+rec = recommend(intent, profile, dna)       # 两层布局决策：标准家族直达原型
+                                           #   （tier="family"，零搜索成本）；
+                                           #   未分类/多焦点才 tier="search"
+cands = search(intent, profile, dna, n=3)   # Layout Grammar 三候选（spec 级，L2）
+pdna = recall_prompt_dna(scenario, world, subject)  # 出图判断召回（构图/光性，
+                                           #   不缓存图片、不存色值）
+record_prompt_dna({...})                   # 发布 PASS 后沉淀 validated prompt DNA
 new, fit = apply_fit_ladder(spec)       # auto_fit:true 元素的阶梯吸附（opt-in）
 out = analyze(brief, spec)              # 三线一次汇合（DNA + 媒体 + 预算 + 风险）
 ```
@@ -110,6 +130,7 @@ CLI 入口保持兼容，新增默认关闭的开关：`guard.py <module> --pref
 
 ```python
 # 执行模式（流程控制）
+qa = run_qa(spec, "out.pptx", mode="sketch")    # 草图链：只守 error 级，契约免除
 qa = run_qa(spec, "out.pptx", mode="draft")     # 零渲染：guard+compile+PPTX
 qa = run_qa(spec, "out.pptx", mode="review")    # 关键页∪受影响页；Critic 稳定后自动
 qa = run_qa(spec, "out.pptx", mode="release")   # 全量 + Critic（result["critic"]["report"]）
@@ -117,7 +138,7 @@ qa = run_qa(spec, "out.pptx", mode="review", critic="force")   # 跳过稳定门
 
 from qa import classify_spec_change, mode_profile, EXECUTION_MODES
 plan = classify_spec_change(old_spec, new_spec)  # deck/pages/render_needed 语义分类
-from route import recommend_mode
+from route import recommend_mode, deck_decision
 mode = recommend_mode(brief)                     # draft|review|release（默认 draft）
 from normalizer import normalize_spec, geometry_only_hash
 spec, report = normalize_spec(spec)              # 见 Spec Normalizer 契约
@@ -183,6 +204,8 @@ spec = {
 
 ### Chart data contract
 
+**Chart Color Role System**：图表不写死色值，声明语义角色——`primary`（主叙事）/ `secondary`（对比）/ `neutral`（语境）/ `accent`（高亮）/ `negative`（风险）。角色由 `theme.chart_palette` 映射到具体色（未声明时回落旧扁平键 `chart_primary` 等，`negative` 未声明用通用风险红兜底并告警）；元素可用 `color_role` / `secondary_role` / `series_roles` 声明角色，柱状序列中 <0 的值自动染 `negative`（`negative_role: false` 可关）。显式 `*_color` 色值仍是逃生口。同一 spec 换主题，图表语义不变、色值随主题派生。
+
 数值图表的 `data` 必须是非空数组，每行至少包含 `label` 与有限数字 `value`；`display` 只负责已核验的展示格式，不参与计算。`highlight` 必须是有效整数索引；`progress_bar` 的 `max` 必须为正数；`pie`/`donut` 的非负有效值总和必须大于零；`ranked_bar`、`progress_bar`、`stacked_bar` 与 `bubble` 不接受负值。Guard 对这些条件返回 `data_integrity` 或 `chart_highlight`，Compile/Render 不得静默补零、截断负值或虚构单位。
 
 图表渲染器遇到空数据时可以跳过该图表并写入 warning；遇到不可解析数值时可以仅为防止程序崩溃按零计算并保留 warning。**这两种容错只服务调试预览，不表示数据有效；Guard 的 `DATA_INTEGRITY_FAIL` 必须使最终状态为 `BLOCKED`，不得以容错后的图表发布。**瀑布图的零轴必须根据数据域映射，而不是固定在画布某一比例位置。
@@ -228,7 +251,7 @@ spec = {
 
 **调参**：全部经 `penalties / thresholds / rules` 传入，不改脚本默认值。常用：无 LibreOffice 环境 `penalties={"render_missing": 0}`（环境问题已由 PREVIEW_ONLY 状态表达）；纯色背景主题 `thresholds={"margin_occupancy": 0.05}` 开启边缘检查。路径（Fast/Advanced）与模式（draft/review/release）只改预算与验证深度，不改任何阈值；Level 1/2 的分数只用于看趋势，不能引用为发布结论。阈值校准方法论见 `references/benchmark-calibration.md`。
 
-继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、Accent、节奏、文本、颜色、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、saliency split、`saliency_method`（显著图实际算法：`cv2_spectral_residual` / `deterministic_fallback`，跨机器可比性的溯源）、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实，其 fail / soft / pass 判定由 QA 与 Critic 共享同一实现（`primitives.text_contrast_verdict`）；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
+继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、Accent、节奏、文本、颜色、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、saliency split、`saliency_method`、渲染级光学对齐 `optical_alignment`（声明轴线视觉峰位一致性：带内有真实边缘=对齐、窗口内有带内无=偏移、无边缘=不可验证不计入）（显著图实际算法：`cv2_spectral_residual` / `deterministic_fallback`，跨机器可比性的溯源）、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实，其 fail / soft / pass 判定由 QA 与 Critic 共享同一实现（`primitives.text_contrast_verdict`）；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
 
 确定性评分建议仍用 100 分制，但只记录 `guard / compile / render` 域，并在 `deduction_by_domain` 中给出分域扣分明细。`passed` 不能仅凭分数决定；硬错误、编译失败、来源缺失、渲染缺失、关键文本不可读或任何未获声明的遮挡时必须覆盖分数。报告必须返回 `failure_codes`、`blocking_items`、`affected_slides`、`next_action`、`status` 和 `elapsed_ms`，让下一次调用只处理受影响范围。`status` 的优先级固定为：阻断错误 → `BLOCKED`；无阻断但缺少真实渲染 → `PREVIEW_ONLY`；有可修复问题 → `REVISE`；全部发布条件满足 → `PASS`。
 
@@ -284,7 +307,7 @@ spec = {
 
 ```json
 {
-  "critic_version": "2.2",
+  "critic_version": "2.3",
   "deck_score": 0,
   "status": "PASS|REVISE|BLOCKED|PREVIEW_ONLY",
   "hard_gates": [{"code": "CRITIC_LOW", "slide": "s01",
@@ -303,7 +326,7 @@ spec = {
 }
 ```
 
-评分模型：每项 0–5 分，从基准分 3（「满足声明契约」）出发，凭**可观察证据**加分或扣分（delta ∈ [-2, +2]，钳制到 0–5）。每一个 delta 都必须写入 `dimension_evidence`，保证分数可逐条溯源复核；不加证据不得加分，不加观察不得扣分。只扣不加的模型会把满分数学性封顶在 80/100、PASS 不可达——证据驱动加减分正是为修复该缺陷；PASS 仍然要求 deck_score ≥ 90 且无任何硬门槛。3–4 个圆角容器时 `professional_quality` 记一次软扣分（未到 `CARD_WALL` 硬门槛，仍可 PASS）；`>4` 的硬门槛与 `ROUNDED_MAX=4` 不变。
+评分模型：每项 0–5 分，从基准分 3（「满足声明契约」）出发，凭**可观察证据**加分或扣分（delta ∈ [-2, +2]，钳制到 0–5）。渲染级光学对齐复核为 alignment 纯加分项（≥3 根可验证声明轴线且一致率 ≥75% 时 +1；低一致率不扣分，图像页内部边缘天然离轴）。每一个 delta 都必须写入 `dimension_evidence`，保证分数可逐条溯源复核；不加证据不得加分，不加观察不得扣分。只扣不加的模型会把满分数学性封顶在 80/100、PASS 不可达——证据驱动加减分正是为修复该缺陷；PASS 仍然要求 deck_score ≥ 90 且无任何硬门槛。3–4 个圆角容器时 `professional_quality` 记一次软扣分（未到 `CARD_WALL` 硬门槛，仍可 PASS）；`>4` 的硬门槛与 `ROUNDED_MAX=4` 不变。
 
 `deck_notes.director_verdict`（加性字段，不参与评分）：`{headline, primary_lever, levers[≤3], gates_by_code}`，其中每条 lever 为 `{rank, kind, target, where, why, action, severity}`（kind ∈ gate / dimension / recurring）。它是「修哪个最值」的行动线：修正时一次只修 `primary_lever`，跑完一轮 QA 再看下一条，禁止逐条追分。纯函数、确定性，同输入必得同 verdict。
 

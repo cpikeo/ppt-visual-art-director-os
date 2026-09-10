@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFS = ROOT / "references"
 SCRIPTS = ROOT / "scripts"
 REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "evidence-library.md", "themes.md", "production-contract.md"}
-REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "normalizer.py", "route.py", "ghost.py", "design_intelligence.py", "layout_search.py"}
+REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "normalizer.py", "route.py", "ghost.py", "design_intelligence.py", "layout_search.py", "calibrate.py"}
 
 
 def load(name, path):
@@ -296,7 +296,9 @@ def check_execution_modes():
     """V2 流程控制：模式档案完备、legacy 别名映射、稳定性门控状态机。"""
     qa_mod = load("qa", SCRIPTS / "qa.py")
     modes = qa_mod.EXECUTION_MODES
-    ok = (set(modes) == {"draft", "review", "release"}
+    ok = (set(modes) == {"sketch", "draft", "review", "release"}
+          and modes["sketch"]["render"] is False and modes["sketch"]["critic"] == "off"
+          and modes["sketch"]["preflight_gate"] is False
           and modes["draft"]["render"] is False and modes["draft"]["critic"] == "off"
           and modes["review"]["qa_level"] == 2 and modes["review"]["critic"] == "auto"
           and modes["release"]["qa_level"] == 3 and modes["release"]["critic"] == "full"
@@ -491,9 +493,22 @@ def check_design_dna():
           and "朱砂" in json.dumps(hit["dna"], ensure_ascii=False))
     miss = di.recall_dna({"subject": "完全无关的火星探测任务简报"})
     ok = ok and miss["matched"] is None
+    # v2 判断记忆：合法条目入库；结果记忆（palette/色值/缺 design_problem）拒收
     rec = di.record_dna({"id": "__selftest_dna__", "signature": {"keywords": ["__t__"]},
-                         "dna": {"space": "test"}, "proven": {"qa": 99.0}})
+                         "design_problem": "自测：探索期与契约期的节奏矛盾",
+                         "judgment": {"space": "occupancy 0.4-0.6", "media": "图承担情绪不承担信息"},
+                         "avoid": ["装饰图片"], "when_not_to": "非自测场景",
+                         "proven": {"qa": 99.0}})
     ok = ok and rec["ok"]
+    rej1 = di.record_dna({"id": "__bad__", "signature": {"keywords": ["__t__"]},
+                          "design_problem": "p", "judgment": {"palette": "蓝色", "space": "s", "media": "m"}})
+    rej2 = di.record_dna({"id": "__bad__", "signature": {"keywords": ["__t__"]},
+                          "design_problem": "p", "judgment": {"color_behavior": "用 #0D0D0D", "space": "s"}})
+    rej3 = di.record_dna({"id": "__bad__", "signature": {"keywords": ["__t__"]},
+                          "judgment": {"space": "s", "media": "m"}})
+    ok = ok and not rej1["ok"] and not rej2["ok"] and not rej3["ok"]
+    ok = ok and not any(e["id"] == "__bad__"
+                        for e in json.loads(di.DNA_STORE.read_text(encoding="utf-8"))["entries"])
     hit2 = di.recall_dna({"subject": "__t__ 项目"})
     ok = ok and hit2["matched"] == "__selftest_dna__"
     # 清理自测条目
@@ -1408,6 +1423,315 @@ def check_manifest_attestation():
             "page_mismatch": m4["status"]}
 
 
+def check_optical_alignment():
+    """渲染级光学对齐复核：声明轴线的视觉峰位与数学坐标一致/偏移的数学正确性。"""
+    import tempfile
+    from PIL import Image, ImageDraw
+    rc = load("render_check", SCRIPTS / "render_check.py")
+    cw, ch = 320, 180
+    slide = {"id": "s01", "elements": [
+        {"type": "shape", "shape": "rect", "id": "a", "x": 40, "y": 40, "width": 80, "height": 60},
+        {"type": "chart", "id": "b", "chart": "ranked_bar", "x": 160, "y": 40, "width": 100, "height": 100},
+        {"type": "image", "id": "c", "x": 40, "y": 120, "width": 60, "height": 40},
+    ]}
+    lines = rc.declared_alignment_lines(slide, cw, ch)
+    ok = len(lines["x"]) >= 4 and len(lines["y"]) >= 3
+
+    def render(shift):
+        with tempfile.TemporaryDirectory() as td:
+            png = pathlib.Path(td) / "p.png"
+            im = Image.new("RGB", (cw, ch), (255, 255, 255))
+            d = ImageDraw.Draw(im)
+            for (x, y, w, h) in [(40, 40, 80, 60), (160, 40, 100, 100), (40, 120, 60, 40)]:
+                d.rectangle([x + shift, y + shift, x + w + shift, y + h + shift],
+                            fill=(20, 20, 20))
+            im.save(png)
+            return rc.optical_alignment(png, slide, cw, ch).get("optical_alignment", {})
+
+    good = render(0)
+    bad = render(5)
+    ok = ok and good.get("lines_checked", 0) >= 3 and good.get("aligned_share", 0) >= 0.9
+    ok = ok and bad.get("aligned_share", 1.0) <= 0.5 and bad.get("max_shift_px", 0) >= 4.0
+    # 无边界元素（纯文字页）→ 不产生度量（没有可验证的声明轴线）
+    text_only = {"id": "s02", "elements": [
+        {"type": "text", "id": "t", "x": 40, "y": 40, "width": 200, "height": 60}]}
+    ok = ok and rc.optical_alignment(pathlib.Path("/nonexistent.png"), text_only, cw, ch) == {}
+    return {"status": "PASS" if ok else "FAIL",
+            "lines": {"x": len(lines["x"]), "y": len(lines["y"])},
+            "aligned_good": good.get("aligned_share"),
+            "aligned_shifted": bad.get("aligned_share"),
+            "max_shift_px": bad.get("max_shift_px")}
+
+
+def check_calibrate_harness():
+    """校准闭环工具：Pearson 数学、样本守门、阈值反推方向性。"""
+    cal = load("calibrate", SCRIPTS / "calibrate.py")
+    ok = abs(cal.pearson([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]) - 1.0) < 1e-9
+    ok = ok and abs(cal.pearson([1, 2, 3, 4, 5], [10, 8, 6, 4, 2]) + 1.0) < 1e-9
+    ok = ok and abs(cal.pearson([1, 1, 1], [1, 2, 3])) < 1e-9      # 零方差 → 0
+    # 守门：样本不足必须拒绝（不给噪声拟合任何机会）
+    r1 = cal.analyze({"pages": [{"slide": "s01", "score": 5}, {"slide": "s02", "score": 1}]},
+                     {"s01": 4.8, "s02": 1.2}, {})
+    ok = ok and r1["ok"] is False and "样本不足" in r1["reason"]
+    # 足量样本：完美相关 + 方向正确的阈值反推
+    labels = {"pages": [{"slide": f"s{i:02d}", "score": s} for i, s in
+                        enumerate([5, 5, 4, 4, 1, 1, 2, 2], 1)]}
+    scores = {f"s{i:02d}": v for i, v in
+              enumerate([4.6, 4.4, 4.2, 4.0, 1.4, 1.2, 2.0, 1.8], 1)}
+    feats = {f"s{i:02d}": {"gravity_drift": g, "accent_pixel_ratio": 0.02,
+                           "edge_kurtosis_avg": 5.0}
+             for i, g in enumerate([0.05, 0.06, 0.10, 0.08, 0.40, 0.35, 0.30, 0.45], 1)}
+    r2 = cal.analyze(labels, scores, feats)
+    ok = ok and r2["ok"] is True and r2["pearson"] > 0.9
+    ok = ok and r2["kill_rate"] == 0.0 and r2["leak_rate"] == 0.0
+    sw = {s["feature"]: s for s in r2["sweeps"]}
+    ok = ok and "gravity_drift" in sw and 0.10 <= sw["gravity_drift"]["suggested"] <= 0.30
+    ok = ok and sw["gravity_drift"]["separation_accuracy"] >= 0.9
+    return {"status": "PASS" if ok else "FAIL",
+            "pearson": r2.get("pearson"), "guard": r1["reason"][:16],
+            "suggested_gravity_drift": (sw.get("gravity_drift") or {}).get("suggested")}
+
+
+def check_chart_color_roles():
+    """v2.11 Chart Color Role System：角色→主题映射链、旧扁平键兼容、负值兜底、元素 color_role。"""
+    prim = load("primitives", SCRIPTS / "primitives.py")
+    charts = load("charts", SCRIPTS / "charts.py")
+    theme = {"colors": {"ink": "#111111", "primary": "#222222", "secondary": "#333333",
+                        "muted": "#777777", "accent": "#AA0000", "risk": "#B00020"},
+             "chart_palette": {"primary": "primary", "secondary": "accent",
+                               "neutral": "muted", "accent": "accent", "negative": "risk"}}
+    ctx = prim.RenderContext(theme, {})
+    ok = (str(ctx.chart_role("negative")) == "B00020"
+          and str(ctx.chart_role("primary")) == "222222"
+          and str(ctx.chart_role("accent")) == "AA0000"
+          and ctx.chart_role("bogus") is None)
+    # 旧扁平键向后兼容（未声明 chart_palette 的主题仍走 chart_primary 等）
+    legacy = {"colors": {"ink": "#111111", "primary": "#222222",
+                         "secondary": "#333333", "accent": "#AA0000"},
+              "chart_primary": "primary", "chart_secondary": "secondary"}
+    ctx2 = prim.RenderContext(legacy, {})
+    ok = ok and str(ctx2.chart_role("primary")) == "222222"
+    # 未声明 negative → 通用风险红兜底 + 告警（最后手段，不是设计建议）
+    ctx3 = prim.RenderContext({"colors": {"ink": "#111111", "accent": "#AA0000"}}, {})
+    neg = ctx3.chart_role("negative")
+    ok = ok and neg is not None and any("negative" in w for w in ctx3.warnings)
+    # 元素声明 color_role 取代色值；显式色值逃生口仍在
+    p, _s, _i, _m = charts.chart_colors({"color_role": "negative"}, ctx)
+    p2, _s2, _i2, _m2 = charts.chart_colors({"primary_color": "#123456"}, ctx)
+    ok = ok and str(p) == "B00020" and str(p2) == "123456"
+    return {"status": "PASS" if ok else "FAIL", "negative_role": str(neg),
+            "role_override": str(p)}
+
+
+def check_brand_seed():
+    """v2.11 Color Intelligence 入口：brief.brand_colors 品牌优先覆盖方向预设。"""
+    route = load("route", SCRIPTS / "route.py")
+    preset = {"colors": {"accent": "#111111", "paper": "#FFFFFF"},
+              "fonts": {"cn": "Source Han Serif", "latin": "Inter"}}
+    brand = route._seed_from_brand(preset, {"accent": "#C8A24B", "primary": "#0F2B46"})
+    ok = (brand["colors"]["accent"] == "#C8A24B"
+          and brand["colors"]["primary"] == "#0F2B46"
+          and brand["colors"]["paper"] == "#FFFFFF"
+          and brand.get("brand_derived") is True)
+    bad = route._seed_from_brand(preset, {"accent": "gold", "junk": "#12"})
+    ok = ok and bad["colors"]["accent"] == "#111111" and "junk" not in bad["colors"]
+    ok = ok and route._seed_from_brand(preset, None) is preset
+    plan = route.plan_deck({"subject": "企业年度总结", "brief": "发布终版 董事会汇报",
+                            "brand_colors": {"accent": "#C8A24B"}})
+    ok = ok and plan["theme"]["colors"]["accent"] == "#C8A24B"
+    return {"status": "PASS" if ok else "FAIL", "brand_accent": brand["colors"]["accent"],
+            "plan_deck_theme_accent": plan["theme"]["colors"]["accent"]}
+
+
+def check_layout_recommend():
+    """v2.11 两层布局决策：标准家族直达原型，复杂页（未分类/多焦点）才搜索。"""
+    ls = load("layout_search", SCRIPTS / "layout_search.py")
+    r1 = ls.recommend({"page_family": "DATA", "insight": "增长加速", "focus": "chart1"})
+    ok = (r1["tier"] == "family" and r1["archetype"] == "full_width_evidence"
+          and len(r1["elements"]) >= 3 and "note" in r1)
+    r2 = ls.recommend({"page_family": None, "insight": "x"})
+    ok = ok and r2["tier"] == "search" and len(r2["candidates"]) == 3
+    r3 = ls.recommend({"page_family": "HERO", "secondary_focus": "logo"})
+    ok = ok and r3["tier"] == "search" and "多焦点" in r3["reason"]
+    r4 = ls.recommend({"page_family": "CLOSING", "focus": "st"})
+    ok = ok and r4["tier"] == "family" and r4["archetype"] == "statement_center_stage"
+    # 内容家族经归一层同样直达（COVER/DATA_STORY/TIMELINE 是真实项目的命名）
+    r5 = ls.recommend({"page_family": "DATA_STORY", "focus": "c"})
+    r6 = ls.recommend({"page_family": "TIMELINE", "focus": "tl"})
+    ok = ok and r5["tier"] == "family" and r5["archetype"] == "full_width_evidence" \
+        and r6["tier"] == "family" and r6["archetype"] == "quiet_progression"
+    return {"status": "PASS" if ok else "FAIL", "data_fast_path": r1["archetype"],
+            "complex_reason": r2["reason"],
+            "content_family_fast_path": [r5["archetype"], r6["archetype"]]}
+
+
+def check_asset_prompt_dna():
+    """v2.11 Asset Intent Cache：判断（构图/光性）可复用，色值拒收，图片永不缓存。"""
+    import tempfile
+    ap = load("asset_prompt", SCRIPTS / "asset_prompt.py")
+    ap.PROMPT_DNA_STORE = pathlib.Path(tempfile.mkdtemp()) / "apdna.json"
+    r = ap.record_prompt_dna({
+        "scenario": "annual report hero", "visual_world": "quiet luxury architecture",
+        "prompt_structure": {"composition": "single mass off-center 0.382",
+                             "lighting": "low warm tungsten, long shadows",
+                             "void": "upper-left 40% for statement"},
+        "avoid": ["stock smile people", "blue tech gradient"],
+        "proven": {"project": "deck2026", "verdict": "PASS"}})
+    ok = r["ok"] and r["entries"] == 1
+    rej = ap.record_prompt_dna({"scenario": "x",
+                                "prompt_structure": {"composition": "#0D0D0D bg",
+                                                     "lighting": "b"},
+                                "proven": {"project": "p"}})
+    ok = ok and not rej["ok"]
+    hit = ap.recall_prompt_dna("Annual Report Hero", "quiet luxury architecture")
+    ok = ok and hit["matched"] is not None and "构图" in hit["note"]
+    near = ap.recall_prompt_dna("annual report hero", "quiet luxury architecture", "chip macro")
+    ok = ok and near["matched"] is None and near["entry"] is not None
+    miss = ap.recall_prompt_dna("火星探测", "红色荒原")
+    ok = ok and miss["entry"] is None and "record_prompt_dna" in miss["note"]
+    return {"status": "PASS" if ok else "FAIL", "entries": r["entries"],
+            "recall": "exact+neighbor+miss" if ok else "?"}
+
+
+def check_pre_critic_v2():
+    """v2.12 预测扩展：平衡/字阶/布局单调/记忆线/字阶漂移——渲染后才看见的，生成前点名。"""
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "primary": "#222222",
+                        "secondary": "#333333", "accent": "#AA0000", "muted": "#777777"}}
+
+    def slide(sid, family, sizes, token):
+        els = [{"type": "text", "id": f"t{k}", "x": 48, "y": 100 + k * 90,
+                "width": 400, "height": 64, "text": f"文{k}", "size": s,
+                "color": "ink", "max_lines": 1} for k, s in enumerate(sizes)]
+        return {"id": sid,
+                "page_intent": {"insight": sid, "focus": "t0", "reading_order": ["t0"],
+                                "energy": "medium", "density": "balanced",
+                                "empty_space_role": "protect_focus", "page_family": family,
+                                "rhythm_stage": "body", "continuity_token": token},
+                "elements": els}
+
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme, "slides": [
+        slide("m1", "DATA_STORY", [32, 22], "T"),            # 左侧堆叠 → 平衡
+        slide("m2", "DATA_STORY", [64, 44, 32, 22, 17], "T"),  # 5 级 → 页级字阶
+        slide("m3", "DATA_STORY", [30, 20], "X"),            # X 单次 → 记忆线断裂
+        slide("m4", "TIMELINE", [26, 18], "T"),
+        slide("m5", "TIMELINE", [40, 15], "T")]}             # 全 deck >8 字号 → 漂移
+    rep = di.pre_critic(spec)
+    codes = {r["code"] for r in rep["risks"]}
+    want = {"BALANCE_SKEW_RISK", "TYPE_LADDER_RISK", "LAYOUT_MONOTONE_RISK",
+            "CONTINUITY_BROKEN_RISK", "TYPE_SCALE_DRIFT_RISK"}
+    ok = want <= codes and all(r.get("prevention") and r.get("root_cause")
+                               for r in rep["risks"])
+    # m2（5 个元素）打断指纹连续 → m3–m5 三连报单调；字号不入指纹，m1/m3/m4/m5 同指纹
+    mono = next(r for r in rep["risks"] if r["code"] == "LAYOUT_MONOTONE_RISK")
+    ok = ok and mono["slides"] == ["m3", "m4", "m5"]
+    drift = next(r for r in rep["risks"] if r["code"] == "TYPE_SCALE_DRIFT_RISK")
+    ok = ok and drift["slides"] == []         # deck 级风险不点名页
+    # 声明型家族豁免：全左堆叠的 STATEMENT 页不报平衡（刻意偏轴是语言）
+    exempt = {"canvas": {"width": 1280, "height": 720}, "theme": theme, "slides": [
+        slide("e1", "MINIMAL_STATEMENT", [64], "T"),
+        slide("e2", "MINIMAL_STATEMENT", [64], "T"),
+        slide("e3", "MINIMAL_STATEMENT", [64], "T"),
+        slide("e4", "DATA_STORY", [32], "T2")]}
+    rep2 = di.pre_critic(exempt)
+    ok = ok and not any(r["code"] == "BALANCE_SKEW_RISK" for r in rep2["risks"])
+    return {"status": "PASS" if ok else "FAIL",
+            "new_codes": sorted(want & codes),
+            "monotone_pages": len(mono["slides"])}
+
+
+def check_intent_skeleton():
+    """v2.12 Page Intent Skeleton：家族骨架确定性生成，AI 只填洞，覆盖永远赢。"""
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    s = di.page_intent_skeleton("DATA_STORY", insight="增长加速", focus="c1")
+    ok = (s["page_family"] == "DATA_STORY" and s["energy"] == "medium"
+          and s["reading_order"] == ["c1"]
+          and s["empty_space_role"] == "protect_focus")
+    s2 = di.page_intent_skeleton("COVER", rhythm_stage="opening")
+    ok = ok and s2["energy"] == "high" and s2["empty_space_role"] == "hold_emotion"
+    ok = ok and di.page_intent_skeleton("DATA", energy="low")["energy"] == "low"
+    ok = ok and di.page_intent_skeleton("MYSTERY")["density"] == "balanced"
+    s3 = di.page_intent_skeleton("CLOSING", energy="low")   # 情绪收束的显式覆盖
+    ok = ok and s3["energy"] == "low" and s3["empty_space_role"] == "hold_emotion"
+    return {"status": "PASS" if ok else "FAIL",
+            "data_story": s["empty_space_role"], "closing_override": s3["energy"]}
+
+
+def check_deck_decision():
+    """v2.12 Deck Decision Card：deck 级判断一次固化，确定性，页面继承。"""
+    route = load("route", SCRIPTS / "route.py")
+    brief = {"subject": "企业年度总结", "brief": "发布终版 董事会 企业年报",
+             "brand_colors": {"accent": "#C8A24B"},
+             "slides": [{"title": "封面", "content": "年度总结 发布会"},
+                        {"title": "亮点", "content": "营收增长 42% 证据"},
+                        {"title": "业务", "content": "三条业务线 数据 对比"},
+                        {"title": "里程碑", "content": "时间线 阶段"},
+                        {"title": "展望", "content": "战略 愿景 收束"}]}
+    card = route.deck_decision(brief)
+    ok = (card["narrative_arc"][0] == "establish" and card["narrative_arc"][-1] == "close"
+          and len(card["density_curve"]) == 5
+          and sum(card["density_profile"].values()) == 5
+          and card["color"]["brand_derived"] is True
+          and card["execution"]["mode"] == "release"
+          and card["media_policy"]["generate"] >= 0
+          and "visual_world" in card["slots"])
+    card2 = route.deck_decision(brief)
+    ok = ok and json.dumps(card, sort_keys=True, default=str) == \
+        json.dumps(card2, sort_keys=True, default=str)
+    return {"status": "PASS" if ok else "FAIL",
+            "arc": card["narrative_arc"], "pages": len(card["density_curve"]),
+            "deterministic": True}
+
+
+def check_compile_version_gate():
+    """v2.12 编译缓存版本闸：编译器行为变更后，spec 未变也必须重编译。"""
+    import tempfile
+    rc = load("render_check", SCRIPTS / "render_check.py")
+    comp = load("compiler", SCRIPTS / "compiler.py")
+    ok = isinstance(getattr(comp, "COMPILER_VERSION", None), str)
+    with tempfile.TemporaryDirectory() as d:
+        work = pathlib.Path(d)
+        pptx = work / "a.pptx"
+        pptx.write_bytes(b"fake")
+        rc.record_compile(work, pptx, "view1", {"passed": True, "warnings": []})
+        rep = rc.compile_reuse(work, pptx, "view1")
+        ok = ok and rep is not None and rep.get("reused") is True
+        # 编译行为版本不一致 → 缓存作废（旧报告不得复活）
+        rc._patch_meta(work, compile={"compiler": "0.0-fossil"})
+        ok = ok and rc.compile_reuse(work, pptx, "view1") is None
+        # 视图变化 → 作废（原语义回归）
+        ok = ok and rc.compile_reuse(work, pptx, "view2") is None
+    return {"status": "PASS" if ok else "FAIL",
+            "compiler_version": getattr(comp, "COMPILER_VERSION", None)}
+
+
+def check_sketch_mode():
+    """v2.11 sketch 草图链：warn/hint 契约免除、无 pre-critic、SKETCH 状态、不可发布。"""
+    import tempfile
+    qa = load("qa", SCRIPTS / "qa.py")
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#CCCCCC",
+                        "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme, "slides": [
+        {"id": "s01", "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
+         "page_intent": {"insight": "探索方向", "focus": "st", "density": "sparse",
+                         "energy": "high", "empty_space_role": "hold_emotion"},
+         "elements": [{"type": "text", "id": "st", "x": 400, "y": 300, "width": 480,
+                       "height": 120, "size": 48, "text": "sketch statement",
+                       "color": "ink", "max_lines": 1, "line_height": 1.2, "padding": 0}]}]}
+    with tempfile.TemporaryDirectory() as d:
+        out = pathlib.Path(d) / "sk.pptx"
+        sk = qa.run_qa(spec, out, mode="sketch", render_dir=pathlib.Path(d) / "r1", dpi=60)
+        dr = qa.run_qa(spec, out, mode="draft", render_dir=pathlib.Path(d) / "r2", dpi=60)
+        exists = out.exists()
+    # muted #CCCCCC 对白底 <1.8:1 → draft 应有 warn；sketch 只留 error 级
+    ok = (sk["status"] == "SKETCH" and dr["status"] == "PREVIEW_ONLY"
+          and sk.get("pre_critic") is None and dr.get("pre_critic") is not None
+          and sk["guard"]["checks"] < dr["guard"]["checks"]
+          and sk.get("release_eligible") is False and exists)
+    return {"status": "PASS" if ok else "FAIL", "sketch_status": sk["status"],
+            "guard_checks_sketch_vs_draft": f"{sk['guard']['checks']}/{dr['guard']['checks']}"}
+
+
 def check_director_upgrade():
     """v2.4 Director 升级：verdict 存在且确定、卡片软压分级、背景层口径统一。"""
     crit = load("art_critic", SCRIPTS / "art_critic.py")
@@ -1508,7 +1832,18 @@ def main():
             "multi_series": check_multi_series(),
             "cache_projection": check_cache_projection(),
             "manifest_attestation": check_manifest_attestation(),
-            "director_upgrade": check_director_upgrade()}
+            "director_upgrade": check_director_upgrade(),
+            "optical_alignment": check_optical_alignment(),
+            "calibrate_harness": check_calibrate_harness(),
+            "chart_color_roles": check_chart_color_roles(),
+            "brand_seed": check_brand_seed(),
+            "layout_recommend": check_layout_recommend(),
+            "asset_prompt_dna": check_asset_prompt_dna(),
+            "sketch_mode": check_sketch_mode(),
+            "pre_critic_v2": check_pre_critic_v2(),
+            "intent_skeleton": check_intent_skeleton(),
+            "deck_decision": check_deck_decision(),
+            "compile_version_gate": check_compile_version_gate()}
     ok = all(v["status"] == "PASS" for v in result.values())
     if "--json" in sys.argv:
         print(json.dumps(result, ensure_ascii=False, indent=2))

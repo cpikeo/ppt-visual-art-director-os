@@ -110,8 +110,8 @@ def _slide_key(slide: dict | None, canvas: dict, dpi: int, theme: dict | None,
                           "theme": _pixel_view(theme, NON_PIXEL_THEME_KEYS),
                           "media": media or [], "renderer": renderer,
                           # 显著图后端进键：cv2 与回退算法的质心/分片不可互换，
-                          # 跨机器共用证据目录时必须分键存放（v4 起生效，旧键自然淘汰）
-                          "sal": _saliency_backend(), "v": 4},
+                          # 跨机器共用证据目录时必须分键存放；v6 起并入光学对齐带内匹配（旧键自然淘汰）
+                          "sal": _saliency_backend(), "v": 6},
                          ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
@@ -222,6 +222,14 @@ def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
     rec = _load_meta(work).get("compile") or {}
     if rec.get("view") != view or not rec.get("report"):
         return None
+    # 编译行为版本闸：编译器行为变了（哪怕 spec 未变），旧报告作废——
+    # 否则 v2.10 修过的「跨算法陈旧判定」会在编译层复活。
+    try:
+        from compiler import COMPILER_VERSION
+        if rec.get("compiler") != COMPILER_VERSION:
+            return None
+    except Exception:
+        pass
     if _file_sha(pptx) != rec.get("pptx_sha"):
         return None
     if not Path(pptx).exists():
@@ -232,8 +240,15 @@ def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
 
 
 def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
+    compiler_ver = None
+    try:
+        from compiler import COMPILER_VERSION
+        compiler_ver = COMPILER_VERSION
+    except Exception:
+        pass
     _patch_meta(work, compile={
         "view": view, "pptx_sha": _file_sha(pptx), "pptx_name": Path(pptx).name,
+        "compiler": compiler_ver,
         "report": {k: v for k, v in (report or {}).items() if k != "guard"}})
 
 
@@ -863,6 +878,115 @@ def _text_contrast(arr, regions: list[dict]) -> dict[str, Any]:
             "text_contrast": [r["ratio"] for r in all_r]}
 
 
+def declared_alignment_lines(slide: dict | None, cw: float, ch: float) -> dict:
+    """从 spec 提取「数学上声明了对齐」的边界轴线（spec 坐标）。
+
+    只取渲染时会画出真实边界的元素（shape / chart / image）——文字块的盒边界
+    不画描边，峰位验证无从谈起；背景层画心占满画布、边缘无信息，一并跳过。
+    返回 {"x": [...], "y": [...]}（浮点 spec 坐标），按 2px 簇去重取簇心。
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for e in (slide or {}).get("elements") or []:
+        if not isinstance(e, dict):
+            continue
+        if e.get("layer") in ("background",) or e.get("role") in ("background", "backdrop"):
+            continue
+        if str(e.get("type", "")) not in ("shape", "chart", "image"):
+            continue
+        try:
+            x, y = float(e["x"]), float(e["y"])
+            w, h = float(e["width"]), float(e["height"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        xs.extend((x, x + w))
+        ys.extend((y, y + h))
+
+    def _dedupe(vals: list[float]) -> list[float]:
+        out: list[float] = []
+        for v in sorted(vals):
+            if not out or v - out[-1] > 2.0:
+                out.append(v)
+            else:
+                out[-1] = (out[-1] + v) / 2.0
+        return [round(v, 1) for v in out]
+
+    return {"x": _dedupe(xs), "y": _dedupe(ys)}
+
+
+def optical_alignment(png: Path, slide: dict | None,
+                      cw: float, ch: float) -> dict[str, Any]:
+    """渲染级光学对齐复核：验证「数学对齐」是否真的成为「视觉对齐」。
+
+    对每根声明边界轴线（见 declared_alignment_lines），在全分辨率梯度投影上
+    找 ±6px 窗口内的视觉峰位；峰位与数学坐标偏差 ≤2px 记对齐。窗口内没有
+    真实边缘能量（元素未渲染出边界，如同底色填充）的线不计入 lines_checked
+    ——只验证像素能验证的事。纯 PIL + numpy，确定性，不依赖 cv2。
+    返回 {}（无声明线）或 {"optical_alignment": {...}}。
+    """
+    lines = declared_alignment_lines(slide, cw, ch)
+    if len(lines["x"]) + len(lines["y"]) < 3:
+        return {}
+    try:
+        from PIL import Image
+        import numpy as np
+        im = Image.open(png).convert("L")
+    except Exception:
+        return {}
+    w_img, h_img = im.size
+    gray = np.asarray(im).astype(np.float32)
+    if gray.size == 0:
+        return {}
+    gy_arr, gx_arr = np.gradient(gray)
+    mag = np.sqrt(gx_arr * gx_arr + gy_arr * gy_arr)
+    col_proj = mag.sum(axis=0)
+    row_proj = mag.sum(axis=1)
+
+    def _check(proj, declared: list[float], total_px: int, spec_len: float):
+        """匹配语义：『声明位置上有没有边缘』，而非『窗口内最强边缘在哪』。
+
+        文字笔画/图表条会在 ±6px 内制造比元素边界更强的峰——按最强峰计距离
+        会被劫持（实测：声明 x=48 处确有 4420 的边界峰，却被 6px 外 4767 的
+        笔画峰抢走）。因此：带内（±tol）有真实边缘 = 对齐；窗口内有、带内没有
+        = 偏移；窗口内连边缘都没有 = 不可验证（元素没渲染出边界，如同底色填充）。
+        """
+        scale = total_px / max(1.0, float(spec_len))
+        win = max(3, int(round(6 * scale)))
+        tol = max(1, int(round(2 * scale)))
+        med = float(np.median(proj)) if proj.size else 0.0
+        floor = 3.0 * max(med, 1e-6)
+        checked = aligned = 0
+        max_shift = 0.0
+        for v in declared:
+            c = int(round(v * scale))
+            wlo, whi = max(0, c - win), min(len(proj), c + win + 1)
+            blo, bhi = max(0, c - tol), min(len(proj), c + tol + 1)
+            if whi - wlo < 2 or bhi - blo < 1:
+                continue
+            if float(proj[wlo:whi].max()) <= floor:
+                continue          # 窗口内无真实边界能量 → 不可验证，不计入
+            checked += 1
+            if float(proj[blo:bhi].max()) > floor:
+                aligned += 1     # 声明位置上就有边缘 → 数学对齐即视觉对齐
+            else:
+                delta = float(wlo + int(proj[wlo:whi].argmax())) - c
+                max_shift = max(max_shift, abs(delta))
+        return checked, aligned, max_shift
+
+    cx, ax, sx = _check(col_proj, lines["x"], w_img, cw)
+    cy, ay, sy = _check(row_proj, lines["y"], h_img, ch)
+    checked = cx + cy
+    if checked < 3:
+        return {"optical_alignment": {"lines_checked": checked,
+                                      "method": "gradient_projection"}}
+    return {"optical_alignment": {
+        "lines_checked": checked,
+        "aligned_share": round((ax + ay) / checked, 3),
+        "max_shift_px": round(max(sx, sy), 1),
+        "method": "gradient_projection",
+    }}
+
+
 def measure_image(path: Path, accent_hex: str | None = None,
                   text_regions: list[dict] | None = None) -> dict[str, Any]:
     """单页真实渲染测量。
@@ -1151,7 +1275,8 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
                                 "index": n - 1, "page": n,
                                 **measure_image(png, accent_hex=accent_hex,
                                                 text_regions=_text_regions(
-                                                    slide, cw, ch, theme))}
+                                                    slide, cw, ch, theme)),
+                                **optical_alignment(png, slide, cw, ch)}
         return _apply_anchor(item, slide, cw, ch)
 
     # ── 光栅化：默认 tiff+lzw（无损且快）；jpeg 为有损快测，需临界复检 ──

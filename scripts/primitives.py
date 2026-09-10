@@ -694,6 +694,44 @@ class RenderContext:
         """按顺序取系列色（循环使用）。"""
         return self.color(f"series{(index % 6) + 1}")
 
+    # -- 图表角色色（Chart Color Role System）─────────────────────────
+    # 图表不写死色值，声明语义角色：primary=主叙事 / secondary=对比 /
+    # neutral=语境 / accent=高亮 / negative=风险。角色由 theme.chart_palette
+    # 映射到具体色——主题换了，spec 的图表语义不变、色值随主题派生。
+    # 解析链：chart_palette[role] → 旧扁平键（chart_primary 等，向后兼容）→
+    # colors token。negative 未声明时用通用风险红兜底并告警（最后手段，
+    # 不是设计建议——主题作者应显式派生风险色）。
+    _CHART_ROLE_FALLBACK = {
+        "primary": ("chart_primary", "primary"),
+        "secondary": ("chart_secondary", "secondary"),
+        "neutral": ("chart_muted", "secondary"),
+        "accent": ("accent",),
+        "negative": ("negative",),
+    }
+    _NEGATIVE_FALLBACK = "#B3261E"   # 通用风险红：仅主题未声明 negative 时兜底
+
+    def chart_role(self, role: str):
+        """语义角色 → 具体色（RGBColor | None）。角色不认识时返回 None。"""
+        role = str(role or "").strip().lower()
+        palette = self.theme.get("chart_palette")
+        chain = []
+        if isinstance(palette, dict) and palette.get(role):
+            chain.append(palette[role])
+        chain += list(self._CHART_ROLE_FALLBACK.get(role, ()))
+        for ref in chain:
+            if not ref:
+                continue
+            c = self.color(ref)
+            if c is not None:
+                return c
+        if role == "negative":
+            msg = ("theme 未声明 negative 角色（chart_palette.negative 或 colors.negative），"
+                   "负值用通用风险红兜底——请为主题显式派生一个风险色")
+            if msg not in self.warnings:
+                self.warnings.append(msg)
+            return self.color(self._NEGATIVE_FALLBACK)
+        return None
+
     def ramp_color(self, index: int):
         return self.color(f"ramp{max(1, min(5, index + 1))}")
 

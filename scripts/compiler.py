@@ -13,6 +13,11 @@ Layer 3 · Compiler（编排层）
 """
 from __future__ import annotations
 
+# 编译行为版本（编译缓存失效闸）：编译器/图表渲染行为变更时递增——
+# spec 视图未变但编译产物语义变了（如新增告警、换色逻辑），旧编译报告必须作废。
+# 1.1 = 图表色彩角色系统 + 负值惰性解析（v2.11/v2.12）
+COMPILER_VERSION = "1.1"
+
 import importlib.util
 import sys
 from pathlib import Path

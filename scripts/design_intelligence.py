@@ -94,21 +94,71 @@ def recall_dna(brief: dict) -> dict:
     alts = [{"id": e.get("id"), "confidence": round(c, 2)}
             for c, h, e in scored[1:3] if c > 0]
     return {"matched": best.get("id"), "confidence": round(conf, 2),
-            "dna": best.get("dna"), "alternatives": alts,
+            "dna": (best.get("judgment") or best.get("dna")),
+            "design_problem": best.get("design_problem"),
+            "avoid": best.get("avoid") or best.get("dna", {}).get("forbidden"),
+            "alternatives": alts,
             "proven": best.get("proven"),
             "note": ("DNA 是起点不是模板：按当前内容与受众重组，禁止照抄" if conf < 0.6
                      else "高置信命中：以该经验为基线，只做内容级调整")}
 
 
-def record_dna(entry: dict) -> dict:
-    """发布 PASS 后沉淀设计经验（去重替换同 id 条目）。
+# ── DNA Schema v2：判断记忆，不是结果记忆 ──────────────────────────────
+# 存「为什么这样设计」（可迁移的行为判断），不存「用了什么颜色/版式」（结果）。
+# 结果记忆会让 AI 变模板（科技=蓝、金融=黑金）；判断记忆跨主题迁移。
+# 色值与实测占比属于证据 → entry["proven"]；行为判断 → entry["judgment"]。
+_RESULT_MEMORY_KEYS = {"palette", "color", "colors", "font", "fonts",
+                       "image_style", "layout", "layout_result"}
+_JUDGMENT_KEYS = {"hierarchy", "space", "media", "color_behavior",
+                  "charts", "anchor_rule", "structure", "type_voice"}
+_HEX_RE = None  # 惰性编译（模块导入零成本）
 
-    entry = {id, signature:{keywords:[...]}, dna:{...}, proven:{qa, critic, revisions, project}}
+
+def _hex_re():
+    global _HEX_RE
+    if _HEX_RE is None:
+        import re
+        _HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+    return _HEX_RE
+
+
+def record_dna(entry: dict) -> dict:
+    """发布 PASS 后沉淀设计经验（Schema v2 判断记忆；去重替换同 id 条目）。
+
+    entry = {id, signature:{keywords:[...]},
+             design_problem: str（这个场景的设计矛盾是什么）,
+             judgment: {hierarchy|space|media|color_behavior|charts|
+                        anchor_rule|structure|type_voice 中 ≥2 项},
+             avoid: [...], when_not_to: str,
+             proven: {qa, critic, revisions, project, measurements?}}
+    拒收结果记忆：judgment 含 palette/font/版式结果字段或色值 → ok:False
+    （色值与实测放 proven——判断进 judgment，证据进 proven）。
     只有真实发布过的经验才值得记忆——调用方应仅在上游校验 PASS 后调用。
     """
     store = _load_store()
     if not entry.get("id") or not entry.get("signature", {}).get("keywords"):
         return {"ok": False, "reason": "entry 需要 id 与 signature.keywords"}
+    problem = entry.get("design_problem")
+    if not isinstance(problem, str) or not problem.strip():
+        return {"ok": False, "reason":
+                "Schema v2 需要 design_problem（这个场景的设计矛盾是什么）——"
+                "没有问题的判断是口号，不是经验"}
+    judgment = entry.get("judgment")
+    if not isinstance(judgment, dict) or len(set(judgment) & _JUDGMENT_KEYS) < 2:
+        return {"ok": False, "reason":
+                "Schema v2 需要 judgment（≥2 项：" + "/".join(sorted(_JUDGMENT_KEYS)) + "）"}
+    bad = set(judgment) & _RESULT_MEMORY_KEYS
+    if bad:
+        return {"ok": False, "reason":
+                f"judgment 含结果记忆字段 {sorted(bad)}：颜色/字体/版式结果会让 DNA "
+                "变模板。可迁移的行为判断放 judgment，色值与实测放 proven"}
+    for k, v in judgment.items():
+        if isinstance(v, str):
+            m = _hex_re().search(v)
+            if m:
+                return {"ok": False, "reason":
+                        f"judgment.{k} 含色值 {m.group(0)}：色值是结果不是判断——"
+                        "具体色随品牌/材质/语境派生，实测色值放 proven.measurements"}
     entries = [e for e in store.get("entries", []) if e.get("id") != entry["id"]]
     entries.append(entry)
     entries.sort(key=lambda e: str(e.get("id")))
@@ -146,13 +196,23 @@ _FAMILY_ALIASES = {
 }
 
 
+def normalize_family(raw) -> str:
+    """家族名归一（内容家族 COVER/DATA_STORY… → route/媒体家族 HERO/DATA…）。
+
+    两套命名的单一映射源：media_decision / pre_critic / layout_search.recommend
+    都经此归一，禁止各自维护别名表（漂移的别名表 = 判断不一致）。
+    """
+    up = str(raw or "").strip().upper()
+    return _FAMILY_ALIASES.get(up, up)
+
+
 def media_decision(page: dict) -> dict:
     """页面 → 媒体决策（置信度 + 理由，而非布尔闸门）。
 
     输入含 elements 时做覆盖判定：已有图表的页降为「图表即锚点」；
     已有 layer=background 画心时记「画心已承担」。"""
     raw = str((page.get("page_intent") or {}).get("page_family") or "").upper()
-    family = _FAMILY_ALIASES.get(raw, raw)
+    family = normalize_family(raw)
     need, conf, reason = _MEDIA_MODEL.get(family, (False, 0.20, "未知家族：默认不出图（媒体需要理由）"))
     has_chart = any(isinstance(e, dict) and e.get("type") in ("chart", "native_chart")
                     for e in (page.get("elements") or []))
@@ -309,6 +369,85 @@ def _risk(code, level, slides, why, prevention, predicted, cause, confidence):
 
 
 
+# ── v2.12 预测扩展：把「渲染后才看得见」前移到生成前 ────────────────────
+# gravity_drift 超标 / 字阶混乱 / 布局指纹连续重复 / 记忆线断裂——这四个失败
+# 模式原来要等渲染证据才暴露；现在 spec 级静态估计就能点名（预测→决策→生成）。
+LADDER_RUNGS = (64.0, 44.0, 32.0, 22.0, 17.0, 12.5)   # 驻点字阶（design-intelligence.md）
+_LADDER_TOL = 2.0            # 驻点吸附容差（34 视作 32，避免 ±1px 噪声）
+_TYPE_WEIGHTS = {"text": 1.0, "image": 1.2, "chart": 1.1,
+                 "native_chart": 1.1, "shape": 0.7}
+# 声明型页面（经 _FAMILY_ALIASES 含 COVER/MINIMAL_STATEMENT/SECTION_DIVIDER）
+# 允许刻意偏轴——不对称是它们的语言，不是失衡
+_ASYMMETRIC_OK = {"HERO", "CLOSING", "STATEMENT", "SECTION"}
+
+
+def _weighted_centroid(elems: list[dict]):
+    """墨量加权质心（文本 1.0 / 图 1.2 / 图表 1.1 / 形状 0.7；背景层不计）。"""
+    wx = ws = 0.0
+    for e in elems:
+        try:
+            w = _TYPE_WEIGHTS.get(str(e.get("type")), 0.8) \
+                * float(e["width"]) * float(e["height"])
+            wx += w * (float(e["x"]) + float(e["width"]) / 2.0)
+            ws += w
+        except (KeyError, TypeError, ValueError):
+            continue
+    return (wx / ws) if ws > 0 else None
+
+
+def _layout_fingerprint(elems: list[dict]) -> tuple:
+    """粗粒度布局指纹（类型 + 96px 网格桶）：识别「换字不换版」的连续重复。"""
+    out = []
+    for e in elems:
+        try:
+            out.append((str(e.get("type")), int(float(e.get("x", 0))) // 96,
+                        int(float(e.get("y", 0))) // 96,
+                        int(float(e.get("width", 0))) // 96,
+                        int(float(e.get("height", 0))) // 96))
+        except (TypeError, ValueError):
+            continue
+    return tuple(sorted(out))
+
+
+# ── Page Intent Skeleton（v2.12）：标准家族的意图骨架，AI 只填洞 ──────────
+# 生成速度的大头不是渲染（毫秒级），是每页重新推理。骨架把「家族决定得了的」
+# （能量/密度/负空间职责/阅读序）确定性给出，AI 只填「内容决定得了的」
+# （insight / focus）；显式覆盖永远赢。deck 级判断见 route.deck_decision。
+INTENT_PRESETS = {
+    "HERO": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
+    "STATEMENT": {"energy": "high", "density": "sparse", "empty_space_role": "create_authority"},
+    "SECTION": {"energy": "medium", "density": "sparse", "empty_space_role": "separate_chapter"},
+    "DATA": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
+    "EVIDENCE": {"energy": "medium", "density": "dense", "empty_space_role": "protect_focus"},
+    "COMPARISON": {"energy": "medium", "density": "balanced", "empty_space_role": "separate_chapter"},
+    "PROCESS": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
+    "STRUCTURE": {"energy": "low", "density": "balanced", "empty_space_role": "separate_chapter"},
+    "STORY": {"energy": "medium", "density": "balanced", "empty_space_role": "hold_emotion"},
+    "CLOSING": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
+}
+
+
+def page_intent_skeleton(family: str, rhythm_stage: str = "body",
+                         insight: str = "", focus: str | None = None,
+                         **overrides) -> dict:
+    """家族 → 页面意图骨架（确定性；insight/focus 由内容填，显式覆盖赢）。
+
+    用法：skeleton = page_intent_skeleton("DATA_STORY", insight=…, focus="c1")，
+    再按当前页内容覆写（如 CLOSING 页 energy="low" 做情绪收束）。
+    未知家族给中性骨架（不猜）——家族判断本身是 Art Director 的职责。
+    """
+    fam = normalize_family(family)
+    base = {"insight": insight, "focus": focus,
+            "page_family": str(family or "").strip().upper(),
+            "rhythm_stage": rhythm_stage}
+    base.update(INTENT_PRESETS.get(fam, {"energy": "medium", "density": "balanced",
+                                         "empty_space_role": "protect_focus"}))
+    if focus:
+        base["reading_order"] = [focus]
+    base.update(overrides)     # 显式覆盖永远赢
+    return base
+
+
 def pre_critic(spec: dict) -> dict:
     """spec → 生成前风险报告（确定性，~10ms/页，零渲染零编译）。
 
@@ -327,6 +466,8 @@ def pre_critic(spec: dict) -> dict:
     slides = spec.get("slides") or []
     risks: list[dict] = []
     pages_at_risk: set[str] = set()
+    fps: list[tuple[str, tuple]] = []      # (页 id, 布局指纹)
+    deck_sizes: set[float] = set()         # 全 deck 出现过的字号
 
     def _add(**kw):
         r = _risk(**kw)
@@ -491,7 +632,72 @@ def pre_critic(spec: dict) -> dict:
                      why=f"密度标签变了但占用差估计 {d_occ:.3f} ≤ {RHYTHM_INK_FLAT}（空转）",
                      prevention="标签变化必须伴随真实占用变化，否则视为空转扣分",
                      predicted="rhythm(空转)", cause="rhythm_density", confidence=0.55)
+        # 9. 视觉平衡（v2.12：预测 gravity_drift——内容页墨量质心严重偏轴）
+        vis = [e for e in elems if e.get("type") in _TYPE_WEIGHTS
+               and e.get("layer") != "background" and e.get("role") != "background"]
+        cx = _weighted_centroid(vis)
+        if (cx is not None and len(vis) >= 2 and family not in _ASYMMETRIC_OK
+                and abs(cx - cw / 2.0) > 0.18 * cw):
+            _add(code="BALANCE_SKEW_RISK", level="med", slides=[sid],
+                 why=f"墨量加权质心 x≈{cx:.0f}，偏离画布中轴 "
+                     f"{abs(cx - cw / 2.0):.0f}px（>18% 画布宽）——视觉重量压在一侧",
+                 prevention=("配平视觉重量（成组/加锚/镜像留白），或在 design_rationale "
+                             "声明刻意偏轴的构图理由"),
+                 predicted="gravity_drift", cause="balance_composition", confidence=0.5)
+
+        # 10. 字阶纪律（v2.12：每页 ≤4 级；驻点 64/44/32/22/17/12.5）
+        page_sizes = sorted({float(e["size"]) for e in elems
+                             if e.get("type") == "text" and e.get("size")})
+        if len(page_sizes) > 4:
+            _add(code="TYPE_LADDER_RISK", level="med", slides=[sid],
+                 why=f"本页 {len(page_sizes)} 个不同字号 {page_sizes}，超过每页 4 级上限",
+                 prevention="并级：同层信息同字号，层次交给字重/墨色（驻点 64/44/32/22/17/12.5）",
+                 predicted="CRITIC_LOW(typography)", cause="type_system", confidence=0.6)
+        deck_sizes.update(page_sizes)
+        fps.append((sid, _layout_fingerprint(elems)))
+
         prev = (pi, occ)
+
+    # 11. 布局单调（v2.12）：连续 ≥3 页同布局指纹 = 换字不换版
+    j = 0
+    while j < len(fps):
+        k = j
+        while k + 1 < len(fps) and fps[k + 1][1] == fps[j][1] and fps[j][1]:
+            k += 1
+        if k - j >= 2 and fps[j][1]:
+            _add(code="LAYOUT_MONOTONE_RISK", level="med",
+                 slides=[fps[m][0] for m in range(j, k + 1)],
+                 why=f"连续 {k - j + 1} 页布局指纹相同（换字不换版）——"
+                     "读者会预判版式，注意力流失",
+                 prevention="同根因批量换版式：相邻页至少改一个构图算子（切分/轴/尺度对偶）",
+                 predicted="RHYTHM_FLAT", cause="layout_monotony", confidence=0.5)
+        j = k + 1
+
+    # 12. 记忆线断裂（v2.12）：token 只出现一次 = 线没有成线
+    if len(slides) >= 4:
+        token_pages: dict[str, list[str]] = {}
+        for s in slides:
+            tok = (s.get("page_intent") or {}).get("continuity_token")
+            if tok:
+                token_pages.setdefault(str(tok), []).append(str(s.get("id")))
+        for tok, pages in token_pages.items():
+            if len(pages) == 1:
+                _add(code="CONTINUITY_BROKEN_RISK", level="med", slides=pages,
+                     why=f"记忆线「{tok}」只在 1 页出现——单点不成线，读者无法当作导航线索",
+                     prevention="让该线索在 ≥2 个关键位置复现（章节转场/收尾呼应），或撤掉声明",
+                     predicted="CRITIC_LOW(narrative)", cause="narrative_continuity",
+                     confidence=0.45)
+
+    # 13. deck 级字阶漂移（v2.12）：全 deck 字号数失控
+    if len(deck_sizes) > 8:
+        off = sorted(s for s in deck_sizes
+                     if all(abs(s - r) > _LADDER_TOL for r in LADDER_RUNGS))
+        _add(code="TYPE_SCALE_DRIFT_RISK", level="med", slides=[],
+             why=f"全 deck {len(deck_sizes)} 个不同字号（>8），字阶在漂移"
+                 + (f"；其中 {len(off)} 个离驻点 >±{_LADDER_TOL:g}px" if off else ""),
+             prevention="deck 级归并到驻点字阶（64/44/32/22/17/12.5），页内 ≤4 级；"
+                        "字重与墨色先于字号",
+             predicted="CRITIC_LOW(typography)", cause="type_system", confidence=0.45)
 
     by_cause: dict[str, list[str]] = {}
     for r in risks:

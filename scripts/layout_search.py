@@ -259,12 +259,82 @@ def search(intent: dict, profile: dict | None = None,
     return out
 
 
+# ── 两层布局决策（v2.11）：L1 家族直达，L2 只搜复杂页 ──────────────────
+# 标准家族（单一焦点）有高置信原型，不必每页三候选打分——AI 推理成本的大头
+# 是「每页重新想布局」，不是搜索本身。L1 返回原型规范元素布局，直接进 spec
+# 再按内容微调；混合家族 / 多焦点 / 未分类页才落 L2 search()。
+FAMILY_FAST_PATH = {
+    "HERO": "cinematic_stage",
+    "CLOSING": "statement_center_stage",
+    "STATEMENT": "statement_center_stage",
+    "SECTION": "quiet_progression",
+    "STORY": "editorial_asymmetric",
+    "EVIDENCE": "editorial_asymmetric",
+    "DATA": "full_width_evidence",
+    "PROCESS": "quiet_progression",
+    "TIMELINE": "quiet_progression",
+    "STRUCTURE": "quiet_progression",
+    "COMPARISON": "split_emphasis",
+}
+
+
+def recommend(intent: dict, profile: dict | None = None,
+              dna: dict | None = None) -> dict:
+    """两层布局决策入口：简单页直达家族原型（tier="family"），
+    复杂页（未分类 / 多焦点）才做三候选搜索（tier="search"）。
+
+    family 档直接给出原型的规范元素布局（elements），可原样进 spec 后按内容
+    微调；search 档带全量候选。判断标准是确定性的：家族在快速通道表内 +
+    无 secondary_focus（focus 为单值）即 L1。
+    """
+    family = str(intent.get("page_family") or "").strip().upper()
+    # 内容家族（COVER/DATA_STORY/…）经归一层映射到 route 家族——两套命名
+    # 共享同一映射源（design_intelligence.normalize_family，禁止各自维护别名表）
+    try:
+        from design_intelligence import normalize_family
+        fam_norm = normalize_family(family)
+    except Exception:
+        fam_norm = family
+    complex_reasons = []
+    if not family:
+        complex_reasons.append("page_family 未分类")
+    if intent.get("secondary_focus"):
+        complex_reasons.append("多焦点（secondary_focus 已声明）")
+    if isinstance(intent.get("focus"), (list, tuple)):
+        complex_reasons.append("多焦点（focus 为列表）")
+    arch = FAMILY_FAST_PATH.get(fam_norm)
+    if family and not arch:
+        complex_reasons.append(f"家族 {family} 无快速通道原型")
+    if complex_reasons or arch is None:
+        return {"tier": "search",
+                "reason": "；".join(complex_reasons) or "复杂页",
+                "candidates": search(intent, profile=profile, dna=dna)}
+    meta = ARCHETYPES[arch]
+    prof = dict(profile or {})
+    prof.setdefault("title", True)
+    prof.setdefault("lead", fam_norm not in ("HERO", "CLOSING"))
+    prof.setdefault("chart", fam_norm in ("DATA", "EVIDENCE", "PROCESS",
+                                          "COMPARISON", "STRUCTURE"))
+    prof.setdefault("stats", fam_norm == "DATA")
+    return {"tier": "family", "family": family, "archetype": arch,
+            "grammar": meta["grammar"], "elements": _synthesize(arch, prof),
+            "note": ("标准家族直达原型：元素布局可直接进 spec，按内容微调即可；"
+                     "只有混合家族/多焦点/未分类页才需要 search() 三候选比较")}
+
+
 # ── CLI：python layout_search.py <build_module.py> [page_id] ────────────────────
 def main(argv):
     import importlib.util
     import json
+    if argv and argv[0] == "--recommend":
+        # 两层决策：python layout_search.py --recommend intent.json
+        intent = json.loads(__import__("pathlib").Path(argv[1]).read_text(encoding="utf-8"))
+        out = recommend(intent)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
     if len(argv) < 2:
-        print("usage: python layout_search.py <build_module.py> [page_id] [--json]")
+        print("usage: python layout_search.py <build_module.py> [page_id] [--json]\n"
+              "       python layout_search.py --recommend intent.json")
         return 1
     mod_path = Path = __import__("pathlib").Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))

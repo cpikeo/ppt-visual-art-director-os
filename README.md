@@ -195,15 +195,18 @@ Deterministic QA 只判断可编译、可渲染、可读、可编辑、无越界
 - **v2.7 文档智能密度优化**：Markdown 全库唯一真源制（字阶归 `design-intelligence.md`、哲学与流程归 `SKILL.md`、历史归本节）；修复字阶三源矛盾；新增构图算子（反模板）、Design Intent 决策理由层、中文排印 Craft、分组语法（卡片准入三条件）、微距规则冲突仲裁、主题混血边界；评分参考文档实义字符 −52%；Design DNA 记忆升级为「问题→原因→决策→视觉结果→规律」推理链并补 `when_not_to` 反适用域。
 - **v2.8 文档架构收敛（本轮）**：评分架构参考文档解散——评分体系总览与调参并入 `references/production-contract.md`（权威唯一），开放建议移入下方路线图；除本 README 外全部文档移除版本号叙事（架构按能力命名，演进史只在本文档）；`primitives.py` 同步清理一处指向已删文档的注释指针（零行为变更）；参考文档数 8 → 7。
 - **v2.9 快速生成默认化（本轮）**：`qa.py` CLI 不传 `--mode` 时默认 draft（快速生成：零渲染、秒级、pre-critic 风险首屏），与 `route.recommend_mode` 默认及全部文档口径对齐；显式 `--level N` / `--fast` 维持 legacy 全量行为。
-- **验证**：40 项自检全 PASS；12 页基准实测预检 0.2s、Level 1 迭代 0.03s、Level 3 冷 4.7s／复跑 0.0s、声明轮 0.01s（QA 98.4 / Critic 94.2 / Manifest PASS）；真实项目「2026 年度总结」11 页 QA 99.5 / Critic 90.9 / 6 轮修订收敛。
+- **v2.10 渲染级光学对齐 + 校准闭环工具（本轮）**：`render_check.optical_alignment`（声明轴线视觉峰位带内匹配，键代次升 v6）→ Critic alignment 纯加分项（`critic_version` 2.3，跨版本不可比；结果缓存命中加版本校验，防跨算法陈旧判定）；`scripts/calibrate.py`（只测量不改动：标注模板 / Pearson / 错杀漏放 / 阈值反推 / 样本守门）。实测：deck2026 critic 90.9 → 91.1（9/11 页光学加分，2 处单线 4–6px 偏移被点名），QA/manifest 不变。
+- **v2.11 判断记忆与角色化色彩（本轮）**：DNA Schema v2（design_problem + judgment + avoid；palette/色值等结果记忆字段拒收，实测证据入 proven——判断跨主题迁移，结果不）；品牌色优先（`brief.brand_colors` 入口即覆盖方向预设，「科技=蓝」式映射被切断）；Chart Color Role System（`theme.chart_palette` 语义角色 primary/secondary/neutral/accent/negative，元素 `color_role`/`series_roles`，柱状负值自动染 negative）；两层布局决策（`layout_search.recommend`：标准家族直达原型，复杂页才三候选搜索）；Asset Intent Cache（`recall_prompt_dna`/`record_prompt_dna`：缓存出图判断，不缓存图片、不存色值）；`--mode sketch` 草图链（探索期只守 error 级，设计契约免除，状态 SKETCH 不可发布）。回归：deck2026 四模式 sketch 98.0 / draft 97.5 / release 99.5·critic 91.1 与 v2.10 逐位一致（向后兼容零破坏）。
+- **v2.12 推理降频与预测升级（本轮）**：**速度**——`route.deck_decision`（Deck Decision Card：叙事弧线/密度曲线/媒体政策/执行模式一次固化，页面继承）+ `design_intelligence.page_intent_skeleton`（家族意图骨架，AI 只填 insight/focus，覆盖永远赢）+ `layout_search.recommend` 内容家族经 `normalize_family` 归一直达快速通道（补 TIMELINE）；**智能**——pre-critic 新增 4 族 5 码（BALANCE_SKEW 墨量质心偏轴预测 gravity_drift、TYPE_LADDER 页级 >4 字号、TYPE_SCALE_DRIFT deck 级字阶漂移、LAYOUT_MONOTONE 连续 ≥3 页同布局指纹、CONTINUITY_BROKEN 记忆线单点不成线），deck2026 实测零误报 + 1 条真实发现（13 字号漂移）；**缺陷修复**——v2.11 负值染色在无负值时也解析 negative 角色导致误告警（编译缓存曾掩盖，沙箱轮换暴露）→ 惰性解析；编译缓存补 `COMPILER_VERSION` 版本闸（与 critic 版本闸同构）。回归：deck2026 四模式 98.0/97.5/99.5·91.1 PASS 与基线逐位一致。
+- **验证**：51 项自检全 PASS；12 页基准实测预检 0.2s、Level 1 迭代 0.03s、Level 3 冷 4.7s／复跑 0.0s、声明轮 0.01s（QA 98.4 / Critic 94.2 / Manifest PASS）；真实项目「2026 年度总结」11 页 QA 99.5 / Critic 90.9 / 6 轮修订收敛。
 - **发布门可自证**：缓存内容核验、背景层免检资格、像素实测对比、报告清单互核——四类蒙混路径一律 fail closed。
 
 ## 路线图（开放优化建议）
 
-1. **光学对齐的渲染级复核**（高 ROI）：基于已有渲染 PNG 做边缘投影（sobel + 投影直方图），验证「数学对齐」与「视觉对齐」的一致性，作为 Critic 对齐维度的渲染级证据。投入低（复用已有 PNG），对高级感评估极为关键。
+1. ~~光学对齐的渲染级复核~~ **已完成**：`render_check.optical_alignment`——声明轴线（shape/chart/image 边界）带内匹配（±2px 有真实边缘=对齐、窗口内有带内无=偏移、无边缘=不可验证），≥3 根可验证且一致率 ≥75% 记 Critic alignment 加分；实测 deck2026 9/11 页获加分并暴露 2 处单线 4–6px 偏移。
 2. **QA 分域扣分上限**：长 deck 的 hint 级条目线性累计，60 页比 12 页更容易被扣到低分。建议 `run_qa` 增加可选 `penalties_cap={"guard": 30, "compile": 20, "render": 15}`，扣满即止并在 items 标注「已达上限」。
 3. **accent 色距阈值主题化**：`measure_image` 的色距阈值对高饱和 Accent 与低饱和金属色灵敏度不同；面积预算已主题化（`accent_max`），色距阈值建议并入 `theme.constraints.accent_distance`。
-4. **阈值校准闭环**（决定审美上限）：所有阈值来自经验默认值，从未被真实好作品反推。标注规范、反推方法与相关性 KPI（Pearson ≥0.75）见 `references/benchmark-calibration.md`——当前 0 标注样本，这是「分数好看」与「审美可信」之间唯一尚未打通的环节。
+4. **阈值校准闭环**（决定审美上限）：工具已就位（`scripts/calibrate.py`：标注模板 / Pearson 与错杀漏放 / 逐特征阈值反推 / 样本守门），方法见 `references/benchmark-calibration.md`。**待人工标注**：deck2026 的 11 页模板已生成（`calibration_labels.json`），凑齐好:中:差 ≈ 1:1:1 的 30 页即可首轮校准——这是「分数好看」与「审美可信」之间唯一尚未打通的环节。
 5. **报告版本可比性**：`critic_version` / `qa_version` 已随每次升级演进，跨版本分数不可直接比较。建议 revision_log 记录评分器版本，Release Manifest 增加 `qa_version` 字段。
 6. **CI 依赖版本锁定**：显著图等测量行为依赖 cv2 可用性（已进证据与缓存键），CI 固定依赖版本可让跨机器分数可比。
 

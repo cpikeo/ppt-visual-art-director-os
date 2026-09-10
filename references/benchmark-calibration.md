@@ -1,8 +1,23 @@
 # 基准校准方法论（Benchmark Calibration）
 
 > 本文档回答一个问题：如何把 Art Critic 从「规则化的品味」校准到「真实好作品的品味」。
-> 它是**过程与方法**，不是代码——不碰 `art_critic.py` 的任何常量，只告诉你拿到标注数据后
-> 该怎么做。仓库内不放置标注样本（避免污染自测），样本集放仓库外的私有基准目录。
+> 方法论的执行工具已就位：`scripts/calibrate.py` **只测量、只建议、只记录，不碰任何常量**
+> （改动由人复核后手工落库并留校准记录）。仓库内不放置标注样本（避免污染自测），
+> 样本集与 labels 放仓库外的私有基准目录。
+
+## 工具（calibrate.py）
+
+```bash
+# 第一步：从 build module 生成标注模板（人工只填 score 与 why）
+python3 scripts/calibrate.py --init path/to/build_module.py --labels labels.json
+
+# 第二步：标注完成后跑分析（复用 <pptx>_render/ 证据目录，缓存命中即免渲染）
+python3 scripts/calibrate.py --labels labels.json --build path/to/build_module.py \
+       --pptx path/to/output.pptx --report calibration_report
+```
+
+labels.json：`{"labeled_by", "date", "pages": [{"slide", "score"(0–5), "why"}]}`。
+工具产出：Pearson(critic 页分, 人工分)、错杀率/漏放率、逐特征阈值反推（好/差最佳分界 + 当前默认对照）、改动记录模板。**样本守门**：匹配 <6 页或好/差任一桶 <2 页时拒绝给出任何建议——样本不足时的「校准值」是噪声拟合。
 
 ## 0. 为什么这是唯一能提审美上限的事
 

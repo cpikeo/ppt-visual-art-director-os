@@ -60,12 +60,20 @@ def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
 
 
 def chart_colors(element: dict, ctx: RenderContext):
-    primary = ctx.color(element.get("primary_color")
-                        or ctx.theme.get("chart_primary", "accent"))
+    # Color Role System：元素可声明语义角色（color_role / secondary_role）取代
+    # 具体色值——主题换了图表语义不变。显式 *_color 仍是逃生口（永远可覆盖）。
+    primary = (ctx.chart_role(element["color_role"])
+               if element.get("color_role") else None)
+    if primary is None:
+        primary = ctx.color(element.get("primary_color")
+                            or ctx.theme.get("chart_primary", "accent"))
     if primary is None:
         primary = ctx.text_color("ink")
-    secondary = ctx.color(element.get("secondary_color")
-                          or ctx.theme.get("chart_secondary", "secondary"))
+    secondary = (ctx.chart_role(element["secondary_role"])
+                 if element.get("secondary_role") else None)
+    if secondary is None:
+        secondary = ctx.color(element.get("secondary_color")
+                              or ctx.theme.get("chart_secondary", "secondary"))
     if secondary is None:
         secondary = primary
     ink = ctx.text_color(element.get("ink_color"))
@@ -74,6 +82,31 @@ def chart_colors(element: dict, ctx: RenderContext):
     if muted is None:
         muted = ctx.text_color("secondary" if "secondary" in ctx.colors else None)
     return primary, secondary, ink, muted
+
+
+def _paint_negative_points(series, ctx: RenderContext, element: dict) -> None:
+    """柱状序列里 <0 的点自动染 negative 角色色（元素可 negative_role=False 关闭）。
+
+    风险语义由角色承担，不由色值承担：主题派生什么风险色，负值就是什么色。
+    """
+    if element.get("negative_role") is False:
+        return
+    try:
+        vals = tuple(series.values or ())
+        # 无负值就不解析角色——告警只在兜底真的被用到时才发声
+        # （否则每个柱图都会因主题没声明 negative 而 COMPILE_FAIL）。
+        if not any(v is not None and v < 0 for v in vals):
+            return
+        neg = ctx.chart_role("negative")
+        if neg is None:
+            return
+        for i, v in enumerate(vals):
+            if v is not None and v < 0:
+                pt = series.points[i]
+                pt.format.fill.solid()
+                pt.format.fill.fore_color.rgb = neg
+    except Exception:
+        pass
 
 
 def _rows(element: dict) -> list[dict]:
@@ -190,8 +223,14 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
         pass
     hl = _safe_index(element.get("highlight"), -1)
     end_labels = bool(element.get("end_labels", True))
+    # 每序列可声明语义角色（series_roles: ["primary","negative",...]）——
+    # 「这条序列是风险」是判断，不该写死成某个 hex。
+    series_roles = element.get("series_roles") or []
     for i, series in enumerate(chart.series):
-        color = ctx.color("accent") if i == hl else ctx.series_color(i)
+        role_color = (ctx.chart_role(str(series_roles[i]))
+                      if i < len(series_roles) else None)
+        color = role_color or (ctx.color("accent") if i == hl
+                               else ctx.series_color(i))
         if kind in ("line", "trend", "single_trend_line"):
             series.format.line.color.rgb = color
             series.format.line.width = Pt(3.0 if i == hl else 1.75)
@@ -210,6 +249,7 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
             series.format.fill.solid()
             series.format.fill.fore_color.rgb = color
             series.format.line.fill.background()
+            _paint_negative_points(series, ctx, element)
     try:
         chart.plots[0].gap_width = int(element.get("gap_width", 55))
     except Exception:
@@ -284,6 +324,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
             series.format.fill.solid()
             series.format.fill.fore_color.rgb = primary
             series.format.line.fill.background()
+            _paint_negative_points(series, ctx, element)
             try:
                 chart.plots[0].gap_width = int(element.get("gap_width", 55))
             except Exception:

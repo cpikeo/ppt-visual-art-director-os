@@ -71,6 +71,13 @@ KEY_PAGE_CAP = 6   # Level 2 最多测这么多页；再多与全量无异，失
 # 与 Fast/Advanced（预算控制：资产数/dpi/Critic 时机）正交，互不替代。
 # ════════════════════════════════════════════════════════════════════════
 EXECUTION_MODES = {
+    "sketch": {
+        "label": "Sketch · 草图链",
+        "qa_level": 1, "render": False, "preflight_gate": False, "critic": "off",
+        "aim": "结构探索：只守「错」（数据诚实性/结构合法性），不守「不好」——"
+               "颜色分析/媒体检查/文字合同全部免除，变体迭代不被设计契约拦截",
+        "deliver": "PPTX + ghost 预览建议；升 draft 时契约检查恢复",
+    },
     "draft": {
         "label": "Creative Draft · 创作链",
         "qa_level": 1, "render": False, "preflight_gate": True, "critic": "off",
@@ -373,6 +380,12 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     # 1) 静态治理（guard_rules 独立传入，qa 不解读内部结构）
     t_guard = time.time()
     guard = check_spec(spec, rules=guard_rules)
+    # sketch 档：只守「错」（error 级），不守「不好」（warn/hint）——探索期免除
+    # 设计契约（颜色/媒体/文字合同都在 warn/hint 层），数据诚实性与结构合法性
+    # 仍在（取舍序：事实与语义 > 一切，不参与降档）。
+    if mode == "sketch":
+        guard = {**guard, "checks": [c for c in guard.get("checks", [])
+                                     if c.get("level") == "error"]}
     t_compile = time.time()
 
     # 2) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
@@ -662,7 +675,10 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "OVERLAP", "SOURCE_COLLISION", "CHART_LABEL_COLLISION", "TEXT_OVERFLOW",
         "READABILITY_FAIL", "DATA_INTEGRITY_FAIL", "COMPILE_FAIL", "GUARD_FAIL"}))
     passed = score >= thr["pass"] and not blocking
-    status = "BLOCKED" if blocking else ("PREVIEW_ONLY" if not evidence.get("rendered") else ("PASS" if passed else "REVISE"))
+    status = "BLOCKED" if blocking else (
+        "SKETCH" if mode == "sketch" else
+        ("PREVIEW_ONLY" if not evidence.get("rendered")
+         else ("PASS" if passed else "REVISE")))
     # 像素证据覆盖率决定「能不能发布」：Level 1/2（或任何子集渲染）都不给发布级结论，
     # 判定阈值一律不放宽——只是把 PASS 留给 Level 3。
     coverage = evidence.get("coverage") or {}
@@ -705,6 +721,12 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         spec_hash_now = spec_fingerprint(spec)
         cached = ((studio_state.get("critic_cache") or {}).get(spec_hash_now)
                   if use_cache else None)
+        # 缓存命中还要过版本关：critic 评分行为变了（版本号变），旧判定作废
+        # ——否则 review 模式会一直吐上一代算法的结果。
+        if cached is not None:
+            import art_critic as _ac
+            if str(cached.get("critic_version")) != str(_ac.CRITIC_VERSION):
+                cached = None
         if critic_policy == "off":
             critic_block["reason"] = "mode_draft_no_critic"
         elif critic_policy == "force":
@@ -921,14 +943,15 @@ def main(argv):
     import json
     if len(argv) < 3:
         print("usage: python qa.py <build_module.py> <output.pptx> "
-              "[--mode draft|review|release] [--critic auto|force|off] "
+              "[--mode sketch|draft|review|release] [--critic auto|force|off] "
               "[--no-normalize] [--no-render] [--fast] [--preflight] "
               "[--quick | --key-pages | --manifest | --level N] [--no-cache] "
               "[--raster auto|png|jpeg] [--json]\n"
               "  三层执行架构：draft=创作链（零渲染，初稿探索）· "
               "review=审查链（关键页+受影响页，Critic 待布局稳定）· "
               "release=发布链（全量+Manifest，唯一 PASS 口径）\n"
-              "  默认：不传 --mode 即 draft（快速生成，零渲染秒级）；--level N / --fast 维持 legacy 全量\n"
+              "  默认：不传 --mode 即 draft（快速生成，零渲染秒级）；sketch=草图链（结构探索，契约免除）\n"
+              "  --level N / --fast 维持 legacy 全量\n"
               "  legacy：--quick≡--mode draft · --key-pages≡--mode review · "
               "--manifest≡--mode release")
         return 1

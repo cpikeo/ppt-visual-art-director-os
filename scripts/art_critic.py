@@ -36,6 +36,7 @@ WEIGHTS = {
 }
 BASELINE = 3          # 基准分：满足「声明契约」的最低审美合格线
 PASS_SCORE = 90       # deck_score >= 90 才允许 PASS（与 production-contract 一致）
+CRITIC_VERSION = "2.3"  # 评分行为版本：2.3 新增渲染级光学对齐加分（跨版本分数不可比）
 CAPTION_ROLES = {"caption", "annotation", "source", "label", "axis",
                  "data_label", "legend", "metadata", "method"}
 MEDIA_ROLES = {"hero", "emotion", "proof", "context"}
@@ -606,6 +607,19 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
                   f"渲染边缘投影峰度 {k_avg:.1f}（x={kx:.1f}, y={ky:.1f}），"
                   f"视觉对齐松散，缺少统一装订线/基线。",
                   "把元素左缘/顶缘吸附到少数轴线；删除不影响阅读的次级元素。")
+        # 渲染级光学对齐复核：验证「数学对齐」是否成为「视觉对齐」——每根
+        # 声明轴线（shape/chart/image 边界）的视觉峰位与 spec 坐标偏差 ≤2px。
+        # 纯加分项：一致率高证明数学对齐即视觉对齐；图像页内部边缘天然离轴，
+        # 低一致率不扣分（原始指标留在渲染报告里供人复核）。
+        opt = (render_page or {}).get("optical_alignment") or {}
+        if int(opt.get("lines_checked") or 0) >= 3 and opt.get("aligned_share") is not None:
+            share = float(opt["aligned_share"])
+            shift = float(opt.get("max_shift_px") or 0.0)
+            if share >= 0.75:
+                r.add("alignment", +1,
+                      f"渲染级光学对齐复核：{int(opt['lines_checked'])} 根声明轴线中 "
+                      f"{share:.0%} 的视觉峰位与数学坐标一致（最大偏移 {shift:.1f}px）"
+                      f"——数学对齐即视觉对齐。")
 
     # ---------- 对比（10） ----------
     ink_bg = _hex_contrast(colors, "ink", "background")
@@ -1184,7 +1198,7 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
     deck_notes["director_verdict"] = _director_verdict(
         reports, hard_gates, deck_notes, deck_score, status)
     return {
-        "critic_version": "2.2",
+        "critic_version": CRITIC_VERSION,
         # 自证戳：与 QA 同一算法；发布清单据此判断报告是否来自当前 spec
         "source_spec_hash": spec_fingerprint(spec),
         "deck_score": deck_score,

@@ -309,16 +309,117 @@ def _load_page(module_path: str | None) -> dict:
     raise AttributeError("页面参数模块需定义 PAGE = {...} 或 build_page() -> dict")
 
 
+# ── Asset Intent Cache（v2.11）：缓存提示词智能，不缓存图片 ─────────────
+# 出图的慢在图像模型本身；可复用的是「怎么写这条 prompt 的判断」（构图/光性/
+# 留白/文字区），不是图片。validated prompt DNA 按 场景×视觉世界×主体 寻址；
+# 色值不进 DNA（色彩由主题在版面层决定），构图与光性判断可以进。
+PROMPT_DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "asset_prompt_dna.json"
+_PROMPT_STRUCTURE_KEYS = {"composition", "lighting", "void", "anchor",
+                          "text_zone", "material", "camera"}
+
+
+def _prompt_key(scenario: str, visual_world: str = "", subject: str = "") -> str:
+    toks = [str(x).strip().lower() for x in (scenario, visual_world, subject)
+            if x and str(x).strip()]
+    return " × ".join(toks)
+
+
+def _load_prompt_store() -> dict:
+    try:
+        return json.loads(PROMPT_DNA_STORE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"version": 1, "entries": []}
+
+
+def recall_prompt_dna(scenario: str, visual_world: str = "",
+                      subject: str = "") -> dict:
+    """场景×视觉世界×主体 → 已验证的出图判断（构图/光性/留白/文字区）。
+
+    返回 {matched, key, entry, note}。无精确命中时做 token 重叠 ≥2 的近邻
+    提示（需适配，禁止照抄——主体一换，构图判断就要重估）。
+    """
+    key = _prompt_key(scenario, visual_world, subject)
+    store = _load_prompt_store()
+    entries = store.get("entries") or []
+    for e in entries:
+        if e.get("key") == key:
+            return {"matched": e.get("key"), "key": key, "entry": e,
+                    "note": "精确命中：构图/光性判断可复用，主体与构图的关系仍要按当前内容重估"}
+    want = {t for t in key.split(" × ") if t}
+    near = []
+    for e in entries:
+        have = {t for t in str(e.get("key", "")).split(" × ") if t}
+        if len(want & have) >= 2:
+            near.append(e)
+    if near:
+        return {"matched": None, "key": key, "entry": near[0],
+                "note": "近邻命中（场景相近主体不同）：只借光性与材质判断，构图按当前主体重估"}
+    return {"matched": None, "key": key, "entry": None,
+            "note": "无 prompt DNA：按 asset contract 起草，发布 PASS 后 record_prompt_dna 沉淀这条判断"}
+
+
+def record_prompt_dna(entry: dict) -> dict:
+    """沉淀已验证的出图判断。entry = {scenario, visual_world?, subject?,
+    prompt_structure: {composition|lighting|void|anchor|text_zone|material|camera ≥2 项},
+    avoid?: [...], proven: {project, verdict?}}。拒收色值（色彩归主题，不归 prompt）。"""
+    key = _prompt_key(entry.get("scenario", ""), entry.get("visual_world", ""),
+                      entry.get("subject", ""))
+    if not key:
+        return {"ok": False, "reason": "需要 scenario（可附 visual_world / subject）"}
+    st = entry.get("prompt_structure")
+    if not isinstance(st, dict) or len(set(st) & _PROMPT_STRUCTURE_KEYS) < 2:
+        return {"ok": False, "reason":
+                "prompt_structure 需 ≥2 项：" + "/".join(sorted(_PROMPT_STRUCTURE_KEYS))}
+    import re
+    for k, v in st.items():
+        if isinstance(v, str) and re.search(r"#[0-9a-fA-F]{3,8}\b", v):
+            return {"ok": False, "reason":
+                    f"prompt_structure.{k} 含色值：色彩由主题在版面层决定，"
+                    "prompt DNA 只存构图/光性/材质判断（光性用语言描述，如 warm tungsten）"}
+    if not (entry.get("proven") or {}).get("project"):
+        return {"ok": False, "reason": "proven.project 必填——只有真实用过的判断才值得缓存"}
+    store = _load_prompt_store()
+    entries = [e for e in store.get("entries", []) if e.get("key") != key]
+    entries.append({"key": key,
+                    "scenario": entry.get("scenario"),
+                    "visual_world": entry.get("visual_world"),
+                    "subject": entry.get("subject"),
+                    "prompt_structure": st,
+                    "avoid": entry.get("avoid") or [],
+                    "proven": entry.get("proven")})
+    entries.sort(key=lambda e: str(e.get("key")))
+    store = {"version": 1, "entries": entries}
+    PROMPT_DNA_STORE.parent.mkdir(parents=True, exist_ok=True)
+    PROMPT_DNA_STORE.write_text(json.dumps(store, ensure_ascii=False, indent=1),
+                                encoding="utf-8")
+    return {"ok": True, "store": str(PROMPT_DNA_STORE), "entries": len(entries)}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="PPT Design OS · 视觉资产提示词组装器")
-    parser.add_argument("card", help="资产卡参数模块（定义 CARD 或 build_card()）")
+    parser.add_argument("--recall", metavar="KEY",
+                        help="提示词 DNA 召回：'场景|视觉世界|主体'（缓存判断，不缓存图片）")
+    parser.add_argument("--record", metavar="ENTRY_JSON",
+                        help="沉淀已验证的出图判断（JSON 文件：scenario/prompt_structure/proven）")
+    parser.add_argument("card", nargs="?", help="资产卡参数模块（定义 CARD 或 build_card()）")
     parser.add_argument("--page", help="页面版面参数模块（定义 PAGE 或 build_page()）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
     parser.add_argument("--ratio", default="16:9", help="出图比例（默认 16:9）")
     parser.add_argument("--no-qc", action="store_true", help="不追加 Universal QC 后缀")
     args = parser.parse_args(argv)
 
+    if args.recall:
+        parts = [x.strip() for x in args.recall.split("|") if x.strip()]
+        out = recall_prompt_dna(*parts)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+    if args.record:
+        entry = json.loads(Path(args.record).read_text(encoding="utf-8"))
+        print(json.dumps(record_prompt_dna(entry), ensure_ascii=False, indent=2))
+        return 0
+    if not args.card:
+        parser.error("需要 card 模块路径（或使用 --recall / --record）")
     try:
         card = _load_card(args.card)
         page = _load_page(args.page)
