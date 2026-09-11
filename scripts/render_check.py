@@ -218,7 +218,7 @@ def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
 
     复用条件就是「编译的两项输入都没变」：spec 的像素视图指纹一致 + 磁盘上的
     PPTX 内容指纹未变。因此手动改过 PPTX、换过图片或删过文件都不会命中；
-    编译器行为变了 → 产物字节变了 → 第二道关自动失效（vNext 起不再需要
+    编译器行为变了 → 产物字节变了 → 第二道关自动失效（不再需要
     COMPILER_VERSION 之类的版本闸：视图 + 内容核验已经覆盖同一件事）。
     `use_cache=False` 时调用方直接跳过本函数。
     """
@@ -659,28 +659,6 @@ def _pdf_from_pptx(pptx: Path, out_dir: Path, keep_pngs=...) -> tuple[Path | Non
     return pdf, None
 
 
-def render_to_images(pptx: Path, out_dir: Path, dpi: int = 96,
-                     pages: list[int] | None = None,
-                     workers: int = MAX_RENDER_WORKERS) -> tuple[list[Path], str | None]:
-    """
-    PPTX → PNG 序列。返回 (pages, reason)；reason=None 表示成功。
-    无 LibreOffice / pdftoppm 时返回 ([], 原因)。
-
-    pages：只转换这些 1-based 页码（None=全部），配合 Progressive QA 把渲染成本
-    从「整副 deck」降到「关键页」；workers 最多 2（见 MAX_RENDER_WORKERS）。
-    """
-    out_dir = Path(out_dir)
-    pdf, reason = _pdf_from_pptx(pptx, out_dir)
-    if pdf is None:
-        return [], reason
-    wanted = [int(n) for n in pages] if pages else list(range(1, _pdf_page_count(pdf) + 1))
-    mapping = _convert_pages(pdf, out_dir, dpi, wanted, workers)
-    if not mapping:
-        return [], "pdftoppm produced no pages"
-    missing = [n for n in wanted if n not in mapping]
-    if missing:
-        return ([mapping[n] for n in sorted(mapping)], f"missing rendered pages: {missing}")
-    return [mapping[n] for n in sorted(mapping)], None
 
 
 def _pdf_page_count(pdf: Path) -> int:
@@ -784,10 +762,6 @@ def _saliency_with_method(arr: Any, max_side: int = 256) -> tuple:
     return np.clip((sal - p[0]) / max(p[1] - p[0], 1e-6), 0, 1), "deterministic_fallback"
 
 
-def _saliency(arr: Any, max_side: int = 256) -> Any:
-    """兼容壳：只要显著图不要溯源的旧调用走这里（唯一生产调用在 measure_image，
-    已改走 _saliency_with_method）。"""
-    return _saliency_with_method(arr, max_side)[0]
 
 
 def _dominant_color(patch) -> str:

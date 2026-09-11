@@ -22,16 +22,18 @@ Layer 0.5 · Guard（静态治理层）
 from __future__ import annotations
 
 import math
+import copy
+import re
 from typing import Any
 
-from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT, contrast,
+from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT, ELEMENT_TYPES, contrast,
                          bg_coverage, bg_overlay_opacity, is_background_declared,
-                         rounded_containers)
+                         rounded_containers, spec_fingerprint)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
 GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalizer/文档同源）
 
-# ── 设计契约 = 观察，不扣分、不阻断（v3.2）────────────────────────────────
+# ── 设计契约 = 观察，不扣分、不阻断────────────────────────────────
 # Guard 是 PPT 的 compiler linter：它只回答「这份 spec 是不是合法、数据是不是真的、
 # 文件能不能渲染、内容有没有被切掉」。「高级感」不在它的管辖范围——那属于
 # Design Intelligence / Art Critic（`art_critic.py` 的设计价值维度）。
@@ -192,21 +194,6 @@ def _inside_zone(e: dict, zone: dict) -> bool:
         return False
 
 
-def _box(e: dict, text_ink_ratio: float, text_ink_v: float) -> tuple[float, float, float, float]:
-    """Return a conservative visible-ink box, not merely the text-frame box."""
-    x, y = float(e.get("x", 0)), float(e.get("y", 0))
-    w, h = max(0.0, float(e.get("width", 0))), max(0.0, float(e.get("height", 0)))
-    if e.get("type") == "text":
-        ratio = max(0.1, min(1.0, float(e.get("ink_width_ratio", text_ink_ratio))))
-        vertical = max(0.1, min(1.0, float(e.get("ink_height_ratio", text_ink_v))))
-        anchor = str(e.get("ink_anchor", "left_top"))
-        if anchor in {"center", "middle"}:
-            x += (w - w * ratio) / 2
-            y += (h - h * vertical) / 2
-        elif anchor in {"right", "right_top"}:
-            x += w - w * ratio
-        w, h = w * ratio, h * vertical
-    return x, y, w, h
 
 
 def _overlap_allowed(a: dict, b: dict) -> bool:
@@ -774,12 +761,25 @@ def _data_claim_mismatch(slide: dict):
     return out
 
 
+def _rule_num(rules: dict, key: str, default, cast=float):
+    """rules 阈值容错读取：None/非数值/脏输入一律回落默认（不炸全链）——
+    rules 来自主题约束或调用方生成物，没有资格让治理层崩溃。"""
+    v = rules.get(key, default)
+    if v is None:
+        return default
+    try:
+        return cast(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def check_spec(spec: dict, rules: dict | None = None) -> dict:
     """
     静态治理：对调用方传入的 spec 做 OS 硬约束断言。
 
-    rules（可配置阈值，调用方传入；缺省用默认值。主题可在 `spec.theme.constraints`
-    声明自身生产约束，未显式传入 rules 时自动生效——来自 VP 主题「生产约束」章节）:
+    rules（可配置阈值，调用方传入；缺省用默认值；脏输入一律回落默认不炸链。
+    主题约束 `spec.theme.constraints` 仅对 accent_max/max_charts/max_colors/
+    font_levels_max/font_families_max 五项在未显式传入 rules 时生效）:
       grid_bias      : 网格偏差最大容忍（0–4，0=必须严格 8 倍数）
       safety_min     : 安全区最小边距（默认 48，通栏条豁免）
       overlap_ratio  : 元素重叠容忍上限（默认 .12）
@@ -822,32 +822,31 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     theme = spec.get("theme") or {}
     # 主题生产约束（来自 VP 主题「生产约束」章节，可被 rules 显式覆盖）
     constraints = dict(theme.get("constraints") or {})
-    grid_bias = int(rules.get("grid_bias", 4))          # 非严格：≤4 仅提示
-    safety_min = float(rules.get("safety_min", 48))
-    overlap_ratio = float(rules.get("overlap_ratio", 0.12))
-    text_ink_ratio = float(rules.get("text_ink_ratio", 0.55))
-    text_ink_v = float(rules.get("text_ink_v", 0.70))
-    accent_max = float(rules.get("accent_max",
-                                 constraints.get("accent_max", 0.05)))
-    accent_text_k = float(rules.get("accent_text_k", 0.30))
+    grid_bias = _rule_num(rules, "grid_bias", 4, int)          # 非严格：≤4 仅提示
+    safety_min = _rule_num(rules, "safety_min", 48, float)
+    overlap_ratio = _rule_num(rules, "overlap_ratio", 0.12, float)
+    text_ink_ratio = _rule_num(rules, "text_ink_ratio", 0.55, float)
+    text_ink_v = _rule_num(rules, "text_ink_v", 0.70, float)
+    accent_max = _rule_num(rules, "accent_max", constraints.get("accent_max", 0.05), float)
+    accent_text_k = _rule_num(rules, "accent_text_k", 0.30, float)
     max_charts = rules.get("max_charts", constraints.get("max_charts"))
     max_colors = rules.get("max_colors", constraints.get("max_colors"))
     check_rhythm = bool(rules.get("check_rhythm", True))
-    narrative_lines_max = int(rules.get("narrative_lines_max", 6))
-    semantic_colors_max = int(rules.get("semantic_colors_max", 3))
-    alignments_max = int(rules.get("alignments_max", 2))
-    decoration_area_max = float(rules.get("decoration_area_max", 0.10))
-    animation_types_max = int(rules.get("animation_types_max", 2))
-    hue_families_max = int(rules.get("hue_families_max", 4))
-    accent_hue_min = float(rules.get("accent_hue_min", 12))
-    chart_label_scale_tol = float(rules.get("chart_label_scale_tol", 1.25))
+    narrative_lines_max = _rule_num(rules, "narrative_lines_max", 6, int)
+    semantic_colors_max = _rule_num(rules, "semantic_colors_max", 3, int)
+    alignments_max = _rule_num(rules, "alignments_max", 2, int)
+    decoration_area_max = _rule_num(rules, "decoration_area_max", 0.10, float)
+    animation_types_max = _rule_num(rules, "animation_types_max", 2, int)
+    hue_families_max = _rule_num(rules, "hue_families_max", 4, int)
+    accent_hue_min = _rule_num(rules, "accent_hue_min", 12, float)
+    chart_label_scale_tol = _rule_num(rules, "chart_label_scale_tol", 1.25, float)
     # §07 排版预算（hint 级软约束：提示层级过碎，不扣硬分）
     font_levels_max = int(rules.get("font_levels_max",
                                     constraints.get("font_levels_max", 4)))
     font_families_max = int(rules.get("font_families_max",
                                       constraints.get("font_families_max", 2)))
     # 可读性底线：注释/来源/标签类文字的最小字号（设计单位 px）
-    min_font_size = float(rules.get("min_font_size", 10))
+    min_font_size = _rule_num(rules, "min_font_size", 10, float)
     focus_scale = bool(rules.get("focus_scale", True))
     require_provenance = bool(rules.get("require_provenance", False))
 
@@ -864,6 +863,19 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         checks.append({"rule": rule, "id": eid, "level": level, "msg": msg})
         if level in ("warn", "error"):
             warnings.append(f"[{rule}] {msg}")
+
+    # 元素类型白名单（F1）：未知 type 在编译期被静默跳过 = 内容丢失；
+    # spec 零成本档不加载编译层，此处是唯一前置拦截。集合单真源 primitives.ELEMENT_TYPES。
+    for _sl in (spec.get("slides") or []):
+        if not isinstance(_sl, dict):
+            continue
+        for _el in (_sl.get("elements") or []):
+            if not isinstance(_el, dict):
+                continue
+            _et = str(_el.get("type", "text"))
+            if _et not in ELEMENT_TYPES:
+                add("element_type", str(_el.get("id", "?")), "error",
+                    f"未知元素类型 {_et!r}（编译期将静默跳过；合法类型：{sorted(ELEMENT_TYPES)}）")
 
     if "grid_columns" in canvas:
         try:
@@ -1559,7 +1571,6 @@ def main(argv):
     # V2：Guard 之前先过 Normalizer（生产链第 0 级）。默认检查的是归一化后的
     # 规范形——Guard 只确认「归一化解决不了的问题」；--raw 看原始 spec 的诊断。
     if "--raw" not in argv:
-        from normalizer import normalize_spec
         spec, _norm = normalize_spec(spec)
     result = check_spec(spec)
     if "--json" in argv:
@@ -1577,6 +1588,212 @@ def main(argv):
             if c["level"] != "hint":
                 print(f"  [{c['level']:5s}] {c['rule']:14s} {c['msg']}")
     return 0 if result["passed"] else 2
+
+
+
+
+# ══════════════════ Normalizer（机械归一化 · 生产链第 0 级）══════════════════
+# 原 normalizer 模块整体并入：治理层统一 CLI 为 guard.py --preflight（normalize 是其第一步）。
+
+SPACING_STEP = 4
+_COLOR_FIELDS = ("color", "background", "border_color", "stroke", "accent",
+                 "fill_color", "track_color", "label_color")
+_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_REPORT_ITEM_CAP = 200   # 报告逐条明细上限（统计仍完整，防止巨型 spec 刷屏）
+def _snap_pos(value: float, grid: int) -> int:
+    """位置就近吸附（round-half-up，与版心设计的取整方向一致）。"""
+    return int(math.floor(float(value) / grid + 0.5)) * grid
+def _snap_size(value: float, grid: int) -> int:
+    """尺寸向上吸附：只增不减，防止吸附后文字/图表溢出容器。"""
+    v = float(value)
+    n = math.ceil(v / grid) * grid
+    return int(n) if n >= v else int(n) + grid  # 浮点边界：ceil(64.0/8)*8==64 直接命中
+def _canonical_color(value: Any, tokens: dict[str, str]) -> tuple[Any, str | None]:
+    """色彩值 → (规范值, 规则名)。tokens: {token名: 规范hex}。
+    规则：token 别名（大小写/空白）→ 规范 token 名；hex → 大写规范形；
+    与主题色完全同值的 hex → token 名（让「同一颜色」在 spec 里只有一个名字）。"""
+    if not isinstance(value, str):
+        return value, None
+    raw = value.strip()
+    if not raw:
+        return value, None
+    # ① token 别名 → 规范 token 名
+    for name in tokens:
+        if raw.lower() == name.strip().lower():
+            return (name, "color_token_alias") if raw != name else (value, None)
+    # ② hex → 规范大写形
+    if _HEX_RE.match(raw):
+        upper = raw.upper()
+        # ③ 与主题色同值的 hex → token 名（单一事实来源）
+        for name, hexv in tokens.items():
+            if isinstance(hexv, str) and _HEX_RE.match(hexv.strip()) \
+                    and hexv.strip().upper() == upper:
+                return name, "color_hex_to_token"
+        return (upper, "color_hex_case") if upper != raw else (value, None)
+    return value, None
+def _canonical_font(value: Any, families: list[str]) -> tuple[Any, str | None]:
+    """字体声明 → 主题声明族名的规范拼写（大小写/空白差异归一）。"""
+    if not isinstance(value, str) or not families:
+        return value, None
+    raw = value.strip()
+    for fam in families:
+        if raw.lower() == str(fam).strip().lower():
+            return (fam, "font_token_alias") if raw != fam else (value, None)
+    return value, None
+def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
+                    spacing: bool) -> tuple[dict, dict[str, int], list[dict], list[dict]]:
+    """单趟归一化（纯函数）：返回 (新 spec, 分规则计数, 逐条明细, 未解析项)。"""
+    src = copy.deepcopy(spec)
+    items: list[dict] = []
+    by_rule: dict[str, int] = {}
+    unresolved: list[dict] = []
+
+    canvas = (src.get("canvas") or {})
+    grid_unit = int(canvas.get("grid_unit") or GRID_UNIT)
+    if grid_unit <= 0:
+        grid_unit = GRID_UNIT
+    # spec 级开关：normalization: {"grid": false} 整体关闭网格吸附
+    spec_opt = (src.get("normalization") or {})
+    do_grid = grid and spec_opt.get("grid", True) is not False
+
+    theme = (src.get("theme") or {})
+    color_tokens: dict[str, str] = {}
+    if colors:
+        for k, v in (theme.get("colors") or {}).items():
+            if isinstance(k, str) and isinstance(v, str):
+                color_tokens[k.strip()] = v.strip()
+    font_families: list[str] = []
+    if fonts:
+        seen: set[str] = set()
+        for v in (theme.get("fonts") or {}).values():
+            if isinstance(v, str) and v.strip():
+                key = v.strip().lower()
+                if key not in seen:
+                    seen.add(key)
+                    font_families.append(v.strip())
+
+    def _record(slide_id: str, el_id: str | None, field: str,
+                old: Any, new: Any, rule: str) -> None:
+        by_rule[rule] = by_rule.get(rule, 0) + 1
+        if len(items) < _REPORT_ITEM_CAP:
+            items.append({"slide": slide_id, "id": el_id, "field": field,
+                          "from": old, "to": new, "rule": rule})
+
+    def _normalize_element(slide_id: str, el: dict) -> None:
+        el_id = el.get("id")
+        # ① 网格吸附：只碰几何四元组，绝不碰语义
+        if do_grid and not el.get("grid_exempt"):
+            for f in ("x", "y"):
+                v = el.get(f)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    snapped = _snap_pos(v, grid_unit)
+                    if snapped != v:
+                        _record(slide_id, el_id, f, v, snapped, "grid_snap")
+                        el[f] = snapped
+            for f in ("width", "height"):
+                v = el.get(f)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    snapped = _snap_size(v, grid_unit)
+                    if snapped != v:
+                        _record(slide_id, el_id, f, v, snapped, "grid_snap_size")
+                        el[f] = snapped
+        # ② 色彩 token 归一
+        if colors and color_tokens:
+            for f in _COLOR_FIELDS:
+                if f not in el:
+                    continue
+                new, rule = _canonical_color(el.get(f), color_tokens)
+                if rule:
+                    _record(slide_id, el_id, f, el.get(f), new, rule)
+                    el[f] = new
+            fill = el.get("fill")
+            if isinstance(fill, dict) and "color" in fill:
+                new, rule = _canonical_color(fill.get("color"), color_tokens)
+                if rule:
+                    _record(slide_id, el_id, "fill.color", fill.get("color"), new, rule)
+                    fill["color"] = new
+        # ③ 字体 token 归一
+        if fonts and font_families:
+            for f in ("font", "font_family"):
+                if f not in el:
+                    continue
+                new, rule = _canonical_font(el.get(f), font_families)
+                if rule:
+                    _record(slide_id, el_id, f, el.get(f), new, rule)
+                    el[f] = new
+                elif isinstance(new, str) and new.strip() and rule is None \
+                        and new.strip().lower() not in {x.lower() for x in font_families}:
+                    unresolved.append({"slide": slide_id, "id": el_id, "field": f,
+                                       "value": new, "kind": "font_not_in_theme"})
+        # ④ 微间距吸附（padding → 4 的倍数）
+        if spacing:
+            v = el.get("padding")
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                snapped = int(math.ceil(float(v) / SPACING_STEP)) * SPACING_STEP
+                if snapped != v:
+                    _record(slide_id, el_id, "padding", v, snapped, "spacing_snap")
+                    el["padding"] = snapped
+
+    for slide in (src.get("slides") or []):
+        if not isinstance(slide, dict):
+            continue
+        slide_id = slide.get("id")
+        for el in (slide.get("elements") or []):
+            if isinstance(el, dict):
+                _normalize_element(str(slide_id), el)
+    return src, by_rule, items, unresolved
+def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True,
+                   fonts: bool = True, spacing: bool = True) -> tuple[dict, dict]:
+    """spec → (归一化 spec, 归一化报告)。纯函数：不改入参，返回深拷贝。
+
+    报告结构：
+        applied          是否发生了修改
+        hash_before/after 归一化前后指纹（发布链自证用）
+        changed / by_rule 修改总数与分规则计数
+        items            逐条明细（slide/id/field/from/to/rule，封顶 200 条）
+        idempotent       内置二次归一化校验（必须为 True）
+        unresolved       无法归一但值得注意的项（如未在主题声明的字体），只记录不改
+    """
+    src, by_rule, items, unresolved = _normalize_once(
+        spec, grid=grid, colors=colors, fonts=fonts, spacing=spacing)
+    # 幂等校验：对结果再归一化一次，必须零修改（保证缓存键与发布链稳定）。
+    # 第二趟不再递归自检（_normalize_once 是单趟），只比对计数。
+    _, by_rule_2, _, _ = _normalize_once(
+        src, grid=grid, colors=colors, fonts=fonts, spacing=spacing)
+    changed = sum(by_rule.values())
+    report = {
+        "applied": changed > 0,
+        "hash_before": spec_fingerprint(spec),
+        "hash_after": spec_fingerprint(src),
+        "changed": changed,
+        "by_rule": by_rule,
+        "items": items,
+        "idempotent": sum(by_rule_2.values()) == 0,
+        "unresolved": unresolved[:_REPORT_ITEM_CAP],
+    }
+    return src, report
+def geometry_only_hash(spec: dict) -> str:
+    """像素相关投影的指纹：剥掉「只影响声明/评分、不影响像素」的字段后取指纹。
+
+    用途：Critic 稳定性判定（连续两次 clean 且几何未变才值得跑 Critic）与
+    语义变更分类。与 render_check 的页级缓存键同向：这些字段变了，页级缓存
+    本来也不会失效——在这里显式说出来，避免「改了一句 insight 也重渲染」。
+    """
+    PIXEL_NEUTRAL_PAGE_FIELDS = (
+        "insight", "narrative_role", "reading_order", "energy", "density",
+        "empty_space_role", "page_family", "rhythm_stage", "continuity_token",
+    )
+    proj = copy.deepcopy(spec)
+    for slide in (proj.get("slides") or []):
+        if not isinstance(slide, dict):
+            continue
+        slide.pop("notes", None)
+        slide.pop("source_note", None)
+        pi = slide.get("page_intent")
+        if isinstance(pi, dict):
+            for f in PIXEL_NEUTRAL_PAGE_FIELDS:
+                pi.pop(f, None)
+    return spec_fingerprint(proj)
 
 
 if __name__ == "__main__":

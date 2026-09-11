@@ -19,7 +19,7 @@ brief 最小集（plan_deck 的唯一输入，yml / json / 定义 BRIEF 的模�
 
 CLI：``python3 scripts/route.py brief.yml --json``（``--demo`` 用内置示例 deck 验证行为）。
 
-设计约束（与 SKILL.md「Less System, More Intelligence」一致）：
+设计约束（与 SKILL.md Decision Framework 一致）：
   * 纯函数、零配置、零外部依赖；不读写主题 Markdown，不产生文件。
   * 输出的是**建议与预算**，不改变 guard/compile/qa 的判定口径。
   * 只维护一张路由表；新增内容类型 = 在 ROUTES 加一行，不新增文件、不新增抽象层。
@@ -475,7 +475,7 @@ _REVIEW_HINTS = ("确认", "审阅", "审查", "review", "方向确认")
 def recommend_mode(brief: dict) -> str:
     """brief → draft | review | release。
 
-    V2 默认是 draft（创作链）：初稿/探索/多方案不该付发布级流水线的成本。
+    默认是 draft（创作链）：初稿/探索/多方案不该付发布级流水线的成本。
     只有 brief 明说要终版发布、或用户已确认方向时才升档。
     显式 brief.execution_mode 优先；关键词 sniff 只做兜底。
     """
@@ -515,7 +515,7 @@ def _load_brief(path: str) -> dict:
 
 
 def deck_decision(brief: dict) -> dict:
-    """Deck Decision Card（v2.12）：全 deck 判断一次，页面继承。
+    """Deck Decision Card：全 deck 判断一次，页面继承。
 
     生成速度的大头是「每页重新想」。这张卡把 deck 级判断（叙事弧线/方向/
     密度曲线/媒体政策/色彩行为/执行模式）一次固化，页面只做适配——

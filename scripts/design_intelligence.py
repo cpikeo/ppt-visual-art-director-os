@@ -42,33 +42,42 @@ from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast, estimate_lines
 from art_critic import (_memory_anchor, _content_occupancy, STATEMENT_SIZE,
                         FOCUS_LEAD, FOCUS_AREA_LEAD, RHYTHM_INK_DELTA,
                         RHYTHM_INK_FLAT)
+# 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
+from design_intelligence_rules import (
+    BAR_FAMILY as _BAR_FAMILY,
+    SMALL_ACCENT_CHART_SHARE as _SMALL_ACCENT,
+    TEXT_INK_FACTOR as _TEXT_INK_FACTOR,
+    SHAPE_FILL_FACTOR as _SHAPE_FILL_FACTOR,
+    RESULT_MEMORY_KEYS as _RESULT_MEMORY_KEYS,
+    JUDGMENT_KEYS as _JUDGMENT_KEYS,
+    MEDIA_MODEL as _MEDIA_MODEL, FAMILY_ALIASES as _FAMILY_ALIASES,
+    LADDER_TOL as _LADDER_TOL, TYPE_WEIGHTS as _TYPE_WEIGHTS,
+    ASYMMETRIC_OK_FAMILIES as _ASYMMETRIC_OK,
+    DIRECTION_ALIAS as _DIRECTION_ALIAS,
+    DENSITY_BANDS, INTENT_PRESETS, LADDER_RUNGS,
+    CALIBRATION_LAWS, CALIBRATION_FAMILIES,
+    COLOR_RATIO_TARGETS, COLOR_FORBIDDEN, COLOR_DIRECTIONS)
 
 DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json"
 
-# ── 密度带（与 art_critic._content_occupancy 判读一致）─────────────────
-DENSITY_BANDS = {"sparse": (0.0, 0.60), "balanced": (0.65, 0.75),
-                 "dense": (0.75, 0.85)}
-# 图表 accent 面积估算（按 chart_kind 物理形态校准，宁可轻微高估不可漏报）：
-# 构成图（donut/pie）：高亮扇区是实心大块 —— 环带 ≈62% bbox × 扇区占比
-# 条形族：细轨道 + 圆头端点，实际着色 ≈7% bbox ×（高亮值/最大值）
-# 点缀类（时间轴/步骤/大数字）：小面积强调
-_BAR_FAMILY = {"bar", "column", "horizontal_bar", "ranked_bar", "comparison_bar",
-               "stacked_bar", "progress_bar", "waterfall"}
-_SMALL_ACCENT = {"line": 0.02, "trend": 0.02, "single_trend_line": 0.02,
-                 "area": 0.05, "sparkline": 0.02, "timeline": 0.04, "steps": 0.04,
-                 "process_flow": 0.04, "big_number": 0.08, "kpi": 0.08,
-                 "executive_kpi": 0.08, "big_number_row": 0.06, "matrix": 0.04}
-_TEXT_INK_FACTOR = 0.40      # 文本框 → 可见墨迹的折算（accent 文字估算用）
-_SHAPE_FILL_FACTOR = 0.90   # 实心形状着色率
+# 密度带与 accent 估算因子 → design_intelligence_rules（真源），经 import 复用。
 
 
 # ════════════════════════════════════════════════════════════════════════
 # ① Design DNA Memory
 # ════════════════════════════════════════════════════════════════════════
-def _load_store() -> dict:
+def _load_store(strict: bool = False) -> dict:
+    """文件不存在 = 合法初态（空库）；存在但解析失败 = 数据损坏。
+
+    读路径回落空库（召回失败安全）；strict 写路径抛错——写方必须在
+    「损坏时拒绝写入」的最高层兜底，否则空库会被整体写回、经验全灭。"""
     try:
         return json.loads(DNA_STORE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"version": 1, "entries": []}
     except Exception:
+        if strict:
+            raise
         return {"version": 1, "entries": []}
 
 
@@ -106,14 +115,7 @@ def recall_dna(brief: dict) -> dict:
                      else "高置信命中：以该经验为基线，只做内容级调整")}
 
 
-# ── DNA Schema v2：判断记忆，不是结果记忆 ──────────────────────────────
-# 存「为什么这样设计」（可迁移的行为判断），不存「用了什么颜色/版式」（结果）。
-# 结果记忆会让 AI 变模板（科技=蓝、金融=黑金）；判断记忆跨主题迁移。
-# 色值与实测占比属于证据 → entry["proven"]；行为判断 → entry["judgment"]。
-_RESULT_MEMORY_KEYS = {"palette", "color", "colors", "font", "fonts",
-                       "image_style", "layout", "layout_result"}
-_JUDGMENT_KEYS = {"hierarchy", "space", "media", "color_behavior",
-                  "charts", "anchor_rule", "structure", "type_voice"}
+# DNA Schema 键集 → design_intelligence_rules（JUDGMENT_KEYS/RESULT_MEMORY_KEYS）。
 _HEX_RE = None  # 惰性编译（模块导入零成本）
 
 
@@ -121,8 +123,20 @@ def _hex_re():
     global _HEX_RE
     if _HEX_RE is None:
         import re
-        _HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+        _HEX_RE = re.compile(r"[#＃][0-9a-fA-F]{3,8}\b")
     return _HEX_RE
+
+
+def _leaf_strings(v):
+    """递归产出 judgment 值内全部叶子字符串（嵌套 dict/list 藏不了色值）。"""
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from _leaf_strings(x)
+    elif isinstance(v, (list, tuple)):
+        for x in v:
+            yield from _leaf_strings(x)
 
 
 def record_dna(entry: dict) -> dict:
@@ -138,7 +152,12 @@ def record_dna(entry: dict) -> dict:
     （色值与实测放 proven——判断进 judgment，证据进 proven）。
     只有真实发布过的经验才值得记忆——调用方应仅在上游校验 PASS 后调用。
     """
-    store = _load_store()
+    try:
+        store = _load_store(strict=True)
+    except Exception as e:
+        return {"ok": False, "reason":
+                f"经验库存在但无法解析（{type(e).__name__}）——拒绝写入以防"
+                f"整库覆盖毁灭；请人工修复 {DNA_STORE.name} 后重试"}
     if not entry.get("id") or not entry.get("signature", {}).get("keywords"):
         return {"ok": False, "reason": "entry 需要 id 与 signature.keywords"}
     problem = entry.get("design_problem")
@@ -156,8 +175,8 @@ def record_dna(entry: dict) -> dict:
                 f"judgment 含结果记忆字段 {sorted(bad)}：颜色/字体/版式结果会让 DNA "
                 "变模板。可迁移的行为判断放 judgment，色值与实测放 proven"}
     for k, v in judgment.items():
-        if isinstance(v, str):
-            m = _hex_re().search(v)
+        for s in _leaf_strings(v):
+            m = _hex_re().search(s)
             if m:
                 return {"ok": False, "reason":
                         f"judgment.{k} 含色值 {m.group(0)}：色值是结果不是判断——"
@@ -176,27 +195,7 @@ def record_dna(entry: dict) -> dict:
 # ════════════════════════════════════════════════════════════════════════
 # ② Media Decision Model
 # ════════════════════════════════════════════════════════════════════════
-_MEDIA_MODEL = {
-    # family → (need, confidence, reason)
-    "HERO": (True, 0.95, "开场页：品牌情绪建立，画心承担第一印象"),
-    "CLOSING": (True, 0.90, "收尾页：情绪收束，画心承担记忆点"),
-    "STORY": (True, 0.85, "叙事页：图像承担 context/emotion 功能"),
-    "STATEMENT": (False, 0.30, "宣言页：留白与字阶就是视觉锚点，加图反而稀释"),
-    "SECTION": (False, 0.25, "章节页：结构即节奏，安静是功能"),
-    "DATA": (False, 0.05, "数据页：图表已是视觉锚点，再叠图 = 双焦点竞争"),
-    "STRUCTURE": (False, 0.02, "结构页：结构关系比图像更清晰，出图必输"),
-    "PROCESS": (False, 0.05, "流程页：步骤序列自带视觉性"),
-    "COMPARISON": (False, 0.08, "对比页：左右张力来自内容本身"),
-    "EVIDENCE": (False, 0.10, "证据页：数字与来源的可信度不需要装饰"),
-}
-
-# route 家族名 → 媒体模型家族（两套命名的一致层）
-_FAMILY_ALIASES = {
-    "COVER": "HERO", "DATA_STORY": "DATA", "MINIMAL_STATEMENT": "STATEMENT",
-    "EDITORIAL": "STORY", "NARRATIVE": "STORY", "FRAMEWORK": "STRUCTURE",
-    "EXECUTIVE_SUMMARY": "EVIDENCE", "EVIDENCE_FIELD": "EVIDENCE",
-    "HERO_COVER": "HERO", "SECTION_DIVIDER": "SECTION",
-}
+# 媒体模型与家族别名表 → design_intelligence_rules（MEDIA_MODEL/FAMILY_ALIASES）。
 
 
 def normalize_family(raw) -> str:
@@ -372,16 +371,10 @@ def _risk(code, level, slides, why, prevention, predicted, cause, confidence):
 
 
 
-# ── v2.12 预测扩展：把「渲染后才看得见」前移到生成前 ────────────────────
+# ── 预测扩展：把「渲染后才看得见」前移到生成前 ────────────────────
 # gravity_drift 超标 / 字阶混乱 / 布局指纹连续重复 / 记忆线断裂——这四个失败
 # 模式原来要等渲染证据才暴露；现在 spec 级静态估计就能点名（预测→决策→生成）。
-LADDER_RUNGS = (64.0, 44.0, 32.0, 22.0, 17.0, 12.5)   # 驻点字阶（design-intelligence.md）
-_LADDER_TOL = 2.0            # 驻点吸附容差（34 视作 32，避免 ±1px 噪声）
-_TYPE_WEIGHTS = {"text": 1.0, "image": 1.2, "chart": 1.1,
-                 "native_chart": 1.1, "shape": 0.7}
-# 声明型页面（经 _FAMILY_ALIASES 含 COVER/MINIMAL_STATEMENT/SECTION_DIVIDER）
-# 允许刻意偏轴——不对称是它们的语言，不是失衡
-_ASYMMETRIC_OK = {"HERO", "CLOSING", "STATEMENT", "SECTION"}
+# 字阶驻点/容差/视觉重量/偏轴白名单 → design_intelligence_rules（真源）。
 
 
 def _weighted_centroid(elems: list[dict]):
@@ -412,22 +405,11 @@ def _layout_fingerprint(elems: list[dict]) -> tuple:
     return tuple(sorted(out))
 
 
-# ── Page Intent Skeleton（v2.12）：标准家族的意图骨架，AI 只填洞 ──────────
+# ── Page Intent Skeleton（标准家族的意图骨架，AI 只填洞 ──────────
 # 生成速度的大头不是渲染（毫秒级），是每页重新推理。骨架把「家族决定得了的」
 # （能量/密度/负空间职责/阅读序）确定性给出，AI 只填「内容决定得了的」
 # （insight / focus）；显式覆盖永远赢。deck 级判断见 route.deck_decision。
-INTENT_PRESETS = {
-    "HERO": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
-    "STATEMENT": {"energy": "high", "density": "sparse", "empty_space_role": "create_authority"},
-    "SECTION": {"energy": "medium", "density": "sparse", "empty_space_role": "separate_chapter"},
-    "DATA": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
-    "EVIDENCE": {"energy": "medium", "density": "dense", "empty_space_role": "protect_focus"},
-    "COMPARISON": {"energy": "medium", "density": "balanced", "empty_space_role": "separate_chapter"},
-    "PROCESS": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
-    "STRUCTURE": {"energy": "low", "density": "balanced", "empty_space_role": "separate_chapter"},
-    "STORY": {"energy": "medium", "density": "balanced", "empty_space_role": "hold_emotion"},
-    "CLOSING": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
-}
+# 意图骨架预设 → design_intelligence_rules.INTENT_PRESETS（真源）。
 
 
 def page_intent_skeleton(family: str, rhythm_stage: str = "body",
@@ -640,7 +622,7 @@ def pre_critic(spec: dict) -> dict:
                      why=f"密度标签变了但占用差估计 {d_occ:.3f} ≤ {RHYTHM_INK_FLAT}（空转）",
                      prevention="标签变化必须伴随真实占用变化，否则视为空转扣分",
                      predicted="rhythm(空转)", cause="rhythm_density", confidence=0.55)
-        # 9. 视觉平衡（v2.12：预测 gravity_drift——内容页墨量质心严重偏轴）
+        # 9. 视觉平衡（预测 gravity_drift——内容页墨量质心严重偏轴）
         vis = [e for e in elems if e.get("type") in _TYPE_WEIGHTS
                and e.get("layer") != "background" and e.get("role") != "background"]
         cx = _weighted_centroid(vis)
@@ -653,7 +635,7 @@ def pre_critic(spec: dict) -> dict:
                              "声明刻意偏轴的构图理由"),
                  predicted="gravity_drift", cause="balance_composition", confidence=0.5)
 
-        # 10. 字阶纪律（v2.12：每页 ≤4 级；驻点 64/44/32/22/17/12.5）
+        # 10. 字阶纪律（每页 ≤4 级；驻点 64/44/32/22/17/12.5）
         page_sizes = sorted({float(e["size"]) for e in elems
                              if e.get("type") == "text" and e.get("size")})
         if len(page_sizes) > 4:
@@ -666,7 +648,7 @@ def pre_critic(spec: dict) -> dict:
 
         prev = (pi, occ)
 
-    # 11. 布局单调（v2.12）：连续 ≥3 页同布局指纹 = 换字不换版
+    # 11. 布局单调（连续 ≥3 页同布局指纹 = 换字不换版
     j = 0
     while j < len(fps):
         k = j
@@ -681,7 +663,7 @@ def pre_critic(spec: dict) -> dict:
                  predicted="RHYTHM_FLAT", cause="layout_monotony", confidence=0.5)
         j = k + 1
 
-    # 12. 记忆线断裂（v2.12）：token 只出现一次 = 线没有成线
+    # 12. 记忆线断裂（token 只出现一次 = 线没有成线
     if len(slides) >= 4:
         token_pages: dict[str, list[str]] = {}
         for s in slides:
@@ -696,7 +678,7 @@ def pre_critic(spec: dict) -> dict:
                      predicted="CRITIC_LOW(narrative)", cause="narrative_continuity",
                      confidence=0.45)
 
-    # 13. deck 级字阶漂移（v2.12）：全 deck 字号数失控
+    # 13. deck 级字阶漂移（全 deck 字号数失控
     if len(deck_sizes) > 8:
         off = sorted(s for s in deck_sizes
                      if all(abs(s - r) > _LADDER_TOL for r in LADDER_RUNGS))
@@ -793,7 +775,7 @@ def forecast_risk(brief: dict) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# ④b Risk → Strategy：把预测翻译成**生成策略**（vNext：预测层的出口是决策，不是审核）
+# ④b Risk → Strategy：把预测翻译成**生成策略**（预测层的出口是决策，不是审核）
 #     原则：风险不是要「过一遍审核」，而是要在起草之前改掉生成参数。
 #     纯函数、零改动 spec、零渲染；输出是给 AI 的决策块 + 可机读的逐页预算。
 # ════════════════════════════════════════════════════════════════════════
@@ -1049,22 +1031,12 @@ if __name__ == "__main__":
 #
 # 这些「带与律」原先来自外部实测存储（一个校准数据文件 + 一个测量脚本），
 # 两者都不在本包内 —— 一个引用不到的证据文件只是装饰，还会让自检/文档
-# 出现悬空指针。vNext 把律**内联为常量**：
+# 出现悬空指针。把律**内联为常量**：
 # 判断阈值直接可读、可改、可核对，不再有第二套缓存/迁移层。
 # 想恢复实测闭环：把测量结果写进 memory/calibration_space.json 即可被
 # `calibration_laws()` 覆盖（文件存在才读；不存在零成本、零告警）。
 # ════════════════════════════════════════════════════════════════════
-CALIBRATION_LAWS = {
-    "area_ratio": {"c1": 0.55, "c1_band": (0.35, 0.85), "c2": 0.21,
-                   "c3": 0.11, "c4": 0.06},
-    "hue_families_page_max": 1,          # 页级（主题级宽一档 → 2）
-    "sat90": {"quiet_max": 0.35, "warm_material_max": 0.65},
-    "brightness_regimes": {"dark": (0.05, 0.35), "light": (0.55, 0.97)},
-    "negative_space_text_led": (0.40, 1.0),
-    "photo_share": (0.18, 0.60),
-    "type_edge_density": (0.016, 0.053),
-}
-CALIBRATION_FAMILIES: dict[str, dict] = {}
+# 校准律与家族带默认值 → design_intelligence_rules（真源），经 import 复用。
 CALIBRATION_STORE = Path(__file__).resolve().parent.parent / "memory" / "calibration_space.json"
 _CAL_CACHE: dict | None = None
 
@@ -1075,7 +1047,14 @@ def _load_calibration() -> dict:
     if _CAL_CACHE is None:
         try:
             _CAL_CACHE = json.loads(CALIBRATION_STORE.read_text(encoding="utf-8"))
-        except Exception:
+        except FileNotFoundError:
+            _CAL_CACHE = {}
+        except Exception as e:
+            # 存在但损坏 ≠ 不存在：口径事故必须留痕，不得无声降律。
+            import sys as _sys
+            print(f"[design_intelligence] 校准文件存在但无法解析（{type(e).__name__}），"
+                  "本进程使用内置律兜底——请人工修复 calibration_space.json",
+                  file=_sys.stderr)
             _CAL_CACHE = {}
     return _CAL_CACHE
 
@@ -1094,78 +1073,16 @@ def calibration_laws(family: str | None = None) -> dict:
         laws["family_bands"] = fams[family]
         laws.update({k: v for k, v in fams[family].items() if k not in laws})
     laws["family_personality"] = fams
-    laws["source"] = "inline" if not cal else "inline+override"
+    # 覆盖源精判（v4.9）：文件存在不等于覆盖存在——判 laws/families 两消费键。
+    laws["source"] = ("inline+override" if (cal.get("laws") or cal.get("families"))
+                      else "inline")
     return laws
 
 
 
-# ── Adaptive Color Intelligence Engine ───────────────────────────────
-# 方向 = 行为 + 材质/光性语言 + 种子骨架；种子只是兜底骨架，
-# brand_colors 永远优先，visual_world 的材质判断永远优先于方向预设。
-COLOR_RATIO_TARGETS = {"foundation": 0.70, "supporting": 0.20,
-                       "information": 0.08, "accent": 0.02}
-COLOR_FORBIDDEN = ("high-saturation gradients", "SaaS blue-purple",
-                   "colorful card walls", "cheap tech glow", "rainbow palette")
-COLOR_DIRECTIONS = {
-    "luxury_editorial": dict(regime="light", sat="quiet", motion=("spatial",),
-        texture=("luxury", "architecture"),
-        material="warm ivory paper, travertine and bronze, soft window light",
-        seed={"foundation": "#F2EDE4", "supporting": "#9A8C74", "information": "#403B32", "accent": "#9C5A2E"}),
-    "song_elegance": dict(regime="light", sat="quiet", motion=("natural",),
-        texture=("eastern",),
-        material="rice paper, ink stone, tea-green silk, diffuse north light",
-        seed={"foundation": "#F3F1EA", "supporting": "#8B8D84", "information": "#22241F", "accent": "#5E7562"}),
-    "zen_minimal": dict(regime="light", sat="quiet", motion=("natural",),
-        texture=("eastern",),
-        material="handmade paper, mist, still water, shadowless light",
-        seed={"foundation": "#F5F4F1", "supporting": "#9A9A96", "information": "#1E1E1C", "accent": "#6E6E6A"}),
-    "nordic_quiet": dict(regime="light", sat="quiet", motion=("spatial",),
-        texture=("architecture",),
-        material="lime plaster, pale oak, ceramic, low winter sun",
-        seed={"foundation": "#EFECE6", "supporting": "#A79E90", "information": "#33302B", "accent": "#8A7A5F"}),
-    "quiet_luxury": dict(regime="light", sat="quiet", motion=("spatial",),
-        texture=("luxury",),
-        material="champagne metal hairline, taupe stone, sea light through sheer curtain",
-        seed={"foundation": "#F1EDE6", "supporting": "#A99878", "information": "#37322A", "accent": "#B08D4F"}),
-    "monochrome_noir": dict(regime="dark", sat="quiet", motion=("spatial",),
-        texture=("architecture",),
-        material="black stone, single raking light shaft, graphite dust",
-        seed={"foundation": "#101010", "supporting": "#4A4A4A", "information": "#F2F2F0", "accent": "#8C8C8C"}),
-    "cinematic_narrative": dict(regime="dark", sat="warm", motion=("spatial", "natural"),
-        texture=("luxury", "architecture"),
-        material="amber dusk, coastal air, brass light, deep shadow",
-        seed={"foundation": "#141210", "supporting": "#5C4A33", "information": "#EFE3CE", "accent": "#C08A3E"}),
-    "nature_luxury": dict(regime="dark", sat="quiet", motion=("natural", "spatial"),
-        texture=("organic", "architecture"),
-        material="deep forest green, mist over water, wet stone, cold diffuse light",
-        seed={"foundation": "#16211C", "supporting": "#4E6157", "information": "#EDEFE9", "accent": "#6FA08C"}),
-    "organic_systems": dict(regime="light", sat="quiet", motion=("natural",),
-        texture=("organic",),
-        material="oat fiber, leaf vein macro, sage clay, soft top light",
-        seed={"foundation": "#EFEBE2", "supporting": "#A8A394", "information": "#3B3A33", "accent": "#7C8B6F"}),
-    "precision_tech": dict(regime="mixed", sat="quiet", motion=("tech",),
-        texture=("technology",),
-        material="optical glass, titanium edge, controlled blue signal on graphite",
-        seed={"foundation": "#0D0F12", "supporting": "#3A4148", "information": "#F2F4F6", "accent": "#2E7BD6"}),
-    "apple_future": dict(regime="light", sat="quiet", motion=("tech", "spatial"),
-        texture=("technology",),
-        material="titanium micro-brush, mist white stage, single product light",
-        seed={"foundation": "#F6F6F7", "supporting": "#9BA0A6", "information": "#1D1D1F", "accent": "#0071E3"}),
-    "data_intelligence": dict(regime="dark", sat="quiet", motion=("tech",),
-        texture=("technology",),
-        material="dark graphite evidence field, steel gray structure, one controlled accent",
-        seed={"foundation": "#141619", "supporting": "#454B52", "information": "#EDEFF1", "accent": "#3E8E7E"}),
-    "editorial_intelligence": dict(regime="light", sat="quiet", motion=("spatial",),
-        texture=("eastern",),
-        material="newsprint white, ink black, one signal red, hard magazine grid",
-        seed={"foundation": "#F7F6F3", "supporting": "#8E8E8C", "information": "#141414", "accent": "#C8102E"}),
-}
-
-
-_DIRECTION_ALIAS = {"quiet_minimal": "zen_minimal",
-                    "editorial_brand": "luxury_editorial",
-                    "product_stage": "apple_future",
-                    "evidence_first": "data_intelligence"}
+# 方向 = 行为 + 材质/光性语言 + 种子骨架（兜底）；比例目标/禁用/方向种子
+# → design_intelligence_rules（真源）。brand_colors 永远优先。
+# 方向种子与方向别名 → design_intelligence_rules（真源），经 import 复用。
 
 
 def color_plan(direction, brief: dict | None = None) -> dict:
@@ -1191,11 +1108,27 @@ def color_plan(direction, brief: dict | None = None) -> dict:
     seed = dict(entry["seed"])
     seed_source = "family_seed"
     if isinstance(brand, dict) and brand:
-        keys = ("foundation", "supporting", "information", "accent")
-        vals = [v for v in brand.values() if isinstance(v, str)]
-        for k, v in zip(keys, vals):
-            seed[k] = v
-        seed_source = "brand_colors"
+        # 键名驱动（v4.9 V1）：品牌声明的是「槽位名 → 色值」；槽位白名单 +
+        # #HEX 校验，未知键与非色值一律忽略。禁止按值序强填——dict.values()
+        # 的插入顺序不是语义，accent 被塞进 foundation 即此类 bug。
+        # 通用 token 别名（v4.14 F3）：品牌方常以 ink/primary/secondary/muted
+        # 表达主辅色——路由侧 colors 词典收全 token、本侧四槽是语义骨架，
+        # 不做别名则「只给 primary 的品牌」在本路静默失效。只映射语义等价的
+        # 三个通行 token；paper/background 与 information 槽语义不同，不扭。
+        _ALIAS = {"ink": "foundation", "primary": "foundation",
+                  "secondary": "supporting", "muted": "supporting",
+                  "accent": "accent",
+                  "foundation": "foundation", "supporting": "supporting",
+                  "information": "information"}
+        valid = {}
+        for k, v in brand.items():
+            slot = _ALIAS.get(str(k).strip())
+            if (slot and isinstance(v, str) and v.strip().startswith("#")
+                    and len(v.strip()) in (4, 7) and slot not in valid):
+                valid[slot] = v.strip()
+        if valid:
+            seed.update(valid)
+            seed_source = "brand_colors"
     return {
         "family": fam_key,
         "ratio_targets": dict(COLOR_RATIO_TARGETS),

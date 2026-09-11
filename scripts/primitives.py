@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-# ── python-pptx 延迟加载（v3.2 契约，别改回顶层 import）────────────────────
+# ── python-pptx 延迟加载（契约，别改回顶层 import）────────────────────
 # 本层被 guard / normalizer / qa 复用，而它们**只处理 spec 数据**：draft 一轮
 # 真正的判断成本是 2.8ms，pptx 的 import 却要 152ms（pptx.api → opc → oxml →
 # xml.sax → urllib.request）。把整套 Presentation API 拖进「读数据」的路径是
@@ -41,6 +41,11 @@ def _p() -> dict:
 
 # 1280 design px -> 13.333 in (12192000 EMU)
 PX_TO_EMU = 9525
+# 元素类型单真源（compiler.DISPATCH 的键与此对齐；guard 白名单校验引用它。
+# spec 档禁加载编译层，集合不能住在编译层——未知 type 会在编译期被静默跳过，
+# 必须在治理层前置拦截）。
+ELEMENT_TYPES = frozenset({"text", "shape", "image", "chart", "native_chart"})
+
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 
 # 设计系统基线网格（8 单位）：guard 归一化确认、normalizer 吸附、SKILL.md 契约三方同源
@@ -194,22 +199,6 @@ def blend(a: str, b: str, t: float, space: str = "oklab") -> str:
     return _hex(_oklab_to_rgb(L, am, bm))
 
 
-def mix_oklab(colors: list, weights: list | None = None) -> str:
-    """多色在 OKLab 空间的加权混合（weights 归一化；缺省等权）。用于推导
-    更干净的中性/中间档色。"""
-    if not colors:
-        return "#000000"
-    if weights is None:
-        weights = [1.0] * len(colors)
-    total = sum(max(0.0, w) for w in weights) or 1.0
-    L = a = b = 0.0
-    for c, w in zip(colors, weights):
-        Lc, ac, bc = _rgb_to_oklab(_tuple(c))
-        w = max(0.0, w) / total
-        L += Lc * w
-        a += ac * w
-        b += bc * w
-    return _hex(_oklab_to_rgb(L, a, b))
 
 
 def luminance(hex_color: str) -> float:
@@ -236,8 +225,6 @@ def text_role(element: dict) -> str:
     return str((element or {}).get("role") or "")
 
 
-def is_aux_text(element: dict) -> bool:
-    return text_role(element) in AUX_TEXT_ROLES
 
 
 def spec_fingerprint(spec: dict) -> str:
@@ -258,7 +245,7 @@ def spec_fingerprint(spec: dict) -> str:
 
 
 # --------------------------------------------------------------------------
-# 跨层共享判定（v2.4 Director 升级：guard / qa / art_critic 在此收敛为单一口径）
+# 跨层共享判定（Director：guard / qa / art_critic 在此收敛为单一口径）
 #
 # 纯函数：只收显式参数，不读 spec 结构、不读主题 —— 因此 Layer 0 可承载。
 # 上层只保留「消息文案 + 严重级别」的呈现权，不再各自实现一遍判定逻辑。
@@ -323,7 +310,7 @@ def bg_coverage(element: dict, cw: float, ch: float) -> float:
 def rounded_containers(elements) -> list[dict]:
     """真正的圆角容器：type == "shape" 且 shape 为 rounded_rect / round_rect。
 
-    v2.4 收敛：guard 预检曾把任何带 shape 属性的元素都计入，与 critic 口径不一致；
+    guard 预检曾把任何带 shape 属性的元素都计入，与 critic 口径不一致；
     非 shape 元素渲染出来并不是容器，计入只是误报。现统一按「渲染出来是容器」计数。
     """
     return [e for e in (elements or [])
@@ -579,8 +566,6 @@ def stroke_color(line, color, alpha=None, width=None) -> None:
         line.width = _p()["Emu"](emu(width))
 
 
-def no_line(line) -> None:
-    line.fill.background()
 
 
 # --------------------------------------------------------------------------

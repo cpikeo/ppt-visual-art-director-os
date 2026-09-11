@@ -1,451 +1,66 @@
-# Production Contract
+# Production Contract（运行时契约 · 唯一权威表）
 
-## Runtime architecture
+三层各答一问：QA 答「能不能正确交付」（PASS/FAIL/WARNING）；Critic 答「有没有高级设计价值」；Design Intelligence 答「该怎么做、会挂在哪里」。同一事实只判一次。
 
-```text
-spec → normalizer.py（生产链第 0 级：机械归一化）
-     → compiler.py → elements.py / charts.py → primitives.py
-     → guard.py（确认器：归一化解决不了的问题）→ render_check.py
-     → qa.py + art_critic.py
-```
+## Contract Map（写 spec 前查这张表）
 
-设计规划阶段读取参考文档并生成完整 `spec`；运行时阶段只处理 `spec`。Normalizer 负责确定性的机械归一化（网格吸附、色彩/字体 token 规范形、微间距）；编译器是编排层，不做设计决策，也不读取 `references/*.md`；元素与图表负责原生可编辑输出；Guard 负责静态硬约束；Render Check 负责像素证据；`qa.py` 负责确定性回归评分；`art_critic.py` 负责结构化审美判断。层间只通过 spec、RenderContext 和 JSON 报告沟通。
+| 任务 | 契约（到此为止） |
+|---|---|
+| 文本 | `text` 放内容，样式平铺顶层（`size/color/bold/align/max_lines/line_height/padding`）；框高 ≥ 字号×行高×行数 |
+| 填充 | `{"fill":{"type":"solid\|gradient\|none",...}}`；无效 fill 报编译错误，不静默回退 |
+| 图表数据 | 每行 `label` + 有限 `value`；`source/unit/period/basis` 缺一即 error；同 metric 全 deck 同单位；标题写洞察 |
+| focus | 每页唯一 `page_intent.focus`；焦点 ≥40px 或领先第二大字 1.25×；落任一轴线（1/4·1/3·1/2·2/3·3/4·0.382/0.618） |
+| 密度节奏 | sparse ≤0.60 / balanced 0.65–0.75 / dense 0.75–0.85（几何占用）；相邻同密度页墨迹差 ≥0.10 |
+| 记忆锚点 | ≥40px 文本 / 图表 `highlight` / 环心 KPI / `target` 线 / sparkline / hero 图（图表内部大数字不算） |
+| 色彩 | 声明 `color_intent:[brand,emotion,hierarchy]`；Accent ≤5%（实测）；色相族 ≤4；Accent 与主色相差 ≥12° |
+| 网格 | 1280×720，8 单位自动吸附；`grid_exempt:true` 可豁免 |
+| 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20 |
+| 可读性 | 实测文字 vs 下方像素：正文 <4.5:1 提示，任何角色 <3:1 阻断 |
+| 风险策略 | 起草前读 `forecast_risk` 政策，落稿后按 `risk_strategy` 修单改；建议不是闸门 |
+| 修订 | 1 根因 = 1 轮：修 `director_verdict.primary_lever` 同组杠杆，其余排队 |
+| 发布 | `--mode release`：QA ≥90 且 Critic ≥90 且 0 阻断 且全量像素；报告盖 `source_spec_hash` |
 
-### Responsibility Boundary（先分层，再谈门数）
-
-| 层 | 唯一问题 | 管 | 不管 | 输出 |
-|---|---|---|---|---|
-| `qa.py`（工程验证） | 这份 PPT 能不能正确交付？ | 内容（溢出/缺失/数据/图表）、几何（越界/重叠/安全区/对齐）、渲染（字体/图片/PDF·像素） | 审美价值 | `verdict`: **PASS / FAIL / WARNING**（+ 状态机细分） |
-| `art_critic.py`（设计批评） | 这套设计有没有高级价值？ | 视觉层级、空间节奏、信息焦点、审美一致性、品牌气质、记忆点 | overflow / contrast / overlap / font-size / 圆角计数 / 渲染完整性（见 `delegated_to_qa`） | 9 维证据化评分 + `director_verdict` |
-| `design_intelligence.py`（设计智能） | 该怎么做？会挂在哪里？ | DNA 召回、媒体决策、质量预算、**风险预测 → 生成策略** | 判定发布（不阻断任何阶段） | `forecast_risk` / `risk_strategy` |
-
-同一事实只判一次：工程判定从 Critic 的 `hard_gates` 里移出（`READABILITY_FAIL` / `BACKGROUND_DISGUISED` /
-`MEDIA_UNJUSTIFIED` / `CARD_WALL` / `RHYTHM_FLAT`），它们在 Critic 侧只留**设计扣分证据**，
-发布阻断权统一归 QA。
-
-### Execution Modes（流程控制）
-
-Fast/Advanced 是**预算控制**（资产数/dpi）；Execution Mode 是**流程控制**（渲染不渲染、Critic 何时介入、状态给到哪一级）。两者正交：
-
-| Mode | 链 | 流程 | Critic | 状态与发布资格 |
-|---|---|---|---|---|
-| `spec` | 零成本档 | python 启动 → Normalizer → Guard → 风险预测，**到此为止**（不 import `pptx`/`lxml`/`compiler`、不写文件） | 恒不跑 | PREVIEW_ONLY（`execution.compiled=false`） |
-| `sketch` | 草图链 | Normalizer（只留 error）→ Compile → PPTX | 恒不跑 | SKETCH（不可发布） |
-| `draft` | 创作链（快） | Normalizer → Guard → Compile → 可编辑 PPTX（零渲染） | 恒不跑 | PREVIEW_ONLY（零渲染 → 必然 `PIXEL_COVERAGE_PARTIAL`） |
-| `review` | 审查链（准） | Compile → **只渲染变化页**（首轮无对照时用关键页）→ QA L2 | **恒跑**（无门控、无结果缓存；页级渲染缓存照用） | 判据与 release 同源：证据齐则 status 可为 PASS，但 `release_eligible=False`（发布资格属发布链） |
-| `release` | 发布链（严） | 全量渲染 → QA L3 → Critic → Release Manifest | 恒全量 | 唯一可写 Manifest、唯一给发布资格的一档 |
-
-CLI：`qa.py <build> <out.pptx> --mode spec|sketch|draft|review|release [--critic on|off]`
-（`--no-compile` 可在任何模式下退化为 `spec` 档行为。）（legacy `--quick/--key-pages/--manifest` 为别名；`--critic auto` 等价于 `on`，门控语义已废弃；**不传 `--mode` 默认 draft 快速生成**，显式 `--level N` / `--fast` 维持 legacy 全量；`sketch` 为显式草图链——结构探索期只守 error 级（数据诚实性/结构合法性），warn/hint 设计契约免除，状态 `SKETCH` 不可发布）。`route.plan_deck(brief)["execution"]["mode"]` 给出推荐模式（默认 draft；brief 说「发布/终版」→ release，「确认方向」→ review；显式 `brief.execution_mode` 优先）。
-
-**Critic 介入规则（vNext，就一句话）**：`draft`/`sketch` 不跑，`review`/`release` 跑。
-已删除（vNext）：`two-clean-round` 触发器、`critic stability state`、`studio_state.json`、Critic 结果缓存、`critic_version` 版本闸、`preflight_gate`——Critic 成本 ~10ms，不是瓶颈；
-省时的正确手段是「少渲染几页 + 页级缓存」，不是把批评藏进状态机。`PIXEL_COVERAGE_PARTIAL` / `RENDER_UNAVAILABLE` 仍是非发布模式的预期码。
-
-**语义变更分类（`qa.classify_spec_change(old, new)`）**：deck 级 `identical / narrative / pages / structure / full_render`，页级 `unchanged / narrative / page_render`。**review 渲染集 = page_render 页**（有上一版可比时）；首轮/冷跑无对照才回落 key_pages——「改了一句 insight 不必重渲染」是显式决策，不是缓存副作用。上一版 spec 存在 `<out>_render/last_spec.json`（唯一保留的跨轮状态）。
-
-**跨轮状态与缓存清单（vNext 的全部家当）**：
-`<out>_render/` 下只有三个文件——`last_spec.json`（变更分类用）、`render_meta.json`（编译视图 + PDF 归属核验）、`render_cache.json`（页级指标）。失效判据只有一个：**内容核验**（`spec_view` 指纹 + 产物字节 sha + 页内图片指纹 + 渲染器身份）；不再有版本号闸（`COMPILER_VERSION` 已退出缓存判定，`cache_version` 迁移层已删）、不再有语义哈希与多版本并存。规模到「每天 1000+ deck」再谈第二层缓存。
-
-### Design Intelligence Layer（生成前契约）
+## Calls（最小稳定 API）
 
 ```python
-from design_intelligence import (recall_dna, record_dna, media_decision,
-                                  quality_budget, pre_critic, apply_fit_ladder, analyze)
-from layout_search import search, recommend      # recommend：两层决策（家族直达/复杂才搜）
-from design_intelligence import page_intent_skeleton
-from asset_prompt import recall_prompt_dna, record_prompt_dna
-# DNA Schema v2（判断记忆，非结果记忆）：record_dna 拒收结果字段——
-#   entry = {id, signature, design_problem, judgment:{hierarchy|space|media|
-#   color_behavior|charts|anchor_rule|structure|type_voice ≥2 项}, avoid, when_not_to,
-#   proven}；色值/实测是证据放 proven.measurements，进 judgment 即被拒收。
-# 品牌色优先：brief.brand_colors（{token:#HEX}）在 route 入口覆盖方向预设种子
-#   ——「科技=蓝」式的方向→色值映射在入口处被切断。
-dna = recall_dna(brief)                 # P1 视觉线（route.plan_deck 已内联）
-card = deck_decision(brief)             # Deck Decision Card：deck 级判断一次固化
-                                        #   （叙事弧线/密度曲线/媒体政策/执行模式），
-                                        #   页面用 page_intent_skeleton 继承骨架只填洞
-skel = page_intent_skeleton("DATA_STORY", insight=…, focus="c1")
-                                        # 家族 → 意图骨架（能量/密度/负空间职责
-                                        #   确定性给出；显式覆盖永远赢）
-risks = pre_critic(spec)                # 12 类风险（18 码）× {level, why, prevention,
-                                        #   predicted(下游失败码), root_cause, confidence}
-risks["strategy"] = risk_strategy(spec, risks)   # 风险 → 生成策略（唯一输出）：
-                                        #   adjusted(修正后的设计政策)/pages/generation/
-                                        #   risk_scores/summary —— 不改 spec、不阻断
-policies = forecast_risk(brief)          # 起草前风险预测（12 页启发式 → 5 条政策）
-                                        #   生成期当设计约束用，替代「先生成再被提醒」
-rec = recommend(intent, profile, dna)       # 两层布局决策：标准家族直达原型
-                                           #   （tier="family"，零搜索成本）；
-                                           #   未分类/多焦点才 tier="search"
-cands = search(intent, profile, dna, n=3)   # Layout Grammar 三候选（spec 级，L2）
-pdna = recall_prompt_dna(scenario, world, subject)  # 出图判断召回（构图/光性，
-                                           #   不缓存图片、不存色值）
-record_prompt_dna({...})                   # 发布 PASS 后沉淀 validated prompt DNA
-new, fit = apply_fit_ladder(spec)       # auto_fit:true 元素的阶梯吸附（opt-in）
-out = analyze(brief, spec)              # 三线一次汇合（DNA + 媒体 + 预算 + 风险）
+from qa import run_qa, verdict_of          # run_qa(spec,out,mode=...) 是唯一执行入口
+qa = run_qa(spec, "o.pptx")                # 默认 draft；review/release 才渲染+Critic
+from route import plan_deck, one_pass_plan # 内容 → 家族/密度/预算/执行模式
+from design_intelligence import analyze, forecast_risk, risk_strategy, color_plan
+from layout_search import recommend        # 标准家族直达，复杂页三候选
+from art_critic import critique_deck       # 只在 review/release 消费
 ```
 
-- **Risk Prediction（vNext：已并入 Design Intelligence，是它的预测层，不再叫 Pre-Critic）**：
-  与 Critic 同一套常量的静态估计（零渲染零编译，~1ms/页），跑在所有模式（含 release：
-  预测值与实测值的差就是下一轮校准的证据）；报告键 `qa["risk"]`（`qa["pre_critic"]` 为兼容别名）。
-  输出**只有两样**：`{findings, hard_gates, blocking}` 供 Generator 提前规避 + `strategy`（生成策略）。
-  accent 估算按图表物理形态校准（构成图扇区实心 / 条形族细轨道 / 点缀类小面积），方向保守。
-  **它不阻断、不缓存、不设门控**（原「只提前发现、不改设计」已废弃——不产出行动的风险预测等于白算）。
-- **Design DNA**（`memory/design_dna.json`）：`record_dna` 只允许在上游 PASS 后调用
-  （真实发布过的经验才值得记忆）；`recall_dna` 确定性关键词打分，命中给 confidence，
-  无命中返回最近邻 + adapt 提示。DNA 是经验不是模板——照抄即违规。
-- **Media Decision Model / Quality Budget**：置信度 + 理由（不是布尔闸门）；
-  route 家族别名（COVER→HERO 等）在 `_FAMILY_ALIASES` 维护。
-- **Layout Search**：Layout Grammar（支配性/负空间/锚点/阅读路径）参数化生成，
-  五维确定性打分（hierarchy 0.25 / whitespace 0.20 / anchor 0.20 / rhythm 0.15 /
-  brand_fit 0.20）+ family fit 加分；只在 spec 级比较，不生成多份 PPTX。
-- **auto_fit**：元素级显式 opt-in；阶梯 `padding→0 → line_height→1.05 →
-  size -2px（下限 12）→ needs_rewrite`；报告键 `qa.auto_fit`（每步留痕）；
-  未声明元素零改动，编译器行为不变（仍只警告不修改）。
-- **失效安全**：预测层异常不阻断主链（`forecast_risk` / `risk_strategy` / `pre_critic` 失败 →
-  报告记 error，QA 与渲染照常）；策略只在「确实有风险可防」时产生，无风险返回 `{}`。
-- **Critic 反馈 → 升级设计杠杆**：`art_critic.recommendation_plan(report)` 把每条 finding 映射到
-  设计域杠杆（`DIMENSIONS` 九维 + 意图/焦点类）并附 `action`；工程手段（改字阶/行高/页边距等）
-  已从映射表移除——那类问题归 QA 修。
-
-### Spec Normalizer（生产链第 0 级契约）
-
-```python
-from normalizer import normalize_spec, geometry_only_hash
-spec, report = normalize_spec(spec)      # 纯函数：入参不动，返回深拷贝 + 报告
-```
-
-- 只做**无判断的机械对齐**：`grid_snap`（x/y 就近、w/h 向上取整到 `primitives.GRID_UNIT`，防吸附后溢出）、`grid_snap_size`、`color_token_alias` / `color_hex_case` / `color_hex_to_token`（主题色 hex → token 名，单一事实来源）、`font_token_alias`、`spacing_snap`（padding → 4 的倍数）；
-- **不碰语义**：不补数据、不改文字、不动 page_intent；unresolved 项（如未在主题声明的字体）只记录不修改；
-- **留痕**：报告含 `hash_before/hash_after/by_rule/items(封顶200)/idempotent`；幂等性内置二次校验；
-- **可退出**：元素 `grid_exempt: true`；spec 级 `normalization: {"grid": false}`；
-- **证明链**：`release_manifest` 接受 `report.normalization.hash_before == 当前 spec 指纹 && hash_after == 报告 source_spec_hash && idempotent` 的归一化证明链（归一化确定性 ⇒ 可复算 ⇒ 可追溯）；
-- `qa.run_qa(normalize=True)`（默认）入口自动归一化并出报告；`--no-normalize` 跳过（spec 已归一化时省一次深拷贝）。Guard 的角色随之改变：**确认器**——网格/token 这类机械偏差已被吸附，它只负责暴露归一化解决不了的问题（数据合同、遮挡、行长、可读性语义）。`guard.py` CLI 默认先归一化再检查（`--raw` 看原始诊断）。
-
-### Single-entry execution
-
-优先调用 `qa.run_qa()` 完成一次性流水线：它只加载并调用所需模块、复用同一份 `guard_rules`，并返回 guard / compile / render 的摘要；不要在代理上下文中逐个读取脚本全文，也不要重复运行 `guard` 与 `compile`。仅在调试对应失败域时调用单模块 CLI。所有 CLI 支持 `--json` 时应优先使用 JSON 输出；日志只保留摘要、失败码、页面 ID 和修复建议。`render=False` 或 `--no-render` 只允许快速迭代，不代表发布通过；在没有其他阻断错误时状态为 `PREVIEW_ONLY`，若同时存在阻断错误则按状态优先级返回 `BLOCKED`。
-
-## Runtime Contract Map（字段级契约索引 · 权威表）
-
-写 spec 前查这一张表就够了；细节再按「读」列精确到小节取。**禁止靠 grep 全库找规则。**
-
-| 任务 | 关键规则（80% 情况到此为止） | 读（仅超纲时） |
-|---|---|---|
-| 文本元素 | 用 `text` 字段放内容，样式平铺顶层（`size/color/bold/align/max_lines/line_height/padding`）；禁 `content`、禁嵌套 `style`；框高 ≥ 字号×行高×行数（40px×1.15×2 行需 ≥92px）；行长 CJK ≤38 字/拉丁 ≤75，超 2× 阻断——缩字号不算修复，拆句或收窄版心才算 | production-contract.md §Spec |
-| 填充 | `{"fill": {"type": "solid\|gradient\|none", ...}}`；无效 fill 按编译错误迁移，不会默认变蓝 | production-contract.md §Fill Contract |
-| 图表数据 | 每行 `label` + 有限数值 `value`；`source/unit/period/basis` 分开声明、缺一即 error；同 metric 全 deck 单位一致；总和≤0 的构成图、非正进度上限、负值冒充正值都是 error；标题写洞察不写字段名 | production-contract.md §Chart data contract |
-| focus | 每页唯一 `page_intent.focus`（绑定元素 id）；焦点文字需 ≥40px 或领先第二大文字 ≥1.25×；其他元素面积 ≤ max(2×焦点, 25%画布)；落任一版面轴线（1/4、1/3、1/2、2/3、3/4、0.382/0.618）记加分 | art_critic.py（`STATEMENT_SIZE/FOCUS_LEAD/FOCUS_AREA_LEAD/AXIS_LINES`） |
-| 密度与节奏 | 占用带：sparse ≤0.60 / balanced 0.65–0.75 / dense 0.75–0.85（`_content_occupancy`）；相邻同密度页需实测墨迹差 ≥0.10，标签变了差 ≤0.03 判空转；连续三页同密度同能量 = RHYTHM_FLAT | art_critic.py（`RHYTHM_*`） |
-| 记忆锚点 | 每页一个机器可指认锚点：≥40px 文本 / 图表 `highlight` / 环心 KPI / `target` 线 / sparkline / 瀑布小计 / image hero；图表内部大数值**不算**（检测器只看声明） | art_critic.py（`_memory_anchor`） |
-| 色彩 | `color_intent: [brand, emotion, hierarchy]` 必须声明；Accent ≤5%（渲染实测）；色相族 ≤4（30° 一档）；Accent 与主/辅色相差 ≥12°；同图表类型跨页标签规格一致（>1.25× 判漂移） | guard.py 色彩纪律 + themes.md |
-| 网格 | 1280×720，8 单位（`primitives.GRID_UNIT`）；**Normalizer 自动吸附**（x/y 就近、w/h 向上），手工对齐不再是你的职责；`grid_exempt: true` 可豁免 | normalizer.py + production-contract.md §Spec Normalizer |
-| 媒体 | 图片须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页永不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；每页媒体 ≤1、阅读文本 ≤4、圆角容器 ≤4（超即 Card Wall） | SKILL.md 媒体闸门 + asset_prompt.py |
-| 可读性 | 渲染实测「文字 vs 其下方底」：正文 <4.5:1 提示，任何角色 <3.0:1 阻断（READABILITY_FAIL）——色板合法 ≠ 物理可读，只有像素证据能暴露 | qa.py（`text_contrast` 域） |
-| 光学对齐 | 渲染级复核：shape/chart/image 声明边界线的视觉峰位 vs 数学坐标（±2px）；≥3 根可验证且一致率 ≥75% 记 alignment 加分，偏移线报 max_shift——数学对齐是否真的成为视觉对齐，只有像素能回答 | render_check.py（`optical_alignment`）→ art_critic.py |
-| 风险预测与策略 | 起草前 `forecast_risk(brief)` 给政策（媒体/文本/字阶/构图/节奏），落稿后 `risk_strategy(spec)` 给逐页修单（12 类风险 18 码，各带根因/预防/预测失败码）；它是**建议不是闸门**，异常零阻断 | design_intelligence.py（`forecast_risk` / `pre_critic` / `risk_strategy`） |
-| 职责分工（防重复劳动） | QA 唯一负责：溢出 / 重叠 / 越界 / 安全区 / 数据合同 / 渲染完整性 / 对比度底线（READABILITY_FAIL）——输出 PASS·FAIL·WARNING。Critic 唯一负责：视觉层级 / 空间节奏 / 信息焦点 / 审美一致性 / 品牌气质 / 记忆点——**不再对上述工程项立案**（报告里的 `delegated_to_qa` 就是移交清单）。同一事实只判一次 | `qa.verdict_of` / `art_critic.DELEGATED_TO_QA` |
-| 参考空间水准 | `visual_calibration_score(spec)` 五维静态分（layout/typography/color/image/information，各 0–5）对照参考空间律（面积律 c1≈55% / 色相族页 ≤1 / 饱和域 / 图片占比带 / 负空间）；~0.3ms，**判断辅助分，不参与任何发布判定**；律以 `CALIBRATION_LAWS` 内联为常量（可选 `memory/calibration_space.json` 覆盖） | design_intelligence.py |
-| 自适应色彩 | `color_plan(direction, brief)`：70/20/8/2 比例目标 + 实测约束（色相族/饱和/明度域）+ 种子骨架；派生序 brand_colors > visual_world 材质 > 方向种子；14 方向族（10 实测 + 4 主张） | design_intelligence.py（`COLOR_DIRECTIONS`） |
-| 一次通过规划 | `route.one_pass_plan(brief)`：Stage1+2 全决策一次固化（plan+deck_decision+color_plan+逐页 skeleton/layout/media/budget），缓存命中 0.6ms | route.py |
-| 出图三层 | 资产卡过 `enhance_asset_card(card, family)` 注入动势（leading lines/透视/光向…）+ 微浮雕（纸纤维/皮革纹/石灰岩…，纪律：微弱低对比近距可感知）+ 空间融合（text-safe 负空间/光向一致/景深层级/无贴纸边）再喂图像模型 | asset_prompt.py（V3） |
-| 设计经验 | `recall_dna(brief)`（route 内联）命中即用其设计问题/空间/色彩行为/图表人格/禁用信号做判断基线（Schema v2 判断记忆，色值在 proven）；`record_dna` 仅 PASS 后调用、拒收结果记忆 | memory/design_dna.json |
-| 版式选型 | 同页 3 候选 spec 级比较：`layout_search.search()` 五维打分（层级/留白/锚点/节奏/品牌契合），选优后起草；原型 = 构图算子的驻点，不是模板 | layout_search.py |
-| 设计理由 | 每页可选一句 `design_rationale`（选择 × 理由 × 否决项，声明层）；修正时先验「意图是否被几何兑现」，`record_dna` 时作为决策出处 | design-intelligence.md §Design Intent |
-| 文本溢出 | 预防优于警告：`auto_fit: true` 按阶梯吸附（padding→行高→字号→重写）；未声明者编译器仍只警告 | design_intelligence.py（`apply_fit_ladder`） |
-| 修订 | 读 `director_verdict.primary_lever`；**1 根因 = 1 轮**：`batch.fix_this_round`（同根因杠杆）一次修完一次验证，`batch.deferred` 排队下轮；修完跑一轮 QA 再看下一条 | art_critic.py（`_director_verdict`） |
-| 发布 | `qa.py --mode release`（= --manifest）：QA ≥90 **且** Critic ≥90 **且** 0 硬门槛 **且** 全量像素；revision_count 必须来自真实修订流水；报告盖 `source_spec_hash`，对不上 → BLOCKED | production-contract.md §Release Manifest |
-
-> 这张表是**字段级契约的唯一权威位置**（v3.2 起从 SKILL.md 移入）：SKILL 只负责让你"
-> 知道往哪走"，精确语义在这里。改字段语义 = 改这张表 + 对应 selftest，两处一起改。
-
-## Stable API
-
-```python
-from compiler import compile_deck
-report = compile_deck(spec, "output.pptx", checks=True, guard_rules=None)
-
-from qa import run_qa
-qa = run_qa(spec, "output.pptx", guard_rules=None, render_dir=None)
-
-from art_critic import critique_deck
-critic = critique_deck(spec, render_evidence=qa.get("render_evidence"), evidence_cards=None)
-
-from route import plan_deck, plan_page
-plan = plan_deck(brief)                      # 内容 → 路径 / 家族 / 密度 / 资产预算 / 闸门（带决策缓存）
-page = plan_page("data", "editorial_brand", "fast")   # 单页决策对象
-route.cache_stats(); route.clear_cache()     # 修订循环是否还在重复推导，可核对
-
-from qa import run_qa, key_pages
-qa = run_qa(spec, "out.pptx", qa_level=3)    # 1=静态 2=关键页 3=全量（默认，发布口径）
-qa = run_qa(spec, "out.pptx", qa_level=2, render_pages=plan["verification"]["pixel_page_ids"])
-qa = run_qa(spec, "out.pptx", qa_level=3, dpi=72, workers=2)   # 便宜的完整渲染
-
-from render_check import render_evidence
-ev = render_evidence(pptx, spec, out_dir, dpi=96, pages=[1, 5, 12], workers=2,
-                     use_cache=True)     # out_dir 稳定时可复用按页指标
-
-from guard import check_spec
-result = check_spec(spec)                    # result["preflight"] / ["preflight_codes"]
-```
-
-CLI 入口保持兼容：`guard.py <module> --preflight [--raw]`（诊断用，拦渲染的开关已删）；`qa.py <module> <out.pptx> --mode sketch|draft|review|release [--critic on|off] [--no-normalize] [--no-cache] [--fast] [--preflight] [--quick] [--key-pages] [--level N]`；`render_check.py <pptx> <module> [out_dir] --pages 1,5 --dpi N --workers N`。`run_qa` 参数：`qa_level / render_pages / workers / mode / normalize / critic`（`render / qa_level` 为 None 哨兵：显式实参优先，None 时由 mode 档案派生，不传 mode 维持 legacy 全量），`release_manifest` 新增 `verification` 关键字参数并接受归一化证明链；全部带默认值，未传时与旧版行为一致。返回值只增不减（新增键：`normalization` / `execution` / `critic` / `risk` / `verdict`）；返回值新增 `verdict`（PASS/FAIL/WARNING）与 `risk`（`pre_critic` 保留为其别名）；已删除的键：`preflight_gate`、`stability`。
-
-```python
-# 执行模式（流程控制）
-qa = run_qa(spec, "out.pptx", mode="sketch")    # 草图链：只守 error 级，契约免除
-qa = run_qa(spec, "out.pptx", mode="draft")     # 零渲染：guard+compile+PPTX
-qa = run_qa(spec, "out.pptx", mode="review")    # 只渲染变化页（首轮=关键页）+ Critic
-qa = run_qa(spec, "out.pptx", mode="release")   # 全量 + Critic（result["critic"]["report"]）
-qa = run_qa(spec, "out.pptx", mode="review", critic="off")   # 显式跳过 Critic（临时）
-from qa import verdict_of
-v = verdict_of(qa)          # {verdict, status, score, blocking, warnings, codes, question}
-
-from qa import classify_spec_change, mode_profile, EXECUTION_MODES
-plan = classify_spec_change(old_spec, new_spec)  # deck/pages/render_needed 语义分类
-from route import recommend_mode, deck_decision
-mode = recommend_mode(brief)                     # draft|review|release（默认 draft）
-from normalizer import normalize_spec, geometry_only_hash
-spec, report = normalize_spec(spec)              # 见 Spec Normalizer 契约
-```
-
-**Revision Batch Intelligence**：`critic.deck_notes.director_verdict` 新增 `root_cause_groups`（门槛码/维度/复现修正 → 根因桶：theme_contrast / geometry_grid / layout_collision / focus_anchor / memory_anchor / rhythm_density / card_clutter / data_contract / …）与 `batch`：`fix_this_round` = primary 所在根因组的**全部**杠杆（同根因一次修完、一次验证），`deferred` = 其余根因组排队。修正纪律从「1 问题 = 1 轮」升级为 **「1 根因 = 1 轮」**——归因清晰与往返最少同时成立。
-
-`compile_deck` 不自动缩字号、改色、重排、删除内容或替换图片。所有 warnings 必须进入报告。`run_qa` 的 `score` 只表示确定性合规，不得冒充审美分数；`passed` 只是数值门槛结果，最终发布依据是 `status`。编译前先完成 Guard；Guard 存在 error 时仍可为调试生成预览，但发布状态必须为 `BLOCKED`，不得被编译成功覆盖。
-
-## Fill Contract
-
-元素填充统一使用以下 schema；普通字符串仍作为兼容 shorthand：
-
-```json
-{"fill": {"type": "solid", "color": "surface", "opacity": 0.30}}
-{"fill": {"type": "gradient", "gradient_type": "linear", "angle": 90,
-  "stops": [{"position": 0, "color": "#FFFFFF", "opacity": 0.8},
-            {"position": 1, "color": "#FFFFFF", "opacity": 0}]}}
-{"fill": {"type": "none"}}
-```
-
-历史 `{"color": "#fff", "opacity": 0.3}` 和 `{"gradient": {"stops": [...]}}` 由 `elements.normalize_fill()` 兼容迁移后再渲染。无效 type、缺失 color、非法 stop 或无法解析的 token 必须抛出包含 Expected 格式的明确错误；不得静默改成默认蓝色。背景层仍可在 compiler 层安全回退，但必须将原始 warning 写入报告。
-
-## Background Layer Contract
-
-背景按需组织为 `Base → Image → Atmosphere/Light → Content Protection`。不要求每页启用全部层；每个启用层必须服务内容，不能遮蔽主体或抢夺第一注意点。推荐图片压暗 overlay：`{"type":"solid","color":"#000000","opacity":0.35}`。
-
-可执行合同（三条，全部由 Guard / Compiler / Art Critic 共享）：
-
-1. 画心承担空间时声明 `layer: background`（或 `role: background|backdrop`）。`image` 元素可占满整页，**不再被要求拆成两侧留白盒**：它免于 overlap 与 source_zone 侵入检查。
-2. 背景画心必须自带内容保护：`overlay`（Fill Contract）或 `content_protection.overlay`。缺失时 Guard 记 `BG_UNPROTECTED` warn，Critic 不给该页叠加可读性加分。声明了但解析不出不透明度的 overlay 按缺失处理（fail-closed）；覆盖率与保护层解析在 `primitives.py` 共享实现，Guard 与 Critic 同一结论。
-3. 编译器把声明为背景层的画心稳定前置绘制（z-order 在最底），并在同一盒上追加保护层，因此作者无需记忆元素顺序；背景层不计入 `MEDIA_BUDGET_MAX`，其面积也不参与焦点压制判定。
-
-`qa.py` 的渲染指标仍按像素测量：背景层允许边缘带合法不安静，但 `margin_occupancy` 只应在纯色 / 结构背景主题开启。
+`run_qa` 内联 normalizer→guard→compile→render，不要再串行跑单脚本（除非看独立诊断）。CLI：`qa.py <build> <out> --mode spec|sketch|draft|review|release [--critic on|off] [--no-cache]`；`guard.py --preflight` 是诊断报告，不拦渲染。
 
 ## Spec minimum
 
 ```python
-spec = {
-  "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
-  "theme": {"colors": {...}, "fonts": {...}, "constraints": {...}},
-  "strategy": {...},
-  "direction": {...},
-  "slides": [{
-    "id": "s01", "page_intent": {...},
-    "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
-    "background": {...}, "elements": [...]
-  }]
-}
+spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
+ "theme": {"colors":{...},"fonts":{...},"constraints":{...}},
+ "strategy": {...}, "direction": {...},
+ "slides": [{"id":"s01","page_intent":{...},
+  "source_zone": {"x":48,"y":672,"width":1184,"height":32},
+  "background": {...}, "elements": [...]}]}
 ```
 
-每页至少有 `page_intent.insight`、`focus`、`reading_order`、`energy`、`density`、`empty_space_role`、`page_family`、`rhythm_stage` 和 `continuity_token`；`direction` 应声明 `color_intent: [brand, emotion, hierarchy]`；每个图表至少有单位、期间、比较口径、数据状态、来源和一个强调点；每个图片至少有资产角色、主体、构图、留白锚点、裁切与溯源。布局可在五类页面家族间变化，但必须复用同一 canvas、12 列逻辑网格、8 单位基线、safe zones、source zone、type budget 与 accent budget。文本元素应声明 `max_lines`、`line_height`、`padding`；图表元素应声明 `label_collision_policy`，密集标签不得默认强行显示。
+每页 `page_intent` 含 `insight/focus/reading_order/energy/density/empty_space_role/page_family/rhythm_stage/continuity_token`；`direction` 含 `color_intent`。几何：所有可见对象数值 `x/y/width/height`；text–text/chart/image 墨迹相交即 `OVERLAP`（来源区/结论/读数永不许遮挡）；图表标签放不下用 `label_collision_policy:hide_redundant|move_outside|fail`，不缩字号。
 
-### Layout collision contract
-
-所有可见对象都必须有数值 `x / y / width / height`。文本必须显式声明或可由默认值推导 `padding / line_height / max_lines`；标题、结论、图表标签和来源不得共享同一几何区域。相交规则如下：
-
-1. text–text、text–chart、text–image 的有效墨迹相交即为 `OVERLAP`；默认不允许通过透明度或 z-order 豁免。
-2. 需要前景遮挡时，必须在双方声明 `allow_overlap: true`、`overlap_reason` 和 `protected_zone`；来源区、关键结论和图表读数永不允许被遮挡。
-3. 文本框外框不等于墨迹框：Guard 使用 `text_ink_ratio / text_ink_v` 估算，渲染 QA 再检查实际视觉占用。右对齐、居中和多行文本应声明 `ink_anchor`，否则按保守左上锚点检查。
-4. 图表内部标签应使用 `label_safe_margin`、`label_gap` 和 `label_collision_policy: hide_redundant | move_outside | fail`；不得以缩小字体消除碰撞。无法安全放置时改用直接标注、减少类别、拆页或 `fail`。
-5. 左下角 `source_zone` 是独立保留区，主体、图表、图片和装饰不得进入；来源需支持自动换行并在渲染后可读。
-
-### Chart data contract
-
-**Chart Color Role System**：图表不写死色值，声明语义角色——`primary`（主叙事）/ `secondary`（对比）/ `neutral`（语境）/ `accent`（高亮）/ `negative`（风险）。角色由 `theme.chart_palette` 映射到具体色（未声明时回落旧扁平键 `chart_primary` 等，`negative` 未声明用通用风险红兜底并告警）；元素可用 `color_role` / `secondary_role` / `series_roles` 声明角色，柱状序列中 <0 的值自动染 `negative`（`negative_role: false` 可关）。显式 `*_color` 色值仍是逃生口。同一 spec 换主题，图表语义不变、色值随主题派生。
-
-数值图表的 `data` 必须是非空数组，每行至少包含 `label` 与有限数字 `value`；`display` 只负责已核验的展示格式，不参与计算。`highlight` 必须是有效整数索引；`progress_bar` 的 `max` 必须为正数；`pie`/`donut` 的非负有效值总和必须大于零；`ranked_bar`、`progress_bar`、`stacked_bar` 与 `bubble` 不接受负值。Guard 对这些条件返回 `data_integrity` 或 `chart_highlight`，Compile/Render 不得静默补零、截断负值或虚构单位。
-
-图表渲染器遇到空数据时可以跳过该图表并写入 warning；遇到不可解析数值时可以仅为防止程序崩溃按零计算并保留 warning。**这两种容错只服务调试预览，不表示数据有效；Guard 的 `DATA_INTEGRITY_FAIL` 必须使最终状态为 `BLOCKED`，不得以容错后的图表发布。**瀑布图的零轴必须根据数据域映射，而不是固定在画布某一比例位置。
-
-多序列图表走 `series` 字段（`series: [{name, values:[...]}, ...]` + `categories: [...]`），此时不需要 `data`；它与单序列 `data` 是同一 geometry 的两种数据表达，不是两种图表类型。`highlight` 在多序列下选中的是「升级为 accent + 加粗 + 末端圆点」的那个序列索引。
-
-图表仍应诚实表达单一关系，但以下字段在不改变数据口径的前提下，扩展了同一关系的**可读表达**（全部原生可编辑）：
-
-- `donut` / `donut_composition` 的 `center_value` / `center_label`：把「总数 / 结论」放进甜甜圈的洞（环心 KPI）。它不新增数据通道，只是把本应由图例承担的总读数放回视觉中心。
-- `sparkline`：去轴迷你折线 + 端点圆点，用于 small multiples（一页多组趋势的「形状对比」）。读数由相邻的直接标注承担，sparkline 本身不伪造坐标轴。
-- `waterfall` 的 `subtotal` / `is_total` / `total` 行标记：小计段从零轴起画整段累计，段间画桥接虚线。数据仍是逐行 `label` + 有限 `value`，只是「起点」语义由累计推导。
-- `ranked_bar` 的 `target` / `target_label`：在已知刻度上画一条竖向目标参考线。它是可视化标注，不改变 `value` 的诚实性。
-
-新增图表表达仍遵守同一份数据契约：负值、缺失、非有限值、空数据、无效高亮索引与无效构成总和必须在 Guard/Compile 阶段暴露，不得静默补零或伪造单位。
-
-### Fact & metric governance（事实/口径治理）
-
-「确定性」不只是数值有限、可编译，还必须是**口径可核验**。数值图表应显式声明 `source`（来源）、`unit`（单位）、`period`（期间）、`basis`（比较口径）、`data_status`（数据状态）；同一指标（用 `metric` 或 `series_name` 作跨页对齐键）必须在整套 deck 中保持单位一致。Guard 据此产出三类治理信号：
-
-- `data_provenance`（warn，`require_provenance=True` 时 error）：数值图表缺少来源/单位/期间声明。来源不可省略；单位与期间必须显式，否则「万元 vs 亿元」「2026 vs FY26」这类口径漂移无法被发现。
-- `metric_consistency`（单位不一致 = error；期间不一致 = warn；比较口径不一致 = hint）：同一 `metric` 跨页单位打架是最会「误导决策」的业务错误——同一指标必须同一单位，否则读成两套数字。
-- `title_semantics`（hint）：`page_intent.insight` 退化成「字段名标题」（如「市场分析」）时提示改写为可复述结论。
-
-本治理只验证「口径是否声明且一致」，不替调用方核验「数值是否真实」——事实真实性由责任人对照来源确认；但缺少来源、口径打架这两类问题，现在会在 Guard 阶段被确定性点名，而不是等到董事会前才发现。
-
-## Asset Contract
-
-图像资产由 `scripts/asset_prompt.py` 生成确定性提示词：调用方传入资产卡（`CARD` 或 `build_card()`，含 `subject / color / material / lighting / composition / motion / style` 必填段与 `apc` 溯源编号）和页面参数（留白锚点、光向、能量、资产功能），脚本按固定顺序拼接并追加 Universal QC、类型后缀与透明资产对比度防护；`validate_asset_card()` 在出图前返回漏项清单。生成后的图像进入 spec 时仍须满足：`asset_function`（context / emotion / proof / hero）、主体、构图、留白锚点、裁切与溯源；Guard 对声明了 `asset` 的图像检查 `theme_ref / apc` 绑定与 negative 中的 no-text / no-logo / no-watermark 约束。图像不得烘焙文字、Logo、水印、数据或来源。
-
-## Deterministic QA
-
-### 评分体系总览
-
-| 层 | 模块 | 分数语义 | 是否审美 |
-|---|---|---|---|
-| 静态治理 | `guard.py` | 内部 `score`（100 减扣），仅用于编译报告摘要；**设计契约条目权重 0（`advisory`）** | 否（规则合规） |
-| 编译诊断 | `compiler.py` | passed/warnings，不计分 | 否 |
-| 渲染证据 | `render_check.py` | 像素指标（占用率、质心、Accent 像素比…），供 QA/Critic 消费 | 否（测量） |
-| 确定性 QA | `qa.py` | 100 分制，guard/compile/render 三域扣分 + 阻断性失败码 | 否（合规 + 渲染完整性） |
-| 结构化审美批评 | `art_critic.py` | 9 维度 × 0–5 加权成 deck_score(0–100) + 硬门槛 | 是（可溯源启发式） |
-
-两个 100 分不得互相替代：QA 分数高不代表设计好，Critic 分数高不代表可发布。Release Manifest 的 `status` 由 QA 与 Critic 状态合成：任一 BLOCKED → BLOCKED；任一 REVISE → REVISE；两者 PASS 才 PASS；缺少真实渲染 → PREVIEW_ONLY。Critic 报告只读、不改 spec；`dimension_evidence` 是给人类复核的评分依据，修正必须回应证据而不是追逐分数；`deck_notes.dimension_averages` 输出 9 维 deck 级加权平均，`systemic_weaknesses` 自动点名偏弱维度并附 `fix_hint`——修正顺序：先看系统性短板，再进页级明细。
-
-**调参**：全部经 `penalties / thresholds / rules` 传入，不改脚本默认值。常用：无 LibreOffice 环境 `penalties={"render_missing": 0}`（环境问题已由 PREVIEW_ONLY 状态表达）；纯色背景主题 `thresholds={"margin_occupancy": 0.05}` 开启边缘检查。路径（Fast/Advanced）与模式（draft/review/release）只改预算与验证深度，不改任何阈值；Level 1/2 的分数只用于看趋势，不能引用为发布结论。阈值校准方法论见 `references/benchmark-calibration.md`。
-
-继承现有 `guard.py` 的网格、越界、安全区、重叠、容量、文本、颜色（其中 Accent、节奏一类属 `DESIGN_RULES`，只作观察不扣分）、对齐、装饰、动画、对比度、叠加层、主题约束、最小字号（min_font）与焦点尺度（focus_scale）检查，并将 `overlap`、`source_zone`、`text_capacity`、`chart_label_collision` 视为优先级高于审美分数的布局问题。继承现有 `render_check.py` 的 occupancy、brightness、saliency centroid、saliency split、`saliency_method`、渲染级光学对齐 `optical_alignment`（声明轴线视觉峰位一致性：带内有真实边缘=对齐、窗口内有带内无=偏移、无边缘=不可验证不计入）（显著图实际算法：`cv2_spectral_residual` / `deterministic_fallback`，跨机器可比性的溯源）、accent pixel ratio（按主题 Accent 色距测量，缺失时回退饱和度启发）、margin occupancy、background luma、gravity drift，以及 `text_contrast_min`（正文级最坏值）/ `text_contrast_all_min`（含注记级）/ `text_contrast_worst`（该框 id、字色与实测底色）——后三项把「文字压在画上能不能读」从声明推断变成像素事实，其 fail / soft / pass 判定由 QA 与 Critic 共享同一实现（`primitives.text_contrast_verdict`）；锚点解析以 `page_intent.focus` → `gravity_anchor` → 启发式 的顺序对齐声明意图。
-
-确定性评分建议仍用 100 分制，但只记录 `guard / compile / render` 域，并在 `deduction_by_domain` 中给出分域扣分明细。`passed` 不能仅凭分数决定；硬错误、编译失败、来源缺失、渲染缺失、关键文本不可读或任何未获声明的遮挡时必须覆盖分数。报告必须返回 `failure_codes`、`blocking_items`、`affected_slides`、`next_action`、`status` 和 `elapsed_ms`，让下一次调用只处理受影响范围。`status` 的优先级固定为：阻断错误 → `BLOCKED`；无阻断但缺少真实渲染 → `PREVIEW_ONLY`；有可修复问题 → `REVISE`；全部发布条件满足 → `PASS`。
-
-### Static Preflight（先于渲染的同一批门槛）
-
-`guard.run_preflight()` 只镜像 Art Critic 中**确定性可静态判定**的部分，阈值经懒加载直接取自 `art_critic` 导出常量（`gate_source: "art_critic"`；导入失败时用等值默认并标注 `guard`）。返回 `{slide, code, observation, minimal_fix, gate_source}`，码表：`INTENT_UNCLEAR`、`FOCUS_UNBOUND`、`FOCUS_SCALE`、`FOCUS_LEAD`、`FOCUS_DOMINATED`、`MEDIA_BUDGET`、`TEXT_BUDGET`、`CARD_WALL`、`CARD_DENSITY`（3–4 个圆角容器，未到硬门槛的提前提示，与 `CARD_WALL` 互斥点名）、`BG_UNPROTECTED`(warn)、`ASYMMETRIC_UNDECLARED`、`DENSITY_FLAT`、`RHYTHM_FLAT`。
-
-预检条目只用于提前修，不参与美学评分：`preflight_hint` 权重为 `0.0`，新增提示不会把 `PASS` 拉成 `REVISE`。
-
-### Design Contract = Advisory（v3.2：Guard 是 compiler linter，不是审美委员会）
-
-`guard.DESIGN_RULES`（17 项）列出的规则——`palette_discipline / rhythm / focus / focus_scale /
-type_budget / accent_budget / alignment_budget / animation_budget / chart_highlight / color_budget /
-decoration_budget / icon_consistency / organic_layer / typography / asset_contract /
-chart_style_drift / preflight`——是**观察**：条目带 `advisory: true` + `score_weight: 0.0`，
-不进 `guard.score`、不进 QA 扣分、不构成 error（设计条目出现 error 直接算 bug，
-`selftest [design_advisory]` 会拦住）。它们留在报告里只服务两件事：让 Critic 与风险预测
-不必重算同一份事实；让你在起草时知道「评审会往哪儿看」。
-
-**Guard 仍然阻断的（工程事实，与美学无关）**：结构合法性（`INVALID_SPEC`/
-`ILLEGAL_STRUCTURE`）、几何与容量（`ELEMENT_OUTSIDE_SAFE_AREA`、`TEXT_OVERFLOW`、
-`LINE_MEASURE` 超出 fail factor → `text_capacity`）、资产与数据真实性（`MISSING_ASSET`/
-`INVALID_DATA`/`BROKEN_REFERENCE`/`FACT_*`）、可编辑性与安全（`EDITABILITY_LOSS`、
-`SENSITIVE_CONTENT`、`UNSAFE_*`）、背景层声明一致（`background_layer`）。判据只有一句：
-**能被固定阈值完全描述 → 归 Guard；不能 → 归 design-craft.md + Critic 的证据**。
-
-「高级感」不由 QA 决定，因此 QA 报告里的 `design_quality` 域只保留渲染实测的
-**物理底线**（文字被切断、文字压在图上不可读），审美维度全部由 Critic 以诊断文字
-表达（见下节），不参与 QA 分数。**vNext：预检不再拦渲染**（`PREFLIGHT_HARD_CODES` 与 `preflight_gate` 已删）——「不干净不渲染」换来的只是一条与「Critic 是否稳定」并列的门控分支，同一件事在 QA 的渲染判定里已经算过一次；现在预检是纯诊断，是否值得付渲染成本由执行模式决定（draft 根本不渲染）。
-
-### Performance
-
-`qa["performance"] = {total_ms, guard_ms, compile_ms, render_ms, slides, preflight_items, render_skipped, qa_level, render_workers, rendered_pages, requested_pages, cache_hits, cache_misses, cache_enabled, compile_reused}`（`preflight_gate` 键已随闸门删除）。渲染通常占整轮 90% 以上成本，因此这几项就是「少跑一轮」的可核对证据。性能数据只用于说明与调参，不参与发布状态。
-
-## Progressive QA 与并行渲染
-
-三个层级共用同一套阈值，差别只在**测了多少**，不在**放宽什么**：
-
-| Level | 内容 | 成本（12 页实测，冷缓存） | 允许的状态 |
-|---|---|---|---|
-| 1 | 文件产出、元素存在、页数、静态治理与预检 | 0.7s | `PREVIEW_ONLY`（无渲染证据） |
-| 2 | 只渲染关键页：封面、收尾、含图片/图表/背景画心的页 | 3.4–4.4s | 上限 `REVISE`（`release_eligible=False`） |
-| 3 | 全量渲染 + 全部检查（默认，发布口径） | 4.6s | 可为 `PASS` |
-
-- 选页：`qa.key_pages(spec)` 从 spec 推导；调用方也可显式传 `render_pages`，或用 `route.plan_deck(brief)["verification"]["pixel_page_ids"]` 复用决策层结果。`KEY_PAGE_CAP = 6`，避免关键页退化成全量。
-- 覆盖率：`render_evidence["coverage"] = {rendered_pages, total_pages, rendered_ids, requested, workers, unrendered}`，并透传到 `qa["render"]["coverage"]`、`critic["deck_notes"]["pixel_coverage"]` 与 manifest 的 `verification`。
-- 证据对齐：子集渲染的每页结果带绝对 `page` 与 `index`，QA 与 Critic 按 `index` 匹配（无 `index` 的旧证据退回位置匹配）。**禁止**按结果数组下标对齐——那会把已测页的指标串到未测页上。
-- `PIXEL_COVERAGE_PARTIAL`（REVISE）：证据不全时无论分数高低都记入 `hard_gates`，并把 `PASS` 降级；覆盖全量后自动消失。
-
-### 复用三段重复劳动（判据，一句话版）
-
-缓存只有一个判据：**这一轮的输入会不会改变量到的数字**。页级键 = 本页 spec 投影 + canvas +
-dpi + 完整 theme + 页内图片身份 + 渲染器路径；命中还要求 PNG 仍在目录内且 `png_sha` 一致。
-`use_cache=False` / `--no-cache` = 冷测：不查也不写，不清空别人的热缓存。`out_dir` 必须先
-`resolve()`（相对路径会拼成非法 LibreOffice profile URI，`soffice` 卡死）。
-`coverage.cache_hits / cache_misses` 透传到 `qa["performance"]`，用来判断「这轮省掉了什么」。
-**实现细节、条目结构与「为什么只有 2 个 worker」的实测分解：见 `OPTIMIZATION.md`。**
-
-## Art Critic contract
-
-`art_critic.py` 必须返回：
-
-```json
-{
-  "critic_version": "2.3",
-  "deck_score": 0,
-  "status": "PASS|REVISE|BLOCKED|PREVIEW_ONLY",
-  "hard_gates": [{"code": "CRITIC_LOW", "slide": "s01",
-                  "severity": "REVISE|BLOCKED|PREVIEW_ONLY", "reason": "..."}],
-  "deck_notes": {"density_curve": [], "energy_curve": [], "rhythm_transitions": 0},
-  "slides": [{
-    "slide": "s01",
-    "scores": {
-      "visual_hierarchy": 0, "balance": 0, "alignment": 0, "contrast": 0,
-      "rhythm": 0, "consistency": 0, "emotional_impact": 0,
-      "memorability": 0, "professional_quality": 0
-    },
-    "dimension_evidence": {"visual_hierarchy": ["+1 焦点拥有 Statement 级尺度优势…"]},
-    "observations": [], "minimal_fixes": [], "recheck": []
-  }]
-}
-```
-
-**主输出是诊断，分数是置信度（v3.2）**：`critique_deck()` 返回 `diagnosis`
-= `{question, assessment, strengths[], risks[], advice[], score_semantics}`，全部由已有证据
-重排而来（不新增任何测量）。`strengths` 记「这条 deck 已经做对了什么、值得保留」，
-`risks` 记「哪个维度/门槛正在损害层级、节奏、记忆点」并指到页码与实测数字，
-`advice` 直接取 `director_verdict.levers` 的下一步。`deck_score` 保留但降级为**置信度**：
-分数变化本身**不得**作为修订理由，修订理由只能是 `evidence` 里的具体事实。
-
-评分模型：每项 0–5 分，从基准分 3（「满足声明契约」）出发，凭**可观察证据**加分或扣分（delta ∈ [-2, +2]，钳制到 0–5）。渲染级光学对齐复核为 alignment 纯加分项（≥3 根可验证声明轴线且一致率 ≥75% 时 +1；低一致率不扣分，图像页内部边缘天然离轴）。每一个 delta 都必须写入 `dimension_evidence`，保证分数可逐条溯源复核；不加证据不得加分，不加观察不得扣分。只扣不加的模型会把满分数学性封顶在 80/100、PASS 不可达——证据驱动加减分正是为修复该缺陷；PASS 仍然要求 deck_score ≥ 90 且无任何硬门槛。3–4 个圆角容器时 `professional_quality` 记一次软扣分（未到 `CARD_WALL` 硬门槛，仍可 PASS）；`>4` 的硬门槛与 `ROUNDED_MAX=4` 不变。
-
-`deck_notes.director_verdict`（加性字段，不参与评分）：`{headline, primary_lever, levers[≤3], gates_by_code}`，其中每条 lever 为 `{rank, kind, target, where, why, action, severity}`（kind ∈ gate / dimension / recurring）。它是「修哪个最值」的行动线：修正时一次只修 `primary_lever`，跑完一轮 QA 再看下一条，禁止逐条追分。纯函数、确定性，同输入必得同 verdict。
-
-建议权重为 Hierarchy 20、Balance 15、Alignment 10、Contrast 10、Rhythm 10、Consistency 10、Emotional Impact 10、Memorability 10、Professional Quality 5。Memorability 必须由可观察的视觉记忆锚点、独特构图动作或跨页连续性说明支撑。`hard_gates` 必须携带失败码表中的真实码与 `severity`：`INTENT_UNCLEAR`（BLOCKED）、`FOCUS_COMPETING` / `CARD_WALL` / `MEDIA_UNJUSTIFIED` / `RHYTHM_FLAT` / `BACKGROUND_DISGUISED`（REVISE）、`READABILITY_FAIL`（BLOCKED，渲染实测文字对比 <3:1）、`CRITIC_LOW`（任何核心维度 < 3，REVISE）、`RENDER_UNAVAILABLE`（PREVIEW_ONLY）。Art Critic 的 `status` 只表示审美批评结果：任何核心维度低于 3 或存在审美硬门槛时至少为 `REVISE`，存在 BLOCKED 级硬门槛时为 `BLOCKED`；它不替代 QA 的数据、编译、安全区和渲染发布门。最终 Release Manifest 的 `status` 必须综合 QA 与 Art Critic，只有两者都满足发布条件时才为 `PASS`。
+图表色走语义角色（`theme.chart_palette`：primary/secondary/neutral/accent/negative；元素 `color_role/series_roles`；柱状负值自动染 negative）。背景画心声明 `layer:background` + 自带 `overlay` 内容保护，不计媒体预算；资格不足按普通对象判。
 
 ## Failure codes
 
-| 代码 | 含义 | 默认动作 |
-|---|---|---|
-| `INPUT_MISSING` | 受众、决定、来源或关键约束缺失 | BLOCKED |
-| `INTENT_UNCLEAR` | 一页无法写出单一 insight | BLOCKED |
-| `THEME_MISMATCH` | 主题人格与内容任务冲突 | REVISE Direction |
-| `FOCUS_COMPETING` | 多个对象争夺 L4 | REVISE Composition |
-| `READABILITY_FAIL` | 对比、字号、行数或安全区失败 | BLOCKED |
-| `DATA_INTEGRITY_FAIL` | 单位、期间、来源或图表映射不完整 | BLOCKED |
-| `MEDIA_UNJUSTIFIED` | 图片无信息功能或遮挡内容 | REVISE Media |
-| `RHYTHM_FLAT` | 连续页面密度/重心/能量重复 | REVISE Story Map |
-| `CARD_WALL` | 圆角容器过多或成为主要结构 | REVISE Composition |
-| `RENDER_UNAVAILABLE` | 没有真实渲染证据 | PREVIEW_ONLY |
-| `CRITIC_LOW` | 审美批评维度低于门槛 | REVISE |
-| `OVERLAP` | 可见文本/图表/图片有效墨迹相交 | BLOCKED |
-| `SOURCE_COLLISION` | 来源区被主体或页脚冲突侵入 | BLOCKED |
-| `CHART_LABEL_COLLISION` | 图表标签、轴、图例或数值互相遮挡 | BLOCKED |
-| `TEXT_OVERFLOW` | 实际或估算文字超出可读区域 | BLOCKED |
-| `COMPILE_FAIL` | 编译器未能产出 PPTX 或报告了未消化警告 | BLOCKED |
-| `GUARD_FAIL` | Guard 发现未被专用错误码覆盖的硬错误 | BLOCKED |
-| `BG_UNPROTECTED` | 背景画心未声明 `overlay` / `content_protection` | warn（扣分，不阻断） |
-| `PIXEL_COVERAGE_PARTIAL` | 渲染证据只覆盖部分页（Progressive Level 1/2） | REVISE，不可发布 |
+| 代码 | 动作 |
+|---|---|
+| `INPUT_MISSING` `INTENT_UNCLEAR` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `COMPILE_FAIL` `GUARD_FAIL` | BLOCKED |
+| `THEME_MISMATCH` `FOCUS_COMPETING` `MEDIA_UNJUSTIFIED` `RHYTHM_FLAT` `CARD_WALL` `CRITIC_LOW` `PIXEL_COVERAGE_PARTIAL` | REVISE |
+| `RENDER_UNAVAILABLE` | PREVIEW_ONLY |
+| `BG_UNPROTECTED` | warn（不阻断） |
+
+状态优先级：阻断 → BLOCKED；无阻断缺渲染 → PREVIEW_ONLY；可修复 → REVISE；全满足 → PASS。Guard 的设计观察（`DESIGN_RULES` 17 项）权重恒 0：只提示评审视角，不扣分、不阻断、不以 error 出现。
 
 ## Release Manifest
 
-最终输出必须记录 `source_spec_hash`、`validation`（`issues` / `notes` / `page_count`）、`theme_id`、`slide_count`、`verification`（`qa_level` / `pixel_pages` / `pixel_total` / `release_eligible`）、`compile_report`、`qa_report`、`critic_report`、`render_evidence_path`、`revision_count`、`revision_log`、`status` 和 `generated_at`。可直接调用 `qa.release_manifest()` 或 `qa.py --manifest` 确定性生成（状态合成：任一环节 `BLOCKED` 即 `BLOCKED`，任一 `REVISE` 即 `REVISE`，QA 与 Art Critic 同时满足发布条件才为 `PASS`）。每次 revision 必须记录 observation、minimal_fix、recheck 结果，避免只写“已优化”。报告应能让另一位代理在不读取整套历史对话的情况下复现或定位失败；`revision_log` 只引用失败码与页面 ID，不嵌入重复源码或整份中间报告；`revision_count` 必须来自真实修订流水（每跑一轮生产链记一条），不能是恒为 0 的占位。
+`qa.py --mode release` 生成：`source_spec_hash`（QA/Critic 报告交叉校验，对不上 → BLOCKED）+ `verification`（qa_level/pixel 覆盖/release_eligible）+ `compile/qa/critic` 报告 + `revision_log`（observation/minimal_fix/recheck，引用失败码与页 ID）+ `status`。`revision_count` 来自真实修订流水。
 
-清单不是汇总器，而是**验收员**：`release_manifest()` 用同一算法（`primitives.spec_fingerprint`）重算当前 spec 的指纹，并对两份报告交叉校验——
-
-- 报告带了 `source_spec_hash` 但与当前 spec 不符 → 记入 `validation.issues`，状态强制 `BLOCKED`（拿旧版报告的 PASS 冒充新版结果）；
-- 报告声称 `PASS` 却没有 `source_spec_hash` → 同样 `BLOCKED`（旁路生成的“合格”不能作为发布证据）；未声称 PASS 的旧格式报告只记 `notes`，不阻断；
-- 报告引用的页面 ID 不在当前 spec 内，或 Critic 覆盖页数与 `slide_count` 不一致 → `BLOCKED`。
-
-`source_spec_hash` 因此是 `run_qa` 与 `critique_deck` 返回值中的固定字段；绕过这两个函数手工拼装报告，最多只能得到非 PASS 的清单状态。
+实现口径以代码为真源；历史决策见 `CHANGELOG.md`（备查，不进入生成上下文）。

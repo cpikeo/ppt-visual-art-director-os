@@ -139,7 +139,7 @@ REQUIRED_SEGMENTS = ("subject", "color", "material", "lighting", "composition")
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# V3 · 提示词智能三层：动势（Motion）/ 微浮雕（Micro Texture）/ 空间融合（Fusion）
+# 提示词智能三层：动势（Motion）/ 微浮雕（Micro Texture）/ 空间融合（Fusion）
 # 图片不是静态素材：动势给视觉方向，微浮雕给近观质感，融合消灭「贴纸感」。
 # 全部为弱描述子句；微浮雕纪律：微弱、低对比、近距可感知，禁止明显纹理。
 # --------------------------------------------------------------------------
@@ -318,7 +318,7 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         if layers.get("organic_shapes"):
             segments.append(f"{layers['organic_shapes']} organic shapes")
 
-    # --- 2.5 V3 三层：动势 / 微浮雕 / 空间融合（enhance_asset_card 注入）---
+    # --- 三层：动势 / 微浮雕 / 空间融合（enhance_asset_card 注入）---
     for key in ("motion", "texture", "fusion"):
         segments.extend(_as_list(card.get(key)))
 
@@ -406,7 +406,7 @@ def _load_page(module_path: str | None) -> dict:
     raise AttributeError("页面参数模块需定义 PAGE = {...} 或 build_page() -> dict")
 
 
-# ── Asset Intent Cache（v2.11）：缓存提示词智能，不缓存图片 ─────────────
+# ── Asset Intent Cache：缓存提示词智能，不缓存图片 ─────────────
 # 出图的慢在图像模型本身；可复用的是「怎么写这条 prompt 的判断」（构图/光性/
 # 留白/文字区），不是图片。validated prompt DNA 按 场景×视觉世界×主体 寻址；
 # 色值不进 DNA（色彩由主题在版面层决定），构图与光性判断可以进。

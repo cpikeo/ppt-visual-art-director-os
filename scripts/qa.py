@@ -40,7 +40,7 @@ DEFAULT_PENALTIES = {
     "render_contrast": 3.0,    # 渲染实测「文字 vs 其下方像素」低于 WCAG AA（每项）
     "render_contrast_low": 1.5,  # 同上但仅偏软（3.0–4.5:1），只提示不阻断
     "preflight_hint": 0.0,     # guard 预检 hint：与 Art Critic 同口径的提前提醒，不扣分
-    "design_advisory": 0.0,    # guard 的设计契约条目（v3.2）：观察，不是扣分项
+    "design_advisory": 0.0,    # guard 的设计契约条目：观察，不是扣分项
 }
 DEFAULT_THRESHOLDS = {
     "pass": 90.0,              # passed = score >= pass
@@ -65,7 +65,7 @@ KEY_PAGE_CAP = 6
 # 执行模式（流程控制）：draft 不渲染 · review 只测变化页 · release 全量 + Critic
 # Mode 决定「渲染不渲染、Critic 何时介入、状态给到哪一级」；
 # 与 Fast/Advanced（预算控制：资产数/dpi）正交，互不替代。
-# 设计要点（vNext 简化）：**没有门控、没有状态机、没有第二套缓存**。
+# 设计要点：**没有门控、没有状态机、没有第二套缓存**。
 # Critic 只在 review / release 跑；draft / sketch 恒不跑。想跳过渲染的成本由
 # 「不渲染 + 页级渲染缓存」承担，而不是由「先攒两轮干净再放行」承担。
 # ════════════════════════════════════════════════════════════════════════
@@ -78,7 +78,7 @@ EXECUTION_MODES = {
         "deliver": "PPTX + ghost 预览建议；升 draft 时契约检查恢复",
     },
     "spec": {
-        "label": "Spec Check · 零成本档（v3.2）",
+        "label": "Spec Check · 零成本档",
         "qa_level": 1,
         "render": False,
         "critic": "off",
@@ -214,7 +214,7 @@ def _intent_differs(a: dict, b: dict) -> bool:
 # ── 上一版 spec（唯一保留的跨轮状态）──────────────────────────────────
 # 只服务一件事：把「本轮改了哪几页」算出来，从而 review 只渲染变化页。
 # 没有状态机、没有连续干净计数、没有 Critic 结果缓存——那些是 Stability Gate
-# 的配套件，收益不足以付它引入的持久化/版本/调试成本（vNext 已删除）。
+# 的配套件，收益不足以付它引入的持久化/版本/调试成本（已删除）。
 LAST_SPEC_NAME = "last_spec.json"
 
 
@@ -270,7 +270,7 @@ def key_pages(spec: dict) -> list[int]:
 
 def verdict_of(status: str, score: float, items: list[dict],
                failure_codes: list[str]) -> dict:
-    """QA 的对外判定只有三个词：PASS / FAIL / WARNING（vNext 契约）。
+    """QA 的对外判定只有三个词：PASS / FAIL / WARNING（契约）。
 
     `status` 保留给发布链的细粒度状态机（PASS / REVISE / BLOCKED / PREVIEW_ONLY /
     SKETCH）；`verdict` 是给 AI 与人的一行结论：
@@ -311,7 +311,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     render_dir 为 None 时使用 `<output>_render/` 稳定目录，保证渲染证据可被
     Release Manifest 的 render_evidence_path 记录与复核；无渲染环境自动降级。
 
-    复用（use_cache=True）只覆盖两处——vNext 的缓存全部家当：
+    复用（use_cache=True）只覆盖两处——缓存全部家当：
       ① 页级渲染指标缓存（键 = 本页像素视图 + 主题 + 画布 + dpi + 图片指纹 + 渲染器）
       ② 编译/PDF 复用（PPTX 逐字节未变 → 不再调 soffice；像素视图未变 → 不再编译）
     改 insight / density 这类声明字段不动像素，因此一整轮重跑只需几十毫秒。
@@ -333,7 +333,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     没有稳定性门控、没有结果缓存、没有连续 clean 计数——渲染子集与页级缓存已经
     把成本压到该压的地方，再叠一层状态机只换来调试复杂度。
 
-    normalize=True（默认）：入口先过 Normalizer（生产链第 0 级，见 normalizer.py）。
+    normalize=True（默认）：入口先过 Normalizer（生产链第 0 级，现并入 guard.py）。
     归一化是确定性的，报告记录 hash_before/after——release_manifest 依此接受
     「原始 spec ↔ 归一化 spec」的证明链。传 False 可跳过（spec 已归一化时省一次深拷贝）。
 
@@ -350,7 +350,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     #    归一化确定性 + 报告留痕（hash_before/after），发布清单据此接受证明链。
     norm_report = None
     if normalize:
-        from normalizer import normalize_spec
+        from guard import normalize_spec
         spec, norm_report = normalize_spec(spec)
 
     # 0.2) Smart Fit Resolver（显式 opt-in）：auto_fit:true 的文本按阶梯
@@ -369,7 +369,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         render = True
     if qa_level is None:
         qa_level = 3
-    # v3.2 编译契约：spec 档（或显式 compile=False）完全不碰 pptx/compiler —— 判
+    # 编译契约：spec 档（或显式 compile=False）完全不碰 pptx/compiler —— 判
     # 「spec 是否合理」是数据工作，不该付 152ms 的 import 成本。需要 PPTX 产物时
     # 用 draft（它只 import 编译层，不渲染）。
     do_compile = compile if compile is not None else bool(
@@ -498,7 +498,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
                            "render": 0.0, "config": 0.0}
 
     # hint 级条目按 rule 聚合（网格/节奏微调提示不逐条刷屏，数据仍在 guard.checks）
-    # v3.2：guard 的设计契约条目是「观察」——guard 侧已 advisory/权重 0，这里同样
+    # guard 的设计契约条目是「观察」——guard 侧已 advisory/权重 0，这里同样
     # 不扣分（它们与 Art Critic 同口径，重复扣分等于把审美写成 QA 分数）。
     hint_buckets: dict[str, dict] = {}
     for c in guard["checks"]:
@@ -708,7 +708,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
           else ("PASS" if passed else "REVISE"))))
     # 像素证据覆盖率决定「能不能发布」：Level 1/2（或任何子集渲染）都不给发布级结论，
     # 判定阈值一律不放宽：像素证据不全 → 不给 PASS（`PIXEL_COVERAGE_PARTIAL`）。
-    # 但「发布资格」与「证据完整」是两件事（vNext）：非 release 链即使本轮把 12 页
+    # 但「发布资格」与「证据完整」是两件事：非 release 链即使本轮把 12 页
     # 全测了（页级缓存让这件事几乎免费），status 可以是 PASS，`release_eligible`
     # 仍为 False——发布需要 Release Manifest，那是 release 链独有的产物。
     coverage = evidence.get("coverage") or {}
@@ -731,7 +731,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     next_action = (base + " · 发布前需 qa_level=3 全量像素复核"
                    if partial_pixel else base)
 
-    # ── Critic 介入策略（vNext：一句话，没有门控）───────────────────────
+    # ── Critic 介入策略（一句话，没有门控）───────────────────────
     # draft / sketch：恒不跑（迭代期不付审美成本）。
     # review / release：跑，用本轮同一份渲染证据。成本主要在渲染，不在 Critic；
     # 想省时间就少渲染几页（已由 change 分类做到），而不是把 Critic 藏进状态机。
@@ -934,6 +934,11 @@ def main(argv):
         return 1
     mod_path = Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
+    if spec_mod is None or spec_mod.loader is None:
+        print(f"qa.py: 无法加载 {mod_path}——本入口读的是 .py build 模块"
+              "（定义 build_spec() 或 SPEC），不是 .json；"
+              "裸 spec baseline 校验请用 --mode spec。")
+        return 1
     mod = importlib.util.module_from_spec(spec_mod)
     spec_mod.loader.exec_module(mod)
     spec = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
@@ -978,7 +983,7 @@ def main(argv):
     # 生产链第 0 级：Normalizer 在一切之前（Guard 只确认，不负责发现机械偏差）。
     # CLI 只归一化一次，后续 run_qa/critic/manifest 共用同一份归一化 spec。
     if do_normalize:
-        from normalizer import normalize_spec
+        from guard import normalize_spec
         spec, norm = normalize_spec(spec)
         # 摘要只进人类输出；--json 必须保持纯净（机器消费契约）
         if norm["changed"] and "--json" not in argv:
@@ -1021,9 +1026,12 @@ def main(argv):
         manifest_path = Path(argv[2]).with_suffix(".manifest.json")
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
-        print(f"manifest: {manifest_path} (status={manifest['status']})")
+        # --json 保持纯净（同 §Critic 分支守则）：manifest 落盘为凭，
+        # 文本行只在人类可读模式打印 stdout，机器管道直接 json.loads 不得被污染。
+        if "--json" not in argv:
+            print(f"manifest: {manifest_path} (status={manifest['status']})")
         # 修订流水提示：占位 0 不再静默通过——发布链要求真实流水
-        if not manifest.get("revision_count"):
+        if not manifest.get("revision_count") and "--json" not in argv:
             print("hint: revision_count=0（发布清单应携带真实修订流水："
                   "observation → minimal_fix → recheck × N 轮）")
     # 风险预测 → 生成策略（首屏）：先按策略改，再谈渲染。它是决策输入，不是审核闸。

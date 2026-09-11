@@ -1,0 +1,34 @@
+# Design Brief（意图压缩层输出 · ~500 tokens）
+#
+# 由 scripts/intent_compiler.py 从原始需求编译而来。
+# Brief 之后所有步骤只消费本文件 + 逐页 Page Intent，不再回读原始需求。
+# 显式填写的字段永远赢过推断；unknown 表示不可验证、不得静默补成事实。
+
+design_intent:
+  goal: ""            # 观看后要支持的决定（一个动词 + 一个对象）
+  audience: ""        # 受众与观看场景
+  tone: calm_authority  # calm_authority | constructive_urgency | human_trust | technical_clarity
+  visual_world: ""    # 一句话隐喻：材质 + 光影 + 空间
+  layout: ""          # composition_grammar / type_voice / color_behavior
+  energy_curve: "sparse-opening → dense-evidence → sparse-closing"
+  media_policy: none  # none | context | emotion | proof | hero
+  avoid: []           # 本 deck 明确不做的三件事（如 dashboard feeling）
+
+strategy_seed:
+  audience: ""
+  decision: ""
+  tension: ""         # 观众当前的疑问、风险或阻力（unknown 亦可）
+  narrative_arc: [establish, explain, prove, recommend, close]
+  emotional_target: calm_authority
+  evidence_posture: fact_led  # fact_led | hypothesis_led | exploratory
+
+direction_seed:
+  visual_world: ""
+  composition_grammar: evidence_field  # soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence
+  type_voice: neutral_sans             # editorial_serif | neutral_sans | product_display | humanist_sans
+  color_behavior: single_signal        # quiet_neutral | single_signal | warm_material | dark_luminous
+  media_role: none
+  background_scene: solid_world        # solid_world | atmospheric | cinematic
+  motion_posture: still                # still | reveal | progressive
+
+slides_seed: []       # [{id, family, density, energy, energy, empty_space_role}] 由 route 复用

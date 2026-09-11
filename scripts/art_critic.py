@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Structured, read-only art criticism for PPT specs (v3).
 
-**职责边界（vNext）：Critic 只回答「这套设计有没有高级价值」，不回答
+**职责边界：Critic 只回答「这套设计有没有高级价值」，不回答
 「这份 PPT 能不能正确交付」。** 后者是 QA（工程验证层）的唯一职责。
 
   管：视觉层级 · 空间节奏 · 信息焦点 · 审美一致性 · 品牌气质 · 记忆点
@@ -50,7 +50,7 @@ BASELINE = 3          # 基准分：满足「声明契约」的最低审美合�
 PASS_SCORE = 90       # deck_score >= 90 才允许 PASS（与 production-contract 一致）
 # 评分行为版本：3.0 = 职责分离（工程判定交还 QA、像素证据只做加分、门控瘦身）。
 # 跨版本分数不可比；它只是报告上的戳，不再参与任何缓存失效逻辑
-# （vNext 已删除 Critic 结果缓存，因此不需要版本闸）。
+# （已删除 Critic 结果缓存，因此不需要版本闸）。
 CRITIC_VERSION = "3.1"
 CAPTION_ROLES = {"caption", "annotation", "source", "label", "axis",
                  "data_label", "legend", "metadata", "method"}
@@ -355,7 +355,7 @@ def background_layer_ok(e: dict, cw: float | None = None,
         return True, None
     op, why = bg_overlay_opacity(e)
     if op is None:
-        if why == "unparsable":             # v2.4 fail-closed：解析不出按无保护处理
+        if why == "unparsable":             # fail-closed：解析不出按无保护处理
             return False, "overlay 无法解析出 opacity（解析不出即视为无保护）"
         return False, "未声明 overlay/content_protection：叠加文字的可读性无保障"
     if op < BG_MIN_PROTECT_OPACITY:
@@ -798,7 +798,7 @@ def _score_page(spec: dict, slide: dict, index: int, previous: dict | None,
     return scores, r.evidence(), observations, fixes, gates
 
 
-# ── 职责移交表（vNext）：这些码**只属于 QA**，Critic 不再重复判罚 ──────────
+# ── 职责移交表：这些码**只属于 QA**，Critic 不再重复判罚 ──────────
 # 列在这里是给自己看的纪律，也是给下游可核对的契约：报告里以 `delegated_to_qa`
 # 原样输出，任何人质疑「Critic 为什么不管溢出/对比度」都能一眼看到答案。
 DELEGATED_TO_QA = (
@@ -987,7 +987,7 @@ def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> di
                     f"{primary['action']}")
     else:
         headline = "无明确杠杆：按页修 minimal_fix 后重跑 QA。"
-    # V2 批量修正：primary 所在根因组的全部杠杆本轮一并修（一次验证）；
+    # 批量修正：primary 所在根因组的全部杠杆本轮一并修（一次验证）；
     # 其余根因组排队后续轮次。归因不破坏：同组 = 同一个「为什么」。
     primary_cause = primary.get("root_cause") if primary else None
     fix_this_round = [l for l in levers if l.get("root_cause") == primary_cause] \
@@ -1007,7 +1007,7 @@ def _director_verdict(reports, hard_gates, deck_notes, deck_score, status) -> di
 
 def _diagnosis(reports: list[dict], hard_gates: list[dict], deck_notes: dict,
                director: dict, deck_score: float, status: str) -> dict:
-    """设计诊断（v3.2）：Critic 的主输出是「判断」，分数只是置信度。
+    """设计诊断：Critic 的主输出是「判断」，分数只是置信度。
 
     纯重排已有证据——不新增任何测量。四条：
       strengths 这条 deck 已经做对的设计决策（值得保留）
@@ -1220,7 +1220,7 @@ def critique_deck(spec: dict, render_evidence: dict | None = None,
     diagnosis = _diagnosis(reports, hard_gates, deck_notes,
                            deck_notes["director_verdict"], deck_score, status)
     return {
-        # v3.2：主输出是诊断（assessment/strengths/risks/advice），分数降为置信度
+        # 主输出是诊断（assessment/strengths/risks/advice），分数降为置信度
         "diagnosis": diagnosis,
         "critic_version": CRITIC_VERSION,
         # 自证戳：与 QA 同一算法；发布清单据此判断报告是否来自当前 spec

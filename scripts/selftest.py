@@ -7,8 +7,8 @@ import importlib.util, json, pathlib, re, sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFS = ROOT / "references"
 SCRIPTS = ROOT / "scripts"
-REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "evidence-library.md", "themes.md", "production-contract.md"}
-REQUIRED_SCRIPTS = {"compiler.py", "charts.py", "elements.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "normalizer.py", "route.py", "ghost.py", "design_intelligence.py", "layout_search.py", "calibrate.py"}
+REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "production-contract.md"}
+REQUIRED_SCRIPTS = {"compiler.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "art_critic.py", "route.py", "ghost.py", "design_intelligence.py", "layout_search.py", "intent_compiler.py", "design_intelligence_rules.py"}
 
 
 def load(name, path):
@@ -116,8 +116,7 @@ def check_references():
     docs = list(ROOT.rglob("*.md")) + sorted(SCRIPTS.glob("*.py"))
     # 不随包分发的引用：用户的构建模块占位名，以及工作区基准/尚未实现的路线图条目
     allow_missing = {"build_mydeck.py", "build_module.py", "build_card.py",
-                     "build_page.py", "build_probe.py", "build_bench_deck.py",
-                     "qa_worker.py"}
+                     "build_page.py", "build_probe.py", "build_bench_deck.py"}
     for doc in docs:
         refs.update(re.findall(r"[\w./-]+\.(?:md|py)", doc.read_text(encoding="utf-8")))
     missing = sorted({r.split("/")[-1] for r in refs if ".." not in r and r.split("/")[-1] not in names and r.split("/")[-1] not in allow_missing})
@@ -227,7 +226,7 @@ def check_render_metrics():
 
 
 def check_fill_contract():
-    mod = load("elements", SCRIPTS / "elements.py")
+    mod = load("compiler", SCRIPTS / "compiler.py")
     standard = mod.normalize_fill({"type": "solid", "color": "#ffffff", "opacity": 0.3})
     legacy = mod.normalize_fill({"color": "#ffffff", "opacity": 0.3})
     transparent = mod.normalize_fill({"type": "none"})
@@ -252,7 +251,7 @@ def check_imports():
 
 def check_normalizer():
     """V2 生产链第 0 级：网格/token 归一化确定性、幂等、可退出、留痕。"""
-    norm = load("normalizer", SCRIPTS / "normalizer.py")
+    norm = load("guard", SCRIPTS / "guard.py")
     theme = {"colors": {"background": "#FAF7F0", "accent": "#8E2F28", "ink": "#191510",
                         "muted": "#6E675C"},
              "fonts": {"family": "SimSun", "latin": "Georgia"}}
@@ -479,7 +478,7 @@ def check_batch_verdict():
 
 
 def check_pre_critic():
-    """V3 Pre-Critic：六类历史失败在渲染前被预测；好 spec 零误报。"""
+    """Pre-Critic：六类历史失败在渲染前被预测；好 spec 零误报。"""
     di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
     theme = {"colors": {"background": "#FAF7F0", "primary": "#2B241B",
                         "secondary": "#9A8F7C", "accent": "#8E2F28",
@@ -543,7 +542,7 @@ def check_pre_critic():
 
 
 def check_design_dna():
-    """V3 Design DNA：召回命中、置信度、record 沉淀回路（自清理）。"""
+    """Design DNA：召回命中、置信度、record 沉淀回路（自清理）。"""
     di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
     hit = di.recall_dna({"subject": "2026 企业年度总结", "brief": "东方高级 宋氏美学 留白 董事会"})
     ok = (hit["matched"] == "song_elegance_editorial" and hit["confidence"] > 0
@@ -575,12 +574,31 @@ def check_design_dna():
                             encoding="utf-8")
     ok = ok and not any(e["id"] == "__selftest_dna__"
                         for e in json.loads(di.DNA_STORE.read_text(encoding="utf-8"))["entries"])
+    # v4.9 V4：拒门递归——嵌套 dict 藏色值、全角＃色值同样拒收
+    rej4 = di.record_dna({"id": "__bad__", "signature": {"keywords": ["__t__"]},
+                          "design_problem": "p",
+                          "judgment": {"space": "s", "media": {"note": "用 #FF0000"}}})
+    rej5 = di.record_dna({"id": "__bad__", "signature": {"keywords": ["__t__"]},
+                          "design_problem": "p",
+                          "judgment": {"space": "用 ＃0D0D0D", "media": "m"}})
+    ok = ok and not rej4["ok"] and not rej5["ok"]
+    # v4.9 V2：经验库损坏 → record 拒写防整库覆盖毁灭（损坏≠不存在）
+    raw = di.DNA_STORE.read_text(encoding="utf-8")
+    try:
+        di.DNA_STORE.write_text("{ \u635f坏", encoding="utf-8")
+        broken = di.record_dna({"id": "__bad__", "signature": {"keywords": ["__t__"]},
+                                "design_problem": "p",
+                                "judgment": {"space": "s", "media": "m"}})
+        ok = ok and not broken["ok"] and "拒绝写入" in broken["reason"]
+    finally:
+        di.DNA_STORE.write_text(raw, encoding="utf-8")
+    ok = ok and bool(json.loads(di.DNA_STORE.read_text(encoding="utf-8"))["entries"])
     return {"status": "PASS" if ok else "FAIL", "matched": hit["matched"],
             "confidence": hit["confidence"]}
 
 
 def check_layout_search():
-    """V3 Layout Search：确定性、排序合理、几何 8 网格对齐。"""
+    """Layout Search：确定性、排序合理、几何 8 网格对齐。"""
     ls = load("layout_search", SCRIPTS / "layout_search.py")
     intent = {"page_family": "CLOSING", "energy": "high", "density": "sparse"}
     c1 = ls.search(intent, {"title": True, "lead": False, "chart": False}, n=3)
@@ -607,7 +625,7 @@ def check_layout_search():
 
 
 def check_media_and_budgets():
-    """V3 媒体决策模型 + 页面质量预算：置信度、理由、route 家族别名。"""
+    """媒体决策模型 + 页面质量预算：置信度、理由、route 家族别名。"""
     di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
     hero = di.media_decision({"page_intent": {"page_family": "COVER"}})
     data = di.media_decision({"page_intent": {"page_family": "DATA_STORY"}})
@@ -626,7 +644,7 @@ def check_media_and_budgets():
 
 
 def check_auto_fit():
-    """V3 Smart Fit Resolver：opt-in 阶梯吸附、未声明零改动、needs_rewrite。"""
+    """Smart Fit Resolver：opt-in 阶梯吸附、未声明零改动、needs_rewrite。"""
     di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
     spec = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}}, "slides": [
         {"id": "s1", "elements": [
@@ -814,7 +832,7 @@ def check_qa_performance_keys():
             "render_skipped"}
     ok = (keys <= set(perf) and (r.get("preflight") or {}).get("items") is not None
           and qa.DEFAULT_PENALTIES.get("preflight_hint") == 0.0
-          and "preflight_gate" not in r        # vNext：预检只诊断，不拦渲染
+          and "preflight_gate" not in r        # 预检只诊断，不拦渲染
           and perf["slides"] == 1)
     return {"status": "PASS" if ok else "FAIL",
             "perf": {k: perf.get(k) for k in ("guard_ms", "compile_ms", "render_ms")}}
@@ -1122,7 +1140,7 @@ def check_line_measure():
                                      text("c", 200, 10, 1088, role="source")]}]}
     g = guard.check_spec(spec)
     # 行长「建议值」是编辑观点（typography / advisory）；超出 fail factor 是内容被切断
-    # 的事实 → 归 text_capacity，可阻断（v3.2 重定性）。
+    # 的事实 → 归 text_capacity，可阻断（重定性）。
     cap_err = [c for c in g["checks"] if c["rule"] == "text_capacity" and c["level"] == "error"]
     typo_warn = [c for c in g["checks"] if c["rule"] == "typography" and c["level"] == "warn"]
     pre = [i for i in (g.get("preflight") or []) if i["code"] == "LINE_MEASURE"]
@@ -1409,7 +1427,7 @@ def check_cache_projection():
                "comment", "comments", "annotations"}
     leak = {rkey for rkey in reads if rkey in set(rc.NON_PIXEL_SLIDE_KEYS)} - allowed
     tsrc = "\n".join((SCRIPTS / m).read_text(encoding="utf-8")
-                     for m in ("compiler.py", "primitives.py", "charts.py", "elements.py"))
+                     for m in ("compiler.py", "primitives.py"))
     treads = set(re.findall(r"theme\.get\(['\"]([a-z_]+)['\"]", tsrc))
     tleak = treads & set(rc.NON_PIXEL_THEME_KEYS)
     ok = (base == same and base != focus_moved and base != pixel_moved and view_same
@@ -1533,39 +1551,10 @@ def check_optical_alignment():
             "max_shift_px": bad.get("max_shift_px")}
 
 
-def check_calibrate_harness():
-    """校准闭环工具：Pearson 数学、样本守门、阈值反推方向性。"""
-    cal = load("calibrate", SCRIPTS / "calibrate.py")
-    ok = abs(cal.pearson([1, 2, 3, 4, 5], [2, 4, 6, 8, 10]) - 1.0) < 1e-9
-    ok = ok and abs(cal.pearson([1, 2, 3, 4, 5], [10, 8, 6, 4, 2]) + 1.0) < 1e-9
-    ok = ok and abs(cal.pearson([1, 1, 1], [1, 2, 3])) < 1e-9      # 零方差 → 0
-    # 守门：样本不足必须拒绝（不给噪声拟合任何机会）
-    r1 = cal.analyze({"pages": [{"slide": "s01", "score": 5}, {"slide": "s02", "score": 1}]},
-                     {"s01": 4.8, "s02": 1.2}, {})
-    ok = ok and r1["ok"] is False and "样本不足" in r1["reason"]
-    # 足量样本：完美相关 + 方向正确的阈值反推
-    labels = {"pages": [{"slide": f"s{i:02d}", "score": s} for i, s in
-                        enumerate([5, 5, 4, 4, 1, 1, 2, 2], 1)]}
-    scores = {f"s{i:02d}": v for i, v in
-              enumerate([4.6, 4.4, 4.2, 4.0, 1.4, 1.2, 2.0, 1.8], 1)}
-    feats = {f"s{i:02d}": {"gravity_drift": g, "accent_pixel_ratio": 0.02,
-                           "edge_kurtosis_avg": 5.0}
-             for i, g in enumerate([0.05, 0.06, 0.10, 0.08, 0.40, 0.35, 0.30, 0.45], 1)}
-    r2 = cal.analyze(labels, scores, feats)
-    ok = ok and r2["ok"] is True and r2["pearson"] > 0.9
-    ok = ok and r2["kill_rate"] == 0.0 and r2["leak_rate"] == 0.0
-    sw = {s["feature"]: s for s in r2["sweeps"]}
-    ok = ok and "gravity_drift" in sw and 0.10 <= sw["gravity_drift"]["suggested"] <= 0.30
-    ok = ok and sw["gravity_drift"]["separation_accuracy"] >= 0.9
-    return {"status": "PASS" if ok else "FAIL",
-            "pearson": r2.get("pearson"), "guard": r1["reason"][:16],
-            "suggested_gravity_drift": (sw.get("gravity_drift") or {}).get("suggested")}
-
-
 def check_chart_color_roles():
-    """v2.11 Chart Color Role System：角色→主题映射链、旧扁平键兼容、负值兜底、元素 color_role。"""
+    """Chart Color Role System：角色→主题映射链、旧扁平键兼容、负值兜底、元素 color_role。"""
     prim = load("primitives", SCRIPTS / "primitives.py")
-    charts = load("charts", SCRIPTS / "charts.py")
+    charts = load("compiler", SCRIPTS / "compiler.py")
     theme = {"colors": {"ink": "#111111", "primary": "#222222", "secondary": "#333333",
                         "muted": "#777777", "accent": "#AA0000", "risk": "#B00020"},
              "chart_palette": {"primary": "primary", "secondary": "accent",
@@ -1594,7 +1583,7 @@ def check_chart_color_roles():
 
 
 def check_brand_seed():
-    """v2.11 Color Intelligence 入口：brief.brand_colors 品牌优先覆盖方向预设。"""
+    """Color Intelligence 入口：brief.brand_colors 品牌优先覆盖方向预设。"""
     route = load("route", SCRIPTS / "route.py")
     preset = {"colors": {"accent": "#111111", "paper": "#FFFFFF"},
               "fonts": {"cn": "Source Han Serif", "latin": "Inter"}}
@@ -1614,7 +1603,7 @@ def check_brand_seed():
 
 
 def check_layout_recommend():
-    """v2.11 两层布局决策：标准家族直达原型，复杂页（未分类/多焦点）才搜索。"""
+    """两层布局决策：标准家族直达原型，复杂页（未分类/多焦点）才搜索。"""
     ls = load("layout_search", SCRIPTS / "layout_search.py")
     r1 = ls.recommend({"page_family": "DATA", "insight": "增长加速", "focus": "chart1"})
     ok = (r1["tier"] == "family" and r1["archetype"] == "full_width_evidence"
@@ -1636,7 +1625,7 @@ def check_layout_recommend():
 
 
 def check_asset_prompt_dna():
-    """v2.11 Asset Intent Cache：判断（构图/光性）可复用，色值拒收，图片永不缓存。"""
+    """Asset Intent Cache：判断（构图/光性）可复用，色值拒收，图片永不缓存。"""
     import tempfile
     ap = load("asset_prompt", SCRIPTS / "asset_prompt.py")
     ap.PROMPT_DNA_STORE = pathlib.Path(tempfile.mkdtemp()) / "apdna.json"
@@ -1911,9 +1900,20 @@ def check_visual_calibration_v3():
         fails.append("color_plan 非确定")
     if abs(sum(a["ratio_targets"].values()) - 1.0) > 1e-9:
         fails.append("比例目标和≠1")
-    branded = di.color_plan("evidence_first", {"brand_colors": {"x": "#123456"}})
-    if branded["seed_source"] != "brand_colors" or branded["seed_skeleton"]["foundation"] != "#123456":
+    branded = di.color_plan("evidence_first", {"brand_colors": {"accent": "#123456"}})
+    if branded["seed_source"] != "brand_colors" or branded["seed_skeleton"]["accent"] != "#123456":
         fails.append("brand_colors 未优先")
+    if branded["seed_skeleton"]["foundation"] == "#123456":
+        fails.append("键名语义错位：accent 被填进 foundation（v4.8 分裂 bug 回潮）")
+    unkn = di.color_plan("evidence_first", {"brand_colors": {"x": "#123456"}})
+    if unkn["seed_source"] == "brand_colors":
+        fails.append("未知槽位键不应接管色板")
+    nothex = di.color_plan("evidence_first", {"brand_colors": {"accent": "gold"}})
+    if nothex["seed_source"] == "brand_colors":
+        fails.append("非 #HEX 色值不应被接受")
+    prim = di.color_plan("evidence_first", {"brand_colors": {"primary": "#0F2B46"}})
+    if prim["seed_source"] != "brand_colors" or prim["seed_skeleton"]["foundation"] != "#0F2B46":
+        fails.append("primary→foundation 别名失效（只给主色的品牌不应静默丢失）")
     if di.color_plan("quiet_minimal")["family"] != "zen_minimal":
         fails.append("direction alias 失效")
     spec = {"canvas": {"width": 1280, "height": 720},
@@ -2128,6 +2128,157 @@ def check_draft_import_contract():
             if not fails else {"status": "FAIL", "violations": fails})
 
 
+
+def check_intent_compiler():
+    """v4.0 意图压缩层：需求 → Design Brief（确定性、可预算、可复算）。"""
+    import io
+    from contextlib import redirect_stdout
+    ic = load("intent_compiler", SCRIPTS / "intent_compiler.py")
+    need = {"occasion": "2026 年度总结", "audience": "董事会",
+            "decision": "批准关停亏损产品线",
+            "slides": ["封面：年度总结",
+                       {"id": "s02", "type": "data", "title": "增长结构"},
+                       {"id": "s03", "type": "closing", "title": "下一步"}]}
+    b1, b2 = ic.compile_brief(need), ic.compile_brief(need)
+    ok = (b1 == b2 and set(b1) >= {"design_intent", "strategy_seed",
+                                   "direction_seed", "slides_seed",
+                                   "token_estimate", "source_hash"})
+    ok = ok and b1["design_intent"]["tone"] == "calm_authority"
+    ok = ok and b1["token_estimate"] <= 800
+    ok = ok and [s["family"] for s in b1["slides_seed"]] == [
+        "COVER", "DATA_STORY", "MINIMAL_STATEMENT"]
+    # 显式覆盖永远赢；自然语言输入可编译
+    b3 = ic.compile_brief({**need, "tone_hint": "human_trust"})
+    ok = ok and b3["design_intent"]["tone"] == "human_trust"
+    b4 = ic.compile_brief("做一个科技公司年度总结，给董事会看")
+    ok = ok and b4["design_intent"]["audience"] == "unknown"
+    # import 零成本：route 只在函数内懒加载
+    top = ic.__file__ and pathlib.Path(ic.__file__).read_text(encoding="utf-8")
+    ok = ok and "\nfrom route" not in top and "\nimport route" not in top
+    # CLI --demo 可执行
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = ic.main(["--demo"])
+    ok = ok and rc == 0 and json.loads(buf.getvalue())["token_estimate"] > 0
+    return {"status": "PASS" if ok else "FAIL",
+            "tokens": b1["token_estimate"], "hash": b1["source_hash"]}
+
+
+def check_rules_module():
+    """v4.0 机器口径真源：查表归代码，且与逻辑同值、与目录互证。"""
+    import ast
+    rules = load("design_intelligence_rules",
+                 SCRIPTS / "design_intelligence_rules.py")
+    di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
+    # 零依赖：只允许 from __future__
+    tree = ast.parse((SCRIPTS / "design_intelligence_rules.py").read_text(
+        encoding="utf-8"))
+    imports = [n for n in ast.walk(tree)
+               if isinstance(n, (ast.Import, ast.ImportFrom))]
+    ok = all(isinstance(n, ast.ImportFrom) and n.module == "__future__"
+             for n in imports)
+    # 同值（搬移零漂移；load() 不注册 sys.modules 故判 == 不判 is）
+    # 目录形状：18 码 / 12 族 / 取舍 5 阶固定序
+    ok = ok and rules.DENSITY_BANDS == di.DENSITY_BANDS
+    ok = ok and rules.CALIBRATION_LAWS == di.CALIBRATION_LAWS
+    ok = ok and rules.COLOR_DIRECTIONS == di.COLOR_DIRECTIONS
+    ok = ok and rules.INTENT_PRESETS == di.INTENT_PRESETS
+    ok = ok and rules.JUDGMENT_KEYS == di._JUDGMENT_KEYS
+    ok = ok and rules.MEDIA_MODEL == di._MEDIA_MODEL
+    ok = ok and len(rules.RISK_CATALOG) == 18
+    ok = ok and len(rules.risk_families()) == 12
+    ok = ok and all(set(m) >= {"family", "level", "predicted", "root_cause",
+                               "prevention", "confidence"}
+                    for m in rules.RISK_CATALOG.values())
+    ok = ok and [t["id"] for t in rules.TRADEOFF_ORDER] == [
+        "fact_semantics", "readability", "content_task", "emotion", "brand"]
+    # 实测发射码 ⊆ 目录（adversarial battery 触发 6+ 码）
+    theme = {"colors": {"background": "#FAF7F0", "primary": "#2B241B",
+                        "secondary": "#9A8F7C", "accent": "#8E2F28",
+                        "ink": "#191510", "muted": "#6E675C"},
+             "constraints": {"accent_max": 0.05}}
+
+    def pi(insight, focus, family="DATA", density="sparse",
+           role="protect_focus"):
+        return {"insight": insight, "focus": focus, "reading_order": [focus],
+                "energy": "medium", "density": density,
+                "empty_space_role": role, "page_family": family,
+                "rhythm_stage": "context", "continuity_token": "t"}
+
+    bad = {"canvas": {"width": 1280, "height": 720}, "theme": theme, "slides": [
+        {"id": "b1", "page_intent": pi("对比", "t", "STATEMENT"), "elements": [
+            {"type": "text", "id": "t", "x": 48, "y": 104, "width": 880,
+             "height": 64, "text": "标题", "size": 34, "color": "ink",
+             "max_lines": 1},
+            {"type": "text", "id": "lead", "x": 48, "y": 184, "width": 600,
+             "height": 64, "text": "淡墨正文", "size": 16, "color": "secondary",
+             "max_lines": 2}]},
+        {"id": "b2", "page_intent": pi("构成", "c", "DATA", "balanced"),
+         "elements": [
+            {"type": "chart", "id": "c", "chart_kind": "donut", "x": 328,
+             "y": 168, "width": 624, "height": 416, "highlight": 1,
+             "data": [{"label": "A", "value": 52},
+                      {"label": "B", "value": 48}],
+             "source": "s", "unit": "%", "period": "2026", "basis": "x"}]},
+        {"id": "b3", "page_intent": pi("溢出", "t3", "STATEMENT"), "elements": [
+            {"type": "text", "id": "t3", "x": 48, "y": 108, "width": 488,
+             "height": 64, "text": "一行肯定放不下的很长很长的标题文字要换行",
+             "size": 40, "color": "ink", "line_height": 1.15,
+             "max_lines": 2}]},
+        {"id": "b4", "page_intent": pi("无锚", "t4", "SECTION",
+                                      role="separate_chapter"), "elements": [
+            {"type": "text", "id": "t4", "x": 48, "y": 108, "width": 880,
+             "height": 56, "text": "小标题", "size": 34, "color": "ink",
+             "max_lines": 1},
+            {"type": "chart", "id": "lanes", "chart_kind": "steps", "x": 48,
+             "y": 264, "width": 1184, "height": 320,
+             "data": [{"label": "一", "value": 1},
+                      {"label": "二", "value": 2}],
+             "source": "s", "unit": "条", "period": "2027", "basis": "x"}]},
+        {"id": "b5", "page_intent": pi("平A", "t5", "SECTION"), "elements": [
+            {"type": "text", "id": "t5", "x": 48, "y": 104, "width": 880,
+             "height": 64, "text": "静一", "size": 40, "color": "ink",
+             "max_lines": 1}]},
+        {"id": "b6", "page_intent": pi("平B", "t6", "SECTION"), "elements": [
+            {"type": "text", "id": "t6", "x": 48, "y": 104, "width": 880,
+             "height": 64, "text": "静二", "size": 40, "color": "ink",
+             "max_lines": 1}]},
+    ]}
+    emitted = {r["code"] for r in di.pre_critic(bad)["risks"]}
+    want = {"CONTRAST_FAIL_RISK", "ACCENT_OVERFLOW", "TEXT_OVERFLOW_RISK",
+            "NO_MEMORY_ANCHOR", "FOCUS_AREA_RISK", "RHYTHM_FLAT_RISK"}
+    ok = ok and want <= emitted and emitted <= set(rules.RISK_CATALOG)
+    return {"status": "PASS" if ok else "FAIL",
+            "codes": len(rules.RISK_CATALOG),
+            "families": len(rules.risk_families()),
+            "emitted_covered": len(emitted)}
+
+
+def check_judgment_diet():
+    """v4.0 判断密度预算：AI 必读面只许瘦不许胖（防规则回潮）。"""
+    import re
+    sizes = {f: (ROOT / f).stat().st_size for f in
+             ("SKILL.md", "references/production-contract.md",
+              "references/design-intelligence.md")}
+    ok = (sizes["SKILL.md"] <= 8192
+          and sizes["references/production-contract.md"] <= 8192
+          and sizes["references/design-intelligence.md"] <= 10240)
+    # 硬规则行（基线 98）≤ 30；知识保全：35 条微规则附录在 CHANGELOG 可找到，不许删
+    hard = 0
+    for f in ("SKILL.md", "references/production-contract.md",
+              "references/design-intelligence.md", "references/design-system.md",
+              "references/design-craft.md"):
+        text = (ROOT / f).read_text(encoding="utf-8")
+        hard += sum(1 for ln in text.splitlines()
+                    if re.search("禁止|必须|不得|不允许|严禁", ln))
+    ok = ok and hard <= 30
+    archived_rules = (ROOT / "references/archive.md").read_text(encoding="utf-8")
+    ok = ok and ("Evidence Micro-Rules" in archived_rules
+                 and "行长 CJK 22–38 字" in archived_rules
+                 and "数据墨水比" in archived_rules)
+    return {"status": "PASS" if ok else "FAIL", "sizes": sizes,
+            "hard_rule_lines": hard}
+
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "art_critic": check_critic(), "critic_with_render": check_critic_with_render(), "critic_pass_reachable": check_critic_pass_reachable(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
                "normalizer": check_normalizer(),
@@ -2161,7 +2312,6 @@ def main():
             "manifest_attestation": check_manifest_attestation(),
             "director_upgrade": check_director_upgrade(),
             "optical_alignment": check_optical_alignment(),
-            "calibrate_harness": check_calibrate_harness(),
             "chart_color_roles": check_chart_color_roles(),
             "brand_seed": check_brand_seed(),
             "layout_recommend": check_layout_recommend(),
@@ -2170,7 +2320,10 @@ def main():
             "pre_critic_v2": check_pre_critic_v2(),
             "intent_skeleton": check_intent_skeleton(),
             "deck_decision": check_deck_decision(),
-            "compile_version_gate": check_compile_version_gate()}
+            "compile_version_gate": check_compile_version_gate(),
+            "intent_compiler": check_intent_compiler(),
+            "rules_module": check_rules_module(),
+            "judgment_diet": check_judgment_diet()}
     ok = all(v["status"] == "PASS" for v in result.values())
     if "--json" in sys.argv:
         print(json.dumps(result, ensure_ascii=False, indent=2))
