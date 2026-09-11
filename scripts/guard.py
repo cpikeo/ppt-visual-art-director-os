@@ -925,6 +925,27 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             eid = e.get("id", f"{sid}[{si}]")
             typ = str(e.get("type", "text"))
             role = str(e.get("role", ""))
+
+            # 媒体闸门：凡是声明为 AI 生成的图片，必须留下 asset_prompt.py 证据。
+            # Guard 无法也不应该重新调用图像模型；它检查的是可审计凭证：
+            # prompt manifest 引用 + APC 编号 + 资产卡无 issues。
+            if typ == "image" and (
+                e.get("generated_asset") is True
+                or e.get("ai_generated") is True
+                or e.get("asset_prompt_ref")
+                or isinstance(e.get("asset_prompt"), dict)
+            ):
+                ap = e.get("asset_prompt") if isinstance(e.get("asset_prompt"), dict) else {}
+                apc = e.get("asset_apc") or ap.get("apc") or (ap.get("meta") or {}).get("apc")
+                ref = e.get("asset_prompt_ref") or ap.get("manifest") or ap.get("ref")
+                issues = ap.get("issues") if isinstance(ap, dict) else None
+                if not ref or not apc:
+                    add("asset_prompt_required", eid, "error",
+                        "AI 生成图片缺少 asset_prompt.py 凭证：需要 asset_prompt_ref + asset_apc")
+                if issues:
+                    add("asset_prompt_required", eid, "error",
+                        f"asset_prompt.py 资产卡存在未解决问题：{issues}")
+
             if e.get("animation") or e.get("transition"):
                 animation_types.add(str(e.get("animation") or e.get("transition")))
             if e.get("icon_style"):
@@ -1679,10 +1700,31 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
             items.append({"slide": slide_id, "id": el_id, "field": field,
                           "from": old, "to": new, "rule": rule})
 
+    def _is_hairline(el: dict) -> bool:
+        """语义发丝线：保留 1–2px 的视觉重量，不被 8px 网格放大。
+
+        网格负责空间秩序，但不能把 divider / rule / axis 变成粗色块。
+        位置仍吸附到网格；线的 width / height 保留原值。
+        """
+        role = str(el.get("role") or "").strip().lower()
+        if el.get("hairline") is True or role in {
+            "hairline", "rule", "divider", "axis", "separator"
+        }:
+            return True
+        # 兼容旧 spec：只有一边 ≤2px 的矩形，本身就是发丝线。
+        if str(el.get("type") or "").lower() == "shape":
+            try:
+                return float(el.get("width", 0)) <= 2 or float(el.get("height", 0)) <= 2
+            except (TypeError, ValueError):
+                return False
+        return False
+
     def _normalize_element(slide_id: str, el: dict) -> None:
         el_id = el.get("id")
-        # ① 网格吸附：只碰几何四元组，绝不碰语义
+        # ① 网格吸附：只碰几何四元组，绝不碰语义。
+        # 发丝线是有意的视觉例外：位置吸附，width / height 不放大。
         if do_grid and not el.get("grid_exempt"):
+            hairline = _is_hairline(el)
             for f in ("x", "y"):
                 v = el.get(f)
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1690,13 +1732,14 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
                     if snapped != v:
                         _record(slide_id, el_id, f, v, snapped, "grid_snap")
                         el[f] = snapped
-            for f in ("width", "height"):
-                v = el.get(f)
-                if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    snapped = _snap_size(v, grid_unit)
-                    if snapped != v:
-                        _record(slide_id, el_id, f, v, snapped, "grid_snap_size")
-                        el[f] = snapped
+            if not hairline:
+                for f in ("width", "height"):
+                    v = el.get(f)
+                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                        snapped = _snap_size(v, grid_unit)
+                        if snapped != v:
+                            _record(slide_id, el_id, f, v, snapped, "grid_snap_size")
+                            el[f] = snapped
         # ② 色彩 token 归一
         if colors and color_tokens:
             for f in _COLOR_FIELDS:

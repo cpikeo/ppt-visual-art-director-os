@@ -13,8 +13,8 @@
 | 密度节奏 | sparse ≤0.60 / balanced 0.65–0.75 / dense 0.75–0.85（几何占用）；相邻同密度页墨迹差 ≥0.10 |
 | 记忆锚点 | ≥40px 文本 / 图表 `highlight` / 环心 KPI / `target` 线 / sparkline / hero 图（图表内部大数字不算） |
 | 色彩 | 声明 `color_intent:[brand,emotion,hierarchy]`；Accent ≤5%（实测）；色相族 ≤4；Accent 与主色相差 ≥12° |
-| 网格 | 1280×720，8 单位自动吸附；`grid_exempt:true` 可豁免 |
-| 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20 |
+| 网格 | 1280×720，8 单位自动吸附；`grid_exempt:true` 可豁免；`role: hairline|rule|divider|axis|separator` 的 1–2px 线仅吸附位置，不放大 width/height |
+| 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；AI 图片必须带 `generated_asset:true` + `asset_prompt_ref` + `asset_apc`，且资产卡 `issues:[]` |
 | 可读性 | 实测文字 vs 下方像素：正文 <4.5:1 提示，任何角色 <3:1 阻断 |
 | 风险策略 | 起草前读 `forecast_risk` 政策，落稿后按 `risk_strategy` 修单改；建议不是闸门 |
 | 修订 | 1 根因 = 1 轮：修 `director_verdict.primary_lever` 同组杠杆，其余排队 |
@@ -52,7 +52,7 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 | 代码 | 动作 |
 |---|---|
-| `INPUT_MISSING` `INTENT_UNCLEAR` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `COMPILE_FAIL` `GUARD_FAIL` | BLOCKED |
+| `INPUT_MISSING` `INTENT_UNCLEAR` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_PROMPT_REQUIRED` | BLOCKED |
 | `THEME_MISMATCH` `FOCUS_COMPETING` `MEDIA_UNJUSTIFIED` `RHYTHM_FLAT` `CARD_WALL` `CRITIC_LOW` `PIXEL_COVERAGE_PARTIAL` | REVISE |
 | `RENDER_UNAVAILABLE` | PREVIEW_ONLY |
 | `BG_UNPROTECTED` | warn（不阻断） |

@@ -67,7 +67,8 @@ Critic 生命周期：`draft/sketch` 不跑，`review/release` 跑。迭代期�
 - 视觉复杂度必须服务阅读路径；说不清功能的装饰删除。
 - 文本/图表/图片/来源区几何不相交；来源区独立保留，不被侵入。
 - 图表声明 `source/unit/period/basis`；同一指标全 deck 同口径。
-- 16:9、1280×720、8 单位网格（自动吸附）；字体家族 ≤2。
+- **AI 图片硬闸门**：凡 `generated_asset: true` / `ai_generated: true` 的图片，必须先经 `scripts/asset_prompt.py` 组装并留下 `asset_prompt_ref` + `asset_apc` + `issues: []`；缺凭证记 `ASSET_PROMPT_REQUIRED`，阻断发布。
+- 16:9、1280×720、8 单位网格（自动吸附）；字体家族 ≤2。发丝线使用 `role: hairline|rule|divider|axis|separator`，仅位置吸附，不把 1–2px 线放大成色块。
 
 ## Load Routing（按需加载，不要通读）
 
@@ -82,3 +83,8 @@ Critic 生命周期：`draft/sketch` 不跑，`review/release` 跑。迭代期�
 | 发布 | 契约 Release Manifest | `qa.py --mode release` |
 
 脚本按入口调用，不读源码；输出存 JSON 摘要。阈值唯一来源是代码常量，档位只改「测多少」不改「放宽什么」。
+
+
+### 2026-09-11 优化补丁
+- 发丝线语义角色 `hairline/rule/divider/axis/separator` 保留 1–2px 视觉重量；仅位置吸附网格，避免被 8px 基线放大成色块。
+- `qa.py --json` 继续保持纯 JSON 输出，机器消费时必须显式传入 `--json`。

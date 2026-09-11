@@ -223,3 +223,16 @@
 - **验证口径**：自检全 PASS；12 页基准 draft 0.29s / release 冷 2.58s；真实项目 11 页 QA 99.5 / Critic 90.9 / 6 轮收敛。发布门可自证：缓存核验、背景资格、像素对比、报告互核一律 fail closed。
 
 ---
+
+## 2026-09-11 · Hairline + JSON hygiene
+
+- Normalizer now preserves semantic 1–2px hairlines (`role: hairline|rule|divider|axis|separator` or `hairline: true`); only their positions snap to the 8px grid.
+- This prevents dividers and footer rules from being enlarged into heavy bars.
+- `qa.py --json` remains the machine-readable contract; human diagnostics stay out of stdout when JSON mode is explicitly requested.
+
+
+## 2026-09-11 · Asset prompt hard gate
+
+- Added `ASSET_PROMPT_REQUIRED` guard enforcement for declared AI-generated images.
+- Generated image elements must carry `generated_asset: true`, `asset_prompt_ref`, and `asset_apc`; asset prompt issues must be empty.
+- The workflow now requires `asset_prompt.py` before image generation, not only as an optional prompt helper.
