@@ -171,7 +171,7 @@ def spec_view(spec: dict | None, base_path: str | Path | None = None) -> str:
 
     只有这份指纹相同，才允许跳过编译与转换。它刻意**不包含** page_intent /
     source_zone / 备注等声明字段——改它们不改变像素，因此也不该重付一轮渲染；
-    这些字段仍会被 guard / art_critic 按当前值读取，判定不会因此变松。
+    这些字段仍会被 guard / qa 按当前值读取，判定不会因此变松。
     """
     import hashlib
     import json
@@ -683,10 +683,9 @@ def _pdf_page_count(pdf: Path) -> int:
 # --------------------------------------------------------------------------
 # 像素测量（PIL + numpy；cv2 可用时显著图更准）
 # --------------------------------------------------------------------------
-# render_check ↔ art_critic 共享契约：每页 page 字典里**至少包含这些键**。
-# 增删字段时必须同步更新 CONSUMED_RENDER_FIELDS（art_critic.py 顶部），
-# 否则会出现「字段写了但 critic 不消费」或「critic 消费但 render 不写」
-# 的契约漂移。art_critic 在 _score_page 入口处会校验消费字段的存在性。
+# render_check ↔ qa 共享契约：每页 page 字典里**至少包含这些键**。v4.15 起
+# 消费侧归 qa/guard（函数从 primitives 取阈值）；字段增删须同步核对 qa 消费点，
+# 否则会出现「字段写了但无人消费」的契约漂移。
 PAGE_FIELDS = frozenset({
     "brightness", "edge", "occupancy", "margin_occupancy",
     "saliency_method",
@@ -996,7 +995,7 @@ def measure_image(path: Path, accent_hex: str | None = None,
     # 边缘投影：把 sobel 强度沿水平/垂直方向求和，得到
     # "axis histograms"。对齐良好的页面：水平/垂直方向会出现清晰的
     # 收束峰（多数内容共享同一 x 或 y）；碎片化页面：分布平坦。
-    # 这是「视觉对齐」的渲染证据，弥补 art_critic alignment 维度
+    # 这是「视觉对齐」的渲染证据，承接 OS 审查模式 §alignment 的量化依据
     # 仅靠结构聚类的盲点（数学对齐但视觉不齐无法识别）。
     gy_arr, gx_arr = np.gradient(gray)
     edge_mag = np.sqrt(gx_arr * gx_arr + gy_arr * gy_arr)

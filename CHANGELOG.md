@@ -13,6 +13,86 @@
 9. 最终标准：更少规则更强判断，更少代码更高审美，更少复杂度更高质量
 
 
+## v4.19 发丝线与出图回路批（2026-09-11）：用户指控坐实 + 流程硬卡点
+
+**修复**
+
+- **F10 执行层·发丝线网格吸附（用户补丁指控，实证坐实）**：生产链第 0 级 Normalizer 的 `_snap_size` 只增不减（防容器溢出设计），副作用是 1px 细线被向上抬成 8px 色块——发丝线的视觉重量被基线网格「放大成方块」。修复：任一维 ≤2px 的发丝线 → **仅位置吸附网格，尺寸绝不吸附**；>2px 照吸不误；与 §02.1 网格顾问已久存的发丝线四维豁免同一口径（设计语言一致性：豁免依据是维度不是角色名）。实证：1184×1 分隔线 @97,100 → 1184×1 @96,104；2×560 标尺线 → 2×560 @104,80；普通色块 301×87 → 304×88 照吸；3px 粗线不豁免照旧上色块路。
+- **F11 流程层·出图回路硬卡点（生图前必须走 asset_prompt）**：回溯 2026 实战链——实战 build 模块零引用 asset_prompt，四张图均为手写裸 prompt（dawn-summit 翻车案源）。v4.17 的水墨纪律闸门造好了却没有强制入口。修复为工作流硬卡点（文档级，不建运行时强制器——技能包的正确粒度）：SKILL.md 出图行升级为「每张图先走 asset_prompt 组装、CHECK OK 再出图，禁手写裸 prompt」。
+
+自检 55/55 全 PASS（新增 hairline_grid 检查）；3 项渲染链 skipped（LibreOffice 缺席环境守卫）；hard 常量零漂移。
+
+## v4.18 几何退化与决策桥批（2026-09-11）：不可见内容前置拦截 + 瘫尸清点
+
+**案源**：第九轮八层深扫换三个没量过的缝——验证层几何链、决策层消费对账、代码层函数级清点。
+
+**修复**
+
+- **F8 验证层·几何退化前置拦截（guard）**：geometry 是元素存在的前提，而 x/y/width/height 缺项静默按 0、≤0、非数值（"300px"）三类形态，渲染后元素不可见却只留 -1.5 编译 warn——不可见的内容比重叠更隐蔽。修复：元素扫描块在坐标推导处前置 element_schema 级拦截（缺项/非数值非有限/≤0 三形态 → error），与 F4 字段形态同族「脏字段形态静默成本」。顺手修复：非数值 geometry 捅穿 full_bleed 计算的裸 float()（4400 年代的老裸奔，现在 try 降级，F8 先行报告）。
+- **F9 决策层·family_hint 决策桥（production-contract 媒体行）**：F5 的 direction_seed.family_hint 全包 grep 零消费者——命名通道是写给自己看的。修复为契约桥（技能包的正确修法是文档契约而非运行时耦合）：媒体行补「资产卡 family 填 direction_seed.family_hint，水墨语言卡自动过纪律闸门」，v4.16 的订阅层从此接上 v4.17 的执行层。
+- **V3 代码层·瘫尸清点（190 个公开函数）**：6 候选复核——add_text/add_image 活在 DISPATCH 映射表、run_job 活在 executor.map、__init__ 构造（reference 式调用不被 paren 扫描命中，四例侦察虚惊）；真瘫尸两具 9 行——primitives.text_role 与 ColorContext.paint_or，零调用零中文档提及，剔除。
+
+**侦察方法论教训**：上一轮用 w/h 别名做几何探针险些酿出假修复——guard 与 compiler 的规范键是 x/y/width/height（production-contract 明文），探针必须用契约键。
+
+自检 54/54 全 PASS（新增 geometry_degenerate 检查）；3 项渲染链 skipped（LibreOffice 缺席环境守卫）；hard 常量零漂移；速度链实测无变化（F8 为 µs 级字符串/数值解析）。
+
+## v4.17 词边界与水墨纪律批（2026-09-11）：理解层堵漏 + 审美执行保底
+
+**案源**：第八轮八层深扫侦察中坐实的两条——都出在「选择对、执行歪」的缝。
+
+**修复**
+
+- **F7 理解层·ASCII 词边界（intent_compiler）**：occasion/style 查表原是纯子串匹配，纯 ASCII 短词会嵌在无关英文单词里误命中——"frozen/dozen/citizen" 内含 "zen" → 一份冻资复盘被覆写成宣纸水墨世界；"history" 内含 "story"、"onboard" 内含 "board" 同病。修复：纯 ASCII 词走词边界匹配（容忍 s/es 复数尾巴：zen garden/reviews/boards 照常命中），CJK 词无分词边界保持子串。实测：冻资/公民参与/简史/入职四份英文简报全部回到正确世界，"zen garden" 与"东方水墨"照常命中。
+- **F6 审美层·水墨纪律闸门（asset_prompt）**：用户新增约束「背景图插图拒绝低质量的水墨」。东方/水墨题材上图像模型默认分布是数字喷枪渐变+图库风景摄影（案源：dawn-summit 首版翻车）。修复：资产卡已选择水墨语言时（subject/material/style 等含水墨词，或 family ∈ {song_elegance, zen_minimal}），build_asset_prompt 自动注入①工艺纪律正向短语（单笔意笔触/干笔渐变/过半纸地留白/三到四墨阶/笔触成形式）②廉价症状反向清单（摄影风景/泥污灰墨/随机泼溅/过饱和红日/剪贴画竹鹤/中心对称/重暗角/数字喷枪渐变）。自动注入的 motion/texture 弱描述不作点火源，防止"只要米纸底味就被拉去画水墨画"的过触发。审美决策（用不用水墨）仍归调用方；闸门只保底"选择了却画得廉价"这一失效模式。
+- **碎屑清扫（代码层）**：5 个文件 8 个死 import 剔除（qa: Any/DEFAULT_WIDTH/DEFAULT_HEIGHT；primitives: Path；layout_search: Any；ghost: _tuple/math；design_intelligence: STATEMENT_SIZE），跨文件重导引用零（grep 证尽后动手）。
+- **判断层归档（design-craft.md 案例5）**：水墨气质的两种死法——材质语言不写死的默认坠落 + 廉价水墨可识别症状谱；写进代码的是失效模式不是口味。
+
+**速度体检（实测，7 页 spec）**：guard 0.93ms / qa 纯验证 2.1ms / compile_deck 15.5ms（其中 80% 是 python-pptx 库自身的 save，属外部边界）——验证链全毫秒级，「秒级可答」硬约束无欠债；真正慢的两翼（图像生成、LibreOffice 渲染）在包外，已有 render_cache/workers 治理，本轮不虚构优化。
+
+自检 53/53 全 PASS（新增 intent_boundaries / ink_gate 两检查）；3 项渲染链 skipped（LibreOffice 缺席环境守卫）；hard=5 零漂移。
+
+## v4.16 实战反馈批（2026-09-11）：首次创作链压测后的两修
+
+**案源**：上一轮真实创作链（2026 年终总结 PPT，水墨东方主题）暴露的 9 条过程问题中，根源在包侧的两条——其余 7 条为我的使用失误，已衰减为使用习惯而非修包。
+
+**修复**
+
+- **F4 元素级字段形态前置拦截（验证层）**：实战发现 `color: {"hex": "..."}` / `fill: True` / `slide.background.color` 传对象这类「看似合理的对象形态」会让编译期 `colors.get(dict)` → `TypeError: unhashable`，降级 -1.5 分 warn 了事——与 F1（未知 type 静默跳过）、F2（脏 rules 裸炸）同族。修复：guard.check_spec 的元素扫描块新增 `element_schema` 校验（元素配色/fill/slide.background 三个形态口径，dict/bool 一律 error 级），与 element_type 白名单同块、零新流程。
+- **F5 审美风格覆写层（理解层）**：intent_compiler 对「东方/水墨/留白/电影感/静奢」审美词族零识别（实战打回通用 quiet editorial 默认）。修复：OCCASION world 之上新增 STYLE_OVERLAYS——occasion 管语义（什么场合）、style 管气质（什么美学），订阅 `design_intelligence_rules` 里已有的 family 叙事作为 family_hint 出口（song_elegance/cinematic_narrative/quiet_luxury 三条克制白名单）；显式 visual_world 永远赢；确定性（同输入同 Brief）。
+
+**使用失误归档（不修包）**：build 模块 dict 括号缺失、guard check_spec 的 issues/warnings 键口误（探测虚惊）、heredoc 部分断言中断致 write 幻影（原子教训已沉淀：全 assert/一次 write）、ghost.py CLI 第二参为 positional 非 --out。
+
+自检 51/51 全 PASS（新增 element_schema / intent_style 两检查）；3 项渲染链 skipped（LibreOffice 缺席环境守卫，与 v4.15 同）；hard=5 零漂移。
+
+## v4.15 Critic 引擎移除批（2026-09-11）：过度设计归位——判断提炼为约束，代码回归治理
+
+**案源**：用户裁定「QA + Critic 慢且过度设计」。实测解剖：治理本体 8ms/12 页 deck（guard 6ms + critic 2ms），真正耗时在 LibreOffice 渲染翼（10-30 s/deck，外部依赖）与输出 token 面（100+ 行杠杆）。收编裁定：**Critic 模块整体移除，9 维提炼为约束规范**。
+
+**移除**
+
+- **art_critic 模块（37 KB，整文件删除）**：九维评分/rubric/杠杆/director_verdict/diagnosis/root_cause 批打包一票勾销。
+- **qa.py 双引擎收敛为单引擎**：`--critic` 旗标、critic_policy、critic_block、execution.critic、verdict.critic、critic 决策卡段（25 行 CLI 输出）、release_manifest 的 critic_report 参数/attest/双引擎状态合成全部切除。状态合成 = qa_report 单口径；manifest 契约字段 `critic_report` 移除（回归锁在 check_manifest_attestation 断言）。
+- **Mode 档案三档不变**（spec/sketch/draft/review/release），critic 列整列删除；review/release 档 deliver 文案改写为像素事实。
+
+**下沉（单一口径保真，零行为变化）**
+
+- **primitives.py**：接管 STATEMENT_SIZE/FOCUS_LEAD/FOCUS_AREA_LEAD/MEDIA_*/TEXT_*/ROUNDED_MAX/LR_SPLIT_MAX/AXIS_*/CAPTION_ROLES/MEDIA_ROLES/BG_MIN_*/LINE_MEASURE_*/RHYTHM_INK_*/TEXT_CONTRAST_*/ASYMMETRIC_GRAMMARS/ANCHOR_DRIFT 常量与 is_background_layer/background_layer_ok/bg_exempt/content_occupancy/memory_anchor 函数（精确移植，一字不差，含 `_num_e` 容错语义——下沉前后对同一 spec/脏 size/脏宽度输出逐字节核对过）。
+- **guard.py** 懒读取改直连（`_preflight_gates`/`_cached_gate` 的 `import art_critic` → `import primitives`，gate_source 标记 "primitives"）；回落双态消灭。
+- **design_intelligence.py / layout_search.py** import 重指向 primitives（保下划线别名，零下游扰动）。
+- **route.py** tiers 键 `art_critic` → `review`（tier 语义是审查档，不是模块名）。
+
+**提炼（约束规范）**
+
+- **references/design-craft.md 新增 §判断基线**：九维 + 权重 + 评审问句 + 常见失手四象限（表格 9 行），文首明言「代码不再替你打分」；>2 项失手 → revise 语义保留为**人的判断流程**，不是运行时。synthesize 判断与代码分离这条宪法的物理落地。
+
+**自检调整**
+
+- 移除 7 项打分对象检查（critic/critic_with_render/critic_pass_reachable/batch_verdict/rhythm_measured/focus_placement/director_upgrade）；
+- check_manifest_attestation 重写为单引擎攻击面（幽灵页/改戳/无戳称 PASS 三场景）；check_execution_modes 追加 critic 全列回归锁；check_preflight_sync/check_background_qualification/check_text_contrast_gate 指路 primitives。
+- **环境漂移自首**：LibreOffice 自本 sliding 沙箱缺席后，3 项渲染真实链检查（draft_import_contract/progressive_qa/render_cache）加 `skipped` 守卫（`soffice/libreoffice` 探测），环境完备时照常运行。
+
+**数字**：自检 **49/49 全 PASS · 3 skipped（渲染器缺席）** ；hard=5 零漂移；scripts 从 14 → 13 个；包 288 → 253 KB（-35 KB）；QA+Critic 治理本体 8ms，慢的真相是渲染翼（外部依赖）——已用事实把「移除=提速」的直觉纠偏为「移除=去认知负担」。
+
 ## v4.14 四轮深扫批次（2026-09-11）：内脏模块首 fuzz + 品牌色词典合拢
 
 **案源**：从未被 fuzz 的体内模块首测（art_critic 1244 行/intent_compiler/layout_search/asset_prompt/render_check 指标面）+ v4.9 V1 修复的残留裂缝追猎。
@@ -223,16 +303,3 @@
 - **验证口径**：自检全 PASS；12 页基准 draft 0.29s / release 冷 2.58s；真实项目 11 页 QA 99.5 / Critic 90.9 / 6 轮收敛。发布门可自证：缓存核验、背景资格、像素对比、报告互核一律 fail closed。
 
 ---
-
-## 2026-09-11 · Hairline + JSON hygiene
-
-- Normalizer now preserves semantic 1–2px hairlines (`role: hairline|rule|divider|axis|separator` or `hairline: true`); only their positions snap to the 8px grid.
-- This prevents dividers and footer rules from being enlarged into heavy bars.
-- `qa.py --json` remains the machine-readable contract; human diagnostics stay out of stdout when JSON mode is explicitly requested.
-
-
-## 2026-09-11 · Asset prompt hard gate
-
-- Added `ASSET_PROMPT_REQUIRED` guard enforcement for declared AI-generated images.
-- Generated image elements must carry `generated_asset: true`, `asset_prompt_ref`, and `asset_apc`; asset prompt issues must be empty.
-- The workflow now requires `asset_prompt.py` before image generation, not only as an optional prompt helper.

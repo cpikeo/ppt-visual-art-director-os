@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-# ── 密度带（与 art_critic._content_occupancy 判读一致）──────────────────
+# ── 密度带（与 primitives.content_occupancy 判读一致）───────────────────
 DENSITY_BANDS = {"sparse": (0.0, 0.60), "balanced": (0.65, 0.75),
                  "dense": (0.75, 0.85)}
 

@@ -36,7 +36,7 @@ ppt-visual-art-director-os/
 │   ├── route.py  design_intelligence.py  layout_search.py  # 决策层
 │   ├── compiler.py  primitives.py                          # 编译层（elements/charts 已并入）
 │   ├── guard.py  qa.py  render_check.py                    # 验证层（normalizer 已并入 guard）
-│   ├── art_critic.py  asset_prompt.py  ghost.py  selftest.py
+│   ├── asset_prompt.py  ghost.py  selftest.py
 └── templates/
     ├── strategy_direction.yml    # Strategy/Direction 空白契约
     └── design_brief.yml          # Design Brief 模板（~500 tokens）

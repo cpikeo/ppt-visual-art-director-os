@@ -3,7 +3,7 @@
 Layer 0.7 · Route（视觉智能决策层 / Visual Intelligence Layer）
 
 职责：把「内容类型 + 设计方向 + 质量等级」推导成页面级设计决策，替代逐页人工配置与
-逐轮渲染试错。它不做审美裁决（那是 art_critic），也不持有主题（那是 spec.theme）。
+逐轮渲染试错。它不做审美裁决（判断归 references/design-craft），也不持有主题（那是 spec.theme）。
 
 对外只有两个函数：
 
@@ -57,7 +57,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
 # ─────────────────────────────────────────────────────────────
 # 路由表：content_type → 页面家族 / 密度 / 能量 / 素材策略 / 字阶
 #   asset: required 必须出图 · optional 视质量等级 · none 禁止出图（省时间、省 token）
-#   density 与 art_critic 的渲染占用率目标同向（sparse .30 / balanced .55 / dense .75）
+#   density 与渲染占用率目标同向（sparse .30 / balanced .55 / dense .75）
 # ─────────────────────────────────────────────────────────────
 ROUTES: dict[str, dict] = {
     "cover":        dict(family="COVER", density="sparse", energy="high",
@@ -303,7 +303,7 @@ def plan_deck(brief: dict) -> dict:
 
     brief 最小集：{"audience","decision","occasion","slides":[str|dict], "quality_level"?}
 
-    Decision Before Generation：一次推导供 guard / compile / qa / critic 全流程消费；
+    Decision Before Generation：一次推导供 guard / compile / qa 全流程消费；
     同一 brief 的重复调用（修订循环、多次调用同一进程）直接命中缓存，且返回深拷贝，
     调用方可以随意改结果而不污染缓存。
     """
@@ -437,13 +437,13 @@ def _plan_deck(brief: dict) -> dict:
                    "max_text_objects_per_page": 4,
                    "render_dpi": 72 if quality == "fast" else 96,
                    "render_workers": 2,
-                   "art_critic": quality == "advanced"},
+                   "review": quality == "advanced"},
         "workflow": workflow,
     }
 
 
 def _alternate_density(pages: list[dict]) -> None:
-    """疏密曲线：相邻页 density 互斥（与 guard DENSITY_FLAT / art_critic rhythm 同口径）。
+    """疏密曲线：相邻页 density 互斥（与 guard DENSITY_FLAT / primitives rhythm 常量同口径）。
 
     优先级：首尾保留大留白（opening/closing 的仪式感）→ 中部自动避让 →
     若末页与前页冲突，改前页而不是改末页，避免为了规则牺牲收束感。

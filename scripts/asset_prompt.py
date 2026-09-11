@@ -61,8 +61,58 @@ NEGATIVE_BASE: tuple[str, ...] = (
 )
 
 # --------------------------------------------------------------------------
-# OS 强制注入的三段（留白锚点 / 光向 / 能量；见 SKILL.md 媒体治理要求）
+# 水墨纪律闸门（F6/v4.17——材质语言的执行质量保底）
+# 每当资产卡已经选择了水墨语言（subject/material/style 等含水墨词），
+# 注入两组确定性短语：正向「工艺纪律」（让图像模型往真·水墨画法走）
+# 与反向「廉价水墨症状」（把默认滑向商业图库/数字喷枪的概率压到最低）。
+# 不做审美决策——是否用水墨是调用方的事；闸门只在「选择了却画得廉价」
+# 这个失效模式上兜底（案源：2026-annual-review dawn-summit 首版翻车）。
 # --------------------------------------------------------------------------
+INK_TERMS: tuple[str, ...] = (
+    "ink-wash", "ink wash", "inkwash", "sumi-e", "sumi e", "shui-mo",
+    "shuimo", "水墨", "宣纸", "笔墨", "泼墨", "写意", "oriental ink",
+    "chinese ink", "east asian ink", "rice paper",
+)
+INK_DISCIPLINE: tuple[str, ...] = (
+    "hand-painted Chinese ink-wash (shui-mo / sumi-e) painting",
+    "single deliberate brushwork, dry-brush gradients with visible stroke structure",
+    "generous unpainted rice-paper ground, more than half the frame left empty",
+    "limited ink tonal range of three to four values",
+    "forms built from confident strokes, no photographic outlines or shading",
+)
+INK_CHEAP_REJECTS: tuple[str, ...] = (
+    "photographic landscape", "stock photo scenery",
+    "muddy gray ink pooling", "random paint splatter",
+    "oversaturated red sun disc", "photorealistic animals",
+    "clip-art bamboo", "digital airbrush gradients",
+    "symmetric centered composition", "heavy vignette",
+    "watercolor clip-art", "3d render", "postcard look",
+)
+
+
+INK_FAMILIES: tuple[str, ...] = ("song_elegance", "zen_minimal")
+
+
+def ink_gate_active(card: dict) -> bool:
+    """资产卡是否已选择水墨语言（纯检测，供调用方/自检复用）。
+
+    检测只扫调用方亲手写的图像语言段（subject/color/material/lighting/
+    composition/style），**不扫** enhance_asset_card 自动注入的
+    motion/texture 弱描述——微浮雕里一句 rice paper 是材质底味，
+    不等于选择了水墨画；家族维度只订阅叙事即水墨的家族名。
+    """
+    if not isinstance(card, dict):
+        return False
+    fam = str(card.get("family") or card.get("direction_family") or "").lower()
+    if fam in INK_FAMILIES:
+        return True
+    fields = [card.get(k) for k in ("subject", "color", "material",
+                                    "lighting", "composition", "style")]
+    blob = " ".join(str(x) for seg in fields for x in _as_list(seg)).lower()
+    return any(t.lower() in blob for t in INK_TERMS)
+
+
+
 NEGATIVE_SPACE_PHRASES = {
     "left": "large clean negative space on the left side",
     "right": "large clean negative space on the right side",
@@ -322,6 +372,10 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     for key in ("motion", "texture", "fusion"):
         segments.extend(_as_list(card.get(key)))
 
+    # --- 水墨纪律闸门：已选水墨语言 → 注入工艺纪律 + 廉价症状反向清单 ---
+    if ink_gate_active(card):
+        segments.extend(INK_DISCIPLINE)
+
     # --- 3. OS 强制三段 --------------------------------------------------
     anchor = negative_space or page.get("negative_space_anchor") or "left"
     light = light_direction or page.get("light_direction") or "left"
@@ -349,6 +403,8 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     # --- 5. 反向提示词 ----------------------------------------------------
     negatives = list(NEGATIVE_BASE) + list(_as_list(card.get("negative"))) \
         + list(_as_list(extra_negative))
+    if ink_gate_active(card):
+        negatives.extend(INK_CHEAP_REJECTS)
     # 统一成 "no X" 写法，避免同一提示词里混用 "text" 与 "no charts"
     negative = ", ".join(
         term if term.lower().startswith("no ") else f"no {term}"

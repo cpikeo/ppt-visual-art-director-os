@@ -2,7 +2,7 @@
 name: ppt-visual-art-director-os
 description: >
   用于创建、重构、审校和优化演示文稿、数据叙事、视觉设计系统与动效表达；先把内容、受众与决策转成视觉策略，
-  再转成视觉语言、页面意图和可编辑 PPTX，并通过渲染证据、确定性 QA 与结构化 Art Critic 完成发布判断。
+  再转成视觉语言、页面意图和可编辑 PPTX，并通过渲染证据与确定性 QA 完成发布判定。
   当用户要求制作、重构、评审或优化 PPT、deck、演示文稿、数据叙事幻灯片，
   或需要生成原生可编辑 PPTX 并给出发布质量判断时使用。
 ---
@@ -67,8 +67,7 @@ Critic 生命周期：`draft/sketch` 不跑，`review/release` 跑。迭代期�
 - 视觉复杂度必须服务阅读路径；说不清功能的装饰删除。
 - 文本/图表/图片/来源区几何不相交；来源区独立保留，不被侵入。
 - 图表声明 `source/unit/period/basis`；同一指标全 deck 同口径。
-- **AI 图片硬闸门**：凡 `generated_asset: true` / `ai_generated: true` 的图片，必须先经 `scripts/asset_prompt.py` 组装并留下 `asset_prompt_ref` + `asset_apc` + `issues: []`；缺凭证记 `ASSET_PROMPT_REQUIRED`，阻断发布。
-- 16:9、1280×720、8 单位网格（自动吸附）；字体家族 ≤2。发丝线使用 `role: hairline|rule|divider|axis|separator`，仅位置吸附，不把 1–2px 线放大成色块。
+- 16:9、1280×720、8 单位网格（自动吸附）；字体家族 ≤2。
 
 ## Load Routing（按需加载，不要通读）
 
@@ -78,13 +77,8 @@ Critic 生命周期：`draft/sketch` 不跑，`review/release` 跑。迭代期�
 | 写 spec 字段 | `references/production-contract.md`（契约表） | `qa.py --mode spec` 先问代码 |
 | 设计品味判断 | `references/design-craft.md` | —（判断依据，不是规则） |
 | 选主题人格 | `references/design-system.md`（Theme DNA 节） | seed 落进 `spec.theme` |
-| 出图 | 契约 asset 行 + `scripts/asset_prompt.py` | 闸门通过后逐页组装提示词 |
+| 出图 | 契约 asset 行 + `scripts/asset_prompt.py` | 每张图先走 asset_prompt 组装、CHECK OK 再出图（禁手写裸 prompt——裸 prompt 漠视纪律闸门，2026 dawn-summit 翻车案源） |
 | 方向确认/改布局 | 契约对应行 | `ghost.py` 看方向 → `--mode review` |
 | 发布 | 契约 Release Manifest | `qa.py --mode release` |
 
 脚本按入口调用，不读源码；输出存 JSON 摘要。阈值唯一来源是代码常量，档位只改「测多少」不改「放宽什么」。
-
-
-### 2026-09-11 优化补丁
-- 发丝线语义角色 `hairline/rule/divider/axis/separator` 保留 1–2px 视觉重量；仅位置吸附网格，避免被 8px 基线放大成色块。
-- `qa.py --json` 继续保持纯 JSON 输出，机器消费时必须显式传入 `--json`。

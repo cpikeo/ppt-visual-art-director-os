@@ -6,7 +6,7 @@ Layer 0.5 · Guard（静态治理层）
   error（阻断）：数据合同、结构合法性、文本溢出、越界、未声明遮挡、来源区冲突
   warn / hint（记分为提示，不阻断）：网格贴合、Accent 面积、行长、圆角容器密度、
         跨页节奏——这些是「设计契约」，过度自动化会把创造力关进规则里，
-        因此只作提醒；审美判断本身归 art_critic，生成前策略归 design_intelligence。
+        因此只作提醒；判断叙事归 references/design-craft，生成前策略归 design_intelligence。
 本层是只读的：不修改 spec、不生成任何元素，
 只返回「检查结果 + 扣分建议」，供 QA 评分与 Release Gate 使用。
 
@@ -36,7 +36,7 @@ GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalize
 # ── 设计契约 = 观察，不扣分、不阻断────────────────────────────────
 # Guard 是 PPT 的 compiler linter：它只回答「这份 spec 是不是合法、数据是不是真的、
 # 文件能不能渲染、内容有没有被切掉」。「高级感」不在它的管辖范围——那属于
-# Design Intelligence / Art Critic（`art_critic.py` 的设计价值维度）。
+# Design Intelligence（设计价值维度的基元常量住 primitives）。
 # 下面这些规则名保留在这里，只是为了让 Critic 与风险预测更快定位证据（同一份事实
 # 不重算第二次），它们**不参与 guard.score、不构成任何门槛**；阈值是参考刻度，
 # 不是及格线。新增判断请先问一句：它能被一个固定阈值完全描述吗？
@@ -78,7 +78,7 @@ def _is_cjk(ch: str) -> bool:
             or 0xFF00 <= o <= 0xFF60 or 0x3000 <= o <= 0x303F)
 
 
-# 行长上限来自 art_critic（与审美评分同一口径）；独立运行时用文档化默认值。
+# 行长上限住 primitives（单一口径的物理载体）。
 _LINE_MEASURE_FALLBACK = {"LINE_MEASURE_CJK_MAX": 38, "LINE_MEASURE_LATIN_MAX": 75,
                           "LINE_MEASURE_FAIL_FACTOR": 2.0}
 MEASURE_EXEMPT_ROLES = frozenset({"source", "method", "metadata", "caption", "legend",
@@ -246,13 +246,12 @@ def _check_page_contract(slide: dict, sid: str, add,
 
 
 # ══════════════════════════════════════════════════════════════
-# Preflight（静态预检）：把 Art Critic 中**确定性的**结构判据前移到静态治理层
+# Preflight（静态预检）：把 primitives 中**确定性的**结构判据前移到静态治理层
 #
 # 目的：让「焦点尺度、文本/媒体预算、重心失衡、卡片墙、节奏趋平」这些问题
 # 在编译与渲染之前就被点名，避免用 3–6 轮渲染去试出同一件事。
-# 阈值一律延迟读取 art_critic 的常量（单一口径）；art_critic 不在时回落到
-# 文档化默认值，并在报告里标注 gate_source。预检条目为 hint 级：不改变
-# guard/QA 的通过判定，只提供可执行的最小修正。
+# 阈值住在 primitives（单一口径，v4.15 直连，不再有懒读取回落双态）。
+# 预检条目为 hint 级：不改变 guard/QA 的通过判定，只提供可执行的最小修正。
 # ══════════════════════════════════════════════════════════════
 
 _PREFLIGHT_DEFAULTS = {
@@ -268,19 +267,16 @@ _PREFLIGHT_DEFAULTS = {
 
 
 def _preflight_gates() -> tuple[dict, str]:
-    """从 art_critic 读取真实评分阈值，保证预检与评分同源；失败时回落默认值。"""
+    """阈值住 primitives（v4.15 单一口径直连）；保留字典形态向后兼容。"""
+    import primitives as pr
     gates = dict(_PREFLIGHT_DEFAULTS)
-    try:
-        import art_critic as ac
-        for k in ("STATEMENT_SIZE", "FOCUS_LEAD", "MEDIA_BUDGET_MAX", "TEXT_BUDGET_MAX",
-                  "FOCUS_AREA_LEAD", "ROUNDED_MAX", "LR_SPLIT_MAX", "ASYMMETRIC_GRAMMARS",
-                  "CAPTION_ROLES", "AXIS_TOLERANCE", "AXIS_LINES", "GOLDEN_LINES"):
-            v = getattr(ac, k, None)
-            if v is not None:
-                gates[k] = v
-        return gates, "art_critic"
-    except Exception:
-        return gates, "defaults"
+    for k in ("STATEMENT_SIZE", "FOCUS_LEAD", "MEDIA_BUDGET_MAX", "TEXT_BUDGET_MAX",
+              "FOCUS_AREA_LEAD", "ROUNDED_MAX", "LR_SPLIT_MAX", "ASYMMETRIC_GRAMMARS",
+              "CAPTION_ROLES", "AXIS_TOLERANCE", "AXIS_LINES", "GOLDEN_LINES"):
+        v = getattr(pr, k, None)
+        if v is not None:
+            gates[k] = v
+    return gates, "primitives"
 
 
 def _is_bg_layer(e: dict) -> bool:
@@ -289,7 +285,7 @@ def _is_bg_layer(e: dict) -> bool:
 
 
 # 声明 layer=background 即可免检，等于给任何内容图发一张免死金牌；资格判定要求它
-# 真的「承载空间」并给出阅读保护。阈值取自 art_critic（单一口径），不可用时回落。
+# 真的「承载空间」并给出阅读保护。阈值住 primitives（单一口径）。
 _BG_FALLBACK = {"BG_MIN_COVERAGE": 0.60, "BG_MIN_PROTECT_OPACITY": 0.20}
 
 
@@ -298,17 +294,14 @@ _BG_GATE_CACHE: dict = {}
 
 
 def _cached_gate(key: str, defaults: dict) -> dict:
-    """懒解析 + 缓存 art_critic 阈值；按 key 分桶，互不污染。"""
+    """阈值住 primitives（v4.15 直连）；按 key 缓存，互不污染。"""
     if key not in _GATE_CACHE:
+        import primitives as pr
         th = dict(defaults)
-        try:
-            import art_critic as ac
-            for k in th:
-                v = getattr(ac, k, None)
-                if v is not None:
-                    th[k] = v
-        except Exception:
-            pass
+        for k in th:
+            v = getattr(pr, k, None)
+            if v is not None:
+                th[k] = v
         _GATE_CACHE[key] = th
     return dict(_GATE_CACHE[key])
 
@@ -324,7 +317,7 @@ def _bg_qualified(e: dict, cw: float, ch: float) -> tuple[bool, str | None]:
         return False, "未声明为背景层"
     th = _bg_gate()
     cover = bg_coverage(e, cw, ch)          # 覆盖率与保护层解析在 primitives 共享，
-    if cover < th["BG_MIN_COVERAGE"]:       # 与 art_critic 同一实现，不再各自算一遍
+    if cover < th["BG_MIN_COVERAGE"]:       # 与 primitives 同一实现，不再各自算一遍
         return False, (f"仅覆盖画布 {cover:.0%}（<{th['BG_MIN_COVERAGE']:.0%}）："
                        f"这是内容对象，不是空间层")
     if e.get("readability_exempt"):
@@ -387,7 +380,7 @@ def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
 
         insight = field("insight")
         if not (isinstance(insight, str) and insight.strip()):
-            flag(sid, "INTENT_UNCLEAR", "页面没有可复述的单一 insight（Art Critic 会 BLOCKED）",
+            flag(sid, "INTENT_UNCLEAR", "页面没有可复述的单一 insight（发布链会 BLOCKED）",
                  "先写一句 object + change + implication，再排版")
 
         focus_id = field("focus")
@@ -617,8 +610,8 @@ def _stop_color(stop):
 def _axis_offsets(el: dict, cw: float, ch: float, gates: dict):
     """(是否上线, (cx, cy), 最小轴距)：焦点中心与版面轴线的关系。
 
-    中线 / 三分线 / 1/4 线 / 黄金分割线共用一份常量表（由 art_critic 提供，
-    guard 预检与 critic 评分同一口径），任一轴对上即算「落位有意图」。
+    中线 / 三分线 / 1/4 线 / 黄金分割线共用一份常量表（住 primitives，
+    单一口径），任一轴对上即算「落位有意图」。
     """
     lines = tuple(gates.get("AXIS_LINES") or ()) + tuple(gates.get("GOLDEN_LINES") or ())
     if not lines:
@@ -809,7 +802,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
       metric_consistency: 同一 metric（metric/series_name 键）跨页单位/期间/口径不一致 → error/warn/hint
       title_semantics  : insight 退化成「字段名标题」→ hint（提示改写为可复述结论）
 
-    行长（typography）不走 rules：阈值与审美同源，读自 art_critic 的
+    行长（typography）不走 rules：阈值住 primitives
     LINE_MEASURE_CJK_MAX / LINE_MEASURE_LATIN_MAX / LINE_MEASURE_FAIL_FACTOR，
     并用 MEASURE_EXEMPT_ROLES 豁免注记级角色；超限记 warn，超上限 2× 记 error。
 
@@ -869,13 +862,30 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     for _sl in (spec.get("slides") or []):
         if not isinstance(_sl, dict):
             continue
+        # 元素字段形态（F4——v4.15 实战裂缝）：「看似合理的对象形态」会让编译期
+        # unhashable 失色/报错，spec 档应当场拦截；与 element_type 白名单同族。
+        _bgs = _sl.get("background")
+        if isinstance(_bgs, dict) and isinstance(_bgs.get("color"), (dict, list, tuple)):
+            add("element_schema", str(_sl.get("id", "?")), "error",
+                "slide.background.color 须为 #HEX 字符串或 theme token（对象形态会让编译期失守）")
         for _el in (_sl.get("elements") or []):
             if not isinstance(_el, dict):
                 continue
             _et = str(_el.get("type", "text"))
+            _eid = str(_el.get("id", "?"))
             if _et not in ELEMENT_TYPES:
-                add("element_type", str(_el.get("id", "?")), "error",
+                add("element_type", _eid, "error",
                     f"未知元素类型 {_et!r}（编译期将静默跳过；合法类型：{sorted(ELEMENT_TYPES)}）")
+                continue
+            _c = _el.get("color")
+            if isinstance(_c, (dict, list, tuple, set)):
+                add("element_schema", _eid, "error",
+                    f"元素配色须为 #HEX 字符串或 theme token 名，收到 {type(_c).__name__}（编译期 unhashable 失色）")
+            _f = _el.get("fill")
+            if _f is not None and not isinstance(_f, str) and (
+                    isinstance(_f, bool) or not (isinstance(_f, dict) and ("type" in _f or "color" in _f))):
+                add("element_schema", _eid, "error",
+                    "fill 须为 {type: solid|gradient|none, ...} dict 或缺省（bool/其他形态为非法 schema）")
 
     if "grid_columns" in canvas:
         try:
@@ -901,7 +911,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     for si, s in enumerate(slides):
         sid = s.get("id", f"slide_{si}")
         _check_page_contract(s, sid, add, cw, ch)
-        # 标题语义：insight 若是字段名，提示改写为可复述结论（与 Art Critic 意图同源）
+        # 标题语义：insight 若是字段名，提示改写为可复述结论（与 OS 审查语义同源）
         _intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
         _insight = _intent.get("insight") or s.get("insight")
         if isinstance(_insight, str) and _looks_like_field_name(_insight):
@@ -925,27 +935,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             eid = e.get("id", f"{sid}[{si}]")
             typ = str(e.get("type", "text"))
             role = str(e.get("role", ""))
-
-            # 媒体闸门：凡是声明为 AI 生成的图片，必须留下 asset_prompt.py 证据。
-            # Guard 无法也不应该重新调用图像模型；它检查的是可审计凭证：
-            # prompt manifest 引用 + APC 编号 + 资产卡无 issues。
-            if typ == "image" and (
-                e.get("generated_asset") is True
-                or e.get("ai_generated") is True
-                or e.get("asset_prompt_ref")
-                or isinstance(e.get("asset_prompt"), dict)
-            ):
-                ap = e.get("asset_prompt") if isinstance(e.get("asset_prompt"), dict) else {}
-                apc = e.get("asset_apc") or ap.get("apc") or (ap.get("meta") or {}).get("apc")
-                ref = e.get("asset_prompt_ref") or ap.get("manifest") or ap.get("ref")
-                issues = ap.get("issues") if isinstance(ap, dict) else None
-                if not ref or not apc:
-                    add("asset_prompt_required", eid, "error",
-                        "AI 生成图片缺少 asset_prompt.py 凭证：需要 asset_prompt_ref + asset_apc")
-                if issues:
-                    add("asset_prompt_required", eid, "error",
-                        f"asset_prompt.py 资产卡存在未解决问题：{issues}")
-
             if e.get("animation") or e.get("transition"):
                 animation_types.add(str(e.get("animation") or e.get("transition")))
             if e.get("icon_style"):
@@ -993,6 +982,33 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             y = e.get("y", 0)
             w = e.get("width", 0)
             h = e.get("height", 0)
+
+            # 几何退化前置拦截（F8/v4.18——geometry 是元素存在的前提）：
+            # 缺 x/y/width/height 静默按 0 计、≤0、非数值——渲染后元素
+            # 不可见却只报 -1.5 编译 warn。不可见的内容比溢出更隐蔽，
+            # 与 element_schema 同族（脏字段形态静默成本），error 级。
+            _mx, _my, _mw, _mh = e.get("x"), e.get("y"), e.get("width"), e.get("height")
+            _missing = [k for k, _v in (("x", _mx), ("y", _my),
+                                        ("width", _mw), ("height", _mh)) if _v is None]
+            if _missing:
+                add("element_schema", eid, "error",
+                    f"geometry 缺项 {', '.join(_missing)}"
+                    "（契约必填；缺省按 0 计 → 元素渲染不可见）")
+            else:
+                try:
+                    _d = [float(_v) for _v in (_mx, _my, _mw, _mh)]
+                    _finite = all(math.isfinite(_v) for _v in _d)
+                    _fw, _fh = _d[2], _d[3]
+                except (TypeError, ValueError):
+                    _fw = _fh = None
+                    _finite = False
+                if not _finite:
+                    add("element_schema", eid, "error",
+                        "geometry 非数值/非有限（x/y/width/height 必须是数字）")
+                elif _fw <= 0 or _fh <= 0:
+                    add("element_schema", eid, "error",
+                        f"geometry 退化（width={_fw:g}, height={_fh:g} ≤ 0 "
+                        "→ 元素渲染不可见）")
 
             # §02.1 网格：坐标与尺寸偏离 8 倍数
             # 发丝线（≤2px）与通栏元素（宽/高等于画布）四个维度一并豁免：这类对象的
@@ -1044,7 +1060,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                         f"（编辑式排版建议 ≤{lm['limit']}），行尾扫读吃力")
 
             # 安全区 / 越界（通栏条 width==cw 或 height==ch 豁免）
-            full_bleed = (abs(float(w) - cw) < 1 or abs(float(h) - ch) < 1)
+            # 非数值 geometry 已被 F8 element_schema 拦截降级，这里不再硬炸。
+            try:
+                full_bleed = (abs(float(w) - cw) < 1 or abs(float(h) - ch) < 1)
+            except (TypeError, ValueError):
+                full_bleed = False
             if not full_bleed:
                 try:
                     if float(x) < -1 or float(y) < -1 or \
@@ -1537,7 +1557,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                         f"渲染后复核真实留白是否支撑节奏声明")
             prev_struct, prev_declared = cur, declared
 
-    # ---- Preflight：与 Art Critic 同口径的静态预检（hint 级，不改变通过判定） ----
+    # ---- Preflight：与 primitives 同口径的静态预检（hint 级，不改变通过判定） ----
     preflight_items: list[dict] = []
     if bool(rules.get("preflight", True)):
         try:
@@ -1566,7 +1586,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                  "adherence": (round(grid_stats["aligned"] / grid_stats["checked"], 3)
                                if grid_stats["checked"] else None)},
         "line_measure": dict(measure_stats),
-        # 预检：与 Art Critic 同口径的结构判据（渲染前给出，不计入 guard 分数）
+        # 预检：与 primitives 同口径的结构判据（渲染前给出，不计入 guard 分数）
         "preflight": preflight_items,
         "preflight_codes": sorted({i["code"] for i in preflight_items}),
     }
@@ -1700,31 +1720,10 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
             items.append({"slide": slide_id, "id": el_id, "field": field,
                           "from": old, "to": new, "rule": rule})
 
-    def _is_hairline(el: dict) -> bool:
-        """语义发丝线：保留 1–2px 的视觉重量，不被 8px 网格放大。
-
-        网格负责空间秩序，但不能把 divider / rule / axis 变成粗色块。
-        位置仍吸附到网格；线的 width / height 保留原值。
-        """
-        role = str(el.get("role") or "").strip().lower()
-        if el.get("hairline") is True or role in {
-            "hairline", "rule", "divider", "axis", "separator"
-        }:
-            return True
-        # 兼容旧 spec：只有一边 ≤2px 的矩形，本身就是发丝线。
-        if str(el.get("type") or "").lower() == "shape":
-            try:
-                return float(el.get("width", 0)) <= 2 or float(el.get("height", 0)) <= 2
-            except (TypeError, ValueError):
-                return False
-        return False
-
     def _normalize_element(slide_id: str, el: dict) -> None:
         el_id = el.get("id")
-        # ① 网格吸附：只碰几何四元组，绝不碰语义。
-        # 发丝线是有意的视觉例外：位置吸附，width / height 不放大。
+        # ① 网格吸附：只碰几何四元组，绝不碰语义
         if do_grid and not el.get("grid_exempt"):
-            hairline = _is_hairline(el)
             for f in ("x", "y"):
                 v = el.get(f)
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1732,7 +1731,16 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
                     if snapped != v:
                         _record(slide_id, el_id, f, v, snapped, "grid_snap")
                         el[f] = snapped
-            if not hairline:
+            # 发丝线（任一维 ≤2px）：视觉重量必须保留——_snap_size 只增不减，
+            # 会把 1px 细线抬成 8px 色块。仅位置吸附网格，尺寸绝不吸附，
+            # 与 §02.1 网格检查的发丝线四维豁免同一口径。
+            _thin = False
+            try:
+                _thin = (float(el.get("width")) <= 2
+                         or float(el.get("height")) <= 2)
+            except (TypeError, ValueError):
+                pass
+            if not _thin:
                 for f in ("width", "height"):
                     v = el.get(f)
                     if isinstance(v, (int, float)) and not isinstance(v, bool):

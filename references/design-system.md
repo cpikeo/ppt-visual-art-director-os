@@ -6,8 +6,6 @@
 
 1280×720、16:9、12 列逻辑网格 + 8 单位基线。每页声明 `focus/gravity_anchor/empty_space_role/energy/density`。黄金比例/三分/对称只是候选工具：内容关系说不通就放弃。相邻两页换密度、重心或版式其一；全套走建立→聚焦→展开→证据→收束的空间曲线。
 
-**Hairline exception（发丝线例外）**：`role: hairline|rule|divider|axis|separator` 或 `hairline: true` 的 1–2px 线，位置吸附网格，但 `width/height` 不被 8px 尺寸吸附放大。网格负责空间秩序，不改变线条的视觉重量；没有语义角色的细矩形也按 1–2px 发丝线兼容处理。
-
 ## Hierarchy
 
 五层：背景 → 环境/媒体 → 结构/标题 → 内容/数据 → 焦点；焦点层原则上只有一个元素。字号阶梯见 `design-intelligence.md`（全库唯一真源）。标题写洞察，眉标只做弱导航；空间不够时减词、减类、拆页——压缩字号是最贵的退路。
@@ -23,8 +21,6 @@
 ## Image
 
 图须声明功能（context/emotion/proof/hero）+ 主体/构图/留白锚点/裁切/溯源。相关性 > 构图 > 光线 > 材质 > 风格。图不烘焙文字/Logo/水印/数据；主体侵入文本区或改写重心时回退、重裁或换图。
-
-**Generated asset gate**：涉及生成图片时，先由 `scripts/asset_prompt.py` 消费资产卡 + 页面参数，产出确定性 `prompt/negative/meta.apc`，再调用图像模型。PPT spec 必须保留 `generated_asset:true`、`asset_prompt_ref`、`asset_apc` 与 `issues:[]` 证据；禁止只写临时 prompt 就直接出图。
 
 ## Grouping（分组四语言，由强到弱）
 

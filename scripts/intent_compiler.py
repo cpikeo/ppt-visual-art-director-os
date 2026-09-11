@@ -13,6 +13,25 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+
+
+def _token_hit(text: str, token: str) -> bool:
+    """词命中判定（F7/v4.17——词边界修复）。
+
+    纯 ASCII 词走词边界匹配（容忍 s/es 复数尾巴），防止短词嵌在无关
+    英文单词里误命中——frozen/citizen/dozen 内含 "zen"、history 内含
+    "story"、onboard 内含 "board"，字串包含会把一份冻资复盘覆写成
+    宣纸水墨世界。CJK 词无空格分词边界，保持子串匹配。
+    """
+    tok = str(token).strip().lower()
+    if not tok:
+        return False
+    if all(ord(c) < 128 for c in tok):
+        return re.search(
+            rf"(?<![a-z0-9_]){re.escape(tok)}(?:e?s)?(?![a-z0-9_])",
+            text) is not None
+    return tok in text
 
 # 场合 → 情绪与视觉世界（起点判断，不是模板；显式 tone_hint 永远赢）
 OCCASION_WORLDS = {
@@ -58,16 +77,75 @@ OCCASION_WORLDS = {
 }
 DEFAULT_WORLD = "board"
 
+# 审美风格覆写层（v4.16 F5——订阅命名通道）：东方/电影/静奢等审美词命中后
+# 在 occasion world 之上覆写美学字段。occasion 决定「这是什么场合」（语义），
+# style 决定「想要什么气质」（美学）；显式 visual_world/audience 永远赢。
+# 不是新生成机制——只是把已有 family 叙事（song_elegance/cinematic_narrative/
+# quiet_luxury 已在 design_intelligence_rules）接入意图端订阅关键词。
+STYLE_OVERLAYS = {
+    "eastern_ink": {
+        "match": ("东方", "水墨", "留白", "禅", "宋韵", "新中式", "卷轴", "宣纸",
+                  "泼墨", "印章", "禅意", "泼墨山水", "eastern", "zen", "sumi",
+                  "ink wash", "east asian"),
+        "family_hint": "song_elegance",
+        "visual_world": "sumi-e editorial: rice-paper ground, ink mountain ridge, "
+                        "vast negative space, one vermilion accent",
+        "composition_grammar": "soft_asymmetry",
+        "type_voice": "serif_editorial",
+        "color_behavior": "ink_restraint",
+        "background_scene": "rice_paper_world",
+        "avoid": ["cyberpunk glow", "tech gradient", "dashboard feeling",
+                  "decorative stock", "neon", "card walls"],
+    },
+    "cinematic": {
+        "match": ("电影感", "电影", "镜头感", "沉浸式", "胶片", "letterbox",
+                  "cinematic", "film", "movie", "immersive"),
+        "family_hint": "cinematic_narrative",
+        "visual_world": "cinematic narrative: letterbox rhythm, deep quiet field, "
+                        "controlled warm light, film grain",
+        "composition_grammar": "cinematic_stage",
+        "background_scene": "cinematic",
+        "avoid": ["dashboard feeling", "card walls", "flat pastel"],
+    },
+    "quiet_luxury": {
+        "match": ("静奢", "quiet luxury", "quiet_luxury", "素雅", "素净",
+                  "雅叙", "老钱", "editorial luxury"),
+        "family_hint": "quiet_luxury",
+        "visual_world": "quiet luxury: wool and bone palette, generous margins, "
+                        "understated material truth",
+        "avoid": ["dashboard feeling", "accent spam", "logo wallpaper"],
+    },
+}
+
 
 def _pick_world(need: dict) -> dict:
     text = " ".join(str(need.get(k) or "") for k in
                    ("occasion", "subject", "audience", "decision",
                     "tone_hint")).lower()
     for key, world in OCCASION_WORLDS.items():
-        if any(m.lower() in text for m in world["match"]):
+        if any(_token_hit(text, m) for m in world["match"]):
             return {"world_key": key, **world}
     world = OCCASION_WORLDS[DEFAULT_WORLD]
     return {"world_key": DEFAULT_WORLD, **world}
+
+
+def _apply_style_overlay(world: dict, need: dict) -> dict:
+    """在 occasion world 之上应用审美覆写层（确定性查表，显式视觉声明永远赢）。"""
+    text = " ".join(str(need.get(k) or "") for k in
+                   ("occasion", "subject", "audience", "decision",
+                    "tone_hint", "design_direction")).lower()
+    for key, so in STYLE_OVERLAYS.items():
+        if any(_token_hit(text, m) for m in so["match"]):
+            w = dict(world)
+            w["style_key"] = key
+            for f in ("visual_world", "composition_grammar", "type_voice",
+                      "color_behavior", "background_scene"):
+                if f in so:
+                    w[f] = so[f]
+            w["avoid"] = sorted(set(world.get("avoid") or []) | set(so.get("avoid") or []))
+            w["family_hint"] = so.get("family_hint")
+            return w
+    return dict(world)
 
 
 def estimate_tokens(obj) -> int:
@@ -91,7 +169,7 @@ def compile_brief(need: dict | str) -> dict:
     if isinstance(need, str):
         need = {"subject": need}
     need = dict(need or {})
-    world = _pick_world(need)
+    world = _apply_style_overlay(_pick_world(need), need)
     tone = str(need.get("tone_hint") or world["tone"])
     visual_world = str(need.get("visual_world") or world["visual_world"])
 
@@ -138,6 +216,8 @@ def compile_brief(need: dict | str) -> dict:
             "media_role": world["media_role"],
             "background_scene": world["background_scene"],
             "motion_posture": world["motion_posture"],
+            **({"family_hint": world["family_hint"], "style_key": world["style_key"],
+                "avoid": world["avoid"]} if world.get("style_key") else {}),
         },
         "slides_seed": slides_seed,
         "route": {"path": plan.get("path"),

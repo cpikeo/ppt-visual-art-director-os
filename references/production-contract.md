@@ -13,8 +13,8 @@
 | 密度节奏 | sparse ≤0.60 / balanced 0.65–0.75 / dense 0.75–0.85（几何占用）；相邻同密度页墨迹差 ≥0.10 |
 | 记忆锚点 | ≥40px 文本 / 图表 `highlight` / 环心 KPI / `target` 线 / sparkline / hero 图（图表内部大数字不算） |
 | 色彩 | 声明 `color_intent:[brand,emotion,hierarchy]`；Accent ≤5%（实测）；色相族 ≤4；Accent 与主色相差 ≥12° |
-| 网格 | 1280×720，8 单位自动吸附；`grid_exempt:true` 可豁免；`role: hairline|rule|divider|axis|separator` 的 1–2px 线仅吸附位置，不放大 width/height |
-| 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；AI 图片必须带 `generated_asset:true` + `asset_prompt_ref` + `asset_apc`，且资产卡 `issues:[]` |
+| 网格 | 1280×720，8 单位自动吸附；`grid_exempt:true` 可豁免 |
+| 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；资产卡 `family` 填 `direction_seed.family_hint`（审美覆写命中即接桥），水墨语言卡自动过纪律闸门 |
 | 可读性 | 实测文字 vs 下方像素：正文 <4.5:1 提示，任何角色 <3:1 阻断 |
 | 风险策略 | 起草前读 `forecast_risk` 政策，落稿后按 `risk_strategy` 修单改；建议不是闸门 |
 | 修订 | 1 根因 = 1 轮：修 `director_verdict.primary_lever` 同组杠杆，其余排队 |
@@ -28,10 +28,9 @@ qa = run_qa(spec, "o.pptx")                # 默认 draft；review/release 才�
 from route import plan_deck, one_pass_plan # 内容 → 家族/密度/预算/执行模式
 from design_intelligence import analyze, forecast_risk, risk_strategy, color_plan
 from layout_search import recommend        # 标准家族直达，复杂页三候选
-from art_critic import critique_deck       # 只在 review/release 消费
 ```
 
-`run_qa` 内联 normalizer→guard→compile→render，不要再串行跑单脚本（除非看独立诊断）。CLI：`qa.py <build> <out> --mode spec|sketch|draft|review|release [--critic on|off] [--no-cache]`；`guard.py --preflight` 是诊断报告，不拦渲染。
+`run_qa` 内联 normalizer→guard→compile→render，不要再串行跑单脚本（除非看独立诊断）。CLI：`qa.py <build> <out> --mode spec|sketch|draft|review|release [--no-cache]`；`guard.py --preflight` 是诊断报告，不拦渲染。
 
 ## Spec minimum
 
@@ -52,7 +51,7 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 | 代码 | 动作 |
 |---|---|
-| `INPUT_MISSING` `INTENT_UNCLEAR` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_PROMPT_REQUIRED` | BLOCKED |
+| `INPUT_MISSING` `INTENT_UNCLEAR` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `COMPILE_FAIL` `GUARD_FAIL` | BLOCKED |
 | `THEME_MISMATCH` `FOCUS_COMPETING` `MEDIA_UNJUSTIFIED` `RHYTHM_FLAT` `CARD_WALL` `CRITIC_LOW` `PIXEL_COVERAGE_PARTIAL` | REVISE |
 | `RENDER_UNAVAILABLE` | PREVIEW_ONLY |
 | `BG_UNPROTECTED` | warn（不阻断） |
@@ -61,6 +60,6 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 ## Release Manifest
 
-`qa.py --mode release` 生成：`source_spec_hash`（QA/Critic 报告交叉校验，对不上 → BLOCKED）+ `verification`（qa_level/pixel 覆盖/release_eligible）+ `compile/qa/critic` 报告 + `revision_log`（observation/minimal_fix/recheck，引用失败码与页 ID）+ `status`。`revision_count` 来自真实修订流水。
+`qa.py --mode release` 生成：`source_spec_hash`（QA 报告与 spec 交叉校验，对不上 → BLOCKED）+ `verification`（qa_level/pixel 覆盖/release_eligible）+ `compile/qa` 报告 + `revision_log`（observation/minimal_fix/recheck，引用失败码与页 ID）+ `status`。`revision_count` 来自真实修订流水。
 
 实现口径以代码为真源；历史决策见 `CHANGELOG.md`（备查，不进入生成上下文）。

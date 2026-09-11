@@ -25,10 +25,9 @@ Layer -1.5 · Layout Search（版式智能搜索——Layout Grammar，不是组
 from __future__ import annotations
 
 import time
-from typing import Any
 
 from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT
-from art_critic import STATEMENT_SIZE, _content_occupancy
+from primitives import STATEMENT_SIZE, content_occupancy as _content_occupancy
 from design_intelligence import DENSITY_BANDS
 
 _M = 48            # 版心安全边距（8 网格倍数）

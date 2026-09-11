@@ -15,7 +15,7 @@ Layer -1 · Design Intelligence（设计智能层——所有流程的大脑）
   ③ Page Quality Budget  页面质量预算：不同页面家族追求不同的好——Hero 页允许
                           高复杂度换情绪，数据页把清晰与准确放第一位。
   ④ Risk Prediction Engine 风险预测（**不是独立审查环节，是本层内部的预测子模块**）：
-                          `pre_critic(spec)` 用与 Critic/QA 同一套常量在渲染之前估计
+                          `pre_critic(spec)` 用与 QA 同一套 primitives 常量在渲染之前估计
                           accent 超载、锚点缺失、对比度、焦点冲突、文本溢出、节奏趋平、
                           密度失配、媒体误用；`risk_strategy(spec)` 把预测**翻译成生成
                           策略**（逐页媒体/文本/字阶/图表/构图调整 + 整套 deck 政策），
@@ -26,8 +26,8 @@ analyze(brief, spec) 把三条智能线（内容/视觉/风险与策略）汇合
 
 与既有层的关系（**职责边界，不重叠**）：本层负责「设计判断 + 未来风险」；
 `guard.py` / `qa.py` 负责工程正确性（溢出、越界、重叠、数据合同、渲染完整性），
-`art_critic.py` 负责设计价值（层级、空间节奏、信息焦点、审美一致性、品牌气质）。
-预测阈值同源于 art_critic.py / qa.py 导出常量：本层只加预测与策略，
+设计价值的判断叙事归 references/design-craft；
+预测阈值同源于 primitives 常量：本层只加预测与策略，
 不改任何判定标准，也不替代渲染证据。
 """
 from __future__ import annotations
@@ -39,9 +39,10 @@ from pathlib import Path
 from typing import Any
 
 from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast, estimate_lines
-from art_critic import (_memory_anchor, _content_occupancy, STATEMENT_SIZE,
-                        FOCUS_LEAD, FOCUS_AREA_LEAD, RHYTHM_INK_DELTA,
-                        RHYTHM_INK_FLAT)
+from primitives import (memory_anchor as _memory_anchor,
+                        content_occupancy as _content_occupancy,
+                        STATEMENT_SIZE, FOCUS_LEAD, FOCUS_AREA_LEAD,
+                        RHYTHM_INK_DELTA, RHYTHM_INK_FLAT)
 # 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
 from design_intelligence_rules import (
     BAR_FAMILY as _BAR_FAMILY,

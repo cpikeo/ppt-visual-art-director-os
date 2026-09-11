@@ -20,12 +20,11 @@ ghost 把这类判断从 ~4.7s 压到 ~5ms/页，把真渲染留给收口与发�
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from primitives import RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, _tuple
+from primitives import RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT
 
 
 def _resolve_color(ctx: RenderContext, token) -> tuple | None:
