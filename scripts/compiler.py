@@ -228,7 +228,7 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     spacing = float(element.get("char_spacing", 0) or 0)
     p = tf.paragraphs[0]
     p.text = str(element.get("text", ""))
-    p.alignment = align_of(element.get("align"), PP_ALIGN.CENTER)
+    p.alignment = align_of(element.get("align", "center"), PP_ALIGN.CENTER)
     p.line_spacing = pt(size * float(element.get("text_line_height", 1.25)))
     for run in p.runs:
         set_run_font(run, cn if is_cjk(run.text[:1] or " ") else latin, cn,

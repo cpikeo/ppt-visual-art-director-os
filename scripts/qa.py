@@ -388,6 +388,18 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     except Exception as exc:      # 预测层失败不阻断主链（它是大脑不是门槛）
         risk_report = {"error": str(exc), "risks": [], "summary": {}, "strategy": None}
 
+    # 审美校准（advisory，不阻断、不扣分）：把五维静态校准分
+    # （layout/typography/color/image/information，各 0–5 → 0–100）带进报告。
+    # 此前它只活在 design_intelligence 与 selftest 里，QA 报告永远看不见「好看」
+    # 这一维——「能正确交付」与「好看」从此在同一份报告里都可核对，但发布
+    # 判定仍只看契约与像素证据（分数只作对照，不进 score/verdict）。
+    aesthetic = None
+    try:
+        from design_intelligence import visual_calibration_score
+        aesthetic = visual_calibration_score(spec)
+    except Exception as exc:
+        aesthetic = {"score": None, "error": str(exc)}
+
     # 渲染证据目录先定下来（编译/PDF/页级指标缓存与上一版 spec 都住在这里）
     render_dir = (Path(render_dir) if render_dir
                   else output_path.with_name(output_path.stem + "_render"))
@@ -579,12 +591,13 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         if p.get("gravity_drift", 0) > thr["gravity_drift"]:
             deduction += pen["render_gravity"]
             deduction_by_domain["render"] += pen["render_gravity"]
+            _asrc = p.get("anchor_source") or "focus"
             items.append({"domain": "render", "level": "warn",
                           "rule": "gravity_drift", "id": p.get("slide"),
-                          "msg": (f"显著性质心偏离声明焦点"
+                          "msg": (f"显著性质心偏离声明锚点"
                                   f"（{p.get('anchor_id') or '未声明'}）"
                                   f" {p['gravity_drift']:.2f} > {thr['gravity_drift']}"
-                                  f"；锚点取 page_intent.focus，非 gravity_anchor"),
+                                  f"；锚点来源 anchor_source={_asrc}"),
                           "penalty": pen["render_gravity"]})
         if p.get("accent_pixel_ratio", 0) > accent_max:
             deduction += pen["render_accent"]
@@ -744,6 +757,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         # 风险预测 + 生成策略（Design Intelligence 的预测子模块；不是审核闸）
         "risk": risk_report,
         "pre_critic": risk_report,          # 兼容别名（同对象，不复制）
+        "aesthetic": aesthetic,             # 五维审美校准（advisory，不进分数）
         "execution": exec_block,
         "verdict": _verdict_of(status, score, items, failure_codes),
         "score": round(score, 1),

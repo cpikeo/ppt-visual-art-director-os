@@ -1919,7 +1919,7 @@ def check_visual_calibration_v3():
         fails.append("校准分结构错误")
     import copy as _copy
     bad = _copy.deepcopy(spec)
-    bad["slides"][0]["elements"][0]["size"] = 47          # 离驻点
+    bad["slides"][0]["elements"][0]["size"] = 38          # 离驻点（阅读字阶 38∉驻点带）
     bad["slides"][0]["page_intent"]["insight"] = ""       # 信息合同缺口
     if di.visual_calibration_score(bad)["score"] >= vc["score"]:
         fails.append("校准分对劣化不敏感")

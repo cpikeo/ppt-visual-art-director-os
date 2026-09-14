@@ -269,7 +269,6 @@ def _clamp_workers(workers) -> int:
         w = int(workers)
     except (TypeError, ValueError):
         w = MAX_RENDER_WORKERS
-    cpus = len(os.os.listdir('/sys/devices/system/cpu')) if False else None
     try:
         cpus = os.cpu_count() or 2
     except Exception:
@@ -294,7 +293,7 @@ PARTIAL_MIN_SAVING = 4      # 至少省下 4 页的转换量才值得拆
 
 
 def _partial_worth_it(need: list[int], total: int) -> bool:
-    if not need or total <= 0 or not need or len(need) >= total:
+    if not need or total <= 0 or len(need) >= total:
         return False
     if len(need) > max(1, int(total * PARTIAL_MAX_RATIO)):
         return False
@@ -780,14 +779,27 @@ def _dominant_color(patch) -> str:
 
 
 def _text_regions(slide: dict, cw: float, ch: float, theme: dict) -> list[dict]:
-    """文字框 → 归一化区域 + 声明色，供「文字 vs 其下方像素」的实测对比度使用。"""
-    colors = (theme or {}).get("colors") or {}
+    """文字框 → 归一化区域 + 声明色，供「文字 vs 其下方像素」的实测对比度使用。
+
+    色值解析与编译器同一口径（RenderContext = 派生色阶 + 显式声明），否则
+    color=panel/rule/muted_soft 等派生 token 的文字会被静默排除在对比度闸门
+    之外（F16：派生 token 文字逃逸可读性检测，此前实测未被点名）。
+    """
+    from primitives import derive_tokens
+    base = (theme or {}).get("colors") or {}
+    colors = {**derive_tokens(base), **base}
     out: list[dict] = []
     for e in (slide or {}).get("elements", []) or []:
         if not isinstance(e, dict) or e.get("type") != "text":
             continue
+        # 声明为装饰/水印的文字（role="decoration" 或 decorative:True）不参与
+        # 可读性判定：它是纹理不是内容（与 guard 的 decoration 面积预算同口径），
+        # 半透明巨字水印如按正文算对比度会把发布误判为不可读。
+        if e.get("role") == "decoration" or e.get("decorative") is True:
+            continue
         raw = str(e.get("color") or "").strip()
-        hexv = raw if raw.startswith("#") else str(colors.get(raw.lstrip("-").split(".")[-1], ""))
+        hexv = raw if raw.startswith("#") else str(
+            colors.get(raw.lstrip("-").split(".")[-1], "") or "")
         if not hexv.startswith("#"):
             continue
         try:
@@ -797,8 +809,15 @@ def _text_regions(slide: dict, cw: float, ch: float, theme: dict) -> list[dict]:
             continue
         if w <= 0 or h <= 0:
             continue
+        opacity = None
+        try:
+            if e.get("opacity") is not None:
+                opacity = max(0.0, min(1.0, float(e["opacity"])))
+        except (TypeError, ValueError):
+            opacity = None
         out.append({"id": e.get("id") or e.get("role") or "text",
                     "role": str(e.get("role") or ""), "color": hexv,
+                    "opacity": opacity,
                     "aux": str(e.get("role") or "") in AUX_TEXT_ROLES,
                     "box": (x / cw, y / ch, w / cw, h / ch)})
     return out
@@ -806,7 +825,7 @@ def _text_regions(slide: dict, cw: float, ch: float, theme: dict) -> list[dict]:
 
 def _text_contrast(arr, regions: list[dict]) -> dict[str, Any]:
     """每个文字框：框内主色当作底，与声明字色算 WCAG 对比 → 取最坏值。"""
-    from primitives import contrast
+    from primitives import contrast, blend
     import numpy as np
     hh, ww, _ = arr.shape
     worst, reading_worst, all_r = None, None, []
@@ -819,12 +838,20 @@ def _text_contrast(arr, regions: list[dict]) -> dict[str, Any]:
         if patch.size < 3 * 3 * 3:
             continue
         bg_hex = _dominant_color(patch)          # 每框只取一次主色
+        eff = reg["color"]
+        if reg.get("opacity") is not None and reg["opacity"] < 1.0:
+            # 半透明文字的真实对比度低于全不透明声明色：按透明度与底色混合后
+            # 再判，否则 0.85 透明文字被高估对比度、漏判不可读（F17）。
+            eff = blend(bg_hex, reg["color"], reg["opacity"], space="srgb")
         try:
-            ratio = float(contrast(reg["color"], bg_hex))
+            ratio = float(contrast(eff, bg_hex))
         except Exception:
             continue
         rec = {"id": reg["id"], "role": reg["role"], "aux": bool(reg.get("aux")),
                "ratio": round(ratio, 2), "color": reg["color"], "background": bg_hex}
+        if reg.get("opacity") is not None and reg["opacity"] < 1.0:
+            rec["opacity"] = round(reg["opacity"], 2)
+            rec["effective_color"] = eff
         all_r.append(rec)
         if worst is None or rec["ratio"] < worst["ratio"]:
             worst = rec

@@ -1218,8 +1218,13 @@ def visual_calibration_score(spec: dict, family: str | None = None) -> dict:
         sizes = [round(float(e.get("size")), 1) for e in s.get("elements") or []
                  if e.get("type") == "text" and e.get("size") is not None]
         deck_sizes.update(sizes)
-        off = [z for z in sizes if all(abs(z - r) > _LADDER_TOL for r in LADDER_RUNGS)]
-        page_ok = (len(set(sizes)) <= 4 and not off)
+        # 驻点字阶约束作用在「阅读字阶」上：Statement 级（≥STATEMENT_SIZE）是
+        # 每页唯一的情感锚点（封面/章节/收尾的 display 尺度），层级由 FOCUS_LEAD
+        # 约束，不纳入驻点判定——把 88/112/240 视作「离驻点」会系统性误伤
+        # 展示字阶，违背本包自己的 STATEMENT_SIZE 分类。
+        reading = [z for z in sizes if z < STATEMENT_SIZE]
+        off = [z for z in reading if all(abs(z - r) > _LADDER_TOL for r in LADDER_RUNGS)]
+        page_ok = (len(set(reading)) <= 4 and not off)
         for e in s.get("elements") or []:
             if e.get("type") != "text" or not e.get("text"):
                 continue
@@ -1229,11 +1234,13 @@ def visual_calibration_score(spec: dict, family: str | None = None) -> dict:
                 notes.append(f"typography: {(e.get('id') or '?')} 行长 >38（拆句或收窄版心）")
         if page_ok:
             ty_ok += 1
-    off_deck = [z for z in deck_sizes if all(abs(z - r) > _LADDER_TOL for r in LADDER_RUNGS)]
+    off_deck = [z for z in deck_sizes
+                if z < STATEMENT_SIZE
+                and all(abs(z - r) > _LADDER_TOL for r in LADDER_RUNGS)]
     typography = 5.0 * ty_ok / n
-    if len(deck_sizes) > 6 or off_deck:
+    if len({z for z in deck_sizes if z < STATEMENT_SIZE}) > 6 or off_deck:
         typography -= 1.0
-        notes.append("typography: 全 deck 字阶 >6 级或存在离驻点字号")
+        notes.append("typography: 全 deck 阅读字阶 >6 级或存在离驻点字号")
 
     # color：色相族 / 色彩职责声明 / accent 约束
     fams = {f for v in colors.values() if isinstance(v, str)
