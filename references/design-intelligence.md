@@ -86,7 +86,7 @@ page_intent:
 
 opening 建世界（HERO，高/sparse）→ context 给背景（EDITORIAL）→ problem 让张力具体（NARRATIVE/COMPARISON）→ insight 给判断（STATEMENT，低/sparse）→ evidence 证明（DATA_STORY，低/dense 不拥挤）→ solution 展结构（FRAMEWORK）→ proof 给案例 → vision 放大意义（HERO）→ closing 定行动与记忆（STATEMENT）。高信息页之后跟留白或低能量页。
 
-页型节奏三手法（六套世界级样本验证）：**章节过渡页是重置不是内容**——全幅视觉 + 单 statement、密度归零，负责换脑；**结尾页回收封面语言**——同级 statement、同轴线，愿景句即落款，不放谢谢页与联系方式；**跨页连续性三锚**——caps 眉标固定上缘、页码固定象限、证据编号（Fig./01–04）全文连续。锚不动，正文才可游走。
+页型节奏三手法（六套样本验证）：**章节过渡页是重置不是内容**——全幅视觉 + 单 statement、密度归零，负责换脑；**结尾页回收封面语言**——同级 statement、同轴线，愿景句即落款，不放谢谢页与联系方式；**跨页连续性三锚**——caps 眉标固定上缘、页码固定象限、证据编号（Fig./01–04）全文连续。锚不动，正文才可游走。
 
 **母题变奏（motif variation）**：一套 deck 只设计一个图形母题（圆/光球/编号方块），用它的变奏承担全部装饰语言——封面注册母题，章节页放大，数据页退成刻度，结尾页收束；母题之外的装饰元素全部删除。**页型标签**全场统一词汇表（COVER / NARRATIVE / DATA / STRATEGY / VISION / CLOSING，caps 小标固定页首），标签即节奏的可视化。（第二批六套样本验证）
 

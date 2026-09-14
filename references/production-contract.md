@@ -1,6 +1,6 @@
 # Production Contract（运行时契约 · 唯一权威表）
 
-三层各答一问：QA 答「能不能正确交付」（PASS/FAIL/WARNING）；Critic 答「有没有高级设计价值」；Design Intelligence 答「该怎么做、会挂在哪里」。同一事实只判一次。
+三层各答一问：QA 答「能不能正确交付」（PASS/FAIL/WARNING）；Design Intelligence 答「该怎么做、会挂在哪里」（风险预测，非闸门）；设计价值判断由人/AI 依 `references/design-craft.md` 完成（v4.15 起无机器评分）。同一事实只判一次。
 
 ## Contract Map（写 spec 前查这张表）
 
@@ -17,20 +17,20 @@
 | 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20；资产卡 `family` 填 `direction_seed.family_hint`（审美覆写命中即接桥），水墨语言卡自动过纪律闸门 |
 | 可读性 | 实测文字 vs 下方像素：正文 <4.5:1 提示，任何角色 <3:1 阻断 |
 | 风险策略 | 起草前读 `forecast_risk` 政策，落稿后按 `risk_strategy` 修单改；建议不是闸门 |
-| 修订 | 1 根因 = 1 轮：修 `director_verdict.primary_lever` 同组杠杆，其余排队 |
-| 发布 | `--mode release`：QA ≥90 且 Critic ≥90 且 0 阻断 且全量像素；报告盖 `source_spec_hash` |
+| 修订 | 1 根因 = 1 轮：只修本轮 `items` 里唯一/首个 error 根因（或 `risk.strategy` 指定的首杠杆），其余排队 |
+| 发布 | `--mode release`：QA ≥90 且 0 阻断 且全量像素（`release_eligible`）；报告盖 `source_spec_hash` |
 
 ## Calls（最小稳定 API）
 
 ```python
 from qa import run_qa, verdict_of          # run_qa(spec,out,mode=...) 是唯一执行入口
-qa = run_qa(spec, "o.pptx")                # 默认 draft；review/release 才渲染+Critic
+qa = run_qa(spec, "o.pptx")                # 默认 draft；review/release 才渲染
 from route import plan_deck, one_pass_plan # 内容 → 家族/密度/预算/执行模式
 from design_intelligence import analyze, forecast_risk, risk_strategy, color_plan
 from layout_search import recommend        # 标准家族直达，复杂页三候选
 ```
 
-`run_qa` 内联 normalizer→guard→compile→render，不要再串行跑单脚本（除非看独立诊断）。CLI：`qa.py <build> <out> --mode spec|sketch|draft|review|release [--no-cache]`；`guard.py --preflight` 是诊断报告，不拦渲染。
+`run_qa` 内联 normalizer→guard→compile→render，不要再串行跑单脚本（除非看独立诊断）。CLI：`qa.py <build> <out> --mode spec|sketch|draft|review|release [--no-cache]`；`guard.py <build>` 是静态诊断报告，不拦渲染；风险预测走 `qa` 报告的 `risk`（`design_intelligence.pre_critic` + `risk_strategy`）。
 
 ## Spec minimum
 

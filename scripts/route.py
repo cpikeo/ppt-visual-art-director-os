@@ -13,7 +13,7 @@ Layer 0.7 · Route（视觉智能决策层 / Visual Intelligence Layer）
 brief 最小集（plan_deck 的唯一输入，yml / json / 定义 BRIEF 的模块均可）：
 
     audience: 董事会            decision: 追加品牌预算
-    occasion: 2026 年终总结      design_direction: editorial_brand   # 可省，按 occasion 推断
+    occasion: 2026 年终总结      design_direction: editorial_brand   # 可省；缺省走中性 quiet_minimal
     quality_level: fast|advanced                                   # 可省
     slides: ["封面：年度总结", {"id": "s04", "type": "data", "title": "增长结构"}]
 
@@ -201,7 +201,7 @@ def _quality(quality_level) -> str:
     return QUALITY_ALIASES.get(str(quality_level or "").strip().lower(), "fast")
 
 
-def plan_page(content_type: str, design_direction: str = "editorial_brand",
+def plan_page(content_type: str, design_direction: str = "quiet_minimal",
               quality_level: str = "advanced") -> dict:
     """单页推导：内容类型 + 设计方向 + 质量等级 → 布局 / 密度 / 字阶 / 素材 / 图表口径。
 
@@ -211,7 +211,9 @@ def plan_page(content_type: str, design_direction: str = "editorial_brand",
     if content_type not in ROUTES:
         content_type = detect_type(content_type)
     r = ROUTES.get(content_type, DEFAULT_ROUTE)
-    d = DIRECTION_PRESETS.get(design_direction, DIRECTION_PRESETS["editorial_brand"])
+    # 兜底方向 = 中性（quiet_minimal）：宋体/编辑方向是「显式选择」不是默认。
+    # 通用商业词（品牌/高端/年报…）不该把 deck 推给宋体——拒绝风格蔓延。
+    d = DIRECTION_PRESETS.get(design_direction, DIRECTION_PRESETS["quiet_minimal"])
     quality = _quality(quality_level)
 
     asset = r["asset"]
@@ -331,8 +333,9 @@ def _plan_deck(brief: dict) -> dict:
     quality = _quality(brief["quality_level"]) if brief.get("quality_level") else (
         "advanced" if any(k in occasion.lower() or k in occasion for k in ADVANCED_TRIGGERS)
         else "fast")
-    direction = brief.get("design_direction") or (
-        "editorial_brand" if quality == "advanced" else "quiet_minimal")
+    # 默认方向 = 中性（quiet_minimal）：宋体/编辑方向只在显式声明 design_direction
+    # 时使用。通用商业词（品牌/高端/年报…）不得把 deck 推给宋体——拒绝风格蔓延。
+    direction = brief.get("design_direction") or "quiet_minimal"
 
     raw = brief.get("slides") or []
     pages = []
@@ -357,13 +360,13 @@ def _plan_deck(brief: dict) -> dict:
                 "预测与策略：design_intelligence.forecast_risk(brief) → 生成政策"
                 "（媒体/文本/字阶/构图四条在起草之前定，不靠渲染试错）",
                 "初稿/探索（默认）：qa.py <build> out.pptx --mode draft"
-                "（Normalizer → Guard → Compile → PPTX，零渲染零 Critic；布局方向用 ghost.py）",
+                "（Normalizer → Guard → Compile → PPTX，零渲染；布局方向用 ghost.py）",
                 "方向确认：qa.py <build> out.pptx --mode review"
-                "（只渲染变化页 ∪ 关键页；Critic 直接给 verdict）",
+                "（只渲染变化页 ∪ 关键页；直接给 verdict）",
                 "发布（唯一给发布资格的一档）：qa.py <build> out.pptx --mode release"
-                "（全量渲染 → QA → Critic → Manifest）",
-                "guard 预检（静态诊断，~0.01s/页）：python3 scripts/guard.py <build> --preflight",
-                "修完预检再编译：python3 scripts/compiler.py <build> out.pptx"]
+                "（全量渲染 → QA → Manifest）",
+                "guard 静态诊断 + 风险预测（~0.01s/页）：python3 scripts/guard.py <build>",
+                "修完静态项再编译：python3 scripts/compiler.py <build> out.pptx"]
     if quality == "advanced":
         workflow.append("资产：仅对 assets.generate 中的页面调用图像模型，逐页绑定留白锚点")
     # 哪些页面值得付渲染成本：首尾页 + 需要画心的页（图表与遮挡由 QA 从 spec 兜底挑选）
@@ -386,7 +389,7 @@ def _plan_deck(brief: dict) -> dict:
             pg["quality_budget"] = quality_budget({"page_intent": pg})
         except Exception:
             pass
-    seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["editorial_brand"]).get("theme_seed", {})
+    seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"]).get("theme_seed", {})
     # Color Intelligence 入口：品牌色一到，方向预设立即让位。「科技=蓝」这类
     # 方向→色值的模板映射在入口处被切断；派生色阶由 RenderContext 的 OKLab
     # derive_tokens 从覆盖后的种子派生。
@@ -400,10 +403,10 @@ def _plan_deck(brief: dict) -> dict:
             "mode": exec_mode,
             "modes": ["sketch", "draft", "review", "release"],
             "rule": ("sketch=草图链（结构探索，只守数据诚实性与结构合法性，契约免除）；"
-                     "draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX，Critic 恒不跑）；"
-                     "review=审查链（只渲染变化页 ∪ 关键页，Critic 跑）；"
-                     "release=发布链（全量像素+Critic+Manifest，唯一给发布资格的一档）；"
-                     "规则一句话：draft 不跑 Critic，review/release 跑"),
+                     "draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX）；"
+                     "review=审查链（只渲染变化页 ∪ 关键页）；"
+                     "release=发布链（全量像素+Manifest，唯一给发布资格的一档）；"
+                     "规则一句话：draft 零渲染，review 测变化页，release 全量"),
             "escalate": {"to_review": ["用户确认方向", "改了布局/主题/图表结构"],
                          "to_release": ["终版交付", "发布前复核"]},
             "note": "模式是流程控制；Fast/Advanced 是预算控制——两者正交，可任意组合。",
@@ -422,15 +425,15 @@ def _plan_deck(brief: dict) -> dict:
                        "发布级 deck：关键页先测，收口仍需 Level 3 全量复核"),
         },
         # 两线程执行模型（严格上限 2）：设计推导与资产/渲染互不等待，只在 QA 处汇合一次。
-        # 没有回环：Thread2 从不回头要求 Thread1 重新推导；修正由预检/QA 的结论驱动。
+        # 没有回环：Thread2 从不回头要求 Thread1 重新推导；修正由 guard 静态项与风险预测驱动。
         "pipelines": {
             "workers": 2,
-            "design": ["route", "guard --preflight", "spec 修正（只按预检项改，不重排全篇）"],
+            "design": ["route", "guard + risk_prediction", "spec 修正（只按静态项与风险预测改，不重排全篇）"],
             "asset_render": ["asset_prompt → 图像模型（仅 assets.generate）", "compiler",
                              f"render + measure（workers=2，Level {2 if quality == 'fast' else 3}）"],
             "join": "qa.run_qa（唯一同步点：静态结论 + 渲染证据在此合并计分）",
             "exchange": "单一 spec / plan JSON；禁止逐页往返通信",
-            "forbidden": ["无限并发", "渲染等待预检的循环依赖", "每轮都跑全量 Critic"],
+            "forbidden": ["无限并发", "渲染等待预检的循环依赖", "每轮都跑全量渲染"],
         },
         "budget": {"max_asset_calls": cap,
                    "max_charts_per_page": 1,

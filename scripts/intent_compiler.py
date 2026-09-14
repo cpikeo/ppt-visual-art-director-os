@@ -37,7 +37,7 @@ def _token_hit(text: str, token: str) -> bool:
 OCCASION_WORLDS = {
     "board": {
         "match": ("董事会", "汇报", "战略", "决策", "年度总结", "年终", "board",
-                  "review", "汇报"),
+                  "review"),
         "tone": "calm_authority",
         "visual_world": "quiet editorial evidence room: paper, soft daylight, one signal",
         "composition_grammar": "evidence_field", "type_voice": "neutral_sans",
@@ -84,7 +84,9 @@ DEFAULT_WORLD = "board"
 # quiet_luxury 已在 design_intelligence_rules）接入意图端订阅关键词。
 STYLE_OVERLAYS = {
     "eastern_ink": {
-        "match": ("东方", "水墨", "留白", "禅", "宋韵", "新中式", "卷轴", "宣纸",
+        # 「留白」是通用排版术语（negative space），任何 deck 都可能提，
+        # 纳入水墨触发会把普通排版需求覆写成水墨——故不在 match 内。
+        "match": ("东方", "水墨", "禅", "宋韵", "新中式", "卷轴", "宣纸",
                   "泼墨", "印章", "禅意", "泼墨山水", "eastern", "zen", "sumi",
                   "ink wash", "east asian"),
         "family_hint": "song_elegance",
@@ -108,7 +110,9 @@ STYLE_OVERLAYS = {
         "avoid": ["dashboard feeling", "card walls", "flat pastel"],
     },
     "quiet_luxury": {
-        "match": ("静奢", "quiet luxury", "quiet_luxury", "素雅", "素净",
+        # 「素雅/素净」是通用审美描述词（同「留白」），不纳入静奢触发——
+        # 否则「希望版面素雅一点」会被误覆写成静奢方向。
+        "match": ("静奢", "quiet luxury", "quiet_luxury",
                   "雅叙", "老钱", "editorial luxury"),
         "family_hint": "quiet_luxury",
         "visual_world": "quiet luxury: wool and bone palette, generous margins, "

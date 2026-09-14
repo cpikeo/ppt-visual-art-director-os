@@ -449,13 +449,6 @@ def _plan_jobs(page_numbers: list[int], workers: int) -> tuple[list[tuple[int, i
     return sorted(runs), n
 
 
-def _convert_pages(pdf: Path, out_dir: Path, dpi: int, page_numbers: list[int],
-                   workers: int = MAX_RENDER_WORKERS,
-                   token: str | None = None) -> dict[int, Path]:
-    """PDF → 指定页 PNG，返回 {页码: png}；某区间失败时仅该区间缺失（调用方按缺页降级）。"""
-    return _run_pipeline(pdf, out_dir, dpi, page_numbers, workers, lambda n, png: png)
-
-
 def _file_sha(path: Path) -> str | None:
     """文件内容指纹：缓存命中必须连像素一起核对，文件名相等不能算数。"""
     import hashlib

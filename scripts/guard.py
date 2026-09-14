@@ -28,7 +28,7 @@ from typing import Any
 
 from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT, ELEMENT_TYPES, contrast,
                          bg_coverage, bg_overlay_opacity, is_background_declared,
-                         rounded_containers, spec_fingerprint)
+                         spec_fingerprint)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
 GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalizer/文档同源）
@@ -44,7 +44,7 @@ GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalize
 DESIGN_RULES = frozenset({
     "accent_budget", "alignment_budget", "animation_budget", "chart_highlight",
     "color_budget", "decoration_budget", "focus", "focus_scale", "icon_consistency",
-    "organic_layer", "palette_discipline", "preflight", "rhythm", "type_budget",
+    "organic_layer", "palette_discipline", "rhythm", "type_budget",
     "typography", "asset_contract", "chart_style_drift",
 })
 
@@ -254,31 +254,6 @@ def _check_page_contract(slide: dict, sid: str, add,
 # 预检条目为 hint 级：不改变 guard/QA 的通过判定，只提供可执行的最小修正。
 # ══════════════════════════════════════════════════════════════
 
-_PREFLIGHT_DEFAULTS = {
-    "STATEMENT_SIZE": 40, "FOCUS_LEAD": 1.25, "MEDIA_BUDGET_MAX": 1,
-    "TEXT_BUDGET_MAX": 4, "FOCUS_AREA_LEAD": 2.0, "ROUNDED_MAX": 4,
-    "LR_SPLIT_MAX": 0.45,
-    "AXIS_TOLERANCE": 0.045, "AXIS_LINES": (0.25, 1 / 3, 0.5, 2 / 3, 0.75),
-    "GOLDEN_LINES": (0.382, 0.618),
-    "ASYMMETRIC_GRAMMARS": {"soft_asymmetry", "cinematic_stage", "path_sequence"},
-    "CAPTION_ROLES": {"caption", "annotation", "source", "label", "axis",
-                      "data_label", "legend", "metadata", "method"},
-}
-
-
-def _preflight_gates() -> tuple[dict, str]:
-    """阈值住 primitives（v4.15 单一口径直连）；保留字典形态向后兼容。"""
-    import primitives as pr
-    gates = dict(_PREFLIGHT_DEFAULTS)
-    for k in ("STATEMENT_SIZE", "FOCUS_LEAD", "MEDIA_BUDGET_MAX", "TEXT_BUDGET_MAX",
-              "FOCUS_AREA_LEAD", "ROUNDED_MAX", "LR_SPLIT_MAX", "ASYMMETRIC_GRAMMARS",
-              "CAPTION_ROLES", "AXIS_TOLERANCE", "AXIS_LINES", "GOLDEN_LINES"):
-        v = getattr(pr, k, None)
-        if v is not None:
-            gates[k] = v
-    return gates, "primitives"
-
-
 def _is_bg_layer(e: dict) -> bool:
     """是否**声明**为背景层（只读意图，不判断资格）。判定在 primitives 共享。"""
     return is_background_declared(e)
@@ -338,194 +313,29 @@ def _bg_exempt(e: dict, cw: float, ch: float) -> bool:
     return _bg_qualified(e, cw, ch)[0]
 
 
-def _ink_box(e: dict) -> tuple[float, float, float, float]:
-    x, y = float(e.get("x", 0)), float(e.get("y", 0))
-    w, h = max(0.0, float(e.get("width", 0))), max(0.0, float(e.get("height", 0)))
-    if e.get("type") == "text":
-        w, h = w * 0.55, h * 0.70
-    return x, y, w, h
-
-
-def run_preflight(spec: dict, cw: float, ch: float, add) -> list[dict]:
-    """返回结构化预检项：{slide, code, observation, minimal_fix}。"""
-    gates, gate_source = _preflight_gates()
-    direction = spec.get("direction") or {}
-    slides = spec.get("slides") or []
-    items: list[dict] = []
-
-    def flag(sid, code, observation, fix):
-        rec = {"slide": sid, "code": code, "observation": observation, "minimal_fix": fix}
-        items.append(rec)
-        add("preflight", f"{sid}:{code}", "hint", f"{observation} → {fix}")
-
-    for si, s in enumerate(slides):
-        sid = s.get("id", f"slide_{si}")
-        elems = [e for e in s.get("elements", []) if isinstance(e, dict)]
-        intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
-
-        def field(key):
-            return intent.get(key) or s.get(key)
-
-        texts = [e for e in elems if e.get("type") == "text"]
-        reading = [t for t in texts if str(t.get("role", "")) not in gates["CAPTION_ROLES"]]
-        _raw_media = [e for e in elems
-                      if e.get("type") in ("chart", "native_chart", "image")
-                      and not _bg_exempt(e, cw, ch)]
-        # small multiples：一组 sparkline 是「一个关系」的降噪呈现，只占一个媒体席位。
-        media = [e for e in _raw_media
-                 if str(e.get("chart_kind") or e.get("kind", "")) != "sparkline"]
-        if any(str(e.get("chart_kind") or e.get("kind", "")) == "sparkline"
-               for e in _raw_media):
-            media.append({"_kind": "sparkline_group"})
-
-        insight = field("insight")
-        if not (isinstance(insight, str) and insight.strip()):
-            flag(sid, "INTENT_UNCLEAR", "页面没有可复述的单一 insight（发布链会 BLOCKED）",
-                 "先写一句 object + change + implication，再排版")
-
-        focus_id = field("focus")
-        focus_el = next((e for e in elems if e.get("id") == focus_id), None)
-        if focus_el is None:
-            flag(sid, "FOCUS_UNBOUND", f"focus={focus_id!r} 未对应页面元素",
-                 "把 focus 指向真实元素 id；唯一 L4 通常是结论文字")
-        else:
-            fsize = float(focus_el.get("size") or 0)
-            others = sorted((float(t.get("size") or 0) for t in texts if t is not focus_el),
-                            reverse=True)
-            if focus_el.get("type") == "text":
-                if fsize < gates["STATEMENT_SIZE"]:
-                    flag(sid, "FOCUS_SCALE",
-                         f"焦点 {fsize:g}px 低于 Statement 线 {gates['STATEMENT_SIZE']}px，"
-                         f"拿不到层级与记忆点加分",
-                         "把结论提为 Statement 尺度（或把结论直接写进标题而非依赖图表）")
-                elif others and others[0] > 0 and fsize / others[0] < gates["FOCUS_LEAD"]:
-                    flag(sid, "FOCUS_LEAD",
-                         f"焦点仅领先第二大文字 {fsize / others[0]:.2f}×"
-                         f"（<{gates['FOCUS_LEAD']}×），存在同级竞争",
-                         "拉开尺度比或降级竞争性文字")
-                fare = _element_area(focus_el)
-                big = [e for e in elems if e is not focus_el
-                       and not _bg_exempt(e, cw, ch)
-                       and _element_area(e) > max(gates["FOCUS_AREA_LEAD"] * fare,
-                                                  0.25 * cw * ch)]
-                if big:
-                    flag(sid, "FOCUS_DOMINATED",
-                         f"「{big[0].get('id')}」面积 > 焦点 {gates['FOCUS_AREA_LEAD']}×，可能夺走第一注意点",
-                         "裁切/缩小该对象，或把焦点声明改给它（保持唯一）")
-            # 落位是否「对齐过」：中心离最近轴线差一点 → 更像没想过，而不是刻意的非对称。
-            # 对文字/图表/图片焦点一视同仁；只在完全不上线时提示，且不判罚——非对称构图
-            # 本来就是合法语法，「哪儿都不靠」才是没决定的排版余数。
-            try:
-                _ax = _axis_offsets(focus_el, cw, ch, gates)
-            except Exception:
-                _ax = None
-            if _ax and not _ax[0]:
-                flag(sid, "FOCUS_PLACEMENT",
-                     f"焦点中心 x={_ax[1][0]:.3f} y={_ax[1][1]:.3f} 距最近版面轴线 "
-                     f"{_ax[2]:.3f}（> 容差 {gates['AXIS_TOLERANCE']:.3f}）",
-                     "把焦点中心对齐到中线/三分线/黄金分割线之一，"
-                     "或在 page_intent 写明这处偏移换来什么（留白/张力/呼应）")
-        if len(media) > gates["MEDIA_BUDGET_MAX"]:
-            flag(sid, "MEDIA_BUDGET",
-                  f"争夺注意力的媒体/图表 {len(media)} 个 > 预算 {gates['MEDIA_BUDGET_MAX']}",
-                  "保留承担核心关系的一个，其余改注释或拆页")
-        if len(reading) > gates["TEXT_BUDGET_MAX"]:
-            flag(sid, "TEXT_BUDGET", f"阅读文本 {len(reading)} 个 > 预算 {gates['TEXT_BUDGET_MAX']}",
-                 "合并重复语句：一个文本框只承担一个语义角色")
-        lm_limits = _measure_limits()
-        for e in texts:
-            lm = line_measure(e, lm_limits)
-            if lm and lm["over"]:
-                flag(sid, "LINE_MEASURE",
-                     f"「{e.get('id', '?')}」每行约 {lm['per_line']:.0f} 字 > "
-                     f"{lm['limit']}（{'CJK' if lm['cjk_led'] else '拉丁'}行长上限）",
-                     "拆成两行/短句，或把宽度收到 "
-                     f"{int(lm['limit'] * (float(e.get('size') or 0)))}px 以内")
-        rounded = rounded_containers(elems)   # 与 critic 同一计数：渲染出来是容器才算
-        if len(rounded) > gates["ROUNDED_MAX"]:
-            flag(sid, "CARD_WALL", f"{len(rounded)} 个圆角容器（卡片墙：Critic 记设计扣分）",
-                 "删容器，改用发丝线 + 留白 + 字阶分组")
-        elif len(rounded) >= 3:
-            # 未到硬门槛，但已偏离「卡片不是默认容器」：提前提示，不与 CARD_WALL 重复点名
-            flag(sid, "CARD_DENSITY",
-                 f"{len(rounded)} 个圆角容器，接近卡片墙（>{gates['ROUNDED_MAX']} 即硬门槛）",
-                 "删容器，改用发丝线 + 留白 + 字阶分组；只保留数据/KPI/特殊强调所需面板")
-        # 整幅背景层：文字可直接叠加，但必须声明内容保护（否则可读性无保障）；
-        # 资格不足的「伪背景」不再免检，并作为 error 点名（它会吃回媒体预算与遮挡检查）
-        for e in elems:
-            if e.get("type") == "image" and _is_bg_layer(e):
-                ok, why = _bg_qualified(e, cw, ch)
-                if not ok:
-                    add("background_layer", f"{sid}:BACKGROUND_DISGUISED", "error",
-                        f"「{e.get('id', '?')}」声明 layer=background 但不具备空间层资格：{why} "
-                        f"→ 改回普通媒体（计入预算与遮挡），或真的整幅承载并叠加遮罩")
-                    items.append({"slide": sid, "code": "BACKGROUND_DISGUISED",
-                                  "observation": f"内容对象伪装成背景层：{why}",
-                                  "minimal_fix": "撤掉 layer=background 标签，或扩大覆盖并声明"
-                                                 " overlay（opacity ≥0.20）/content_protection"})
-                elif not (e.get("content_protection") or e.get("overlay")):
-                    add("background_layer", f"{sid}:BG_UNPROTECTED", "warn",
-                        "整幅背景图未声明 content_protection/overlay：文字叠加后对比不可控 "
-                        "→ 为画心叠加低能量遮罩（solid #000000, opacity 0.35）或改用分幅画心")
-                    items.append({"slide": sid, "code": "BG_UNPROTECTED",
-                                  "observation": "背景层未声明内容保护",
-                                  "minimal_fix": "为叠加文字的画心声明 overlay/content_protection"})
-        # 左右墨迹失衡 vs 构图语法声明
-        left = right = 0.0
-        for e in elems:
-            if e.get("type") not in ("text", "chart", "native_chart", "image"):
-                continue
-            bx, by, bw, bh = _ink_box(e)
-            mass = bw * bh
-            if (bx + bw / 2) < cw / 2:
-                left += mass
-            else:
-                right += mass
-        total = left + right
-        if total > 0:
-            split = abs(left - right) / total
-            light_heavy = (1.0 - split) / (1.0 + split) if split < 1 else 0.0
-            grammar = str(direction.get("composition_grammar", ""))
-            if (split > gates["LR_SPLIT_MAX"] and light_heavy > 0.15
-                    and grammar not in gates["ASYMMETRIC_GRAMMARS"]):
-                flag(sid, "ASYM_UNDECLARED",
-                     f"左右墨迹失衡 {split:.0%} 但 composition_grammar={grammar!r}",
-                     "回填轻侧，或在 direction 声明非对称语法（soft_asymmetry 等）")
-        # 疏密曲线：声明密度需要与相邻页不同（否则 rhythm 扣分）
-        if si:
-            prev = slides[si - 1]
-            pi = prev.get("page_intent") if isinstance(prev.get("page_intent"), dict) else {}
-            pd = pi.get("density") or prev.get("density")
-            pe = pi.get("energy") or prev.get("energy")
-            if field("density") and field("density") == pd:
-                flag(sid, "DENSITY_FLAT",
-                     f"与 {prev.get('id', 's%02d' % (si - 1))} 同为 density={pd}",
-                     "让相邻页疏密互斥（sparse↔balanced↔dense），或改用不同的重心")
-
-    # 连续三页同密度同能量 = RHYTHM_FLAT 硬门槛
-    streak, prev_stamp = 1, None
-    for si, s in enumerate(slides):
-        intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
-        stamp = (intent.get("density") or s.get("density"),
-                 intent.get("energy") or s.get("energy"))
-        if stamp == prev_stamp and all(stamp):
-            streak += 1
-        else:
-            streak = 1
-        prev_stamp = stamp
-        if streak == 3:
-            flag(s.get("id", f"slide_{si}"), "RHYTHM_FLAT",
-                 f"连续 3 页 density/energy 相同 {stamp}（跨页节奏趋平；预测层已给策略，"
-                 f"Critic 只在实测墨迹不动时扣分）",
-                 "改动其中一页的内容量/留白恢复呼吸，或在 design_rationale 说明刻意平铺")
-
-    for it in items:
-        it["gate_source"] = gate_source
-    return items
-
-
-
 # ══════════════════════════════════════════════════════════════
+def _check_background_qualification(slide: dict, sid: str, cw: float, ch: float,
+                                    add) -> None:
+    """背景层资格判定（工程事实，非预测）：伪背景 error、无保护 warn。
+
+    原住 run_preflight；预检层并入 risk_prediction 后，资格判定留在 guard 主链
+    ——它是阻断性工程检查（BACKGROUND_DISGUISED/BG_UNPROTECTED），不是预测。
+    """
+    for e in (slide.get("elements") or []):
+        if not isinstance(e, dict):
+            continue
+        if e.get("type") == "image" and _is_bg_layer(e):
+            ok, why = _bg_qualified(e, cw, ch)
+            if not ok:
+                add("background_layer", f"{sid}:BACKGROUND_DISGUISED", "error",
+                    f"「{e.get('id', '?')}」声明 layer=background 但不具备空间层资格：{why} "
+                    f"→ 改回普通媒体（计入预算与遮挡），或真的整幅承载并叠加遮罩")
+            elif not (e.get("content_protection") or e.get("overlay")):
+                add("background_layer", f"{sid}:BG_UNPROTECTED", "warn",
+                    "整幅背景图未声明 content_protection/overlay：文字叠加后对比不可控 "
+                    "→ 为画心叠加低能量遮罩（solid #000000, opacity 0.35）或改用分幅画心")
+
+
 # 色彩系统纪律（deck 级）：单页颜色数已经由 color_budget / theme_constraint 管住，
 # 但「每一页都合规、合起来却不成系统」是 AI 组稿最常见的塌法：色相越铺越开、
 # 强调色与主色同族所以强调不出来、两色渐变混成脏灰。这里只做三件能测的事。
@@ -605,25 +415,6 @@ def _stop_color(stop):
     if isinstance(stop, (list, tuple)) and len(stop) > 1:
         return stop[1]
     return None
-
-
-def _axis_offsets(el: dict, cw: float, ch: float, gates: dict):
-    """(是否上线, (cx, cy), 最小轴距)：焦点中心与版面轴线的关系。
-
-    中线 / 三分线 / 1/4 线 / 黄金分割线共用一份常量表（住 primitives，
-    单一口径），任一轴对上即算「落位有意图」。
-    """
-    lines = tuple(gates.get("AXIS_LINES") or ()) + tuple(gates.get("GOLDEN_LINES") or ())
-    if not lines:
-        return None
-    try:
-        cx = (float(el.get("x") or 0) + float(el.get("width") or 0) / 2) / max(cw, 1)
-        cy = (float(el.get("y") or 0) + float(el.get("height") or 0) / 2) / max(ch, 1)
-    except (TypeError, ValueError):
-        return None
-    tol = float(gates.get("AXIS_TOLERANCE", 0.045))
-    best = min(min(abs(v - a) for a in lines) for v in (cx, cy))
-    return (best <= tol, (cx, cy), best)
 
 
 def _gradient_muck(fill) -> str | None:
@@ -1344,6 +1135,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 f"装饰面积 {decoration_area / (cw * ch):.1%} > 上限 {decoration_area_max:.0%}")
         if len(icon_styles) > 1:
             add("icon_consistency", sid, "warn", "页面混用多种图标风格")
+        # 背景层资格（工程事实，非预测）：伪背景 error、无保护 warn
+        _check_background_qualification(s, sid, cw, ch, add)
 
         # ── 几何自检：三级门禁都不查元素互相遮挡，只能静态补 ──
         # 真实案例：图例(1096–1232) 与页码(1112–1232) 100% 重叠，guard / QA /
@@ -1569,14 +1362,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                         f"渲染后复核真实留白是否支撑节奏声明")
             prev_struct, prev_declared = cur, declared
 
-    # ---- Preflight：与 primitives 同口径的静态预检（hint 级，不改变通过判定） ----
-    preflight_items: list[dict] = []
-    if bool(rules.get("preflight", True)):
-        try:
-            preflight_items = run_preflight(spec, cw, ch, add)
-        except Exception as exc:                      # 预检永远不能阻断生产链
-            preflight_items = []
-            warnings.append(f"[preflight] skipped: {exc}")
 
     # 设计契约条目：标为 advisory（权重 0）——它们进报告、进证据，不进分数与门槛。
     for c in checks:
@@ -1598,9 +1383,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                  "adherence": (round(grid_stats["aligned"] / grid_stats["checked"], 3)
                                if grid_stats["checked"] else None)},
         "line_measure": dict(measure_stats),
-        # 预检：与 primitives 同口径的结构判据（渲染前给出，不计入 guard 分数）
-        "preflight": preflight_items,
-        "preflight_codes": sorted({i["code"] for i in preflight_items}),
     }
 
 
@@ -1611,7 +1393,7 @@ def main(argv):
     import importlib.util
     from pathlib import Path
     if len(argv) < 2:
-        print("usage: python guard.py <build_module.py> [--json] [--preflight]")
+        print("usage: python guard.py <build_module.py> [--json] [--raw]")
         return 1
     mod_path = Path(argv[1])
     spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
@@ -1630,13 +1412,7 @@ def main(argv):
         import json
         print(json.dumps(result, ensure_ascii=False))
     else:
-        print(f"score={result['score']} passed={result['passed']} "
-              f"preflight={len(result.get('preflight') or [])}")
-        if "--preflight" in argv:
-            for i in result.get("preflight") or []:
-                print(f"  {i['slide']:>6} {i['code']:17s} {i['observation']}")
-                print(f"          fix → {i['minimal_fix']}")
-            return 0 if result["passed"] else 2
+        print(f"score={result['score']} passed={result['passed']}")
         for c in result["checks"]:
             if c["level"] != "hint":
                 print(f"  [{c['level']:5s}] {c['rule']:14s} {c['msg']}")
@@ -1646,7 +1422,7 @@ def main(argv):
 
 
 # ══════════════════ Normalizer（机械归一化 · 生产链第 0 级）══════════════════
-# 原 normalizer 模块整体并入：治理层统一 CLI 为 guard.py --preflight（normalize 是其第一步）。
+# 原 normalizer 模块整体并入：治理层统一 CLI 为 guard.py（normalize 是其第一步）。
 
 SPACING_STEP = 4
 _COLOR_FIELDS = ("color", "background", "border_color", "stroke", "accent",
@@ -1838,9 +1614,9 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True,
 def geometry_only_hash(spec: dict) -> str:
     """像素相关投影的指纹：剥掉「只影响声明/评分、不影响像素」的字段后取指纹。
 
-    用途：Critic 稳定性判定（连续两次 clean 且几何未变才值得跑 Critic）与
-    语义变更分类。与 render_check 的页级缓存键同向：这些字段变了，页级缓存
-    本来也不会失效——在这里显式说出来，避免「改了一句 insight 也重渲染」。
+    用途：语义变更分类（改声明不重渲染）与报告指纹对照。与 render_check 的
+    页级缓存键同向：这些字段变了，页级缓存本来也不会失效——在这里显式说出
+    来，避免「改了一句 insight 也重渲染」。
     """
     PIXEL_NEUTRAL_PAGE_FIELDS = (
         "insight", "narrative_role", "reading_order", "energy", "density",

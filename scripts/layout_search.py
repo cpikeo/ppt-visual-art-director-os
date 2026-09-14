@@ -61,7 +61,7 @@ ARCHETYPES: dict[str, dict] = {
         "traits": {"dominance": 0.40, "anchor": "chart highlight",
                    "path": "top-down", "whitespace": "horizontal bands"},
         "fit": {"families": {"DATA", "EVIDENCE", "PROCESS"},
-                "dna": ["FT editorial", "exhibit", "通栏"]},
+                "dna": ["editorial report", "exhibit", "通栏"]},
     },
     "split_emphasis": {
         "grammar": "大数字左 / 证据右（dominance 0.6 / path: 左右互证）",

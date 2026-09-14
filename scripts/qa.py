@@ -38,7 +38,6 @@ DEFAULT_PENALTIES = {
     "render_missing": 2.0,     # 无渲染环境（结构证据降级，轻微提示）
     "render_contrast": 3.0,    # 渲染实测「文字 vs 其下方像素」低于 WCAG AA（每项）
     "render_contrast_low": 1.5,  # 同上但仅偏软（3.0–4.5:1），只提示不阻断
-    "preflight_hint": 0.0,     # guard 预检 hint：与 primitives 同口径的提前提醒，不扣分
     "design_advisory": 0.0,    # guard 的设计契约条目：观察，不是扣分项
 }
 DEFAULT_THRESHOLDS = {
@@ -61,12 +60,10 @@ KEY_PAGE_CAP = 6
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 执行模式（流程控制）：draft 不渲染 · review 只测变化页 · release 全量 + Critic
-# Mode 决定「渲染不渲染、Critic 何时介入、状态给到哪一级」；
-# 与 Fast/Advanced（预算控制：资产数/dpi）正交，互不替代。
-# 设计要点：**没有门控、没有状态机、没有第二套缓存**。
-# Critic 只在 review / release 跑；draft / sketch 恒不跑。想跳过渲染的成本由
-# 「不渲染 + 页级渲染缓存」承担，而不是由「先攒两轮干净再放行」承担。
+# 执行模式（流程控制）：draft 不渲染 · review 只测变化页 · release 全量 + Manifest
+# Mode 决定「渲染不渲染、状态给到哪一级」；与 Fast/Advanced（预算控制：资产数/dpi）
+# 正交，互不替代。设计要点：**没有门控、没有状态机、没有第二套缓存**。
+# 想跳过渲染的成本由「不渲染 + 页级渲染缓存」承担，而不是「先攒两轮干净再放行」。
 # ════════════════════════════════════════════════════════════════════════
 EXECUTION_MODES = {
     "sketch": {
@@ -388,18 +385,6 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     except Exception as exc:      # 预测层失败不阻断主链（它是大脑不是门槛）
         risk_report = {"error": str(exc), "risks": [], "summary": {}, "strategy": None}
 
-    # 审美校准（advisory，不阻断、不扣分）：把五维静态校准分
-    # （layout/typography/color/image/information，各 0–5 → 0–100）带进报告。
-    # 此前它只活在 design_intelligence 与 selftest 里，QA 报告永远看不见「好看」
-    # 这一维——「能正确交付」与「好看」从此在同一份报告里都可核对，但发布
-    # 判定仍只看契约与像素证据（分数只作对照，不进 score/verdict）。
-    aesthetic = None
-    try:
-        from design_intelligence import visual_calibration_score
-        aesthetic = visual_calibration_score(spec)
-    except Exception as exc:
-        aesthetic = {"score": None, "error": str(exc)}
-
     # 渲染证据目录先定下来（编译/PDF/页级指标缓存与上一版 spec 都住在这里）
     render_dir = (Path(render_dir) if render_dir
                   else output_path.with_name(output_path.stem + "_render"))
@@ -508,8 +493,6 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         key = f"guard_{c['level']}"
         if c.get("advisory"):
             key = "design_advisory"     # 权重 0.0：只进报告，不进分数
-        elif c.get("rule") == "preflight" and c["level"] == "hint":
-            key = "preflight_hint"      # 预检提前给出，避免同一问题在渲染后二次扣分
         if key not in pen:
             continue
         deduction += pen[key]
@@ -646,7 +629,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "compile_reused": bool(compile_report.get("reused")),
         "render_ms": int((_t_end - t_render) * 1000),
         "slides": len(slides_count),
-        "preflight_items": len(guard.get("preflight") or []),
+        "risk_items": len((risk_report or {}).get("risks") or []),
         "render_skipped": bool(skip_render_reason),
         # 渐进级别与并行度：让「省掉了什么」可核对，而不是只报一个总时长
         "qa_level": qa_level,
@@ -757,7 +740,6 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         # 风险预测 + 生成策略（Design Intelligence 的预测子模块；不是审核闸）
         "risk": risk_report,
         "pre_critic": risk_report,          # 兼容别名（同对象，不复制）
-        "aesthetic": aesthetic,             # 五维审美校准（advisory，不进分数）
         "execution": exec_block,
         "verdict": _verdict_of(status, score, items, failure_codes),
         "score": round(score, 1),
@@ -779,9 +761,6 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
                    "coverage": coverage or None},
         "release_eligible": release_eligible,
         "render_evidence": evidence,
-        "preflight": {"count": len(guard.get("preflight") or []),
-                      "codes": guard.get("preflight_codes") or [],
-                      "items": guard.get("preflight") or []},
         "performance": perf,
         "failure_codes": failure_codes,
         "blocking_items": sum(1 for it in items if it.get("level") == "error"),
@@ -891,12 +870,12 @@ def main(argv):
     if len(argv) < 3:
         print("usage: python qa.py <build_module.py> <output.pptx> "
               "[--mode spec|sketch|draft|review|release] [--no-compile] "
-              "[--no-normalize] [--no-render] [--fast] [--preflight] "
+              "[--no-normalize] [--no-render] [--fast] "
               "[--quick | --key-pages | --manifest | --level N] [--no-cache] "
               "[--raster auto|png|jpeg] [--json]\n"
               "  执行模式：spec=零成本档（只读 spec：不 import pptx、不编译、不渲染）· "
 "      sketch=草图链（契约免除）· draft=创作链（零渲染，初稿探索）· "
-              "review=审查链（只测变化页 + Critic）· release=发布链（全量+Critic+Manifest，唯一给发布资格的一档）\n"
+              "review=审查链（只测变化页）· release=发布链（全量+Manifest，唯一给发布资格的一档）\n"
               "  默认：不传 --mode 即 draft（零渲染秒级 + 风险预测与生成策略首屏）\n"
               "  --level N / --fast 维持 legacy 全量\n"
               "  --no-compile：任何模式下只判 spec（不写 PPTX、不 import 编译层）\n"
@@ -968,25 +947,13 @@ def main(argv):
                     compile=False if no_compile else None)
     if norm and result.get("normalization") is None:
         result["normalization"] = norm      # CLI 已归一化：报告仍要留痕（证明链）
-    if "--preflight" in argv:
-        for i in (result.get("preflight") or {}).get("items", []):
-            print(f"  {i['slide']:>6} {i['code']:17s} {i['observation']}")
-            print(f"          fix → {i['minimal_fix']}")
-        print(f"preflight: {result['performance']['preflight_items']} 项 · "
-              f"guard {result['performance']['guard_ms']}ms · "
-              f"compile {result['performance']['compile_ms']}ms"
-              + ("（spec 档：未编译未渲染）" if not result["execution"]["compiled"] else "") + " · "
-              f"render {result['performance']['render_ms']}ms"
-              + (f" (skipped: {result['performance']['render_skipped']})"
-                 if result['performance']['render_skipped'] else ""))
-        return 0
     want_manifest = "--manifest" in argv or (mode == "release")
     if want_manifest:
         manifest = release_manifest(spec, result)
         manifest_path = Path(argv[2]).with_suffix(".manifest.json")
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
-        # --json 保持纯净（同 §Critic 分支守则）：manifest 落盘为凭，
+        # --json 保持纯净：manifest 落盘为凭，
         # 文本行只在人类可读模式打印 stdout，机器管道直接 json.loads 不得被污染。
         if "--json" not in argv:
             print(f"manifest: {manifest_path} (status={manifest['status']})")
@@ -994,6 +961,10 @@ def main(argv):
         if not manifest.get("revision_count") and "--json" not in argv:
             print("hint: revision_count=0（发布清单应携带真实修订流水："
                   "observation → minimal_fix → recheck × N 轮）")
+        # 判断记忆沉淀提示（不自动写：记忆归人/AI，机器不替判断）
+        if result.get("release_eligible") and "--json" not in argv:
+            print("hint: 本轮 release 通过，可 design_intelligence.record_dna() "
+                  "沉淀此 deck 的判断经验 → memory/design_dna.json")
     # 风险预测 → 生成策略（首屏）：先按策略改，再谈渲染。它是决策输入，不是审核闸。
     if mode in ("sketch", "draft", "review", "release") and "--json" not in argv:
         pc = result.get("risk") or {}

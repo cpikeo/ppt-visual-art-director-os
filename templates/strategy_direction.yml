@@ -3,7 +3,7 @@
 # 字段为空时本模板是「空白契约」；在交付前请按项目实际填写。
 # 下方提供的 narrative_arc_default / rhythm_anchors / continuity_token_default
 # 三个示例值用于演示「编辑感」节奏，可按项目删除或覆盖；
-# 它们是高级感的最小化提示，不参与 runtime 编译。
+# 它们是成片品质的最小化提示，不参与 runtime 编译。
 
 # ────────────────────────────────────────────────────────────
 # 必填最小集（OS 治理必需；缺失会让 Guard 返回 INPUT_MISSING / INTENT_UNCLEAR）
@@ -48,8 +48,8 @@ direction:
   forbidden_signals: [card_wall, decorative_stock, competing_highlights]
 
   # 编辑感默认：跨页「one signature spatial gesture」——同一只签名动作反复出现，
-  # 形成识别度。Apple 用留白、Pentagram 用几何、FT 用红条；建议在每套 deck
-  # 选择一种克制的、可重复的"动作"（如左缘轴线收束、章节编号、右下页码），
+  # 形成识别度。识别度靠可重复的视觉动作——留白、几何构成、信号条各是一例；建议在每套 deck
+  # 选择一种收敛的、可重复的"动作"（如左缘轴线收束、章节编号、右下页码），
   # 并写到这里，让跨页连续性可被验证。
   continuity_token_default: "one signature spatial gesture"
 

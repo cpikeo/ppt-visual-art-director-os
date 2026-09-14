@@ -379,6 +379,9 @@ def check_design_dna():
           and "朱砂" in json.dumps(hit["dna"], ensure_ascii=False))
     miss = di.recall_dna({"subject": "完全无关的火星探测任务简报"})
     ok = ok and miss["matched"] is None
+    # 通用场景词（年度总结）不是水墨特征词：不得把普通年度 deck 召回成水墨经验
+    generic = di.recall_dna({"subject": "年度总结", "brief": "2026 年度业绩回顾与预算规划"})
+    ok = ok and generic["matched"] != "song_elegance_editorial"
     # v2 判断记忆：合法条目入库；结果记忆（palette/色值/缺 design_problem）拒收
     rec = di.record_dna({"id": "__selftest_dna__", "signature": {"keywords": ["__t__"]},
                          "design_problem": "自测：探索期与契约期的节奏矛盾",
@@ -544,46 +547,6 @@ def check_pipeline():
     return result
 
 
-def check_preflight_sync():
-    """guard 预检阈值与 primitives 同源（v4.15 直连单口径），并提前点名同一批硬门槛。"""
-    guard = load("guard", SCRIPTS / "guard.py")
-    prim = load("primitives", SCRIPTS / "primitives.py")
-    gates, source = guard._preflight_gates()
-    synced = all(gates[k] == getattr(prim, k) for k in
-                 ("STATEMENT_SIZE", "FOCUS_LEAD", "MEDIA_BUDGET_MAX", "TEXT_BUDGET_MAX",
-                  "FOCUS_AREA_LEAD", "LR_SPLIT_MAX", "AXIS_TOLERANCE", "AXIS_LINES",
-                  "GOLDEN_LINES"))
-
-    def page(sid, intent, els):
-        return {"id": sid, "page_intent": intent, "elements": els}
-
-    def statement(size, sid="t"):
-        return {"type": "text", "id": sid, "x": 96, "y": 200, "width": 608, "height": 40,
-                "size": size, "text": "标题", "color": "ink"}
-
-    cards = [{"type": "shape", "shape": "rounded_rect", "id": f"c{i}", "x": 96,
-              "y": 300 + i * 48, "width": 400, "height": 40} for i in range(5)]
-    spec = {"canvas": {"width": 1280, "height": 720}, "direction": {}, "slides": [
-        # s01：focus 指向不存在的元素 + 无 insight
-        page("s01", {"focus": "missing", "density": "sparse", "energy": "low"},
-             [statement(24)] + cards),
-        # s02：focus 有效但尺度低于 Statement 线；与前一页同密度
-        page("s02", {"focus": "t", "density": "sparse", "energy": "low"},
-             [statement(24)] + cards)]}
-    out = guard.check_spec(spec)
-    codes = {i["code"] for i in out.get("preflight") or []}
-    per_slide: dict = {}
-    for i in out.get("preflight") or []:
-        per_slide.setdefault(i["slide"], set()).add(i["code"])
-    want = {"INTENT_UNCLEAR", "FOCUS_UNBOUND", "FOCUS_SCALE", "CARD_WALL", "DENSITY_FLAT"}
-    # 阈值同源 + 五类门槛全部提前点名，且两类 focus 判定落在各自正确的页面上
-    ok = (source == "primitives" and synced and want <= codes
-          and {"INTENT_UNCLEAR", "FOCUS_UNBOUND"} <= per_slide.get("s01", set())
-          and "FOCUS_SCALE" in per_slide.get("s02", set()))
-    return {"status": "PASS" if ok else "FAIL", "gate_source": source,
-            "thresholds_synced": synced, "codes": sorted(codes)}
-
-
 def check_background_layer():
     """整幅画心 + 文字直接叠加：静态预检放行，编译器把背景层置底并补内容保护层。"""
     import tempfile
@@ -632,12 +595,18 @@ def check_route_layer():
                                       "结论判断", "请求决定"]})
     dens = [p["density"] for p in deck["pages"]]
     clash = any(dens[i] == dens[i - 1] for i in range(1, len(dens)))
+    # 通用商业词（品牌/高端/年报）不得把 deck 推给宋体方向——拒绝排版/配色蔓延
+    brand_deck = route.plan_deck({"occasion": "品牌发布会",
+                                  "slides": ["封面", "产品", "收尾"]})
     ok = (fast["page_family"] == "DATA_STORY" and fast["asset"]["decision"] == "none"
           and cover["content_type"] == "cover" and cover["asset"]["decision"] == "required"
           and deck["path"] == "fast" and deck["budget"]["max_asset_calls"] == 2
-          and not clash and dens[0] == "sparse" and dens[-1] == "sparse")
+          and not clash and dens[0] == "sparse" and dens[-1] == "sparse"
+          # 缺省方向 = 中性；宋体（editorial_brand）只在显式声明时用
+          and brand_deck["design_direction"] == "quiet_minimal")
     return {"status": "PASS" if ok else "FAIL", "fast_asset": fast["asset"]["decision"],
-            "density_curve": dens, "path": deck["path"]}
+            "density_curve": dens, "path": deck["path"],
+            "brand_default_direction": brand_deck["design_direction"]}
 
 
 def check_qa_performance_keys():
@@ -658,11 +627,10 @@ def check_qa_performance_keys():
     with tempfile.TemporaryDirectory() as d:
         r = qa.run_qa(spec, pathlib.Path(d) / "t.pptx", render=False)
     perf = r.get("performance") or {}
-    keys = {"total_ms", "guard_ms", "compile_ms", "render_ms", "slides", "preflight_items",
+    keys = {"total_ms", "guard_ms", "compile_ms", "render_ms", "slides", "risk_items",
             "render_skipped"}
-    ok = (keys <= set(perf) and (r.get("preflight") or {}).get("items") is not None
-          and qa.DEFAULT_PENALTIES.get("preflight_hint") == 0.0
-          and "preflight_gate" not in r        # 预检只诊断，不拦渲染
+    ok = (keys <= set(perf) and (r.get("risk") or {}).get("risks") is not None
+          and "preflight" not in r             # 预检层已并入 risk_prediction
           and perf["slides"] == 1)
     return {"status": "PASS" if ok else "FAIL",
             "perf": {k: perf.get(k) for k in ("guard_ms", "compile_ms", "render_ms")}}
@@ -884,9 +852,10 @@ def check_background_qualification():
                                       "data": [{"label": "A", "value": 1}], "unit": "次",
                                       "period": "2026", "basis": "示例口径"}]}]}
     g = guard.check_spec(spec)
-    disguised = [c for c in g["checks"] if "BACKGROUND_DISGUISED" in str(c.get("id"))
-                 or c.get("rule") == "preflight" and "BACKGROUND_DISGUISED" in str(c.get("msg"))]
-    media_over = [c for c in g.get("preflight") or [] if c["code"] == "MEDIA_BUDGET"]
+    disguised = [c for c in g["checks"] if "BACKGROUND_DISGUISED" in str(c.get("id"))]
+    from design_intelligence import pre_critic as _pc
+    _risks = _pc(spec)["risks"]
+    media_over = [r for r in _risks if r["code"] in ("MEDIA_MISUSE_RISK", "MEDIA_BUDGET_RISK")]
     ok = (not s_ok and "10" in (s_why or "") and l_ok and not b_ok
           and declared_only and bool(disguised) and bool(media_over))
     return {"status": "PASS" if ok else "FAIL", "smuggle_reason": s_why,
@@ -1007,16 +976,15 @@ def check_line_measure():
     # 的事实 → 归 text_capacity，可阻断（重定性）。
     cap_err = [c for c in g["checks"] if c["rule"] == "text_capacity" and c["level"] == "error"]
     typo_warn = [c for c in g["checks"] if c["rule"] == "typography" and c["level"] == "warn"]
-    pre = [i for i in (g.get("preflight") or []) if i["code"] == "LINE_MEASURE"]
     lm_stats = g.get("line_measure") or {}
     ok = (over and over["over"] and not over["fatal"] and fatal and fatal["fatal"]
           and aux is None and ok_case and not ok_case["over"]
           and len(cap_err) == 1 and "b" in cap_err[0]["id"] and len(typo_warn) == 1
-          and bool(pre) and lm_stats.get("checked") == 2 and lm_stats.get("over") == 2
+          and lm_stats.get("checked") == 2 and lm_stats.get("over") == 2
           and (g.get("grid") or {}).get("adherence") is not None)
     return {"status": "PASS" if ok else "FAIL", "over": bool(over and over["over"]),
             "fatal_blocked": len(cap_err), "warn": len(typo_warn),
-            "preflight": len(pre), "grid_adherence": (g.get("grid") or {}).get("adherence")}
+            "grid_adherence": (g.get("grid") or {}).get("adherence")}
 
 
 def check_palette_discipline():
@@ -1388,34 +1356,6 @@ def check_layout_recommend():
             "content_family_fast_path": [r5["archetype"], r6["archetype"]]}
 
 
-def check_asset_prompt_dna():
-    """Asset Intent Cache：判断（构图/光性）可复用，色值拒收，图片永不缓存。"""
-    import tempfile
-    ap = load("asset_prompt", SCRIPTS / "asset_prompt.py")
-    ap.PROMPT_DNA_STORE = pathlib.Path(tempfile.mkdtemp()) / "apdna.json"
-    r = ap.record_prompt_dna({
-        "scenario": "annual report hero", "visual_world": "quiet luxury architecture",
-        "prompt_structure": {"composition": "single mass off-center 0.382",
-                             "lighting": "low warm tungsten, long shadows",
-                             "void": "upper-left 40% for statement"},
-        "avoid": ["stock smile people", "blue tech gradient"],
-        "proven": {"project": "deck2026", "verdict": "PASS"}})
-    ok = r["ok"] and r["entries"] == 1
-    rej = ap.record_prompt_dna({"scenario": "x",
-                                "prompt_structure": {"composition": "#0D0D0D bg",
-                                                     "lighting": "b"},
-                                "proven": {"project": "p"}})
-    ok = ok and not rej["ok"]
-    hit = ap.recall_prompt_dna("Annual Report Hero", "quiet luxury architecture")
-    ok = ok and hit["matched"] is not None and "构图" in hit["note"]
-    near = ap.recall_prompt_dna("annual report hero", "quiet luxury architecture", "chip macro")
-    ok = ok and near["matched"] is None and near["entry"] is not None
-    miss = ap.recall_prompt_dna("火星探测", "红色荒原")
-    ok = ok and miss["entry"] is None and "record_prompt_dna" in miss["note"]
-    return {"status": "PASS" if ok else "FAIL", "entries": r["entries"],
-            "recall": "exact+neighbor+miss" if ok else "?"}
-
-
 def check_pre_critic_v2():
     """v2.12 预测扩展：平衡/字阶/布局单调/记忆线/字阶漂移——渲染后才看见的，生成前点名。"""
     di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
@@ -1510,25 +1450,34 @@ def check_intent_boundaries():
     onboard = ic.compile_brief("Onboarding plan for new hires, quarterly cadence")
     zen = ic.compile_brief("Launch keynote for our zen garden wellness app")
     ink = ic.compile_brief("2026 年终总结：东方水墨气质，大量留白")
+    ws = ic.compile_brief("希望版面留白多一点，重点突出")
+    plain = ic.compile_brief("希望整体素雅一点，干净大方")
     ok = (frozen["direction_seed"].get("style_key") is None
           and "sumi-e" not in frozen["design_intent"]["visual_world"]
           and citizen["direction_seed"].get("style_key") is None
           and history["design_intent"]["visual_world"].startswith("quiet editorial")
           and onboard["design_intent"]["visual_world"].startswith("quiet editorial")
           and zen["direction_seed"].get("family_hint") == "song_elegance"
-          and ink["direction_seed"].get("family_hint") == "song_elegance")
+          and ink["direction_seed"].get("family_hint") == "song_elegance"
+          # 「留白」是通用排版术语：不得触发水墨覆写（拒绝「生成的都是水墨」）
+          and ws["direction_seed"].get("family_hint") is None
+          # 「素雅/素净」是通用审美词：不得触发静奢覆写（拒绝风格蔓延）
+          and plain["direction_seed"].get("family_hint") is None)
     return {"status": "PASS" if ok else "FAIL",
             "frozen": frozen["direction_seed"].get("style_key"),
             "citizen": citizen["direction_seed"].get("style_key"),
             "history_world": history["design_intent"]["visual_world"][:30],
             "zen": zen["direction_seed"].get("family_hint"),
-            "ink": ink["direction_seed"].get("family_hint")}
+            "ink": ink["direction_seed"].get("family_hint"),
+            "whitespace_hint": ws["direction_seed"].get("family_hint"),
+            "plain_hint": plain["direction_seed"].get("family_hint")}
 
 
 def check_ink_gate():
     """F6/v4.17：水墨纪律闸门——选择了水墨语言的资产卡注入
     工艺纪律（正向）+ 廉价症状（反向）；非水墨卡零污染；
-    song_elegance/zen_minimal 家族名自动点火；重复注入去重。"""
+    song_elegance 家族名自动点火（zen_minimal 非水墨家族，不点火）；
+    重复注入去重。"""
     import importlib.util as iu
     spec = iu.spec_from_file_location("asset_prompt", SCRIPTS / "asset_prompt.py")
     ap = iu.module_from_spec(spec)
@@ -1560,6 +1509,8 @@ def check_ink_gate():
           and ap.ink_gate_active(ink_card)
           and "shui-mo" in fam_out["prompt"].lower()
           and not ap.ink_gate_active(neutral)
+          # zen_minimal 是「东方禅意极简」非水墨：不自动点火（拒绝水墨蔓延）
+          and not ap.ink_gate_active({"family": "zen_minimal", "subject": ["still water"]})
           and "shui-mo" not in neutral_out["prompt"].lower()
           and "photographic landscape" not in neutral_out["negative"].lower())
     return {"status": "PASS" if ok else "FAIL",
@@ -1858,7 +1809,7 @@ def check_sketch_mode():
     return {"status": "PASS" if ok else "FAIL", "sketch_status": sk["status"],
             "guard_checks_sketch_vs_draft": f"{sk['guard']['checks']}/{dr['guard']['checks']}"}
 def check_visual_calibration_v3():
-    """V3 校准闭环：证据可载、色彩引擎确定、校准分自洽、草稿链与提示词三层生效。"""
+    """V3 校准闭环：律内联唯一真源、色彩引擎确定、比例自洽、草稿链与提示词三层生效。"""
     import design_intelligence as di
     import asset_prompt as ap
     import route as rt
@@ -1870,9 +1821,8 @@ def check_visual_calibration_v3():
         fails.append("内联律缺失或被覆盖异常")
     if not (di.CALIBRATION_LAWS.get("area_ratio") or {}).get("c1"):
         fails.append("面积律缺失")
-    # 可选覆盖文件缺失 = 正常状态（零成本、零告警），不得抛异常
-    if di._load_calibration() is None:
-        fails.append("覆盖文件缺失时不应报错")
+    if di.calibration_laws().get("source") != "inline":
+        fails.append("校准律应为内联唯一真源（无外部覆盖层）")
     a = di.color_plan("cinematic_narrative")
     b = di.color_plan("cinematic_narrative")
     if a != b:
@@ -1895,34 +1845,6 @@ def check_visual_calibration_v3():
         fails.append("primary→foundation 别名失效（只给主色的品牌不应静默丢失）")
     if di.color_plan("quiet_minimal")["family"] != "zen_minimal":
         fails.append("direction alias 失效")
-    spec = {"canvas": {"width": 1280, "height": 720},
-            "theme": {"colors": {"background": "#F5F4F1", "ink": "#1E1E1C",
-                                 "muted": "#9A9A96", "primary": "#33302B",
-                                 "secondary": "#6E6A5E", "accent": "#6FA08C"},
-                      "color_intent": ["hierarchy"], "constraints": {"accent_max": 0.05}},
-            "slides": [
-                {"id": "s1", "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 32},
-                 "page_intent": {"insight": "结论一", "focus": "t", "density": "sparse",
-                                 "energy": "high", "empty_space_role": "hold_emotion"},
-                 "elements": [{"type": "text", "id": "t", "x": 96, "y": 248, "width": 896,
-                               "height": 160, "text": "一句话结论", "size": 64, "color": "ink",
-                               "bold": True, "line_height": 1.15, "max_lines": 2, "padding": 0}]},
-                {"id": "s2", "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 32},
-                 "page_intent": {"insight": "结论二", "focus": "t2", "density": "sparse",
-                                 "energy": "low", "empty_space_role": "protect_focus"},
-                 "elements": [{"type": "text", "id": "t2", "x": 96, "y": 264, "width": 1088,
-                               "height": 160, "text": "另一句话结论", "size": 64, "color": "ink",
-                               "bold": True, "line_height": 1.15, "max_lines": 2, "padding": 0}]}]}
-    vc = di.visual_calibration_score(spec)
-    if not (0 <= vc["score"] <= 100) or set(vc["dims"]) != {"layout", "typography",
-                                                           "color", "image", "information"}:
-        fails.append("校准分结构错误")
-    import copy as _copy
-    bad = _copy.deepcopy(spec)
-    bad["slides"][0]["elements"][0]["size"] = 38          # 离驻点（阅读字阶 38∉驻点带）
-    bad["slides"][0]["page_intent"]["insight"] = ""       # 信息合同缺口
-    if di.visual_calibration_score(bad)["score"] >= vc["score"]:
-        fails.append("校准分对劣化不敏感")
     opp = rt.one_pass_plan({"audience": "a", "decision": "d", "occasion": "o",
                             "slides": ["封面", "结论"]})
     if not opp.get("color_plan") or not opp["pages"] or "skeleton" not in opp["pages"][0]:
@@ -1947,7 +1869,7 @@ def check_design_advisory():
     guard = load("guard", SCRIPTS / "guard.py")
     from qa import EXECUTION_MODES as M, mode_profile
     design = guard.DESIGN_RULES
-    ok = (isinstance(design, frozenset) and len(design) >= 17
+    ok = (isinstance(design, frozenset) and len(design) >= 16
           and {"palette_discipline", "rhythm", "focus", "type_budget",
                "accent_budget", "asset_contract", "chart_style_drift"} <= design)
     ok = ok and "spec" in M and M["spec"]["render"] is False \
@@ -2157,17 +2079,20 @@ def check_rules_module():
     ok = all(isinstance(n, ast.ImportFrom) and n.module == "__future__"
              for n in imports)
     # 同值（搬移零漂移；load() 不注册 sys.modules 故判 == 不判 is）
-    # 目录形状：18 码 / 12 族 / 取舍 5 阶固定序
+    # 目录形状：22 码 / 12 族 / 取舍 5 阶固定序；每条含 strategy 三元组（单一注册表）
     ok = ok and rules.DENSITY_BANDS == di.DENSITY_BANDS
     ok = ok and rules.CALIBRATION_LAWS == di.CALIBRATION_LAWS
     ok = ok and rules.COLOR_DIRECTIONS == di.COLOR_DIRECTIONS
     ok = ok and rules.INTENT_PRESETS == di.INTENT_PRESETS
     ok = ok and rules.JUDGMENT_KEYS == di._JUDGMENT_KEYS
     ok = ok and rules.MEDIA_MODEL == di._MEDIA_MODEL
-    ok = ok and len(rules.RISK_CATALOG) == 18
+    ok = ok and len(rules.RISK_CATALOG) == 22
     ok = ok and len(rules.risk_families()) == 12
     ok = ok and all(set(m) >= {"family", "level", "predicted", "root_cause",
-                               "prevention", "confidence"}
+                               "prevention", "confidence", "strategy"}
+                    for m in rules.RISK_CATALOG.values())
+    ok = ok and all(isinstance(m.get("strategy"), tuple)
+                    and len(m["strategy"]) == 3
                     for m in rules.RISK_CATALOG.values())
     ok = ok and [t["id"] for t in rules.TRADEOFF_ORDER] == [
         "fact_semantics", "readability", "content_task", "emotion", "brand"]
@@ -2222,10 +2147,32 @@ def check_rules_module():
             {"type": "text", "id": "t6", "x": 48, "y": 104, "width": 880,
              "height": 64, "text": "静二", "size": 40, "color": "ink",
              "max_lines": 1}]},
+        # 追加 4 页：触发 preflight 并入 pre_critic 的 4 码，防「发射但未注册」回潮
+        {"id": "b7", "page_intent": pi("", "t7", "STATEMENT"), "elements": [
+            {"type": "text", "id": "t7", "x": 48, "y": 104, "width": 880,
+             "height": 64, "text": "无洞察标题", "size": 40, "color": "ink",
+             "max_lines": 1}]},
+        {"id": "b8", "page_intent": pi("幽灵焦点", "ghost", "STATEMENT"), "elements": [
+            {"type": "text", "id": "t8", "x": 48, "y": 104, "width": 880,
+             "height": 64, "text": "标题", "size": 40, "color": "ink",
+             "max_lines": 1}]},
+        {"id": "b9", "page_intent": pi("卡片墙", "t9", "STRUCTURE",
+                                       role="separate_chapter"), "elements": [
+            {"type": "text", "id": "t9", "x": 48, "y": 104, "width": 880,
+             "height": 64, "text": "标题", "size": 40, "color": "ink",
+             "max_lines": 1}] +
+            [{"type": "shape", "id": f"r{i}", "shape": "rounded_rect",
+              "x": 48 + i * 120, "y": 300, "width": 100, "height": 100}
+             for i in range(5)]},
+        {"id": "b10", "page_intent": pi("文本碎片", "t10_0", "STATEMENT"), "elements": [
+            {"type": "text", "id": f"t10_{i}", "x": 48, "y": 104 + i * 56,
+             "width": 880, "height": 48, "text": f"第{i}句", "size": 20,
+             "color": "ink", "max_lines": 1} for i in range(5)]},
     ]}
     emitted = {r["code"] for r in di.pre_critic(bad)["risks"]}
     want = {"CONTRAST_FAIL_RISK", "ACCENT_OVERFLOW", "TEXT_OVERFLOW_RISK",
-            "NO_MEMORY_ANCHOR", "FOCUS_AREA_RISK", "RHYTHM_FLAT_RISK"}
+            "NO_MEMORY_ANCHOR", "FOCUS_AREA_RISK", "RHYTHM_FLAT_RISK",
+            "INTENT_UNCLEAR", "FOCUS_UNBOUND", "CARD_WALL_RISK", "TEXT_BUDGET_RISK"}
     ok = ok and want <= emitted and emitted <= set(rules.RISK_CATALOG)
     return {"status": "PASS" if ok else "FAIL",
             "codes": len(rules.RISK_CATALOG),
@@ -2258,6 +2205,34 @@ def check_judgment_diet():
     return {"status": "PASS" if ok else "FAIL", "sizes": sizes,
             "hard_rule_lines": hard}
 
+def check_degenerate_inputs():
+    """退化输入不崩溃：空 spec / slides=None / 畸形元素 / 未知家族 → 优雅降级。"""
+    import design_intelligence as di
+    guard = load("guard", SCRIPTS / "guard.py")
+    ok = True
+
+    def _no_crash(name, fn):
+        nonlocal ok
+        try:
+            fn()
+        except Exception as e:
+            ok = False
+            print(f"  [degenerate_inputs] {name} 崩溃: {type(e).__name__}: {e}")
+
+    _no_crash("pre_critic({})", lambda: di.pre_critic({}))
+    _no_crash("pre_critic(slides=None)", lambda: di.pre_critic({"slides": None}))
+    _no_crash("pre_critic(malformed elem)", lambda: di.pre_critic(
+        {"slides": [{"id": "x", "elements": [{"type": "text"}]}]}))
+    _no_crash("guard.check_spec({})", lambda: guard.check_spec({}))
+    _no_crash("color_plan(unknown)", lambda: di.color_plan("unknown_xyz"))
+    _no_crash("risk_strategy({})", lambda: di.risk_strategy({}))
+    _no_crash("media_decision(empty)", lambda: di.media_decision({"elements": []}))
+    # 未知家族 → quiet_luxury 兜底（不是 crash、不是静默空返回）
+    cp = di.color_plan("unknown_xyz")
+    ok = ok and cp.get("family") == "quiet_luxury"
+    return {"status": "PASS" if ok else "FAIL"}
+
+
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
                "normalizer": check_normalizer(),
@@ -2272,7 +2247,8 @@ def main():
                "media_budgets": check_media_and_budgets(),
                "auto_fit": check_auto_fit(),
                "visual_calibration_v3": check_visual_calibration_v3(),
-            "preflight_sync": check_preflight_sync(), "background_layer": check_background_layer(),
+               "degenerate_inputs": check_degenerate_inputs(),
+            "background_layer": check_background_layer(),
             "route_layer": check_route_layer(), "qa_performance": check_qa_performance_keys(),
             "progressive_qa": check_progressive_qa(), "decision_cache": check_decision_cache(),
             "render_cache": check_render_cache(),
@@ -2294,7 +2270,6 @@ def main():
             "chart_color_roles": check_chart_color_roles(),
             "brand_seed": check_brand_seed(),
             "layout_recommend": check_layout_recommend(),
-            "asset_prompt_dna": check_asset_prompt_dna(),
             "sketch_mode": check_sketch_mode(),
             "pre_critic_v2": check_pre_critic_v2(),
             "intent_skeleton": check_intent_skeleton(),

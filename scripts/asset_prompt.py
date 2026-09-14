@@ -112,7 +112,7 @@ INK_CHEAP_REJECTS: tuple[str, ...] = (
 )
 
 
-INK_FAMILIES: tuple[str, ...] = ("song_elegance", "zen_minimal")
+INK_FAMILIES: tuple[str, ...] = ("song_elegance",)
 
 
 def ink_gate_active(card: dict) -> bool:
@@ -121,7 +121,8 @@ def ink_gate_active(card: dict) -> bool:
     检测只扫调用方亲手写的图像语言段（subject/color/material/lighting/
     composition/style），**不扫** enhance_asset_card 自动注入的
     motion/texture 弱描述——微浮雕里一句 rice paper 是材质底味，
-    不等于选择了水墨画；家族维度只订阅叙事即水墨的家族名。
+    不等于选择了水墨画；家族维度只订阅叙事即水墨的家族名（song_elegance）。
+    zen_minimal 是「东方禅意极简」，不是水墨画家族，不自动点火。
     """
     if not isinstance(card, dict):
         return False
@@ -258,7 +259,7 @@ FAMILY_MOTION: dict[str, tuple[str, ...]] = {
     "luxury_editorial": ("spatial",), "precision_tech": ("tech",),
     "organic_systems": ("natural",), "cinematic_narrative": ("spatial", "natural"),
     "editorial_intelligence": ("spatial",), "quiet_luxury": ("spatial",),
-    "song_elegance": ("natural",), "apple_future": ("tech", "spatial"),
+    "song_elegance": ("natural",), "precision_minimal": ("tech", "spatial"),
     "data_intelligence": ("tech",),
 }
 FAMILY_TEXTURE: dict[str, tuple[str, ...]] = {
@@ -267,7 +268,7 @@ FAMILY_TEXTURE: dict[str, tuple[str, ...]] = {
     "luxury_editorial": ("luxury", "architecture"), "precision_tech": ("technology",),
     "organic_systems": ("organic",), "cinematic_narrative": ("luxury", "architecture"),
     "editorial_intelligence": ("eastern",), "quiet_luxury": ("luxury",),
-    "song_elegance": ("eastern",), "apple_future": ("technology",),
+    "song_elegance": ("eastern",), "precision_minimal": ("technology",),
     "data_intelligence": ("technology",),
 }
 
@@ -452,6 +453,137 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
 
 
 # --------------------------------------------------------------------------
+# 图像轻量体检（出图后）：只找问题、给建议，不打分。
+# Issue + Suggestion，绝不输出数值分数（评分是 QA/渲染层的职责，这里只做定性体检）。
+# --------------------------------------------------------------------------
+QC_BLOCK = 64                      # 局部纹理统计的块边长（px）
+QC_FLAT_STD = 0.05                 # 块内标准差低于该值视为「平坦」（留白/均匀区）
+QC_TEXTURE_STD = 0.075             # 文字安全区块内标准差高于该值视为「纹理过密」
+QC_MIN_NEGATIVE_RATIO = 0.25       # 负空间占比下限
+QC_BRIGHT_DARK = 0.12              # 整体过暗阈值
+QC_BRIGHT_LIGHT = 0.88             # 整体过亮阈值
+QC_BALANCE_GAP = 0.18              # 左右/上下亮度失衡阈值
+QC_SUBJECT_MARGIN = 0.02           # 主体贴边判定阈值（主体质量占比达到此比例视为贴边）
+QC_TEXT_RANGE = 0.30               # 安全区亮度需落在此范围外才同时支持深浅文字
+
+# 安全区定义：文字通常落在声明锚点的对面/一侧（留白区），按锚点取一块矩形。
+_SAFE_ZONES = {
+    "left":   (0.00, 0.00, 0.45, 0.55),
+    "right":  (0.55, 0.00, 1.00, 0.55),
+    "top":    (0.00, 0.00, 1.00, 0.40),
+    "bottom": (0.00, 0.60, 1.00, 1.00),
+}
+
+
+def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None) -> dict:
+    """对一张出图结果做定性体检（Issue + Suggestion，不打分）。"""
+    from PIL import Image  # 懒加载：纯组装路径不引入像素依赖
+    import numpy as np
+
+    p = Path(path)
+    if not p.exists():
+        return {"file": str(p), "status": "error",
+                "issue": f"找不到图片: {p}",
+                "suggestion": "确认路径后再跑", "checks": []}
+
+    arr = np.asarray(Image.open(p).convert("L"), dtype=np.float32) / 255.0
+    h, w = arr.shape
+
+    # 自适应块：目标 ~QC_BLOCK px/块，但以实际尺寸为准（<64px 的图不再越界）
+    bh = max(1, h // QC_BLOCK)          # 行块数
+    bw = max(1, w // QC_BLOCK)          # 列块数
+    bhs, bws = h // bh, w // bw         # 每块像素高/宽
+    crop = arr[: bh * bhs, : bw * bws]
+    blk = crop.reshape(bh, bhs, bw, bws)
+    blk_mean = blk.mean(axis=(1, 3))    # (bh, bw) 块均值
+    blk_std = blk.std(axis=(1, 3))      # (bh, bw) 块内标准差
+
+    checks = []
+
+    def _add(check, ok, issue, suggestion):
+        checks.append({"check": check, "status": "ok" if ok else "issue",
+                       "issue": None if ok else issue,
+                       "suggestion": None if ok else suggestion})
+
+    x0, y0, x1, y1 = _SAFE_ZONES.get(safe_area, _SAFE_ZONES["left"])
+    bh, bw = blk_std.shape
+    sx0, sy0, sx1, sy1 = int(x0 * bw), int(y0 * bh), max(int(x1 * bw), 1), max(int(y1 * bh), 1)
+    safe_std = blk_std[sy0:sy1, sx0:sx1]
+
+    # 1. 文字安全区：纹理是否过密（会吃掉文字）
+    busy = float((safe_std > QC_TEXTURE_STD).mean()) if safe_std.size else 0.0
+    _add("text_safe_area", busy < 0.15,
+         f"文字安全区（{safe_area}）内 {busy:.0%} 的块纹理过密",
+         "主体/细节避开安全区，或局部压暗/压平该区域，保证文字落在均匀底上")
+
+    # 2. 负空间比例：足够放文字、不憋
+    flat_ratio = float((blk_std < QC_FLAT_STD).mean())
+    _add("negative_space_ratio", flat_ratio >= QC_MIN_NEGATIVE_RATIO,
+         f"负空间占比仅 {flat_ratio:.0%}（低于 {QC_MIN_NEGATIVE_RATIO:.0%}）",
+         "增加留白：拉远主体、放大背景均匀面，或删减前景元素")
+
+    # 3. 主体位置：主体是否侵入安全区 / 贴边（在块网格对齐的裁切域内计算）
+    grid = np.kron(blk_mean, np.ones((bhs, bws), dtype=np.float32))
+    sal = np.minimum(np.abs(crop - grid), 1.0)
+    subj = sal > 0.20
+    subj_ratio = float(subj.mean())
+    in_safe = float(subj[sy0 * bhs:sy1 * bhs,
+                         sx0 * bws:sx1 * bws].mean()) if subj_ratio else 0.0
+    edge = max(float(subj[: bhs, :].mean()),
+               float(subj[-bhs:, :].mean()),
+               float(subj[:, : bws].mean()),
+               float(subj[:, -bws:].mean()))
+    if in_safe > 0.10:
+        _add("subject_position", False,
+             f"主体质量 {in_safe:.0%} 侵入文字安全区（{safe_area}）",
+             "主体挪到安全区对面，把留白一侧留给文字")
+    elif edge > QC_SUBJECT_MARGIN:
+        _add("subject_position", False,
+             f"主体 {edge:.0%} 贴边被裁",
+             "主体整体入画，四边留出呼吸距离")
+    else:
+        _add("subject_position", True, None, None)
+
+    # 4. 亮度平衡：整体明暗 + 左右/上下失衡
+    mean = float(arr.mean())
+    too_dark = mean < QC_BRIGHT_DARK
+    too_light = mean > QC_BRIGHT_LIGHT
+    half_w = w // 2
+    half_h = h // 2
+    lr_gap = abs(float(arr[:, :half_w].mean()) - float(arr[:, half_w:].mean()))
+    tb_gap = abs(float(arr[:half_h, :].mean()) - float(arr[half_h:, :].mean()))
+    if too_dark:
+        _add("brightness_balance", False, f"整体过暗（亮度 {mean:.2f}）",
+             "提高整体曝光或提亮主体受光面，保留层次")
+    elif too_light:
+        _add("brightness_balance", False, f"整体过亮（亮度 {mean:.2f}）",
+             "压暗背景或收光圈，让主体与文字有落点")
+    elif lr_gap > QC_BALANCE_GAP or tb_gap > QC_BALANCE_GAP:
+        _add("brightness_balance", False,
+             f"画面失衡（左右差 {lr_gap:.2f} / 上下差 {tb_gap:.2f}）",
+             "平衡光源或主体分布，避免一侧明显压黑/过曝")
+    else:
+        _add("brightness_balance", True, None, None)
+
+    # 5. 对比度适配：安全区能否同时给深浅文字留出对比
+    safe_lum = crop[sy0 * bhs:sy1 * bhs, sx0 * bws:sx1 * bws].mean() \
+        if safe_std.size else 0.5
+    if text_is_dark is not None:
+        ok = safe_lum > 0.55 if text_is_dark else safe_lum < 0.45
+        _add("contrast_suitability", bool(ok),
+             f"安全区亮度 {safe_lum:.2f} 支撑不了{'深' if text_is_dark else '浅'}色文字",
+             "调整安全区明度：深色文字需亮底，浅色文字需暗底")
+    else:
+        _add("contrast_suitability", safe_lum > QC_TEXT_RANGE or safe_lum < 1 - QC_TEXT_RANGE,
+             f"安全区亮度 {safe_lum:.2f} 处于中间带，深浅文字对比都不足",
+             "把安全区推到亮端（>0.7）或暗端（<0.3），给文字明确落点")
+
+    issue_count = sum(1 for c in checks if c["status"] == "issue")
+    return {"file": str(p), "status": "issue" if issue_count else "ok",
+            "issue_count": issue_count, "checks": checks}
+
+
+# --------------------------------------------------------------------------
 # CLI：与 compiler.py 一致地读取参数模块
 # --------------------------------------------------------------------------
 def _load_card(module_path: str) -> dict:
@@ -485,117 +617,39 @@ def _load_page(module_path: str | None) -> dict:
     raise AttributeError("页面参数模块需定义 PAGE = {...} 或 build_page() -> dict")
 
 
-# ── Asset Intent Cache：缓存提示词智能，不缓存图片 ─────────────
-# 出图的慢在图像模型本身；可复用的是「怎么写这条 prompt 的判断」（构图/光性/
-# 留白/文字区），不是图片。validated prompt DNA 按 场景×视觉世界×主体 寻址；
-# 色值不进 DNA（色彩由主题在版面层决定），构图与光性判断可以进。
-PROMPT_DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "asset_prompt_dna.json"
-_PROMPT_STRUCTURE_KEYS = {"composition", "lighting", "void", "anchor",
-                          "text_zone", "material", "camera"}
-
-
-def _prompt_key(scenario: str, visual_world: str = "", subject: str = "") -> str:
-    toks = [str(x).strip().lower() for x in (scenario, visual_world, subject)
-            if x and str(x).strip()]
-    return " × ".join(toks)
-
-
-def _load_prompt_store() -> dict:
-    try:
-        return json.loads(PROMPT_DNA_STORE.read_text(encoding="utf-8"))
-    except Exception:
-        return {"version": 1, "entries": []}
-
-
-def recall_prompt_dna(scenario: str, visual_world: str = "",
-                      subject: str = "") -> dict:
-    """场景×视觉世界×主体 → 已验证的出图判断（构图/光性/留白/文字区）。
-
-    返回 {matched, key, entry, note}。无精确命中时做 token 重叠 ≥2 的近邻
-    提示（需适配，禁止照抄——主体一换，构图判断就要重估）。
-    """
-    key = _prompt_key(scenario, visual_world, subject)
-    store = _load_prompt_store()
-    entries = store.get("entries") or []
-    for e in entries:
-        if e.get("key") == key:
-            return {"matched": e.get("key"), "key": key, "entry": e,
-                    "note": "精确命中：构图/光性判断可复用，主体与构图的关系仍要按当前内容重估"}
-    want = {t for t in key.split(" × ") if t}
-    near = []
-    for e in entries:
-        have = {t for t in str(e.get("key", "")).split(" × ") if t}
-        if len(want & have) >= 2:
-            near.append(e)
-    if near:
-        return {"matched": None, "key": key, "entry": near[0],
-                "note": "近邻命中（场景相近主体不同）：只借光性与材质判断，构图按当前主体重估"}
-    return {"matched": None, "key": key, "entry": None,
-            "note": "无 prompt DNA：按 asset contract 起草，发布 PASS 后 record_prompt_dna 沉淀这条判断"}
-
-
-def record_prompt_dna(entry: dict) -> dict:
-    """沉淀已验证的出图判断。entry = {scenario, visual_world?, subject?,
-    prompt_structure: {composition|lighting|void|anchor|text_zone|material|camera ≥2 项},
-    avoid?: [...], proven: {project, verdict?}}。拒收色值（色彩归主题，不归 prompt）。"""
-    key = _prompt_key(entry.get("scenario", ""), entry.get("visual_world", ""),
-                      entry.get("subject", ""))
-    if not key:
-        return {"ok": False, "reason": "需要 scenario（可附 visual_world / subject）"}
-    st = entry.get("prompt_structure")
-    if not isinstance(st, dict) or len(set(st) & _PROMPT_STRUCTURE_KEYS) < 2:
-        return {"ok": False, "reason":
-                "prompt_structure 需 ≥2 项：" + "/".join(sorted(_PROMPT_STRUCTURE_KEYS))}
-    import re
-    for k, v in st.items():
-        if isinstance(v, str) and re.search(r"#[0-9a-fA-F]{3,8}\b", v):
-            return {"ok": False, "reason":
-                    f"prompt_structure.{k} 含色值：色彩由主题在版面层决定，"
-                    "prompt DNA 只存构图/光性/材质判断（光性用语言描述，如 warm tungsten）"}
-    if not (entry.get("proven") or {}).get("project"):
-        return {"ok": False, "reason": "proven.project 必填——只有真实用过的判断才值得缓存"}
-    store = _load_prompt_store()
-    entries = [e for e in store.get("entries", []) if e.get("key") != key]
-    entries.append({"key": key,
-                    "scenario": entry.get("scenario"),
-                    "visual_world": entry.get("visual_world"),
-                    "subject": entry.get("subject"),
-                    "prompt_structure": st,
-                    "avoid": entry.get("avoid") or [],
-                    "proven": entry.get("proven")})
-    entries.sort(key=lambda e: str(e.get("key")))
-    store = {"version": 1, "entries": entries}
-    PROMPT_DNA_STORE.parent.mkdir(parents=True, exist_ok=True)
-    PROMPT_DNA_STORE.write_text(json.dumps(store, ensure_ascii=False, indent=1),
-                                encoding="utf-8")
-    return {"ok": True, "store": str(PROMPT_DNA_STORE), "entries": len(entries)}
-
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="PPT Design OS · 视觉资产提示词组装器")
-    parser.add_argument("--recall", metavar="KEY",
-                        help="提示词 DNA 召回：'场景|视觉世界|主体'（缓存判断，不缓存图片）")
-    parser.add_argument("--record", metavar="ENTRY_JSON",
-                        help="沉淀已验证的出图判断（JSON 文件：scenario/prompt_structure/proven）")
     parser.add_argument("card", nargs="?", help="资产卡参数模块（定义 CARD 或 build_card()）")
     parser.add_argument("--page", help="页面版面参数模块（定义 PAGE 或 build_page()）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
     parser.add_argument("--ratio", default="16:9", help="出图比例（默认 16:9）")
     parser.add_argument("--no-qc", action="store_true", help="不追加 Universal QC 后缀")
+    parser.add_argument("--qc", metavar="IMAGE", help="出图后体检：对图片做 Issue+Suggestion 定性检查（不打分）")
+    parser.add_argument("--safe-area", default="left",
+                        choices=list(_SAFE_ZONES), help="文字安全区锚点（默认 left）")
+    parser.add_argument("--text", choices=["dark", "light"],
+                        help="安全区预期文字颜色（dark=深色文字需亮底 / light=浅色文字需暗底）")
     args = parser.parse_args(argv)
 
-    if args.recall:
-        parts = [x.strip() for x in args.recall.split("|") if x.strip()]
-        out = recall_prompt_dna(*parts)
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-        return 0
-    if args.record:
-        entry = json.loads(Path(args.record).read_text(encoding="utf-8"))
-        print(json.dumps(record_prompt_dna(entry), ensure_ascii=False, indent=2))
-        return 0
+    if args.qc:
+        text_dark = {"dark": True, "light": False}.get(args.text)
+        out = image_qc(args.qc, safe_area=args.safe_area, text_is_dark=text_dark)
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+            return 0
+        print(f"image-qc: {out['file']} → {out['status']}"
+              + (f"（{out['issue_count']} 项待改）" if out.get("issue_count") else ""))
+        for c in out["checks"]:
+            if c["status"] == "issue":
+                print(f"  [x] {c['check']}: {c['issue']}")
+                print(f"      → {c['suggestion']}")
+            else:
+                print(f"  [ok] {c['check']}")
+        return 0 if out["status"] == "ok" else 1
+
     if not args.card:
-        parser.error("需要 card 模块路径（或使用 --recall / --record）")
+        parser.error("需要 card 模块路径")
     try:
         card = _load_card(args.card)
         page = _load_page(args.page)
