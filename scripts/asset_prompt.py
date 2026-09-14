@@ -136,6 +136,41 @@ def ink_gate_active(card: dict) -> bool:
 
 
 
+# --------------------------------------------------------------------------
+# 摄影写实纪律闸门（v4.21——摄影语言的执行质量保底，与水墨闸门同源同理）
+# 资产卡语言为摄影（background 型、非水墨、非插画/3D/矢量）时注入少量正向
+# 写实纪律：光有方向与衰减、空间有空气与真实尺度、质感有胶片性格。
+# 闸门不做审美决策——拍还是画是调用方的事；它只压「选了摄影感却滑向
+# 塑料商业图」的默认分布。廉价症状的反向清单住在 UNIVERSAL_CHEAP_REJECTS
+# （heavy HDR / plastic skin / oversaturated / generic stock photo 已有案源），
+# 这里只补过度锐化与均匀布光两条新案源（TerraForma 校准）。
+# 守门纪律不变：排除廉价，不堆砌高级词——正向仅 3 句。
+# --------------------------------------------------------------------------
+_PHOTO_STYLE_EXCLUDE = ("illustration", "3d", "vector", "render", "painting",
+                        "clipart", "ink", "sumi")
+PHOTO_REALISM_DISCIPLINE: tuple[str, ...] = (
+    "single natural light source with visible direction and gentle falloff",
+    "subtle atmospheric perspective, faint air between planes",
+    "true-to-life spatial scale, medium format film character, soft micro grain",
+)
+PHOTO_CHEAP_REJECTS: tuple[str, ...] = (
+    "over-sharpened details", "uniform flat studio lighting",
+)
+
+
+def photo_gate_active(card: dict) -> bool:
+    """资产卡是否已选择摄影语言（纯检测）。插画/3D/矢量/水墨卡不点火。"""
+    if not isinstance(card, dict):
+        return False
+    if (card.get("asset_type") or "background") != "background":
+        return False
+    if ink_gate_active(card):
+        return False
+    blob = " ".join(str(card.get(k) or "") for k in
+                    ("style", "subject", "material")).lower()
+    return not any(w in blob for w in _PHOTO_STYLE_EXCLUDE)
+
+
 NEGATIVE_SPACE_PHRASES = {
     "left": "large clean negative space on the left side",
     "right": "large clean negative space on the right side",
@@ -398,6 +433,8 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     # --- 水墨纪律闸门：已选水墨语言 → 注入工艺纪律 + 廉价症状反向清单 ---
     if ink_gate_active(card):
         segments.extend(INK_DISCIPLINE)
+    if photo_gate_active(card):
+        segments.extend(PHOTO_REALISM_DISCIPLINE)
 
     # --- 3. OS 强制三段 --------------------------------------------------
     anchor = negative_space or page.get("negative_space_anchor") or "left"
@@ -429,6 +466,8 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         + list(_as_list(extra_negative))
     if ink_gate_active(card):
         negatives.extend(INK_CHEAP_REJECTS)
+    if photo_gate_active(card):
+        negatives.extend(PHOTO_CHEAP_REJECTS)
     # 统一成 "no X" 写法，避免同一提示词里混用 "text" 与 "no charts"
     negative = ", ".join(
         term if term.lower().startswith("no ") else f"no {term}"

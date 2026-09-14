@@ -11,6 +11,11 @@ description: >
 
 视觉艺术指导 + 信息设计 + 原生可编辑 PPTX 生产。成片品质 = 判断质量 × 空间秩序 × 叙事记忆 × 执行一致性。
 
+本技能是七种导演判断的合体——视觉设计 / 视觉体验 / 编辑艺术 / 品牌体验 / 信息设计 / 创意 / 演示设计：
+一个 **Visual Design Intelligence Skill**，理解内容、判断视觉价值、做高级设计决策。
+它不是模板库、不是设计系统：无固定页面结构、无固定配色、无固定组件——设计规则只是判断依据，
+不是限制；高级设计不是增加内容，而是精准删减（少即是多：设计是发现什么应该被留下）。
+
 ## Design Intent First（最高优先级）
 
 任何视觉决策之前，先回答四件事：
@@ -71,8 +76,8 @@ Brief 之后所有步骤只消费 Brief + Page Intent，不再回读原始需求
 ## Director Pipeline（P1–P5，唯一执行顺序）
 
 - **P1 理解**：冻结输入（受众/决策/口径/来源；不可验证标 `unknown`）→ 产出 Brief + Strategy。
-- **P2 策略**：Direction（visual_world 一句话隐喻：材质/光影/空间）+ Story Map + 逐页 Page Intent。
-- **P3 落地**：内容定 Family → 写 spec（数值几何 + `text` 字段，样式平铺顶层）→ 媒体闸门（图须有功能）→ compile 出可编辑 PPTX。
+- **P2 策略**：Direction（visual_world 一句话隐喻：材质/光影/空间）+ Story Map（声明情绪弧线：opening 建世界观 → 章节页制造情绪变化 → 内容页给证据 → closing 成记忆点；深浅强弱服务叙事段落）+ 逐页 Page Intent。系统级判断（色彩/字阶/母题/节奏词汇）在此判一次，全稿继承。
+- **P3 落地**：内容定 Family → 写 spec（数值几何 + `text` 字段，样式平铺顶层；页面只继承 P2 系统判断，不重议）→ 媒体闸门（图须有功能：先答「它证明这页哪句话」）→ compile 出可编辑 PPTX。
 - **P4 修正**：1 根因 = 1 轮。只修本轮 `items` 里唯一/首个 error（或 `risk.strategy` 的首杠杆），其余排队；为分数调参数 = 把对的地方改坏。
 - **P5 验证**：`qa.py --mode draft`（默认，零渲染）→ `review`（只渲染变化页）→ `release`（全量 + Manifest，唯一给发布资格）。
 
@@ -104,7 +109,7 @@ Brief 之后所有步骤只消费 Brief + Page Intent，不再回读原始需求
 | 写 spec 字段 | `references/production-contract.md`（契约表） | `qa.py --mode spec` 先问代码 |
 | 设计品味判断 | `references/design-craft.md` | —（判断依据，不是规则） |
 | 主题参考（可选） | `references/design-system.md`（Theme DNA 节） | 只作材质/光影灵感，seed 落进 `spec.theme`（先走 Design Intent First + Color Decision Chain） |
-| 出图 | 契约 asset 行 + `scripts/asset_prompt.py` | 每张图先走 asset_prompt 组装、CHECK OK 再出图（禁手写裸 prompt——裸 prompt 漠视纪律闸门）；出图后跑 `asset_prompt.py --qc <图>` 体检（亮度/留白/主体位置/文字区/对比度，Issue+Suggestion 不打分），有问题再重出 |
+| 出图 | 契约 asset 行 + `scripts/asset_prompt.py` | 每张图先走 asset_prompt 组装、CHECK OK 再出图（禁手写裸 prompt——裸 prompt 漠视纪律闸门；摄影语言卡自动过摄影写实纪律闸门：光方向/空气感/真实尺度/胶片性格，与水墨闸门同源）；出图后跑 `asset_prompt.py --qc <图>` 体检（亮度/留白/主体位置/文字区/对比度，Issue+Suggestion 不打分），有问题再重出 |
 | 方向确认/改布局 | 契约对应行 | `ghost.py` 看方向 → `--mode review` |
 | 发布 | 契约 Release Manifest | `qa.py --mode release` |
 

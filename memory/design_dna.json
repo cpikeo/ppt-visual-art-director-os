@@ -3,6 +3,46 @@
  "schema_note": "经验库（非参数库）：每条 = pattern（模式名）+ design_problem（当时矛盾）+ judgment（可迁移的行为判断）+ works_because（为什么成立）+ avoid + when_not_to + proven（实测证据）。judgment 只写行为判断，不写色值/字号/版式结果——结果是证据，放 proven.measurements。",
  "entries": [
   {
+   "id": "accent_pixel_identifiability",
+   "pattern": "accent 先过「像素可辨识」再过审美：与照片全色域保持大于实测容差的色距——暖世界里的单一冷信号既成立又高级",
+   "signature": {
+    "keywords": [
+     "accent",
+     "强调色",
+     "摄影",
+     "photo",
+     "像素",
+     "pixel",
+     "材质",
+     "material",
+     "earth tone",
+     "年报"
+    ]
+   },
+   "design_problem": "含大幅摄影的 deck 里，发布门按『与主题 accent 的 RGB 色距』实测强调色面积；地球色调照片的暖棕/中性灰簇会在宽松色距内吞掉任何暖色或低明度 accent，使 accent 预算在像素层失效（视觉上却完全看不见问题）",
+   "judgment": {
+    "color_behavior": "照片型 deck 的 accent 先过『像素可辨识』再过审美：与照片全色域保持大于实测容差的色距，暖世界里的单一冷信号（或反之）往往既成立又高级",
+    "media": "出图前用资产卡的 color 段预演照片色域；accent 与画心色域同族时，换信号色相而不是换照片",
+    "charts": "图表语义色随 accent 同步迁移，指认职责（高亮/端点/印章）不因色相更换而削弱"
+   },
+   "avoid": [
+    "为像素指标把 accent 调到高饱和",
+    "逐页遮罩照片来压 accent 像素"
+   ],
+   "when_not_to": "无摄影或摄影仅为小尺寸证据图的 deck（纸面 accent 面积自会封顶）",
+   "proven": {
+    "qa": "release：accent 像素 4.4–29.3% → ≤1.5%",
+    "revisions": 2,
+    "project": "SUYU AR2025 (PPT_CASE_002)",
+    "measurements": {
+     "rgb_tolerance": 0.3,
+     "accent_area_max": 0.04
+    }
+   },
+   "works_because": "像素色距是物理事实不是口味：色距跨过容差 accent 才在照片色簇里可辨识；低彩度冷信号在暖世界里反而成为最高级的单一信号，审美与指标同向",
+   "source_case": "PPT_CASE_002"
+  },
+  {
    "id": "comparison_single_decision",
    "pattern": "对比表只给答案染色",
    "signature": {
@@ -91,6 +131,48 @@
    }
   },
   {
+   "id": "editorial_photo_focus_anchor",
+   "pattern": "图像主导的编辑页把 focus 声明在视线第一落点（画心/索引场）；标题承担叙事声音，不做视觉锚",
+   "signature": {
+    "keywords": [
+     "编辑",
+     "editorial",
+     "摄影",
+     "photo",
+     "章节页",
+     "chapter",
+     "案例页",
+     "case",
+     "focus",
+     "重心",
+     "gravity",
+     "年报"
+    ]
+   },
+   "design_problem": "图像主导的编辑页上，语义结论（标题）与视觉第一落点（照片/证据场）分离；focus 声明给标题时，渲染显著性重心校验会持续报警，作者容易被诱去移动标题",
+   "judgment": {
+    "anchor_rule": "focus 声明在视线第一落点：全幅摄影页=画心、证据索引页=索引场；标题/陈述承担叙事声音而非视觉锚",
+    "hierarchy": "标题的层级靠字阶与轴线，不靠成为第一注视点；照片先 landing、标题后发声是编辑页的正确阅读路径",
+    "media": "画心即内容时，画心就是主语；gravity_anchor 只在无 focus 时生效，不要用它绕开 focus 优先级"
+   },
+   "avoid": [
+    "为过重心校验把标题移进照片区",
+    "用 gravity_anchor 与 focus 双重声明制造伪一致"
+   ],
+   "when_not_to": "纯排版页与数据页：focus 仍是结论陈述或主数字（显著性重心本就与文字重合）",
+   "proven": {
+    "qa": "release 100.0 PASS（改前 76.0，gravity_drift warn ×8）",
+    "revisions": 2,
+    "project": "SUYU AR2025 (PPT_CASE_002)",
+    "measurements": {
+     "drift_before": "0.29–0.46",
+     "drift_after": "<0.28 all pages"
+    }
+   },
+   "works_because": "显著性重心只认眼睛真正落的地方：照片先 landing、标题后发声是编辑页的真实阅读路径；focus 声明与落点同一后，实测重心与声明主语合一，drift 报警自然消失",
+   "source_case": "PPT_CASE_002"
+  },
+  {
    "id": "executive_voice_authority",
    "pattern": "引言大到可被引用，人像负责可信，署名负责实名",
    "signature": {
@@ -177,6 +259,40 @@
     "revisions": null,
     "lessons": "问题：信息越多，记住的越少 → 决策：一页一句话，删到不能再删，尺度对比承担全部层级 → 规律：高级感来自尺度对比与克制，不来自元素数量。"
    }
+  },
+  {
+   "id": "lo_spc_alpha_glyph_drop",
+   "pattern": "字距与 run 级透明不得共存于 meta 行（LibreOffice 渲染缺陷规避）",
+   "signature": {
+    "keywords": [
+     "char_spacing",
+     "spc",
+     "opacity",
+     "alpha",
+     "libreoffice",
+     "眉标",
+     "页码",
+     "meta"
+    ]
+   },
+   "design_problem": "高端报告的 meta 行（眉标/章标/页码/落款）需要字距拉开+压低存在感的透明；但 LibreOffice 对 spc∧run-alpha 并存的 run 丢弃尾部字形——预览与 PDF 导出静默截断，而 PPTX 文本完整",
+   "judgment": {
+    "space": "meta 行单行不换行（wrap=False）+ 盒宽冗余 ≥1.5× 估宽",
+    "structure": "字距只给 caps 拉丁 run；CJK run 不加 spc",
+    "color_behavior": "降存在感用预混实色 hex（按局部底 alpha 合成计算），不用 run 级 alpha；图区 meta 用实墨/实 primary",
+    "type_voice": "meta 行是页面的呼吸边距，截断一个字符即破坏整页秩序",
+    "media": "交付前必须 LO 渲染 150dpi 裁切目检 meta 行尾字符",
+    "charts": "n/a",
+    "anchor_rule": "spc 与 alpha 互斥；诊断用最小探针矩阵逐项开关"
+   },
+   "works_because": "预混实色在像素上与 alpha 合成等价，既保住低存在感又绕开渲染器缺陷",
+   "avoid": [
+    "run 级 alpha + spc 共存",
+    "仅凭 PowerPoint 目检交付",
+    "60dpi 缩略图裁决截断"
+   ],
+   "when_not_to": "目标渲染器仅 PowerPoint 且不做 LO 预览时（缺陷不触发）",
+   "source_case": "PPT_CASE_002"
   },
   {
    "id": "monochrome_photo_carries_color",

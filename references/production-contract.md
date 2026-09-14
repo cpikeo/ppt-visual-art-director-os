@@ -49,6 +49,14 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 Donut `hole_size` 已修复为真实写入 XML（此前 python-pptx 空类导致无声 no-op）；PowerPoint 遵循该值，LibreOffice 预览忽略（恒按默认孔比渲染）——以 PowerPoint 实际显示为准。
 
+渲染器与交付事实（工程事实，不是品味）：① `char_spacing` 与 `opacity` 互斥——LibreOffice
+对 spc ∧ run 级 alpha 并存的 run 静默丢弃尾部字形（XML 完整、仅预览/导出受害）；meta 行要
+字距+压低存在感时，把透明度按局部底预混进实色 hex。② 单行 meta 行（眉标/章标/页码/落款）
+`wrap=False` 且盒宽 ≥1.5× 估宽——第二行落盒外的裁切在预览里是沉默的。③ `page_intent.focus`
+声明**视线第一落点**（英雄图/索引场/主数字），不是叙事主语；重力实测只认眼睛真正落的地方。
+④ accent 须与照片色簇保持足够彩度距离（实测归一化 RGB 距离 <0.30 判同族）：大地色/灰调
+照片世界里暖铜、赭血、灰蓝均阵亡，仅足彩度钴蓝级存活。
+
 图表色走语义角色（`theme.chart_palette`：primary/secondary/neutral/accent/negative；元素 `color_role/series_roles`；柱状负值自动染 negative）。背景画心声明 `layer:background` + 自带 `overlay` 内容保护，不计媒体预算；资格不足按普通对象判。
 
 ## Failure codes
