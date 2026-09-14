@@ -335,7 +335,14 @@ def text_contrast_verdict(render_page: dict | None, fail: float = 3.0,
     hard = (reading if worst_all is None
             else (min(reading, worst_all) if reading is not None else worst_all))
     if hard is not None and hard < fail:
-        return {"level": "fail", "value": hard, "worst": worst}
+        # F14/v4.21：fail 由注记级（aux）最坏值驱动时，worst 必须指向
+        # 注记框——旧行为把 reading 级框贴到消息里，数字与元素对不上，
+        # 人会去修一个本来合格的元素（2026 实战被它指了四个小时）。
+        w_fail = worst
+        if (worst_all is not None and worst_all < fail
+                and (reading is None or worst_all <= reading)):
+            w_fail = page.get("text_contrast_aux_worst") or worst
+        return {"level": "fail", "value": hard, "worst": w_fail}
     if reading is not None and reading < warn:
         return {"level": "soft", "value": reading, "worst": worst}
     if reading is not None:

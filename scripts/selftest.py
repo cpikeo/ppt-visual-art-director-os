@@ -1651,6 +1651,113 @@ def check_hairline_grid():
             "thick_w": thick["width"], "hline_size_snaps": len(hrules)}
 
 
+def check_cheap_rejects():
+    """F12/v4.20：负面清单落在出图层——任意资产卡的 negative 必含
+    廉价症状反向短语；与 illustration 正向 3D minimal 无矛盾；
+    用户追加词条不被吞；两次构建字节一致（确定性）。"""
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("asset_prompt", SCRIPTS / "asset_prompt.py")
+    ap = iu.module_from_spec(spec)
+    import sys as _s
+    _s.modules["asset_prompt"] = ap
+    spec.loader.exec_module(ap)
+    card = {"apc": "APC-BG-01", "asset_type": "background",
+            "subject": ["modern city skyline at dusk"],
+            "color": ["deep navy and warm amber"],
+            "material": ["atmospheric haze"],
+            "lighting": ["city lights bokeh"],
+            "composition": ["low horizon, vast sky"]}
+    out = ap.build_asset_prompt(card)
+    neg = out["negative"].lower()
+    must = ["generic stock photo", "corporate handshake", "posed smiling people",
+            "clip art", "neon glow", "cyberpunk", "humanoid robot",
+            "glassmorphism", "tech blue gradient", "plastic skin",
+            "oversaturated colors", "heavy hdr", "ai artifacts"]
+    ill = ap.build_asset_prompt(dict(card, asset_type="illustration", apc="APC-IL-01"))
+    extra = ap.build_asset_prompt(dict(card, negative=["drones"]),
+                                  extra_negative=["lens dirt"])
+    a = ap.build_asset_prompt(card)
+    b = ap.build_asset_prompt(card)
+    ok = (all(f"no {m}" in neg for m in must)
+          and "no 3d render" not in ill["negative"].lower()
+          and "3D minimal illustration" in ill["prompt"]
+          and "no drones" in extra["negative"].lower()
+          and "no lens dirt" in extra["negative"].lower()
+          and a["prompt"] == b["prompt"] and a["negative"] == b["negative"])
+    return {"status": "PASS" if ok else "FAIL",
+            "hit": sum(f"no {m}" in neg for m in must), "total": len(must),
+            "ill_3d_free": "no 3d render" not in ill["negative"].lower(),
+            "deterministic": a["negative"] == b["negative"]}
+
+
+def check_shape_dialect():
+    """F13/v4.21（release 像素档首战收网）：shape 顶层 color 无 fill →
+    add_shape 只读 fill，内容凭空消失（2026 时间轴圆点/深色框实测）；
+    line 无 stroke → 印章框边框凭空消失。error 级前置拦截。"""
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("guard", SCRIPTS / "guard.py")
+    g = iu.module_from_spec(spec)
+    import sys as _s
+    _s.modules["guard"] = g
+    spec.loader.exec_module(g)
+
+    def _mk(el):
+        return g.check_spec({"slides": [{"id": "s01",
+            "page_intent": {"insight": "A", "focus": "t", "density": "sparse"},
+            "background": {"color": "#F3F1EA"},
+            "elements": [{"type": "text", "id": "t", "text": "锚", "size": 20,
+                          "color": "#111111", "x": 96, "y": 80, "width": 200, "height": 40},
+                         el]}]})
+
+    def _es(out):
+        return [w for w in out.get("warnings", []) if "element_schema" in w]
+
+    base = {"x": 96, "y": 200, "width": 240, "height": 24}
+    c_nof = _mk({"type": "shape", "id": "a", **base, "color": "#999999"})
+    l_nos = _mk({"type": "shape", "id": "b", **base,
+                 "fill": {"type": "none"}, "line": {"color": "#999999", "width": 1}})
+    good = _mk({"type": "shape", "id": "c", **base,
+                "fill": {"type": "solid", "color": "#999999"},
+                "stroke": "#999999", "stroke_width": 1})
+    txt = _mk({"type": "text", "id": "d", "text": "文字顶层 color 合法",
+               "size": 14, "color": "#222222", "x": 96, "y": 240,
+               "width": 300, "height": 30})
+    ok = (any("顶层 color" in w for w in _es(c_nof)) and c_nof.get("passed") is False
+          and any("stroke" in w for w in _es(l_nos)) and l_nos.get("passed") is False
+          and not _es(good) and not _es(txt))
+    return {"status": "PASS" if ok else "FAIL",
+            "color_dialect": c_nof.get("passed"), "line_dialect": l_nos.get("passed"),
+            "fill_clean": not _es(good), "text_clean": not _es(txt)}
+
+
+def check_contrast_fingerpoint():
+    """F14/v4.21：注记级 aux 最坏值驱动 fail 时，verdict 的 worst 必须指认
+    注记框而非阅读级框——旧行为让 1.33 的读数贴在 5.69 的元素上，
+    人要修错对象（2026 实战被指向合格印章）。"""
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("primitives", SCRIPTS / "primitives.py")
+    p = iu.module_from_spec(spec)
+    import sys as _s
+    _s.modules["primitives"] = p
+    spec.loader.exec_module(p)
+    page = {"slide": "s07", "text_contrast_min": 5.69, "text_contrast_all_min": 1.33,
+            "text_contrast_worst": {"id": "t_seal", "aux": False, "ratio": 5.69,
+                                    "color": "#F3F1EA", "background": "#A63A2E"},
+            "text_contrast_aux_worst": {"id": "t_src", "aux": True, "ratio": 1.33,
+                                        "color": "#5A5C54", "background": "#C9C6BB"}}
+    v1 = p.text_contrast_verdict(page, 3.0, 4.5)
+    page2 = dict(page, text_contrast_min=1.2,
+                 text_contrast_worst={"id": "body", "aux": False, "ratio": 1.2,
+                                      "color": "#111111", "background": "#EEEEEE"})
+    v2 = p.text_contrast_verdict(page2, 3.0, 4.5)
+    ok = (v1["level"] == "fail" and v1["value"] == 1.33
+          and v1["worst"].get("id") == "t_src"
+          and v2["level"] == "fail" and v2["value"] == 1.2
+          and v2["worst"].get("id") == "body")
+    return {"status": "PASS" if ok else "FAIL",
+            "aux_points_to": v1["worst"].get("id"), "reading_points_to": v2["worst"].get("id")}
+
+
 def check_intent_skeleton():
     """v2.12 Page Intent Skeleton：家族骨架确定性生成，AI 只填洞，覆盖永远赢。"""
     di = load("design_intelligence", SCRIPTS / "design_intelligence.py")
@@ -2181,6 +2288,8 @@ def main():
             "manifest_attestation": check_manifest_attestation(), "element_schema": check_element_schema(), "intent_style": check_intent_style(),
         "intent_boundaries": check_intent_boundaries(), "ink_gate": check_ink_gate(),
         "geometry_degenerate": check_geometry_degenerate(), "hairline_grid": check_hairline_grid(),
+        "shape_dialect": check_shape_dialect(), "contrast_fingerpoint": check_contrast_fingerpoint(),
+        "cheap_rejects": check_cheap_rejects(),
             "optical_alignment": check_optical_alignment(),
             "chart_color_roles": check_chart_color_roles(),
             "brand_seed": check_brand_seed(),

@@ -13,6 +13,32 @@
 9. 最终标准：更少规则更强判断，更少代码更高审美，更少复杂度更高质量
 
 
+## v4.21 release 首战批（2026-09-11）：像素档首跑，拿 11 条真命换两枚包修
+
+**案源**：沙盒补装 LibreOffice 25.2 + Noto CJK，2026 年终 deck 全量 release 档首跑。首报 62.9 分 7 条 READABILITY_FAIL——draft 只测声明层，这些病只有真相机拍得到。逐条收网后终版 REVISE 86.4 / blocking=0；残留的 3.6 分缺口全是设计判断事项（三卡页容量与非对称锚点），按 craft 案例 4 未为分数改设计。
+
+**包修复**
+
+- **F13 验证层·形状方言静默丢失（guard element_schema）**：顶层 `color` 仅文字元素合法；`add_shape` 只读 `fill`/`stroke`——「形状 + 顶层 color 无 fill」= 填充凭空消失（实战收网：时间轴圆点、深色框、发丝线三例全没渲染），「line 无 stroke」= 边框凭空消失（印章框实测）。draft 档全绿而像素档才现形——静默成本家族第五次收网。
+- **F14 验证层·对比度 verdict 指认错误（primitives + render_check）**：注记级（aux）最坏值驱动 fail 时，旧 verdict 把 reading 级框贴进消息——1.33 的读数落在一枚 5.69 合格的印章上，排错指错对象（实战被指向修了四回别处）。修复：render_check 留痕 text_contrast_aux_worst，verdict 按 fail 驱动源指认真病灶（真病灶=s07 底部来源注记压在深墨底带，已骨色化）。
+- **记忆层·prompt DNA 首批沉淀**：2026 实战四张过闸出图（封面远山雾海/单笔触山脊/数据雾/日出远峦）的判断（构图/留白/锚点/光性/材质 + avoid 谱）落盘 memory/asset_prompt_dna.json；卷终图召回精确命中验证通过。
+
+**使用侧战果（deck 修复账本）**：token 级修（muted #8B8D84→#5A5C54 一族收五条、小字朱砂 ACC_TEXT #8C2F25/白文印章）；六处 fill/stroke 归位；印章白文对位 60×60 + anchor:middle；卷目条目名 role=label 语义修复。**渲染证据翼首次在沙盒全量运行**：selftest 渲染链检查 0 skipped。
+
+自检 58/58 全 PASS（新增 shape_dialect / contrast_fingerpoint 两检查，渲染链历史性 0 skip）；hard 常量零漂移。
+
+## v4.20 廉价谱守门批（2026-09-11）：负面清单走出文档、落在出图层
+
+**案源**：以世界级视觉总监标准复审 asset_prompt——低质水墨有闸门了（v4.17），但通用廉价症状零拦截：city skyline 卡可端回图库握手照、科技蓝渐变、玻璃拟态、塑料皮肤，无一被拦。宪法负面清单此前只活在审查语言里。
+
+**修复**
+
+- **F12 审美执行层·通用廉价症状拦截（asset_prompt UNIVERSAL_CHEAP_REJECTS）**：16 条反向短语，每条在负面清单有案源——Stock Photo Feeling/人物摆拍（generic stock photo、cliché corporate imagery、corporate handshake、posed smiling people、thumbs up）、Excessive Icons→剪贴画感（clip art）、Neon Cyberpunk 与机器人元素（D06 禁项：neon glow、cyberpunk、humanoid robot、robot mascot）、Glassmorphism（glassmorphism、frosted glass panels）、科技蓝/过度渐变（tech blue gradient、rainbow gradient）、Cheap AI Aesthetic（plastic skin、oversaturated colors、heavy HDR、AI artifacts）。全资产类型通用注入，用户追加词条与去重管线照旧。
+- **守门纪律（写进代码注释）**：排除廉价而非堆砌高级词——prompt 通胀（叠 luxury 词）不是质量门。**刻意缺席「no 3d render」**：illustration 正向本就要求 3D minimal，通用拒 3D 即自相矛盾（3D Decoration 症状由水墨闸门按族拒绝）。
+- 出图防线自此三层：基础卫生（text/logo/watermark/clutter）→ 通用廉价谱 → 水墨族纪律。
+
+自检 56/56 全 PASS（新增 cheap_rejects 检查）；3 项渲染链 skipped（LibreOffice 缺席环境守卫）；hard 常量零漂移。
+
 ## v4.19 发丝线与出图回路批（2026-09-11）：用户指控坐实 + 流程硬卡点
 
 **修复**

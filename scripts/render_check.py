@@ -810,6 +810,7 @@ def _text_contrast(arr, regions: list[dict]) -> dict[str, Any]:
     import numpy as np
     hh, ww, _ = arr.shape
     worst, reading_worst, all_r = None, None, []
+    aux_worst = None
     for reg in regions:
         x, y, bw, bh = reg["box"]
         x0, y0 = max(0, min(ww - 3, int(x * ww))), max(0, min(hh - 3, int(y * hh)))
@@ -827,6 +828,8 @@ def _text_contrast(arr, regions: list[dict]) -> dict[str, Any]:
         all_r.append(rec)
         if worst is None or rec["ratio"] < worst["ratio"]:
             worst = rec
+        if rec["aux"] and (aux_worst is None or rec["ratio"] < aux_worst["ratio"]):
+            aux_worst = rec
         if not rec["aux"] and (reading_worst is None or rec["ratio"] < reading_worst["ratio"]):
             reading_worst = rec
     if not worst:
@@ -836,6 +839,9 @@ def _text_contrast(arr, regions: list[dict]) -> dict[str, Any]:
     return {"text_contrast_min": reading_worst["ratio"] if reading_worst else worst["ratio"],
             "text_contrast_worst": reading_worst or worst,
             "text_contrast_all_min": worst["ratio"],
+            # F14/v4.21：注记级最坏框单独留痕——fail 由注记驱动时，
+            # verdict 消息必须指认这个框，而不是张冠李戴到正文级框上。
+            "text_contrast_aux_worst": aux_worst or worst,
             "text_contrast": [r["ratio"] for r in all_r]}
 
 

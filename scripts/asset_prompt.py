@@ -61,6 +61,28 @@ NEGATIVE_BASE: tuple[str, ...] = (
 )
 
 # --------------------------------------------------------------------------
+# 通用廉价症状拦截层（F12/v4.20——负面清单走出文档、落在出图层）
+# 包的避讳谱（Stock Photo Feeling / 人物摆拍 / Excessive Icons / Neon /
+# 机器人元素 / Glassmorphism / 科技蓝渐变 / Cheap AI Aesthetic）此前只活在
+# 审查语言里，出图层一条没拦——city skyline 卡可以大摇大摆端回一张图库握手照。
+# 本表是**既有口味法的执行**，不是新口味：每个短语在负面清单中有案源。
+# 守门纪律：排除廉价，不堆砌高级词——prompt 通胀（叠 luxury 词）不是质量门。
+# 刻意缺席：「3d render」——illustration 正向本就要求 3D minimal，
+# 3D Decoration 症状由水墨闸门按族拒绝，不进通用层（防自相矛盾）。
+# --------------------------------------------------------------------------
+UNIVERSAL_CHEAP_REJECTS: tuple[str, ...] = (
+    "generic stock photo", "cliché corporate imagery", "corporate handshake",
+    "posed smiling people", "thumbs up",          # Stock Photo Feeling / 人物摆拍
+    "clip art", "clipart illustration",           # Excessive Icons → 剪贴画感
+    "neon glow", "cyberpunk",                     # Neon Cyberpunk（D06 禁项）
+    "humanoid robot", "robot mascot",             # 机器人元素（D06 禁项）
+    "glassmorphism", "frosted glass panels",      # Glassmorphism
+    "tech blue gradient", "rainbow gradient",     # Excessive Gradients / 科技蓝渐变
+    "plastic skin", "oversaturated colors",       # Cheap AI Aesthetic
+    "heavy HDR", "AI artifacts",
+)
+
+# --------------------------------------------------------------------------
 # 水墨纪律闸门（F6/v4.17——材质语言的执行质量保底）
 # 每当资产卡已经选择了水墨语言（subject/material/style 等含水墨词），
 # 注入两组确定性短语：正向「工艺纪律」（让图像模型往真·水墨画法走）
@@ -401,7 +423,8 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     prompt = separator.join(_dedup(segments))
 
     # --- 5. 反向提示词 ----------------------------------------------------
-    negatives = list(NEGATIVE_BASE) + list(_as_list(card.get("negative"))) \
+    negatives = list(NEGATIVE_BASE) + list(UNIVERSAL_CHEAP_REJECTS) \
+        + list(_as_list(card.get("negative"))) \
         + list(_as_list(extra_negative))
     if ink_gate_active(card):
         negatives.extend(INK_CHEAP_REJECTS)

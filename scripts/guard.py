@@ -881,6 +881,18 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             if isinstance(_c, (dict, list, tuple, set)):
                 add("element_schema", _eid, "error",
                     f"元素配色须为 #HEX 字符串或 theme token 名，收到 {type(_c).__name__}（编译期 unhashable 失色）")
+            # 形状方言静默丢弃（F13/v4.21——release 像素档实战收网）：
+            # 顶层 color 仅文字元素使用；add_shape 只读 fill/stroke。
+            # 「形状 + 顶层 color 无 fill」= 填充凭空消失（2026 时间轴圆点、
+            # 章节深色框三例实测）；「line 无 stroke」= 边框凭空消失（印章框实测）。
+            if _et == "shape":
+                if _el.get("color") is not None and "fill" not in _el:
+                    add("element_schema", _eid, "error",
+                        "形状填充须走 fill（颜色字符串或 {type: solid, ...}）；"
+                        "顶层 color 在形状上被静默丢弃 → 元素渲染不可见")
+                if _el.get("line") is not None and "stroke" not in _el:
+                    add("element_schema", _eid, "error",
+                        "形状边框须走 stroke/stroke_width；顶层 line 字段被静默丢弃")
             _f = _el.get("fill")
             if _f is not None and not isinstance(_f, str) and (
                     isinstance(_f, bool) or not (isinstance(_f, dict) and ("type" in _f or "color" in _f))):
