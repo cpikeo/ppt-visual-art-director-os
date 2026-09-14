@@ -45,6 +45,10 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 每页 `page_intent` 含 `insight/focus/reading_order/energy/density/empty_space_role/page_family/rhythm_stage/continuity_token`；`direction` 含 `color_intent`。几何：所有可见对象数值 `x/y/width/height`；text–text/chart/image 墨迹相交即 `OVERLAP`（来源区/结论/读数永不许遮挡）；图表标签放不下用 `label_collision_policy:hide_redundant|move_outside|fail`，不缩字号。
 
+来源区（`source_zone`）内文字 `role` 只允许 `{source, method, metadata}`（页码、目录索引、编号等结构性文字挂 `metadata`/`label`）；用其他角色会触发全页 zone-invasion 错误。图像 `src` 相对路径按输出目录解析，找不到时回退到 spec 文件所在目录（绝对路径优先）。
+
+Donut `hole_size` 已修复为真实写入 XML（此前 python-pptx 空类导致无声 no-op）；PowerPoint 遵循该值，LibreOffice 预览忽略（恒按默认孔比渲染）——以 PowerPoint 实际显示为准。
+
 图表色走语义角色（`theme.chart_palette`：primary/secondary/neutral/accent/negative；元素 `color_role/series_roles`；柱状负值自动染 negative）。背景画心声明 `layer:background` + 自带 `overlay` 内容保护，不计媒体预算；资格不足按普通对象判。
 
 ## Failure codes

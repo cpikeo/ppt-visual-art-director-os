@@ -289,12 +289,21 @@ def add_shape(slide, element: dict, ctx: RenderContext) -> None:
 # --------------------------------------------------------------------------
 # image（cover / contain 裁切）
 # --------------------------------------------------------------------------
-def _resolve_src(element: dict, base_path: str | None) -> Path:
+def _resolve_src(element: dict, base_path: str | None,
+                 spec_path: str | None = None) -> Path:
     src = Path(element["src"])
     if src.is_absolute():
         return src
-    root = Path(base_path).parent if base_path else Path.cwd()
-    return (root / src).resolve()
+    # 相对路径：先按输出目录解析（既有行为），再回退到 spec 文件所在目录
+    # （作者更直觉的写法；两个都不存在时按输出目录报错，保持旧语义）。
+    roots = [Path(base_path).parent if base_path else Path.cwd()]
+    if spec_path:
+        roots.append(Path(spec_path).parent)
+    for root in roots:
+        cand = (root / src).resolve()
+        if cand.exists():
+            return cand
+    return (roots[0] / src).resolve()
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -409,9 +418,10 @@ def _content_protection_overlay(element: dict) -> dict | None:
     return ov if isinstance(ov, (dict, str)) and ov else None
 
 
-def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = None) -> None:
+def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = None,
+              spec_path: str | None = None) -> None:
     x, y, w, h = ctx.bounds(element)
-    src = _resolve_src(element, base_path)
+    src = _resolve_src(element, base_path, spec_path)
     if not src.exists():
         ctx.warn(f"image '{element.get('id')}': 找不到文件 {src}")
         return
@@ -582,6 +592,27 @@ def _safe_index(value, default=0):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _set_donut_hole_size(plot, pct: int) -> None:
+    """写 c:doughnutHoleSize。python-pptx 1.0.2 的 DoughnutPlot 是空类：
+    plot.hole_size = N 只是无声的实例属性赋值，序列化时丢失（实测 XML 无此元素，
+    渲染器回落到默认孔比）。直接写 XML 元素；按 CT_DoughnutChart 子元素顺序
+    （varyColors, ser*, dLbls, firstSliceAng, doughnutHoleSize）置于其后。
+
+    注意：PowerPoint 遵循该属性；LibreOffice 导入时忽略（对照实验 30/62/90
+    渲染孔比恒为其默认 ~0.50）——预览不变化属渲染器差异，不是本函数失效。"""
+    from pptx.oxml.ns import qn
+    el = plot._element
+    tag = qn("c:doughnutHoleSize")
+    for old in el.findall(tag):
+        el.remove(old)
+    node = el.makeelement(tag, {"val": str(int(pct))})
+    fang = el.find(qn("c:firstSliceAng"))
+    if fang is not None:
+        fang.addnext(node)
+    else:
+        el.append(node)
 
 
 def _display(row, element, fallback=""):
@@ -816,7 +847,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
 
         if kind in ("donut", "donut_composition", "pie"):
             if kind != "pie":
-                chart.plots[0].hole_size = int(element.get("hole_size", 62))
+                _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
             hl = _safe_index(element.get("highlight"), 0)
             for i, point in enumerate(series.points):
                 point.format.fill.solid()
@@ -833,22 +864,26 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                 if center_value is not None or center_label:
                     inner = min(w, h) * 0.46        # 洞可用直径（hole_size 默认 62%）
                     cx, cy = x + w / 2, y + h / 2
-                    if center_value is not None:
-                        _textbox(slide, f"{eid}__center_value",
-                                 cx - inner / 2, cy - inner * 0.60,
-                                 inner, inner * 0.5,
-                                 str(center_value),
-                                 float(element.get("center_value_size", 30)),
-                                 ink, ctx, element, align=PP_ALIGN.CENTER, bold=True)
-                    if center_label:
-                        _textbox(slide, f"{eid}__center_label",
-                                 cx - inner / 2, cy + inner * 0.02,
-                                 inner, inner * 0.34,
-                                 str(center_label),
-                                 float(element.get("center_label_size", 12)),
-                                 muted, ctx, element, align=PP_ALIGN.CENTER)
-    except Exception:
-        pass
+                # 几何：数值行框以孔心为中心（值即读数，必须上下居中），
+                # 标签行框在数值下方、仍落在孔内（孔半径 ≈ inner/2）。
+                if center_value is not None:
+                    _textbox(slide, f"{eid}__center_value",
+                             cx - inner / 2, cy - inner * 0.25,
+                             inner, inner * 0.5,
+                             str(center_value),
+                             float(element.get("center_value_size", 30)),
+                             ink, ctx, element, align=PP_ALIGN.CENTER, bold=True)
+                if center_label:
+                    _textbox(slide, f"{eid}__center_label",
+                             cx - inner / 2, cy + inner * 0.27,
+                             inner, inner * 0.18,
+                             str(center_label),
+                             float(element.get("center_label_size", 12)),
+                             muted, ctx, element, align=PP_ALIGN.CENTER)
+    except Exception as exc:
+        # 不静默吞掉：图表样式块任何一步失败都可能悄悄丢掉环心 KPI / 孔比，
+        # 至少要让报告里看得到（此前裸 pass，排障时图表可以无声缺件）。
+        ctx.warn(f"chart '{element.get('id')}': 样式块异常 {type(exc).__name__}: {exc}")
 
 
 # --------------------------------------------------------------------------
@@ -1426,7 +1461,7 @@ DISPATCH = {
 
 
 def compile_deck(spec: dict, output_path, checks: bool = True,
-                 guard_rules: dict | None = None) -> dict:
+                 guard_rules: dict | None = None, spec_path: str | None = None) -> dict:
     """
     把设计 spec 编译为原生可编辑 PPTX。
 
@@ -1494,7 +1529,7 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
                 continue
             try:
                 if fn is add_image:
-                    fn(slide, element, ctx, str(output_path))
+                    fn(slide, element, ctx, str(output_path), spec_path)
                 else:
                     fn(slide, element, ctx)
             except Exception as exc:  # 只记录，不静默改稿
@@ -1532,7 +1567,7 @@ def main(argv):
         return 1
     rest = [a for a in argv[2:] if not a.startswith("--")]
     out = rest[0] if rest else "deck.pptx"
-    report = compile_deck(deck, out)
+    report = compile_deck(deck, out, spec_path=str(mod_path))
     if "--json" in argv:
         import json
         print(json.dumps(report, ensure_ascii=False, indent=2))
