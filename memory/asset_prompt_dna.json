@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "entries": [
+  {
+   "key": "卷目过渡页 × sumi-e editorial × 单笔触山脊",
+   "scenario": "卷目过渡页",
+   "visual_world": "sumi-e editorial",
+   "subject": "单笔触山脊",
+   "prompt_structure": {
+    "composition": "一笔连续山脊横贯页宽，起伏有呼吸",
+    "void": "山脊四周纯宣纸地",
+    "material": "dry-brush ink on rice paper",
+    "text_zone": "left column quiet"
+   },
+   "avoid": [
+    "multiple peak clutter",
+    "digital airbrush gradients"
+   ],
+   "proven": {
+    "project": "2026-annual-review",
+    "verdict": "首版即过；release 档复验通过"
+   }
+  },
+  {
+   "key": "卷终落款页 × sumi-e editorial × 日出远峦",
+   "scenario": "卷终落款页",
+   "visual_world": "sumi-e editorial",
+   "subject": "日出远峦",
+   "prompt_structure": {
+    "composition": "山脊低带 + 中部雾海 + 上段平静",
+    "lighting": "one restrained warm dawn band",
+    "void": "upper half calm water",
+    "material": "shui-mo ink-wash, rice paper"
+   },
+   "avoid": [
+    "photographic appearance",
+    "photorealistic detail",
+    "oversaturated dawn sky",
+    "stock landscape feel"
+   ],
+   "proven": {
+    "project": "2026-annual-review",
+    "verdict": "首版摄影感翻车 → 硬锁材质语言后一次过；release 档通过"
+   }
+  },
+  {
+   "key": "年终总结封面 × sumi-e editorial × 远山雾海",
+   "scenario": "年终总结封面",
+   "visual_world": "sumi-e editorial",
+   "subject": "远山雾海",
+   "prompt_structure": {
+    "composition": "山脊色带只进下三分之一，上部大空",
+    "void": "上三分之二纯纸地",
+    "anchor": "left",
+    "lighting": "dawn haze",
+    "material": "Chinese ink-wash on rice paper, single deliberate brushwork"
+   },
+   "avoid": [
+    "photographic mountain silhouette",
+    "oversaturated red sun disc",
+    "center symmetric composition"
+   ],
+   "proven": {
+    "project": "2026-annual-review",
+    "verdict": "release 像素档通过（draft 87.9 → 修复后 blocking 0）"
+   }
+  },
+  {
+   "key": "时间轴数据页底 × sumi-e editorial × 数据雾",
+   "scenario": "时间轴数据页底",
+   "visual_world": "sumi-e editorial",
+   "subject": "数据雾",
+   "prompt_structure": {
+    "composition": "低对比等高线弥散场 + 稀疏朱砂点",
+    "material": "mineral ink on rice paper",
+    "anchor": "center-left",
+    "text_zone": "upper band readable"
+   },
+   "avoid": [
+    "chart clutter",
+    "3d decoration"
+   ],
+   "proven": {
+    "project": "2026-annual-review",
+    "verdict": "首版即过"
+   }
+  }
+ ]
+}
