@@ -1301,17 +1301,28 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             cursor += seg
         if element.get("legend") is not False:
             ly = bar_y + bar_h + 18
+            item_w = 16 + 150
+            # 图例与分段位置对应：每项居中于其分段下方（均布会让标签与色块错位）
+            seg_starts, cur = [], x
+            for r in rows[:8]:
+                seg_starts.append((cur, w * max(r["value"], 0) / total))
+                cur += w * max(r["value"], 0) / total
+            xs = [s_ + sw_ / 2 - item_w / 2 for s_, sw_ in seg_starts]
+            if xs and (xs[0] < x or xs[-1] + item_w > x + w or any(
+                    xs[i] + item_w > xs[i + 1] for i in range(len(xs) - 1))):
+                xs = None  # 分段过窄放不下时回落均布
             lx = x
             for i, r in enumerate(rows[:8]):
+                cur_x = xs[i] if xs else lx
                 dot = slide.shapes.add_shape(
-                    MSO_SHAPE.OVAL, Emu(emu(lx)), Emu(emu(ly + 4)), Emu(emu(10)), Emu(emu(10)))
+                    MSO_SHAPE.OVAL, Emu(emu(cur_x)), Emu(emu(ly + 4)), Emu(emu(10)), Emu(emu(10)))
                 dot.name = f"{eid}__dot_{i}"
                 solid_fill(dot.fill, ctx.series_color(i) if not element.get(
                     "ramp") else ctx.ramp_color(i))
                 dot.line.fill.background()
-                _textbox(slide, f"{eid}__legend_{i}", lx + 16, ly - 4, 150, 22,
+                _textbox(slide, f"{eid}__legend_{i}", cur_x + 16, ly - 4, 150, 22,
                          r["label"], 11, ink, ctx, element)
-                lx += 16 + 150 + 18
+                lx = cur_x + item_w + 18
         return
 
     if kind == "big_number_row":
@@ -1487,6 +1498,33 @@ DISPATCH = {
 }
 
 
+def _strip_theme_shadows(output_path) -> None:
+    """默认 Office 主题的 effectStyleLst 携带 outerShdw，部分渲染器
+    （LibreOffice 等）会无视 spPr 的空 effectLst 仍套用主题投影。
+    直接在 theme XML 中移除 outerShdw，从根源保证 Quiet-luxury 无投影。"""
+    import re as _re
+    import zipfile as _zip
+    import shutil as _shutil
+    path = Path(output_path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    changed = False
+    with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w", _zip.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.startswith("ppt/theme/") and item.filename.endswith(".xml"):
+                text = data.decode("utf-8")
+                stripped = _re.sub(r"<a:outerShdw\b.*?</a:outerShdw>", "", text,
+                                   flags=_re.S)
+                if stripped != text:
+                    data = stripped.encode("utf-8")
+                    changed = True
+            zout.writestr(item, data)
+    if changed:
+        _shutil.move(str(tmp), str(path))
+    else:
+        tmp.unlink(missing_ok=True)
+
+
 def compile_deck(spec: dict, output_path, checks: bool = True,
                  guard_rules: dict | None = None, spec_path: str | None = None) -> dict:
     """
@@ -1596,8 +1634,18 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
             except Exception as exc:  # 只记录，不静默改稿
                 ctx.warn(f"slide[{si}].elements[{ei}] ({element.get('id')}): {exc}")
 
+        # Quiet-luxury 硬约束：主题默认 effectStyleLst 会给一切形状/连接线/图片
+        # 继承标准 Office 投影，编辑式版面会显得廉价。统一移除继承，
+        # 深度感交给色阶、留白与细线，而不是投影。
+        for _shp in slide.shapes:
+            try:
+                _shp.shadow.inherit = False
+            except Exception:
+                pass
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
+    _strip_theme_shadows(output_path)
     report = {
         "passed": len(ctx.warnings) == 0,
         "slides": len(slides),

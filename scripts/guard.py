@@ -533,6 +533,72 @@ def _geometry_occlusion(slide: dict):
     return out
 
 
+def _optical_pair_alignment(slide: dict):
+    """小色块（图例块/圆点）与右侧紧贴文字必须垂直光学居中。
+
+    真实案例：10px 图例块与 12px 文字各写各的 y，渲染后文字上浮、色块下沉，
+    人眼立刻读作「没对齐」。柱条(h≤16)与端点读数同理。静态几何即可预防。"""
+    out = []
+    els = [e for e in slide.get("elements") or [] if isinstance(e, dict)]
+    texts = [e for e in els if str(e.get("type", "text")) == "text"]
+    for e in els:
+        if e.get("type") != "shape" or \
+                e.get("shape") not in ("rect", "rounded_rect", "oval"):
+            continue
+        try:
+            w = float(e.get("width", 0)); h = float(e.get("height", 0))
+            ex = float(e.get("x", 0)); ey = float(e.get("y", 0))
+        except (TypeError, ValueError):
+            continue
+        if not (0 < min(w, h) <= 16):
+            continue
+        right, cy = ex + w, ey + h / 2
+        for t in texts:
+            try:
+                tx = float(t.get("x", 0)); ty = float(t.get("y", 0))
+                th = float(t.get("height", 0))
+            except (TypeError, ValueError):
+                continue
+            # 同一行才算配对：水平紧贴 + 垂直范围相交，避免跨行误配
+            if not (right <= tx <= right + 24):
+                continue
+            if not (ty < ey + h and ty + th > ey):
+                continue
+            # 编译器文本顶锚+autofit：光学中心按行高模型算，而非声明盒中心
+            size = float(t.get("size", 12) or 12)
+            lh = float(t.get("line_height", 1.4) or 1.4)
+            single = (t.get("wrap") is False) or (t.get("max_lines") == 1)
+            lines = 1.0 if single else max(1.0, round(th / (size * lh)) if size * lh else 1.0)
+            delta = abs((ty + lines * size * lh / 2) - cy)
+            out.append((e.get("id"), t.get("id"), delta, tx - right))
+    return out
+
+
+def _baseline_crossings(slide: dict):
+    """柱体不得穿过基线：hairline 细线若落在某柱体内部（非底边），
+    渲染即读作「柱底越过坐标线」。真实案例：尺寸吸附把柱底抬过基线。"""
+    out = []
+    els = [e for e in slide.get("elements") or [] if isinstance(e, dict)]
+    rules = [e for e in els if e.get("type") == "shape"
+             and float(e.get("height", 9)) <= 2 and float(e.get("width", 0)) > 50
+             and e.get("fill") in ("hairline", "track")]
+    bars = [e for e in els if e.get("type") == "shape"
+            and e.get("shape") in ("rect", "rounded_rect")
+            and float(e.get("height", 0)) > 24]
+    for b in bars:
+        bx, by = float(b.get("x", 0)), float(b.get("y", 0))
+        bw, bh = float(b.get("width", 0)), float(b.get("height", 0))
+        for r in rules:
+            rx, ry = float(r.get("x", 0)), float(r.get("y", 0))
+            rw = float(r.get("width", 0))
+            if rx < bx + bw and rx + rw > bx and by + 1 < ry < by + bh - 1:
+                # track 型细线本就是柱内轨道（成对条形），只有穿过底边附近才算病
+                if r.get("fill") == "track" and ry < by + bh - 6:
+                    continue
+                out.append((b.get("id"), r.get("id"), ry - (by + bh)))
+    return out
+
+
 def _chart_values(chart: dict):
     """取图表里的全部数值（兼容 data 行与 series 两种写法）。"""
     vals = []
@@ -1285,6 +1351,32 @@ def check_spec(spec: dict, rules: dict | None = None,
                 f"「{a_id}」与「{b_id}」重叠 {ratio:.0%}（互相遮挡，"
                 f"其中一方信息实际不可读；挪开或删掉其一）")
 
+        # ── 光学对齐：小色块与紧贴文字必须垂直居中、间距一致 ──
+        _pairs = _optical_pair_alignment(s)
+        _gaps = []
+        for a_id, b_id, delta, gap in _pairs:
+            if delta > 3:
+                add("optical_alignment", sid, "warn",
+                    f"色块「{a_id}」与右侧文字「{b_id}」垂直偏差 {delta:.1f}px"
+                    f"（小色块/圆点与文字须光学居中，否则读作未对齐）")
+            if not 4 <= gap <= 20:
+                add("optical_alignment", sid, "warn",
+                    f"色块「{a_id}」与文字「{b_id}」间距 {gap:.0f}px 异常"
+                    f"（舒适区 4–20px）")
+            else:
+                _gaps.append((a_id, b_id, gap))
+        if len(_gaps) >= 2 and max(g for *_, g in _gaps) - min(g for *_, g in _gaps) > 2:
+            add("optical_alignment", sid, "warn",
+                f"页内色块-文字间距不一致（"
+                + "、".join(f"「{b}」{g:.0f}px" for _, b, g in _gaps)
+                + "；图例/读数对应组的间距应处处相等）")
+
+        # ── 柱体不得穿过基线（柱底压线是编辑式图表的契约）──
+        for b_id, r_id, over in _baseline_crossings(s):
+            add("baseline_crossing", sid, "warn",
+                f"柱体「{b_id}」底边越过基线「{r_id}」{-over:.0f}px"
+                f"（柱底应与基线共边，不得穿过）")
+
         # ── 主张 vs 图表：标题里的百分比必须能在图上算出来 ──
         # 真实案例：标题写「自有内容 61%」，图表单位是「指数点」，68/180=37.8%，
         # 主张与证据不符；另一页「Q4 占 38%」而实际 142/486=29%。这类错误
@@ -1658,6 +1750,7 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
         el_id = el.get("id")
         # ① 网格吸附：只碰几何四元组，绝不碰语义
         if do_grid and not el.get("grid_exempt"):
+            _ox, _oy = el.get("x"), el.get("y")  # 吸附前的边，用于保边尺寸吸附
             for f in ("x", "y"):
                 v = el.get(f)
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1677,11 +1770,28 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
             if not _thin:
                 for f in ("width", "height"):
                     v = el.get(f)
-                    if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    if not isinstance(v, (int, float)) or isinstance(v, bool):
+                        continue
+                    if el.get("type") == "shape":
+                        # 形状柱/色块按「远边就近吸附」取尺寸：与基线/邻块
+                        # 共享的边保持精确对齐（柱底压线这类细节的根因修复）；
+                        # 吸附后不足一格才回退只增不减。
+                        axis = "y" if f == "height" else "x"
+                        orig = _oy if axis == "y" else _ox
+                        if isinstance(orig, (int, float)):
+                            far = _snap_pos(float(orig) + float(v), grid_unit)
+                            snapped = far - float(el[axis])
+                            if snapped < grid_unit:
+                                snapped = _snap_size(v, grid_unit)
+                            snapped = int(snapped)
+                        else:
+                            snapped = _snap_size(v, grid_unit)
+                    else:
+                        # 文本/图表容器：只增不减，防溢出
                         snapped = _snap_size(v, grid_unit)
-                        if snapped != v:
-                            _record(slide_id, el_id, f, v, snapped, "grid_snap_size")
-                            el[f] = snapped
+                    if snapped != v:
+                        _record(slide_id, el_id, f, v, snapped, "grid_snap_size")
+                        el[f] = snapped
         # ② 色彩 token 归一
         if colors and color_tokens:
             for f in _COLOR_FIELDS:
