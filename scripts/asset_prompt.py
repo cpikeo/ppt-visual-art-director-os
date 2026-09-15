@@ -505,6 +505,68 @@ QC_BALANCE_GAP = 0.18              # 左右/上下亮度失衡阈值
 QC_SUBJECT_MARGIN = 0.02           # 主体贴边判定阈值（主体质量占比达到此比例视为贴边）
 QC_TEXT_RANGE = 0.30               # 安全区亮度需落在此范围外才同时支持深浅文字
 
+# QC 是资产局部体检，不是整副 deck 的 QA。默认最多允许一次定向重出；
+# review/release 只记录问题并交给人工/qa 处理，不由资产脚本自动升级流程。
+ASSET_QC_MAX_RETRIES = 1
+ASSET_QC_BLOCKING_CHECKS = frozenset({
+    "text_safe_area", "negative_space_ratio", "subject_position",
+    "contrast_suitability",
+})
+ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance"})
+ASSET_QC_PHASES = frozenset({"draft", "review", "release"})
+
+
+def qc_retry_decision(qc: dict, *, attempt: int = 0,
+                      phase: str = "draft", max_retries: int = ASSET_QC_MAX_RETRIES) -> dict:
+    """把 image_qc 结果翻译成有界动作，不改变 run_qa 的 review/release 档位。
+
+    ``attempt`` 从 0 开始。draft 只对影响文字安全区/构图可用性的检查自动
+    允许一次定向重出；brightness_balance 仅建议。review/release 不自动重出，
+    release 的阻断信号仍须由最终 QA/Manifest 消费，而不是由这层伪造通过。
+    """
+    phase = str(phase or "draft").strip().lower()
+    if phase not in ASSET_QC_PHASES:
+        raise ValueError(f"unknown asset QC phase {phase!r}; "
+                         f"choose one of {', '.join(sorted(ASSET_QC_PHASES))}")
+    try:
+        attempt = max(0, int(attempt))
+    except (TypeError, ValueError):
+        attempt = 0
+    try:
+        requested = max(0, int(max_retries))
+    except (TypeError, ValueError):
+        requested = ASSET_QC_MAX_RETRIES
+    retry_cap = min(requested, ASSET_QC_MAX_RETRIES)
+    checks = qc.get("checks") or [] if isinstance(qc, dict) else []
+    issues = [c for c in checks if isinstance(c, dict) and c.get("status") == "issue"]
+    blocking = [c for c in issues if c.get("check") in ASSET_QC_BLOCKING_CHECKS]
+    advisory = [c for c in issues if c.get("check") in ASSET_QC_ADVISORY_CHECKS
+                 or c.get("check") not in ASSET_QC_BLOCKING_CHECKS]
+    missing_file = isinstance(qc, dict) and qc.get("status") == "error"
+    if missing_file:
+        action = "block"
+    elif not blocking:
+        action = "accept" if not advisory else "accept_with_advisory"
+    elif phase == "draft" and attempt < retry_cap:
+        action = "retry"
+    elif phase == "release":
+        action = "block"
+    else:
+        action = "flag"
+    return {
+        "action": action,
+        "retry": action == "retry",
+        "attempt": attempt,
+        "max_retries": retry_cap,
+        "phase": phase,
+        "blocking_checks": [c.get("check") for c in blocking],
+        "advisory_checks": [c.get("check") for c in advisory],
+        "manual_required": bool(blocking and action != "retry") or missing_file,
+        "triggers_review": False,
+        "triggers_release": False,
+    }
+
+
 # 安全区定义：文字通常落在声明锚点的对面/一侧（留白区），按锚点取一块矩形。
 _SAFE_ZONES = {
     "left":   (0.00, 0.00, 0.45, 0.55),
@@ -669,23 +731,32 @@ def main(argv=None) -> int:
                         choices=list(_SAFE_ZONES), help="文字安全区锚点（默认 left）")
     parser.add_argument("--text", choices=["dark", "light"],
                         help="安全区预期文字颜色（dark=深色文字需亮底 / light=浅色文字需暗底）")
+    parser.add_argument("--phase", choices=sorted(ASSET_QC_PHASES), default="draft",
+                        help="资产 QC 所属阶段；不自动触发 review/release（默认 draft）")
+    parser.add_argument("--attempt", type=int, default=0,
+                        help="当前出图尝试次数，从 0 开始；自动重出最多一次")
     args = parser.parse_args(argv)
 
     if args.qc:
         text_dark = {"dark": True, "light": False}.get(args.text)
         out = image_qc(args.qc, safe_area=args.safe_area, text_is_dark=text_dark)
+        out["policy"] = qc_retry_decision(out, attempt=args.attempt, phase=args.phase)
         if args.json:
             print(json.dumps(out, ensure_ascii=False, indent=2))
             return 0
         print(f"image-qc: {out['file']} → {out['status']}"
               + (f"（{out['issue_count']} 项待改）" if out.get("issue_count") else ""))
+        print(f"  policy: {out['policy']['action']}"
+              + ("（不会自动进入 review/release）" if out['policy']['retry']
+                 else ""))
         for c in out["checks"]:
             if c["status"] == "issue":
                 print(f"  [x] {c['check']}: {c['issue']}")
                 print(f"      → {c['suggestion']}")
             else:
                 print(f"  [ok] {c['check']}")
-        return 0 if out["status"] == "ok" else 1
+        # 建议级 QC 不让 shell/CI 误判失败；阻断项才要求重出或人工处理。
+        return 0 if out["policy"]["action"] in ("accept", "accept_with_advisory") else 1
 
     if not args.card:
         parser.error("需要 card 模块路径")

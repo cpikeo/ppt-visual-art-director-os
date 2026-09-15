@@ -48,6 +48,7 @@ MEDIA_MODEL = {
     "PROCESS": (False, 0.05, "流程页：步骤序列自带视觉性"),
     "COMPARISON": (False, 0.08, "对比页：左右张力来自内容本身"),
     "EVIDENCE": (False, 0.10, "证据页：数字与来源的可信度不需要装饰"),
+    "CASE_STUDY": (True, 0.45, "案例页：仅在图像证明现场/人物/结果时使用 proof 媒体"),
 }
 
 # route 家族名 → 媒体模型家族（两套命名的一致层，唯一映射源）
@@ -55,6 +56,7 @@ FAMILY_ALIASES = {
     "COVER": "HERO", "DATA_STORY": "DATA", "MINIMAL_STATEMENT": "STATEMENT",
     "EDITORIAL": "STORY", "NARRATIVE": "STORY", "FRAMEWORK": "STRUCTURE",
     "EXECUTIVE_SUMMARY": "EVIDENCE", "EVIDENCE_FIELD": "EVIDENCE",
+    "CASE_STUDY": "CASE_STUDY",
     "HERO_COVER": "HERO", "SECTION_DIVIDER": "SECTION",
 }
 
@@ -77,6 +79,7 @@ INTENT_PRESETS = {
     "PROCESS": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
     "STRUCTURE": {"energy": "low", "density": "balanced", "empty_space_role": "separate_chapter"},
     "STORY": {"energy": "medium", "density": "balanced", "empty_space_role": "hold_emotion"},
+    "CASE_STUDY": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
     "CLOSING": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
 }
 

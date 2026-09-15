@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFS = ROOT / "references"
 SCRIPTS = ROOT / "scripts"
 REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "production-contract.md"}
-REQUIRED_SCRIPTS = {"compiler.py", "primitives.py", "guard.py", "render_check.py", "qa.py", "asset_prompt.py", "route.py", "ghost.py", "design_intelligence.py", "layout_search.py", "intent_compiler.py", "design_intelligence_rules.py"}
+REQUIRED_SCRIPTS = {"compiler.py", "primitives.py", "guard.py", "render_check.py", "compile_cache.py", "qa.py", "asset_prompt.py", "route.py", "pipeline.py", "ghost.py", "design_intelligence.py", "layout_search.py", "intent_compiler.py", "design_intelligence_rules.py"}
 
 
 def load(name, path):
@@ -191,7 +191,27 @@ def check_execution_modes():
           # 模式档案里不再有 preflight_gate / 稳定性字段
           and all("preflight_gate" not in m and "stability" not in m
                   for m in modes.values())
-          and qa_mod.mode_profile("bogus")["qa_level"] == 3)   # 未知 → 宁严勿松
+          and qa_mod.mode_profile(None)["render"] is False
+          and qa_mod.mode_profile("")["render"] is False)
+    try:
+        qa_mod.mode_profile("bogus")
+        unknown_mode_ok = False
+    except ValueError:
+        unknown_mode_ok = True
+    ok = ok and unknown_mode_ok       # 未知模式必须显式报错，不能宁严静默回落
+    # API 默认也必须是 draft，而不是只有 CLI 看起来像 draft。
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        default_run = qa_mod.run_qa(
+            {"canvas": {"width": 1280, "height": 720}, "slides": []},
+            pathlib.Path(td) / "default.pptx")
+        empty_run = qa_mod.run_qa(
+            {"canvas": {"width": 1280, "height": 720}, "slides": []},
+            pathlib.Path(td) / "empty-mode.pptx", mode="")
+    ok = ok and (default_run.get("execution") or {}).get("mode") == "draft" \
+        and (empty_run.get("execution") or {}).get("mode") == "draft" \
+        and default_run.get("performance", {}).get("qa_level") == 1 \
+        and not (default_run.get("render") or {}).get("rendered", False)
     # 已被删除的机制不得复活（Stability Gate / Studio 状态机 / Critic 结果缓存与引擎）
     ok = ok and not hasattr(qa_mod, "_stability_decision") \
         and not hasattr(qa_mod, "_load_studio_state") \
@@ -357,6 +377,9 @@ def check_pre_critic():
             "NO_MEMORY_ANCHOR", "FOCUS_AREA_RISK", "RHYTHM_FLAT_RISK"}
     ok = want <= codes and rep["summary"]["high"] >= 6
     ok = ok and all(r.get("root_cause") and r.get("prevention") for r in rep["risks"])
+    ok = ok and rep.get("root_cause_summary") and all(
+        set(c) >= {"root_cause", "risk_count", "representative_pages", "fix_first"}
+        for c in rep["root_cause_summary"])
     ok = ok and rep["first_fix"]["root_cause"] in {
         r["root_cause"] for r in rep["risks"] if r["level"] == "high"}
     # 好 spec（单一 40px 锚点 + muted 正文 + 无图表）→ 0 high
@@ -494,8 +517,11 @@ def check_auto_fit():
           and opt["size"] < 40
           and noopt["size"] == 40 and noopt.get("padding") == 8   # 未声明零改动
           and len(rep["items"][0]["steps"]) >= 2)
-    # 入参未被修改（纯函数）
+    # 入参未被修改（纯函数）；没有 auto_fit 时不做无效 deepcopy。
     ok = ok and spec["slides"][0]["elements"][0]["size"] == 40
+    plain = {"slides": [{"elements": [{"type": "text", "id": "plain"}]}]}
+    same, nofit = di.apply_fit_ladder(plain)
+    ok = ok and same is plain and nofit == {"applied": 0, "items": [], "needs_rewrite": []}
     return {"status": "PASS" if ok else "FAIL", "steps": rep["items"][0]["steps"]}
 
 
@@ -547,6 +573,29 @@ def check_pipeline():
     return result
 
 
+def check_single_process_pipeline():
+    """规划链只算一次 route，并返回可复用的 bundle。"""
+    try:
+        pipeline = load("pipeline", SCRIPTS / "pipeline.py")
+        need = {"audience": "管理层", "decision": "决定是否继续", "occasion": "季度复盘",
+                "design_direction": "evidence_first",
+                "slides": ["结论", "证据", "行动"]}
+        bundle = pipeline.build_plan_bundle(need)
+        pages = bundle.get("pages") or []
+        ok = (bundle.get("schema") == "vao-plan-v1"
+              and bundle.get("plan", {}).get("pages")
+              and len(pages) == len(bundle["plan"]["pages"])
+              and bundle["performance"].get("route_calls") == 1
+              and bundle["performance"].get("rendered") is False
+              and bundle["performance"].get("compiled") is False
+              and bundle.get("brief", {}).get("source_hash"))
+        return {"status": "PASS" if ok else "FAIL",
+                "route_calls": bundle.get("performance", {}).get("route_calls"),
+                "pages": len(pages)}
+    except Exception as exc:
+        return {"status": "FAIL", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def check_background_layer():
     """整幅画心 + 文字直接叠加：静态预检放行，编译器把背景层置底并补内容保护层。"""
     import tempfile
@@ -575,13 +624,24 @@ def check_background_layer():
     g = guard.check_spec(spec)
     clash = [c for c in g["checks"] if c["rule"] in ("overlap", "source_zone")]
     unprotected = [c for c in g["checks"] if "BG_UNPROTECTED" in str(c["id"])]
+    # 回归：通用 overlap 路径必须真的执行；错误的 _box 参数曾被 TypeError
+    # 静默吞掉，导致所有 text/chart/image 重叠检查失效。
+    overlap_spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                    "slides": [{"id": "o1", "elements": [
+                        {"type": "text", "id": "a", "x": 100, "y": 100,
+                         "width": 300, "height": 100, "text": "A", "color": "ink"},
+                        {"type": "text", "id": "b", "x": 150, "y": 120,
+                         "width": 300, "height": 100, "text": "B", "color": "ink"}]}]}
+    overlap_report = guard.check_spec(overlap_spec)
+    overlap_detected = any(c.get("rule") == "overlap" for c in overlap_report.get("checks", []))
     with tempfile.TemporaryDirectory() as d:
         out = pathlib.Path(d) / "t.pptx"
         rep = comp.compile_deck(spec, out, checks=False)
         names = [sh.name for sh in Presentation(str(out)).slides[0].shapes]
-    ok = (not clash and not unprotected and rep["passed"]
+    ok = (not clash and not unprotected and overlap_detected and rep["passed"]
           and names[:2] == ["bg", "bg__protection"] and "t" in names)
-    return {"status": "PASS" if ok else "FAIL", "clash": len(clash), "z_order": names[:3],
+    return {"status": "PASS" if ok else "FAIL", "clash": len(clash),
+            "overlap_detected": overlap_detected, "z_order": names[:3],
             "compile_warnings": rep["warnings"][:2]}
 
 
@@ -598,15 +658,30 @@ def check_route_layer():
     # 通用商业词（品牌/高端/年报）不得把 deck 推给宋体方向——拒绝排版/配色蔓延
     brand_deck = route.plan_deck({"occasion": "品牌发布会",
                                   "slides": ["封面", "产品", "收尾"]})
+    benchmark = route.plan_deck({"occasion": "品牌年度报告",
+                                 "quality_level": "benchmark",
+                                 "design_direction": "Quiet Luxury × Editorial Storytelling",
+                                 "slides": ["封面", "证据", "结语"]})
+    false_story = route.detect_type("history of the company")
     ok = (fast["page_family"] == "DATA_STORY" and fast["asset"]["decision"] == "none"
           and cover["content_type"] == "cover" and cover["asset"]["decision"] == "required"
+          and set(deck.get("intent_interpretation", {})) >= {"explicit", "inferred", "conflicts"}
+          and all(set(p.get("intent_interpretation", {})) >= {"explicit", "inferred", "conflicts"}
+                  for p in deck.get("pages", []))
           and deck["path"] == "fast" and deck["budget"]["max_asset_calls"] == 2
           and not clash and dens[0] == "sparse" and dens[-1] == "sparse"
           # 缺省方向 = 中性；宋体（editorial_brand）只在显式声明时用
-          and brand_deck["design_direction"] == "quiet_minimal")
+          and brand_deck["design_direction"] == "quiet_minimal"
+          # 自由文本方向与 benchmark 质量不得静默降级
+          and benchmark["design_direction"] == "editorial_brand"
+          and benchmark["quality_level"] == "advanced"
+          and benchmark["path"] == "advanced"
+          and false_story != "brand_story")
     return {"status": "PASS" if ok else "FAIL", "fast_asset": fast["asset"]["decision"],
             "density_curve": dens, "path": deck["path"],
-            "brand_default_direction": brand_deck["design_direction"]}
+            "brand_default_direction": brand_deck["design_direction"],
+            "benchmark_direction": benchmark["design_direction"],
+            "benchmark_quality": benchmark["quality_level"]}
 
 
 def check_qa_performance_keys():
@@ -626,12 +701,30 @@ def check_qa_performance_keys():
                                       "line_height": 1.2, "padding": 0}]}]}
     with tempfile.TemporaryDirectory() as d:
         r = qa.run_qa(spec, pathlib.Path(d) / "t.pptx", render=False)
+        advisory = qa.run_qa(spec, pathlib.Path(d) / "advisory.pptx",
+                             render=False, include_advisory=True)
+        bad = {**spec, "slides": [{**spec["slides"][0],
+                                    "elements": [{**spec["slides"][0]["elements"][0],
+                                                   "width": 0}]}]}
+        gated = qa.run_qa(bad, pathlib.Path(d) / "gated.pptx",
+                          render=False, include_advisory=True)
     perf = r.get("performance") or {}
-    keys = {"total_ms", "guard_ms", "compile_ms", "render_ms", "slides", "risk_items",
-            "render_skipped"}
-    ok = (keys <= set(perf) and (r.get("risk") or {}).get("risks") is not None
-          and "preflight" not in r             # 预检层已并入 risk_prediction
-          and perf["slides"] == 1)
+    keys = {"total_ms", "guard_ms", "compile_ms", "advisory_ms", "render_ms",
+            "slides", "risk_items", "render_skipped", "cache_reason",
+            "render_cache_reason", "output_attestation_ms", "semantic_compile_view_available",
+            "artifact_attested", "provenance_required"}
+    gate = (gated.get("risk") or {})
+    ok = (keys <= set(perf) and "risk" not in r
+          and "pre_critic" not in r
+          and "risk" in advisory and "pre_critic" not in advisory
+          and gate.get("skipped") is True
+          and (gate.get("reason") == "engineering_gate")
+          and "preflight" not in r             # 设计建议不属于默认 QA
+          and perf["slides"] == 1
+          and perf["cache_reason"] in {"cache_miss", "view_and_output_attestation_match"}
+          and perf["artifact_attested"] is True
+          and isinstance(r.get("compile", {}).get("semantic_compile_view"), str)
+          and r.get("compile", {}).get("artifact_sha256") == r.get("compile", {}).get("output_sha256"))
     return {"status": "PASS" if ok else "FAIL",
             "perf": {k: perf.get(k) for k in ("guard_ms", "compile_ms", "render_ms")}}
 
@@ -680,9 +773,12 @@ def check_progressive_qa():
     picked = qa.key_pages(spec)
     with tempfile.TemporaryDirectory() as d:
         out = pathlib.Path(d) / "prog.pptx"
-        r1 = qa.run_qa(spec, out, render_dir=pathlib.Path(d) / "r1", qa_level=1, dpi=60)
-        r2 = qa.run_qa(spec, out, render_dir=pathlib.Path(d) / "r2", qa_level=2, dpi=60)
-        r3 = qa.run_qa(spec, out, render_dir=pathlib.Path(d) / "r3", qa_level=3, dpi=60)
+        r1 = qa.run_qa(spec, out, mode="draft",
+                        render_dir=pathlib.Path(d) / "r1", qa_level=1, dpi=60)
+        r2 = qa.run_qa(spec, out, mode="review",
+                        render_dir=pathlib.Path(d) / "r2", qa_level=2, dpi=60)
+        r3 = qa.run_qa(spec, out, mode="release",
+                        render_dir=pathlib.Path(d) / "r3", qa_level=3, dpi=60)
     cov2 = (r2.get("render") or {}).get("coverage") or {}
     # 子集渲染必须按绝对页码对齐，不能把 s01 的指标串到 s02 上
     aligned = [p["index"] for p in (r2.get("render_evidence") or {}).get("pages") or []]
@@ -738,8 +834,35 @@ def check_render_cache():
     import time
     rc = load("render_check", SCRIPTS / "render_check.py")
     comp = load("compiler", SCRIPTS / "compiler.py")
+    # 即使没有 LibreOffice，也能验证 PDF 中间产物的完整性戳：旧 metadata
+    # 只有 PPTX/renderer/页数时会接受被替换的 PDF，必须安全 miss。
+    pdf_attestation = False
+    with tempfile.TemporaryDirectory() as pdf_tmp:
+        pdf_root = pathlib.Path(pdf_tmp)
+        pdf_work = pdf_root / "render"
+        pdf_work.mkdir()
+        pdfx = pdf_root / "deck.pptx"
+        pdff = pdf_work / "deck.pdf"
+        renderer_stub = pdf_root / "soffice-stub"
+        pdfx.write_bytes(b"pptx")
+        pdff.write_bytes(b"pdf-original")
+        renderer_stub.write_bytes(b"renderer")
+        rc._patch_meta(pdf_work, pdf={"name": pdff.name,
+                                      "pptx_sha": rc._file_sha(pdfx),
+                                      "pdf_sha": rc._file_sha(pdff),
+                                      "renderer": rc.renderer_identity(str(renderer_stub))})
+        old_count = rc._pdf_page_count
+        rc._pdf_page_count = lambda _path: 1
+        try:
+            pdf_hit = rc._pdf_is_reusable(pdfx, pdf_work, str(renderer_stub))
+            pdff.write_bytes(b"pdf-tampered")
+            pdf_miss = rc._pdf_is_reusable(pdfx, pdf_work, str(renderer_stub))
+        finally:
+            rc._pdf_page_count = old_count
+        pdf_attestation = pdf_hit == pdff and pdf_miss is None
     if not (shutil.which("soffice") or shutil.which("libreoffice")):
-        return {"status": "PASS", "skipped": "no LibreOffice in env"}
+        return {"status": "PASS" if pdf_attestation else "FAIL",
+                "skipped": "no LibreOffice in env", "pdf_attestation": pdf_attestation}
     theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
                         "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
 
@@ -771,7 +894,8 @@ def check_render_cache():
         metrics_same = all(abs(a[k] - b[k]) < 1e-9
                            for a, b in zip(cold["pages"], warm["pages"])
                            for k in ("occupancy", "brightness", "gravity_drift"))
-    ok = (cold["rendered"] and cold["coverage"]["cache_misses"] == 2
+    ok = (pdf_attestation
+          and cold["rendered"] and cold["coverage"]["cache_misses"] == 2
           and warm["rendered"] and warm["coverage"]["cache_hits"] == 2
           and warm["coverage"]["cache_misses"] == 0 and warm["coverage"]["workers"] == 0
           and warm_ms < 900 and all(p.get("cached") for p in warm["pages"])
@@ -780,9 +904,31 @@ def check_render_cache():
           and [bool(p.get("cached")) for p in inc["pages"]] == [True, False]
           and pngs_kept and metrics_same and len(entries) == 2)   # 旧键被裁掉，缓存不会无限增长)
     return {"status": "PASS" if ok else "FAIL", "warm_ms": round(warm_ms),
+            "pdf_attestation": pdf_attestation,
             "cold_misses": cold["coverage"]["cache_misses"],
             "incremental": [(p["slide"], bool(p.get("cached"))) for p in inc["pages"]],
             "entries": len(entries), "pngs_kept": pngs_kept, "metrics_same": metrics_same}
+
+
+def check_render_request_bounds():
+    """渲染请求边界：空集/全越界只能 SKIPPED，不得宣称 rendered=True。"""
+    import tempfile
+    rc = load("render_check_bounds", SCRIPTS / "render_check.py")
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "slides": [{"id": "s01", "elements": []}]}
+    with tempfile.TemporaryDirectory() as d:
+        empty = rc.render_evidence(pathlib.Path(d) / "missing.pptx", spec,
+                                   pathlib.Path(d) / "render", pages=[])
+        invalid = rc.render_evidence(pathlib.Path(d) / "missing.pptx", spec,
+                                     pathlib.Path(d) / "render2", pages=[0, 99, True])
+    ok = (empty.get("rendered") is False and empty.get("skipped") is True
+          and empty.get("coverage", {}).get("rendered_pages") == 0
+          and invalid.get("rendered") is False and invalid.get("skipped") is True
+          and invalid.get("coverage", {}).get("invalid_requested") == [0, 99, True])
+    return {"status": "PASS" if ok else "FAIL",
+            "empty_rendered": empty.get("rendered"),
+            "invalid_rendered": invalid.get("rendered"),
+            "invalid_requested": invalid.get("coverage", {}).get("invalid_requested")}
 
 
 def check_cache_content_verify():
@@ -796,9 +942,13 @@ def check_cache_content_verify():
         a.write_bytes(b"pixel-A")
         b.write_bytes(b"pixel-B")
         sha_a = rc._file_sha(a)
-        entry_ok = {"png": a.name, "png_sha": sha_a}
-        same_exists_other_content = {"png": a.name, "png_sha": rc._file_sha(b)}
-        legacy = {"png": a.name}                                   # 旧格式：无指纹
+        metrics = {"brightness": 0.5, "edge": 0.1, "occupancy": 0.2,
+                   "margin_occupancy": 0.1, "saliency_centroid": [0.5, 0.5],
+                   "accent_pixel_ratio": 0.01, "saturated_pixel_ratio": 0.02,
+                   "background_luma": 0.9, "optical_alignment": {}}
+        entry_ok = {"png": a.name, "png_sha": sha_a, **metrics}
+        same_exists_other_content = {"png": a.name, "png_sha": rc._file_sha(b), **metrics}
+        legacy = {"png": a.name}                                   # 旧格式：无指纹/证据字段
         hit_before = rc._png_present(work, entry_ok)               # 未篡改 → 应命中
         a.write_bytes(b"pixel-A-tampered")                          # 缓存被别页像素顶替
         res = {
@@ -1151,14 +1301,94 @@ def check_multi_series():
     g = guard.check_spec(spec)
     codes = {c["rule"] for c in g.get("checks") or []}
     msgs = "\n".join(g.get("warnings") or [])
+    mismatch = json.loads(json.dumps(spec))
+    mismatch["slides"][0]["elements"][0]["series"][1]["values"] = [2, 3]
+    gm = guard.check_spec(mismatch)
     guard_ok = ("data_integrity" not in codes and "chart_highlight" not in codes
-                and "缺少 data" not in msgs)
+                and "缺少 data" not in msgs
+                and any("长度" in c.get("msg", "") for c in gm.get("checks", [])))
     with tempfile.TemporaryDirectory() as d:
         out = pathlib.Path(d) / "m.pptx"
         rep = comp.compile_deck(spec, out, checks=False)
     render_ok = rep["passed"] and "已跳过" not in "\n".join(rep["warnings"])
     return {"status": "PASS" if (guard_ok and render_ok) else "FAIL",
-            "guard_ok": guard_ok, "render_ok": render_ok}
+            "guard_ok": guard_ok, "render_ok": render_ok,
+            "length_mismatch_blocked": guard_ok}
+
+
+def check_compile_cache_projection():
+    """轻量编译缓存与渲染缓存保持同一像素投影，且不拖入渲染依赖。"""
+    import ast
+    import tempfile
+    cc = load("compile_cache_contract", SCRIPTS / "compile_cache.py")
+    rc = load("render_check_contract", SCRIPTS / "render_check.py")
+    tree = ast.parse((SCRIPTS / "compile_cache.py").read_text(encoding="utf-8"))
+    imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+    imported = set()
+    for node in imports:
+        if isinstance(node, ast.Import):
+            imported.update(a.name.split(".")[0] for a in node.names)
+        else:
+            imported.add(node.module or "")
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#fff", "ink": "#111"},
+                      "constraints": {"max_colors": 5}, "notes": "not pixels"},
+            "slides": [{"id": "s01", "page_intent": {"insight": "A"},
+                        "notes": "not pixels", "elements": [{"type": "text", "x": 10,
+                        "y": 20, "width": 100, "height": 40, "text": "A"}]}]}
+    with tempfile.TemporaryDirectory() as td:
+        work = pathlib.Path(td)
+        pptx = work / "deck.pptx"
+        pptx.write_bytes(b"pptx-bytes")
+        view_a = cc.spec_view(spec, base_path=work)
+        view_b = rc.spec_view(spec, base_path=work)
+        import hashlib
+        report = {"passed": True, "slides": 1, "warnings": [],
+                  "output_sha256": hashlib.sha256(b"pptx-bytes").hexdigest(),
+                  "output_path": str(pptx), "guard": {"x": 1}}
+        cc.record_compile(work, pptx, view_a, report)
+        meta_compile = json.loads((work / cc.RENDER_META_NAME).read_text(encoding="utf-8")).get("compile", {})
+        semantic_meta = meta_compile.get("semantic_view") == view_a
+        hit = cc.compile_reuse(work, pptx, view_a)
+        pptx.write_bytes(b"changed")
+        miss_after_change = cc.compile_reuse(work, pptx, view_a) is None
+        asset_root = work / "build-assets"
+        asset_root.mkdir()
+        media = asset_root / "media.png"
+        media.write_bytes(b"1111")
+        fixed = 1700000000
+        import os as _os
+        _os.utime(media, (fixed, fixed))
+        media_spec = {"canvas": spec["canvas"], "slides": [{"id": "s01",
+            "elements": [{"type": "image", "src": "media.png"}]}]}
+        # output_dir 与 build module 目录不同：spec_path 必须让缓存看到真实素材，
+        # 否则「缺失」会被错误地写进 view，后续图片替换也无法可靠失效。
+        media_missing = cc.spec_view(media_spec, base_path=work)
+        media_a = cc.spec_view(media_spec, base_path=work,
+                               spec_path=asset_root / ("build" + ".py"))
+        media.write_bytes(b"2222")
+        _os.utime(media, (fixed, fixed))
+        media_b = cc.spec_view(media_spec, base_path=work,
+                               spec_path=asset_root / ("build" + ".py"))
+        (work / cc.RENDER_META_NAME).write_text("[truncated", encoding="utf-8")
+        cc.record_compile(work, pptx, view_a, report)
+        metadata_valid = isinstance(json.loads((work / cc.RENDER_META_NAME).read_text()), dict)
+        renderer = work / "renderer"
+        renderer.write_bytes(b"v1")
+        renderer_a = rc.renderer_identity(str(renderer))
+        renderer.write_bytes(b"v2-upgraded")
+        renderer_b = rc.renderer_identity(str(renderer))
+    ok = (view_a == view_b and semantic_meta and hit and hit.get("reused") is True
+          and miss_after_change and media_missing != media_a and media_a != media_b
+          and metadata_valid and renderer_a != renderer_b
+          and imported <= {"__future__", "hashlib", "json", "os",
+                           "pathlib", "tempfile"})
+    return {"status": "PASS" if ok else "FAIL", "same_view": view_a == view_b,
+            "reuse_hit": bool(hit), "semantic_view_recorded": semantic_meta,
+            "media_content_collision_rejected": media_a != media_b,
+            "media_spec_path_resolved": media_missing != media_a,
+            "metadata_atomic_recovered": metadata_valid, "renderer_upgrade_rejected": renderer_a != renderer_b,
+            "imports": sorted(imported)}
 
 
 def check_cache_projection():
@@ -1217,6 +1447,9 @@ def check_cache_projection():
 def check_manifest_attestation():
     """发布清单不得承认来历不明的报告：戳不符 / 无戳却称 PASS / 幽灵页面 → BLOCKED。
     （v4.15 单引擎：攻击面只剩 qa_report——证明链口径一律按 QA 报告走。）"""
+    import hashlib
+    import os
+    import tempfile
     prim = load("primitives", SCRIPTS / "primitives.py")
     qa = load("qa", SCRIPTS / "qa.py")
     spec = {"canvas": {"width": 1280, "height": 720}, "slides": [{"id": "s01"}, {"id": "s02"}]}
@@ -1225,22 +1458,40 @@ def check_manifest_attestation():
                                           "canvas": {"height": 720, "width": 1280},
                                           })
     differs = fp != prim.spec_fingerprint({**spec, "slides": [{"id": "s01"}]})
+    fd, output_name = tempfile.mkstemp(prefix="manifest-attest-", suffix=".pptx")
+    os.close(fd)
+    output_path = pathlib.Path(output_name)
+    output_path.write_bytes(b"editable-pptx-attestation")
+    output_sha = hashlib.sha256(output_path.read_bytes()).hexdigest()
     good_qa = {"status": "PASS", "source_spec_hash": fp, "release_eligible": True,
-               "render": {"coverage": {"rendered_pages": 2, "total_pages": 2,
-                                      "rendered_ids": ["s01", "s02"]}},
-               "render_evidence": {"pages": [{"slide": "s01"}, {"slide": "s02"}]}}
+               "execution": {"mode": "release"},
+               "performance": {"qa_level": 3},
+               "compile": {"passed": True, "output_path": str(output_path),
+                           "output_sha256": output_sha},
+               "render": {"rendered": True,
+                          "coverage": {"rendered_pages": 2, "total_pages": 2,
+                                       "rendered_ids": ["s01", "s02"]}},
+               "render_evidence": {"rendered": True,
+                                   "pages": [{"slide": "s01"}, {"slide": "s02"}]}}
     m0 = qa.release_manifest(spec, good_qa)
     m1 = qa.release_manifest(spec, {**good_qa, "render_evidence": {
         "pages": [{"slide": "s01"}, {"slide": "s02"}, {"slide": "ghost"}]}})
     m2 = qa.release_manifest(spec, {**good_qa, "source_spec_hash": "deadbeef00000000"})
     m3 = qa.release_manifest(spec, {k: v for k, v in good_qa.items() if k != "source_spec_hash"})
+    m4 = qa.release_manifest(spec, {**good_qa, "release_eligible": False})
+    try:
+        output_path.unlink(missing_ok=True)
+    except OSError:
+        pass
     ok = (stable and differs and m0["status"] == "PASS" and not m0["validation"]["issues"]
           and m1["status"] == "BLOCKED" and m2["status"] == "BLOCKED"
-          and m3["status"] == "BLOCKED"
+          and m3["status"] == "BLOCKED" and m4["status"] == "BLOCKED"
           and m0["source_spec_hash"] == fp
           and "critic_report" not in m0)
     return {"status": "PASS" if ok else "FAIL", "clean": m0["status"],
-            "ghost": m1["status"], "stale": m2["status"], "unstamped_pass": m3["status"]}
+            "ghost": m1["status"], "stale": m2["status"],
+            "unstamped_pass": m3["status"], "ineligible_pass": m4["status"],
+            "output_attestation": bool(good_qa["compile"].get("output_sha256"))}
 
 
 def check_optical_alignment():
@@ -1545,6 +1796,9 @@ def check_geometry_degenerate():
     zero = _mk([dict(base, width=0, height=40)])
     neg = _mk([dict(base, width=300, height=-8)])
     nonnum = _mk([dict(base, width="300px", height=40)])
+    nan = _mk([dict(base, x=float("nan"), width=300, height=40)])
+    inf = _mk([dict(base, y=float("inf"), width=300, height=40)])
+    boolean = _mk([dict(base, x=True, width=300, height=40)])
     good = _mk([dict(base, width=800, height=40)])
     miss_xy = _mk([{k: v for k, v in dict(base, width=800, height=40).items()
                     if k not in ("x", "y")}])
@@ -1553,11 +1807,88 @@ def check_geometry_degenerate():
           and any("geometry 退化" in w for w in _es(zero)) and zero.get("passed") is False
           and any("geometry 退化" in w for w in _es(neg)) and neg.get("passed") is False
           and any("非数值" in w for w in _es(nonnum)) and nonnum.get("passed") is False
+          and any("非数值" in w for w in _es(nan)) and nan.get("passed") is False
+          and any("非数值" in w for w in _es(inf)) and inf.get("passed") is False
+          and any("非数值" in w for w in _es(boolean)) and boolean.get("passed") is False
           and not _es(good))
     return {"status": "PASS" if ok else "FAIL",
             "miss": miss.get("passed"), "zero": zero.get("passed"),
             "neg": neg.get("passed"), "nonnum": nonnum.get("passed"),
-            "good_clean": not _es(good)}
+            "nan": nan.get("passed"), "inf": inf.get("passed"),
+            "bool": boolean.get("passed"), "good_clean": not _es(good)}
+
+
+def check_adversarial_contracts():
+    """跨层对抗回归：轴向 full-bleed、安全区/来源区、唯一锚点与有限数据。"""
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("guard_adversarial", SCRIPTS / "guard.py")
+    g = iu.module_from_spec(spec)
+    import sys as _s
+    _s.modules["guard_adversarial"] = g
+    spec.loader.exec_module(g)
+
+    def run(elements, **slide):
+        intent = slide.pop("page_intent", {"focus": "focus"})
+        page = {"id": "s01", "page_intent": intent,
+                "elements": elements, **slide}
+        return g.check_spec({"canvas": {"width": 1280, "height": 720},
+                             "slides": [page]}, include_advisory=False)
+
+    def errors(out, rule=None):
+        return [c for c in out.get("checks", []) if c.get("level") == "error"
+                and (rule is None or c.get("rule") == rule)]
+
+    text = lambda eid, x, y, w=40, h=30: {
+        "type": "text", "id": eid, "text": "x", "x": x, "y": y,
+        "width": w, "height": h, "size": 16}
+    x_bleed_ok = run([text("focus", 0, 80, 1280, 40)])
+    x_bleed_bad = run([text("focus", 40, 80, 1280, 40)])
+    y_bleed_ok = run([text("focus", 80, 0, 40, 720)])
+    y_bleed_bad = run([text("focus", 80, 40, 40, 720)])
+    source_collision = run([text("focus", 250, 150, 100, 100)],
+                           source_zone={"x": 100, "y": 100, "width": 200, "height": 100})
+    duplicate_focus = run([text("focus", 80, 80), text("focus", 160, 80)])
+    multi_focus = run([text("a", 80, 80)], page_intent={"focus": ["a", "b"]})
+    bool_chart = run([{"type": "chart", "id": "focus", "x": 80, "y": 80,
+                       "width": 400, "height": 240, "chart_kind": "ranked_bar",
+                       "data": [{"label": "A", "value": True}]}])
+    nested_provenance = run([{"type": "chart", "id": "focus", "x": 80, "y": 80,
+                              "width": 400, "height": 240, "chart_kind": "ranked_bar",
+                              "data": [{"label": "A", "value": 1}],
+                              "provenance": {"source": "audit", "unit": "%",
+                                             "period": "2025", "basis": "YoY"}}])
+    bad_canvas = g.check_spec({"canvas": {"width": float("nan"), "height": True},
+                               "slides": []}, include_advisory=False)
+    malformed_slide = g.check_spec({"slides": [{"id": "s01", "elements": {},
+                                                  "source_zone": {}}]},
+                                    include_advisory=False)
+    malformed = g.check_spec({"slides": "not-a-list"}, include_advisory=False)
+    ok = (not errors(x_bleed_ok, "safety")
+          and errors(x_bleed_bad, "safety")
+          and not errors(y_bleed_ok, "safety")
+          and errors(y_bleed_bad, "safety")
+          and errors(source_collision, "source_zone")
+          and errors(duplicate_focus, "element_schema")
+          and errors(multi_focus, "focus_contract")
+          and errors(bool_chart, "data_integrity")
+          and not errors(nested_provenance, "data_provenance")
+          and errors(bad_canvas, "canvas_schema")
+          and errors(malformed_slide, "slide_schema")
+          and errors(malformed_slide, "source_zone")
+          and errors(malformed, "spec_schema"))
+    return {"status": "PASS" if ok else "FAIL",
+            "x_bleed_axis_safe": not errors(x_bleed_ok, "safety"),
+            "x_bleed_cross_axis_blocked": bool(errors(x_bleed_bad, "safety")),
+            "y_bleed_axis_safe": not errors(y_bleed_ok, "safety"),
+            "y_bleed_cross_axis_blocked": bool(errors(y_bleed_bad, "safety")),
+            "source_intersection_blocked": bool(errors(source_collision, "source_zone")),
+            "duplicate_focus_blocked": bool(errors(duplicate_focus, "element_schema")),
+            "multi_focus_blocked": bool(errors(multi_focus, "focus_contract")),
+            "bool_chart_blocked": bool(errors(bool_chart, "data_integrity")),
+            "malformed_canvas_blocked": bool(errors(bad_canvas, "canvas_schema")),
+            "malformed_slide_blocked": bool(errors(malformed_slide, "slide_schema")),
+            "empty_source_zone_blocked": bool(errors(malformed_slide, "source_zone")),
+            "malformed_top_level_blocked": bool(errors(malformed, "spec_schema"))}
 
 
 def check_hairline_grid():
@@ -1639,6 +1970,37 @@ def check_cheap_rejects():
             "hit": sum(f"no {m}" in neg for m in must), "total": len(must),
             "ill_3d_free": "no 3d render" not in ill["negative"].lower(),
             "deterministic": a["negative"] == b["negative"]}
+
+
+def check_asset_qc_policy():
+    """资产 QC 只做一次有界重出，不自动触发 review/release。"""
+    import asset_prompt as ap
+    bad = {"status": "issue", "checks": [
+        {"check": "text_safe_area", "status": "issue"},
+        {"check": "brightness_balance", "status": "issue"},
+    ]}
+    first = ap.qc_retry_decision(bad, attempt=0, phase="draft", max_retries=99)
+    exhausted = ap.qc_retry_decision(bad, attempt=1, phase="draft")
+    review = ap.qc_retry_decision(bad, attempt=0, phase="review")
+    release = ap.qc_retry_decision(bad, attempt=0, phase="release")
+    advisory = ap.qc_retry_decision(
+        {"status": "issue", "checks": [{"check": "brightness_balance", "status": "issue"}]},
+        phase="draft")
+    try:
+        ap.qc_retry_decision(bad, phase="qa")
+        unknown = False
+    except ValueError:
+        unknown = True
+    ok = (first["action"] == "retry" and first["max_retries"] == 1
+          and not first["triggers_review"] and not first["triggers_release"]
+          and exhausted["action"] == "flag" and exhausted["manual_required"]
+          and review["action"] == "flag" and not review["retry"]
+          and release["action"] == "block" and release["manual_required"]
+          and advisory["action"] == "accept_with_advisory" and not advisory["retry"]
+          and unknown)
+    return {"status": "PASS" if ok else "FAIL",
+            "first": first["action"], "exhausted": exhausted["action"],
+            "release": release["action"]}
 
 
 def check_shape_dialect():
@@ -1757,12 +2119,19 @@ def check_compile_version_gate():
     import tempfile
     rc = load("render_check", SCRIPTS / "render_check.py")
     comp = load("compiler", SCRIPTS / "compiler.py")
-    ok = True
+    prim = load("primitives", SCRIPTS / "primitives.py")
+    mapped_chart_kinds = {"kpi", "executive_kpi", "big_number"} \
+        | set(comp.SHAPE_CHARTS) | set(comp.NATIVE_CHART_TYPES)
+    ok = mapped_chart_kinds == set(prim.CHART_KINDS)
     with tempfile.TemporaryDirectory() as d:
         work = pathlib.Path(d)
         pptx = work / "a.pptx"
         pptx.write_bytes(b"fake")
-        rc.record_compile(work, pptx, "view1", {"passed": True, "warnings": []})
+        import hashlib
+        rc.record_compile(work, pptx, "view1", {
+            "passed": True, "warnings": [],
+            "output_sha256": hashlib.sha256(b"fake").hexdigest(),
+            "output_path": str(pptx)})
         rep = rc.compile_reuse(work, pptx, "view1")
         ok = ok and rep is not None and rep.get("reused") is True
         # vNext：不再读 COMPILER_VERSION——编译器行为变了产物字节就变了，
@@ -1800,10 +2169,7 @@ def check_sketch_mode():
         exists = out.exists()
     # muted #CCCCCC 对白底 <1.8:1 → draft 应有 warn；sketch 只留 error 级
     ok = (sk["status"] == "SKETCH" and dr["status"] == "PREVIEW_ONLY"
-          and dr.get("pre_critic") is dr.get("risk")          # 别名同对象，不复制
-          and dr.get("risk") is not None
-          and isinstance((dr["risk"].get("strategy") or {}).get("adjusted"), dict)
-          and "strategy" in (sk["risk"] or {})
+          and "risk" not in sk and "risk" not in dr
           and sk["guard"]["checks"] < dr["guard"]["checks"]
           and sk.get("release_eligible") is False and exists)
     return {"status": "PASS" if ok else "FAIL", "sketch_status": sk["status"],
@@ -1903,7 +2269,17 @@ def check_design_advisory():
     g = guard.check_spec(spec)
     adv = [c for c in g["checks"] if c.get("advisory")]
     scored = [c for c in g["checks"] if not c.get("advisory") and c["level"] in ("error", "warn")]
-    ok = ok and (len(adv) > 0 and all(c["score_weight"] == 0.0 for c in adv))
+    # 关闭 advisory 不只是 add() 丢弃结果：设计扫描本身也不能运行。
+    old_gradient_muck = guard._gradient_muck
+    try:
+        guard._gradient_muck = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("advisory gradient scan should be skipped"))
+        core = guard.check_spec(spec, include_advisory=False)
+    finally:
+        guard._gradient_muck = old_gradient_muck
+    core_adv = [c for c in core["checks"] if c.get("advisory")]
+    ok = ok and (len(adv) > 0 and not core_adv
+                 and all(c["score_weight"] == 0.0 for c in adv))
     ok = ok and (g["score"] == 100 - sum(4 if c["level"] == "error" else 2 for c in scored))
     # 设计条目可以 warn，但绝不允许以 error 出现（error = 阻断 = 把审美写成了门槛）
     ok = ok and all(not c.get("advisory") for c in g["checks"] if c["level"] == "error")
@@ -1925,8 +2301,8 @@ def check_design_advisory():
 def check_draft_import_contract():
     """Spec runtime contract（v3.2）：判「spec 是否合理」不该把 python-pptx 拖进来。
 
-    spec 档 = Normalizer + Guard + 风险预测与策略，实测一轮 6ms；而 pptx 的 import 链
-    （pptx.api → opc → oxml → xml.sax → urllib.request）要 152ms。谁把
+    spec 档 = Normalizer + Guard（风险建议仅显式 advisory），实测一轮毫秒级；而 pptx 的 import 链
+    （pptx.api → opc → oxml → xml.sax → urllib.request）要约 150ms。谁把
     `from pptx import ...` 放回 primitives 顶部、或让 spec 档偷偷编译，立刻失败。
     另锁两件事：② release 必须真的把 pptx 拉起来（防止靠「删掉编译路径」骗过 ①）；
     ③ 同一 render 目录跨模式复用（review 接着 release 的证据跑，不再起 LibreOffice）。
@@ -1999,11 +2375,33 @@ def check_draft_import_contract():
                            text=True, cwd=str(ROOT), timeout=600)
         if "pptx" not in (r.stdout or ""):
             fails["release_loads_pptx"] = "release 未加载 pptx：" + ((r.stdout or r.stderr)[-160:])
-        # ③ 跨模式复用同一 render 目录：release 已渲染 → review 不再起 soffice
-        #    （依赖外部渲染器：LibreOffice 缺席时本段跳过，①② 不受环境限制）
+        # ③ draft 缓存命中时，新的 Python 进程也不应加载 compiler/python-pptx。
+        #    这是 draft 高频调用能否真正变快的关键，而不只是少一个 JSON 字段。
+        cache_probe = (
+            "import sys, pathlib, json, importlib.util, qa\n"
+            "m = importlib.util.spec_from_file_location('b', %s)\n"
+            "mod = importlib.util.module_from_spec(m); m.loader.exec_module(mod)\n"
+            "p = pathlib.Path(%s)\n"
+            "r = qa.run_qa(mod.SPEC, p / 'cached.pptx', mode='draft', render_dir=p / 'cached-render')\n"
+            "print('CACHE', r['performance']['compile_reused'], 'compiler' in sys.modules, 'design_intelligence' in sys.modules, 'render_check' in sys.modules)\n"
+        )
+        cache_probe_code = cache_probe % (repr(str(build)), repr(str(pathlib.Path(d) / "cache-work")))
+        first = subprocess.run([sys.executable, "-c", cache_probe_code], capture_output=True,
+                               text=True, cwd=str(ROOT), timeout=300)
+        second = subprocess.run([sys.executable, "-c", cache_probe_code], capture_output=True,
+                                text=True, cwd=str(ROOT), timeout=300)
+        if (first.returncode or second.returncode
+                or "CACHE False True False False" not in (first.stdout or "")
+                or "CACHE True False False False" not in (second.stdout or "")):
+            fails["draft_cache_import"] = {"first": (first.stdout or first.stderr)[-200:],
+                                            "second": (second.stdout or second.stderr)[-200:]}
+        # ④ 跨模式复用同一 render 目录：release 已渲染 → review 不再起 soffice
+        #    （依赖外部渲染器：LibreOffice 缺席时本段跳过，①②③ 不受环境限制）
         qa_mod = load("qa", SCRIPTS / "qa.py")
         if not (shutil.which("soffice") or shutil.which("libreoffice")):
-            return {"status": "PASS", "skipped": "render reuse needs LibreOffice"}
+            return ({"status": "PASS", "skipped": "render reuse needs LibreOffice",
+                     "cache_probe": "checked"} if not fails else
+                    {"status": "FAIL", "violations": fails})
         r_rel = qa_mod.run_qa(spec, pathlib.Path(d) / "shared.pptx", mode="release",
                               render_dir=work, dpi=60)
         r_rev = qa_mod.run_qa(spec, pathlib.Path(d) / "shared.pptx", mode="review",
@@ -2053,6 +2451,21 @@ def check_intent_compiler():
     ok = ok and b3["design_intent"]["tone"] == "human_trust"
     b4 = ic.compile_brief("做一个科技公司年度总结，给董事会看")
     ok = ok and b4["design_intent"]["audience"] == "unknown"
+    # 直接 intent 编译与完整 pipeline 的 route 输入必须等价；subject/brief/purpose
+    # 不能在压缩层丢失，否则同一需求会得到不同 content_type/page family。
+    context_need = {"occasion": "董事会汇报", "subject": "brand story",
+                     "brief": "历史与现场证据", "purpose": "批准下一步",
+                     "audience": "董事会", "slides": ["故事"]}
+    direct = ic.compile_brief(context_need)
+    from route import plan_deck as _plan_deck
+    expected_plan = _plan_deck(context_need)
+    ok = ok and direct["route"]["path"] == expected_plan["path"]
+    ok = ok and direct["slides_seed"][0]["family"] == expected_plan["pages"][0]["page_family"]
+    lux = ic.compile_brief({"occasion": "年度报告", "subject": "品牌叙事",
+                            "design_direction": "Quiet Luxury × Editorial Storytelling",
+                            "slides": ["封面"]})
+    ok = ok and lux["direction_seed"]["route_direction"] == "editorial_brand"
+    ok = ok and lux["route"]["direction"] == lux["direction_seed"]["route_direction"]
     # import 零成本：route 只在函数内懒加载
     top = ic.__file__ and pathlib.Path(ic.__file__).read_text(encoding="utf-8")
     ok = ok and "\nfrom route" not in top and "\nimport route" not in top
@@ -2235,6 +2648,7 @@ def check_degenerate_inputs():
 
 def main():
     result = {"structure": check_structure(), "templates_yaml": check_templates_yaml(), "references": check_references(), "imports": check_imports(), "fill_contract": check_fill_contract(), "render_metrics": check_render_metrics(), "pipeline": check_pipeline(),
+               "single_process_pipeline": check_single_process_pipeline(),
                "normalizer": check_normalizer(),
                "modes": check_execution_modes(),
                "state_footprint": check_state_footprint(),
@@ -2252,6 +2666,7 @@ def main():
             "route_layer": check_route_layer(), "qa_performance": check_qa_performance_keys(),
             "progressive_qa": check_progressive_qa(), "decision_cache": check_decision_cache(),
             "render_cache": check_render_cache(),
+            "render_request_bounds": check_render_request_bounds(),
             "cache_content_verify": check_cache_content_verify(),
             "background_qualification": check_background_qualification(),
             "text_contrast_gate": check_text_contrast_gate(),
@@ -2260,12 +2675,15 @@ def main():
             "chart_style_drift": check_chart_style_drift(),
             "data_governance": check_data_governance(),
             "multi_series": check_multi_series(),
+            "compile_cache_projection": check_compile_cache_projection(),
             "cache_projection": check_cache_projection(),
             "manifest_attestation": check_manifest_attestation(), "element_schema": check_element_schema(), "intent_style": check_intent_style(),
         "intent_boundaries": check_intent_boundaries(), "ink_gate": check_ink_gate(),
-        "geometry_degenerate": check_geometry_degenerate(), "hairline_grid": check_hairline_grid(),
-        "shape_dialect": check_shape_dialect(), "contrast_fingerpoint": check_contrast_fingerpoint(),
-        "cheap_rejects": check_cheap_rejects(),
+        "geometry_degenerate": check_geometry_degenerate(),
+        "adversarial_contracts": check_adversarial_contracts(),
+        "hairline_grid": check_hairline_grid(),
+            "shape_dialect": check_shape_dialect(), "contrast_fingerpoint": check_contrast_fingerpoint(),
+        "cheap_rejects": check_cheap_rejects(), "asset_qc_policy": check_asset_qc_policy(),
             "optical_alignment": check_optical_alignment(),
             "chart_color_roles": check_chart_color_roles(),
             "brand_seed": check_brand_seed(),

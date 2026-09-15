@@ -26,6 +26,8 @@ CLI：``python3 scripts/route.py brief.yml --json``（``--demo`` 用内置示例
 """
 from __future__ import annotations
 
+import re
+
 # ─────────────────────────────────────────────────────────────
 # 内容类型词表（中英文关键词 → 内容类型）
 # ─────────────────────────────────────────────────────────────
@@ -178,20 +180,63 @@ DIRECTION_PRESETS: dict[str, dict] = {
 ADVANCED_TRIGGERS = ("发布会", "品牌", "年报", "旗舰", "形象", "高端", "launch", "brand",
                      "keynote", "manifesto", "premium", "campaign")
 
+# 自由文本方向必须先落到已知方向；否则「Quiet Luxury × Editorial Storytelling」
+# 会静默回落 quiet_minimal，丢掉材质/字声判断。别名只做确定性归一，不新增设计模板。
+DIRECTION_ALIASES = {
+    "quiet minimal": "quiet_minimal", "quiet_minimal": "quiet_minimal",
+    "minimal": "quiet_minimal", "neutral": "quiet_minimal",
+    "editorial": "editorial_brand", "editorial brand": "editorial_brand",
+    "editorial storytelling": "editorial_brand",
+    "quiet luxury": "editorial_brand",
+    "quiet luxury x editorial storytelling": "editorial_brand",
+    "quiet_luxury": "editorial_brand", "luxury editorial": "editorial_brand",
+    "product stage": "product_stage", "product_stage": "product_stage",
+    "evidence first": "evidence_first", "evidence_first": "evidence_first",
+    "data intelligence": "evidence_first",
+}
+
+
+def _canonical_direction(value) -> tuple[str, dict | None]:
+    raw = str(value or "").strip()
+    if not raw:
+        return "quiet_minimal", None
+    if raw in DIRECTION_PRESETS:
+        return raw, None
+    key = re.sub(r"\s+", " ", raw.lower().replace("×", " x ")).strip()
+    if key in DIRECTION_ALIASES:
+        return DIRECTION_ALIASES[key], None
+    # 组合型方向允许命中最长语义片段，但不会任意猜测单个形容词。
+    for alias, canonical in sorted(DIRECTION_ALIASES.items(), key=lambda kv: -len(kv[0])):
+        if len(alias) >= 8 and alias in key:
+            return canonical, {"input": raw, "canonical": canonical, "rule": "direction_alias"}
+    return "quiet_minimal", {"input": raw, "canonical": "quiet_minimal", "rule": "direction_fallback"}
+
+
+def _keyword_hit(text: str, keyword: str) -> bool:
+    """CJK 用子串；ASCII 用词边界，避免 history→story 等误路由。"""
+    tok = str(keyword or "").strip().lower()
+    if not tok:
+        return False
+    if all(ord(c) < 128 for c in tok):
+        return re.search(rf"(?<![a-z0-9_]){re.escape(tok)}(?![a-z0-9_])", text) is not None
+    return tok in text
+
 
 def detect_type(text: str) -> str:
     """按关键词命中内容类型；未命中时回落到 business（最常见的汇报页）。"""
-    t = (text or "").lower()
+    t = str(text or "").lower()
     best, best_hits = None, 0
     for ctype, kws in KEYWORDS.items():
-        hits = sum(1 for k in kws if k in t)
+        hits = sum(1 for k in kws if _keyword_hit(t, k))
         if hits > best_hits:
             best, best_hits = ctype, hits
     return best or "business"
 
 
 QUALITY_ALIASES = {"fast": "fast", "quick": "fast", "standard": "fast",
-                   "advanced": "advanced", "premium": "advanced", "keynote": "advanced"}
+                   "advanced": "advanced", "premium": "advanced", "keynote": "advanced",
+                   # benchmark 案例需要完整媒体预算与 review 证据，不应静默走 fast。
+                   "benchmark": "advanced"}
 MODE_LABEL = {"fast": "Fast Mode", "advanced": "Premium Mode"}
 
 
@@ -208,12 +253,13 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
     参数只有三个，其余全部由 ROUTES 与 DIRECTION_PRESETS 推导；调用方不应再逐页传
     color / mood / lighting / material / composition —— 那些是本页的输出，不是输入。
     """
+    content_type = str(content_type or "")
     if content_type not in ROUTES:
         content_type = detect_type(content_type)
     r = ROUTES.get(content_type, DEFAULT_ROUTE)
-    # 兜底方向 = 中性（quiet_minimal）：宋体/编辑方向是「显式选择」不是默认。
-    # 通用商业词（品牌/高端/年报…）不该把 deck 推给宋体——拒绝风格蔓延。
-    d = DIRECTION_PRESETS.get(design_direction, DIRECTION_PRESETS["quiet_minimal"])
+    # 自由文本方向先规范化；未知方向仍安全回落，但由 plan_deck 留 warning。
+    direction, _direction_note = _canonical_direction(design_direction)
+    d = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"])
     quality = _quality(quality_level)
 
     asset = r["asset"]
@@ -309,11 +355,13 @@ def plan_deck(brief: dict) -> dict:
     同一 brief 的重复调用（修订循环、多次调用同一进程）直接命中缓存，且返回深拷贝，
     调用方可以随意改结果而不污染缓存。
     """
+    if not isinstance(brief, dict):
+        raise TypeError("brief must be a mapping/dict")
     try:
         import copy as _copy
         import json as _json
         key = _json.dumps(brief, ensure_ascii=False, sort_keys=True, default=str)
-    except Exception:                      # 不可序列化 → 直接算，不缓存
+    except (TypeError, ValueError, OverflowError):  # 不可序列化 → 直接算，不缓存
         return _plan_deck(dict(brief))
     hit = _DECK_CACHE.get(key)
     if hit is not None:
@@ -328,27 +376,126 @@ def plan_deck(brief: dict) -> dict:
     return _copy.deepcopy(plan)
 
 
+def _intent_value(value) -> bool:
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
+_PAGE_INTENT_FIELDS = (
+    "type", "title", "content", "insight", "focus", "page_family",
+    "density", "energy", "narrative_role", "asset", "media", "reading_order",
+)
+
+
+def _page_intent_interpretation(item, text: str, explicit_type, page_plan: dict) -> dict:
+    """保留页面意图的来源：显式输入、路由推断，以及两者的可见冲突。"""
+    explicit = {}
+    if isinstance(item, dict):
+        explicit = {k: item.get(k) for k in _PAGE_INTENT_FIELDS
+                    if k in item and _intent_value(item.get(k))}
+    inferred_type = detect_type(text)
+    inferred = {
+        "content_type": {"value": page_plan.get("content_type"),
+                          "basis": "explicit type" if _intent_value(explicit_type)
+                                   else "keyword detection"},
+        "page_family": {"value": page_plan.get("page_family"), "basis": "content_type route"},
+        "density": {"value": page_plan.get("density"), "basis": "content_type route"},
+        "energy": {"value": page_plan.get("energy"), "basis": "content_type route"},
+        "asset": {"value": (page_plan.get("asset") or {}).get("decision"),
+                  "basis": "quality and content route"},
+    }
+    conflicts = []
+    if _intent_value(explicit_type) and str(explicit_type) not in ROUTES:
+        conflicts.append({"field": "type", "explicit": explicit_type,
+                          "inferred": inferred_type,
+                          "reason": "unknown explicit type fell back to keyword/business route"})
+    elif _intent_value(explicit_type) and inferred_type != "business" \
+            and str(explicit_type) != inferred_type:
+        conflicts.append({"field": "type", "explicit": explicit_type,
+                          "inferred": inferred_type,
+                          "reason": "page text strongly signals a different content type; explicit type wins"})
+    for field in ("density", "energy"):
+        if field in explicit and str(explicit[field]) != str(page_plan.get(field)):
+            conflicts.append({"field": field, "explicit": explicit[field],
+                              "inferred": page_plan.get(field),
+                              "reason": "route output does not silently override explicit page intent"})
+    return {"explicit": explicit, "inferred": inferred, "conflicts": conflicts}
+
+
+def _deck_intent_interpretation(brief: dict, requested_direction, direction,
+                                quality_input, quality, pages, warnings) -> dict:
+    explicit_keys = ("audience", "decision", "occasion", "subject", "brief",
+                     "design_direction", "quality_level", "slides")
+    explicit = {k: brief.get(k) for k in explicit_keys
+                if k in brief and _intent_value(brief.get(k))}
+    inferred = {
+        "design_direction": {"value": direction,
+                              "basis": "explicit canonicalization" if "design_direction" in explicit
+                                       else "default quiet_minimal"},
+        "quality_level": {"value": quality,
+                           "basis": "explicit alias" if "quality_level" in explicit
+                                    else "occasion trigger / fast default"},
+        "page_count": {"value": len(pages), "basis": "explicit slides list"},
+        "execution_mode": {"value": recommend_mode(brief), "basis": "brief cost and risk signals"},
+    }
+    conflicts = []
+    for w in warnings:
+        if not isinstance(w, dict):
+            continue
+        rule = str(w.get("rule") or "")
+        if rule in {"direction_alias", "direction_fallback"}:
+            conflicts.append({"field": "design_direction", "explicit": requested_direction,
+                              "inferred": direction, "reason": rule})
+        elif rule == "quality_fallback":
+            conflicts.append({"field": "quality_level", "explicit": quality_input,
+                              "inferred": quality, "reason": rule})
+    return {"explicit": explicit, "inferred": inferred, "conflicts": conflicts}
+
+
 def _plan_deck(brief: dict) -> dict:
     occasion = f"{brief.get('occasion','')} {brief.get('subject','')} {brief.get('brief','')}"
-    quality = _quality(brief["quality_level"]) if brief.get("quality_level") else (
+    quality_input = brief.get("quality_level")
+    quality = _quality(quality_input) if quality_input else (
         "advanced" if any(k in occasion.lower() or k in occasion for k in ADVANCED_TRIGGERS)
         else "fast")
-    # 默认方向 = 中性（quiet_minimal）：宋体/编辑方向只在显式声明 design_direction
-    # 时使用。通用商业词（品牌/高端/年报…）不得把 deck 推给宋体——拒绝风格蔓延。
-    direction = brief.get("design_direction") or "quiet_minimal"
+    quality_warning = None
+    if quality_input and str(quality_input).strip().lower() not in QUALITY_ALIASES:
+        quality_warning = {"input": quality_input, "canonical": quality,
+                           "rule": "quality_fallback"}
+    requested_direction = brief.get("design_direction") or "quiet_minimal"
+    direction, direction_warning = _canonical_direction(requested_direction)
 
-    raw = brief.get("slides") or []
+    raw = brief.get("slides")
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise TypeError("brief.slides must be a list of page briefs")
     pages = []
     for i, item in enumerate(raw):
         ctype = item.get("type") if isinstance(item, dict) else None
-        text = (item.get("title", "") + " " + item.get("content", "")) if isinstance(
+        text = (str(item.get("title") or "") + " " + str(item.get("content") or "")) if isinstance(
             item, dict) else str(item)
         plan = plan_page(ctype or text, direction, quality)
         plan["index"] = i + 1
         plan["id"] = (item.get("id") if isinstance(item, dict) and item.get("id")
                       else f"s{i + 1:02d}")
+        plan["intent_interpretation"] = _page_intent_interpretation(
+            item, text, ctype, plan)
         pages.append(plan)
     _alternate_density(pages)
+    for pg in pages:
+        interp = pg.get("intent_interpretation") or {}
+        inferred = interp.get("inferred") or {}
+        if "density" in inferred:
+            inferred["density"]["value"] = pg.get("density")
+        if pg.get("density_declared_conflict"):
+            inferred["density"]["basis"] = "content route + deck rhythm adjustment"
+            (interp.setdefault("conflicts", [])).append({
+                "field": "density",
+                "explicit": (interp.get("explicit") or {}).get("density"),
+                "inferred_before": pg["density_declared_conflict"],
+                "inferred": pg.get("density"),
+                "kind": "inferred_adjustment",
+                "reason": "adjacent-page rhythm alternation changed the route suggestion"})
 
     needed = [p["id"] for p in pages if p["asset"]["decision"] in ("required",)]
     reused = [p["id"] for p in pages if p["asset"]["decision"] == "reuse"]
@@ -356,30 +503,32 @@ def _plan_deck(brief: dict) -> dict:
     assets = {"generate": needed[:cap], "generate_extra": needed[cap:], "reuse": reused,
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
     assets["planned_calls"] = len(assets["generate"])
-    workflow = ["route → 冻结输入（受众/决定/口径）",
-                "预测与策略：design_intelligence.forecast_risk(brief) → 生成政策"
-                "（媒体/文本/字阶/构图四条在起草之前定，不靠渲染试错）",
+    workflow = ["pipeline.py → 在单进程冻结 Brief / route / layout / risk（写 plan.json）",
                 "初稿/探索（默认）：qa.py <build> out.pptx --mode draft"
                 "（Normalizer → Guard → Compile → PPTX，零渲染；布局方向用 ghost.py）",
                 "方向确认：qa.py <build> out.pptx --mode review"
                 "（只渲染变化页 ∪ 关键页；直接给 verdict）",
                 "发布（唯一给发布资格的一档）：qa.py <build> out.pptx --mode release"
                 "（全量渲染 → QA → Manifest）",
-                "guard 静态诊断 + 风险预测（~0.01s/页）：python3 scripts/guard.py <build>",
-                "修完静态项再编译：python3 scripts/compiler.py <build> out.pptx"]
+                "独立诊断（按需）：guard.py / compiler.py，不要与 qa.py 默认串行执行"]
     if quality == "advanced":
         workflow.append("资产：仅对 assets.generate 中的页面调用图像模型，逐页绑定留白锚点")
     # 哪些页面值得付渲染成本：首尾页 + 需要画心的页（图表与遮挡由 QA 从 spec 兜底挑选）
     pixel_ids = sorted({p["id"] for p in pages if p["needs_pixel_evidence"]}
                        | ({pages[0]["id"], pages[-1]["id"]} if pages else set()))
     exec_mode = recommend_mode(brief)
-    # V3：P1 就召回 Design DNA（视觉线与内容线并行，不串行等待）
+    # V3：P1 就召回 Design DNA（视觉线与内容线并行，不串行等待）。
+    # 可选智能层失败可以降级，但必须留在 plan.warnings，不能把异常伪装成
+    # 「无 DNA/无媒体判断」；工程主链仍由 Guard/QA 负责。
+    intelligence_warnings = []
     try:
         from design_intelligence import recall_dna, media_decision, quality_budget
         dna_hit = recall_dna(brief)
-    except Exception:
+    except Exception as exc:
+        intelligence_warnings.append({"rule": "design_intelligence", "scope": "deck",
+                                      "error": f"{type(exc).__name__}: {exc}"})
         dna_hit = {"matched": None, "confidence": 0.0, "dna": None,
-                   "note": "design_intelligence 不可用，按主题种子起步"}
+                   "note": "design_intelligence 不可用，按主题种子起步；详见 warnings"}
     for pg in pages:
         # 媒体决策模型：置信度 + 理由（与 asset 闸门互补——闸门管预算，模型管判断）
         try:
@@ -387,14 +536,21 @@ def _plan_deck(brief: dict) -> dict:
             pg["media_confidence"] = md["confidence"]
             pg["media_reason"] = md["reason"]
             pg["quality_budget"] = quality_budget({"page_intent": pg})
-        except Exception:
-            pass
+        except Exception as exc:
+            intelligence_warnings.append({
+                "rule": "design_intelligence", "scope": pg.get("id"),
+                "error": f"{type(exc).__name__}: {exc}"})
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"]).get("theme_seed", {})
     # Color Intelligence 入口：品牌色一到，方向预设立即让位。「科技=蓝」这类
     # 方向→色值的模板映射在入口处被切断；派生色阶由 RenderContext 的 OKLab
     # derive_tokens 从覆盖后的种子派生。
     seed = _seed_from_brand(seed, brief.get("brand_colors")
                             if isinstance(brief, dict) else None)
+    plan_warnings = ([w for w in (direction_warning, quality_warning) if w]
+                     + intelligence_warnings)
+    intent_interpretation = _deck_intent_interpretation(
+        brief, requested_direction, direction, quality_input, quality, pages,
+        plan_warnings)
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
@@ -412,6 +568,11 @@ def _plan_deck(brief: dict) -> dict:
             "note": "模式是流程控制；Fast/Advanced 是预算控制——两者正交，可任意组合。",
         },
         "design_direction": direction,
+        "direction_input": requested_direction,
+        "quality_level": quality,
+        "quality_input": quality_input,
+        "warnings": plan_warnings,
+        "intent_interpretation": intent_interpretation,
         "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可覆盖）
         "pages": pages,
         "assets": assets,
@@ -424,16 +585,18 @@ def _plan_deck(brief: dict) -> dict:
                        if quality == "fast" else
                        "发布级 deck：关键页先测，收口仍需 Level 3 全量复核"),
         },
-        # 两线程执行模型（严格上限 2）：设计推导与资产/渲染互不等待，只在 QA 处汇合一次。
-        # 没有回环：Thread2 从不回头要求 Thread1 重新推导；修正由 guard 静态项与风险预测驱动。
+        # 有界并行建议（严格上限 2）：独立资产 QC / 渲染页可并行；阶段门仍串行。
+        # render_check 真正执行页级并行；资产生成由调用方调度，不能并发写同一产物。
         "pipelines": {
             "workers": 2,
+            "mode": "caller-managed bounded parallel; stage gates remain serial",
             "design": ["route", "guard + risk_prediction", "spec 修正（只按静态项与风险预测改，不重排全篇）"],
             "asset_render": ["asset_prompt → 图像模型（仅 assets.generate）", "compiler",
                              f"render + measure（workers=2，Level {2 if quality == 'fast' else 3}）"],
             "join": "qa.run_qa（唯一同步点：静态结论 + 渲染证据在此合并计分）",
             "exchange": "单一 spec / plan JSON；禁止逐页往返通信",
-            "forbidden": ["无限并发", "渲染等待预检的循环依赖", "每轮都跑全量渲染"],
+            "forbidden": ["无限并发", "渲染等待预检的循环依赖", "每轮都跑全量渲染",
+                          "并发写同一 PPTX/cache/revision log"],
         },
         "budget": {"max_asset_calls": cap,
                    "max_charts_per_page": 1,
@@ -517,7 +680,7 @@ def _load_brief(path: str) -> dict:
     raise ValueError("brief 需为 yml / json 数据文件或定义 BRIEF 的模块")
 
 
-def deck_decision(brief: dict) -> dict:
+def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     """Deck Decision Card：全 deck 判断一次，页面继承。
 
     生成速度的大头是「每页重新想」。这张卡把 deck 级判断（叙事弧线/方向/
@@ -528,7 +691,7 @@ def deck_decision(brief: dict) -> dict:
     是内容级判断，仍是 Art Director 的职责。
     """
     from collections import Counter
-    plan = plan_deck(brief)
+    plan = plan if plan is not None else plan_deck(brief)
     pages = plan.get("pages") or []
     n = len(pages)
     if n <= 3:
@@ -590,8 +753,11 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-def one_pass_plan(brief: dict) -> dict:
-    """Fast Visual Intelligence Pipeline · Stage 1+2 一次调用固化（带决策缓存）。
+def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
+    """Fast Visual Intelligence Pipeline · Stage 1+2 一次调用固化。
+
+    plan 可由统一入口预先计算；传入后本函数不会再次调用 plan_deck，避免
+    intent_compiler / route / forecast 在同一轮重复推导。
 
     返回 {plan, deck_decision, color_plan, pages:[{family, skeleton, layout,
     media, budget}]}。生成侧只填 insight / focus / 数据洞——
@@ -599,8 +765,8 @@ def one_pass_plan(brief: dict) -> dict:
     """
     import design_intelligence as di
     import layout_search as ls
-    plan = plan_deck(brief)
-    card = deck_decision(brief)
+    plan = plan if plan is not None else plan_deck(brief)
+    card = deck_decision(brief, plan=plan)
     color = di.color_plan(plan.get("design_direction"), brief)
     dna = (plan.get("dna") or {}).get("dna")
     pages = []
@@ -616,7 +782,7 @@ def one_pass_plan(brief: dict) -> dict:
         })
     forecast = None
     try:
-        forecast = di.forecast_risk(brief)
+        forecast = di.forecast_risk(brief, plan=plan)
     except Exception as exc:
         forecast = {"error": str(exc), "policies": {}}
     return {"plan": plan, "deck_decision": card, "color_plan": color,

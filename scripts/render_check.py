@@ -16,6 +16,8 @@ Layer 3.5 · Render Check（渲染证据层）
 """
 from __future__ import annotations
 
+import math
+import os
 import shutil
 import subprocess
 import tempfile
@@ -26,69 +28,82 @@ from typing import Any
 from PIL import Image
 
 from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, AUX_TEXT_ROLES
+from compile_cache import (
+    RENDER_META_NAME,
+    NON_PIXEL_SLIDE_KEYS,
+    NON_PIXEL_THEME_KEYS,
+    _file_sha,
+    _media_stamp,
+    _pixel_view,
+    _atomic_json_write,
+    _load_meta,
+    _patch_meta,
+    spec_view,
+    compile_reuse,
+    record_compile,
+)
+
+
+_RENDERER_PROBE_KEY: tuple[str, str] | None = None
+_RENDERER_PROBE_VALUE: str | None = None
+
+
+def clear_renderer_probe_cache() -> None:
+    """清除进程内 renderer 探测；仅供环境变更/测试显式调用。"""
+    global _RENDERER_PROBE_KEY, _RENDERER_PROBE_VALUE
+    _RENDERER_PROBE_KEY = None
+    _RENDERER_PROBE_VALUE = None
 
 
 def find_renderer() -> str | None:
-    """定位 LibreOffice。Windows: soffice.exe；POSIX: soffice。"""
+    """定位 LibreOffice。Windows: soffice.exe；POSIX: soffice。
+
+    探测结果按 PATH/PATHEXT 在进程内记忆：一次 QA 可能同时经过
+    ``render_evidence``、PDF 复用和 cache 写回，找不到 renderer 时不应每个
+    分支都重复调用 ``shutil.which``。显式清缓存后才重新探测，避免把环境热插拔
+    误当成稳定事实。
+    """
+    global _RENDERER_PROBE_KEY, _RENDERER_PROBE_VALUE
+    probe_key = (os.environ.get("PATH", ""), os.environ.get("PATHEXT", ""))
+    if probe_key == _RENDERER_PROBE_KEY:
+        return _RENDERER_PROBE_VALUE
+    found = None
     for name in ("soffice", "libreoffice"):
         p = shutil.which(name)
         if p:
-            return p
-    for cand in (
-        r"C:\Program Files\LibreOffice\program\soffice.exe",
-        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-        "/usr/bin/soffice", "/usr/local/bin/soffice",
-    ):
-        if Path(cand).exists():
-            return cand
-    return None
+            found = p
+            break
+    if found is None:
+        for cand in (
+            r"C:\\Program Files\\LibreOffice\\program\\soffice.exe",
+            r"C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
+            "/usr/bin/soffice", "/usr/local/bin/soffice",
+        ):
+            if Path(cand).exists():
+                found = cand
+                break
+    _RENDERER_PROBE_KEY = probe_key
+    _RENDERER_PROBE_VALUE = found
+    return found
+
+
+def renderer_identity(renderer: str | None) -> str:
+    """路径之外再绑定可执行文件的 stat 指纹，避免升级 LO 后误用旧证据。"""
+    if not renderer:
+        return ""
+    try:
+        path = Path(renderer).resolve()
+        stat = path.stat()
+        return f"{path}|{stat.st_size}|{stat.st_mtime_ns}"
+    except (OSError, TypeError, ValueError):
+        return str(renderer)
+
 
 
 MAX_RENDER_WORKERS = 2   # 并行上限：soffice/numpy 已接近吃满 2 核，更多线程只会互相抢占
 
 
 RENDER_CACHE_NAME = "render_cache.json"
-RENDER_META_NAME = "render_meta.json"      # 记录「这份 PDF 来自哪一份 PPTX」   # 与 page-*.png 同目录，可复核可删除
-
-
-def _media_stamp(slide: dict | None, base_path: str | Path | None) -> list:
-    """页内图片资产的 (文件名, 大小, mtime)：重新出图必然改变指纹，缓存自动失效。"""
-    base = Path(base_path) if base_path else None
-    stamps = []
-    for e in (slide or {}).get("elements", []) or []:
-        if not isinstance(e, dict):
-            continue
-        src = e.get("src")
-        if not src and isinstance(e.get("asset"), dict):
-            src = e["asset"].get("src")
-        if not src:
-            continue
-        p = Path(str(src))
-        if base is not None and not p.is_absolute():
-            p = base / p
-        try:
-            st = p.stat()
-            stamps.append([p.name, st.st_size, st.st_mtime_ns])
-        except Exception:
-            stamps.append([str(src), "missing"])
-    return stamps
-
-
-# 只影响判定、不影响本页像素的字段。编译器（compiler.py）实际只读 slide 的
-# background / elements（id 仅用于诊断文案），RenderContext 读 theme 的 colors/fonts
-# 与 chart_*/text_default；其余是声明与治理输入。把元数据排除在键外，改一句
-# insight 或把 density 上调一档（本项目自己给出的最小修正）就不必再付一轮渲染。
-# selftest 会拿编译器源码对拍这份名单，新增像素字段时立即点名。
-# 例外：page_intent.focus 虽不产出像素，却决定量到的是哪个元素的墨量占比，
-# 因此由 _slide_key 的 focus 参数单独并入键里，不在这里放行。
-NON_PIXEL_SLIDE_KEYS = ("page_intent", "source_zone", "notes", "speaker_notes", "comment",
-                        "comments", "annotations", "id", "label")
-NON_PIXEL_THEME_KEYS = ("constraints", "notes", "description", "name", "metadata",
-                        "provenance", "id")
-
-
-def _pixel_view(obj: dict | None, drop: tuple) -> dict:
-    return {k: v for k, v in (obj or {}).items() if k not in drop}
 
 
 def _slide_key(slide: dict | None, canvas: dict, dpi: int, theme: dict | None,
@@ -101,7 +116,7 @@ def _slide_key(slide: dict | None, canvas: dict, dpi: int, theme: dict | None,
     声明类字段（source_zone / 备注 / page_intent 的叙述部分）不在键里：它们只改判定
     不改量出来的数字，命中后仍按当前 spec 读取，因此既省时间也不留陈旧。唯一的例外是
     page_intent.focus——它决定量哪个元素的墨量占比，故必须进键（focus 参数）。
-    切换 LibreOffice 版本后请清缓存（或传 use_cache=False）。
+    LibreOffice 可执行文件的路径、大小与 mtime 也进身份戳；升级/替换 renderer 会自然失效（仍可传 use_cache=False 做排障）。
     """
     import hashlib
     import json
@@ -116,16 +131,57 @@ def _slide_key(slide: dict | None, canvas: dict, dpi: int, theme: dict | None,
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
+def _safe_work_file(work: Path, name) -> Path | None:
+    try:
+        root = work.resolve()
+        path = (root / str(name)).resolve()
+        path.relative_to(root)
+        return path
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+_REQUIRED_CACHE_METRICS = (
+    "brightness", "edge", "occupancy", "margin_occupancy",
+    "saliency_centroid", "accent_pixel_ratio", "saturated_pixel_ratio",
+    "background_luma",
+)
+# optical_alignment is intentionally optional in the cache schema: a text-only page
+# has no declared shape/image/chart boundaries to verify, so optical_alignment()
+# legitimately returns {}. Pages with measurable alignment still carry the field
+# and reuse it through the normal pixel evidence path.
+
+
+
 def _png_present(work: Path, entry: dict) -> bool:
-    """缓存命中 = 证据 PNG 在原处 **且内容未变**。只比文件名会把别页像素当本页。"""
+    """缓存命中 = PNG、内容指纹与当前证据 schema 都有效。"""
+    if not isinstance(entry, dict):
+        return False
     name = entry.get("png")
     if not name:
         return False
-    p = work / name
-    if not p.exists():
+    p = _safe_work_file(work, name)
+    if p is None or not p.exists():
         return False
     want = entry.get("png_sha")
     if not want:                      # 旧格式（无指纹）条目不信任 → 重测
+        return False
+    for key in _REQUIRED_CACHE_METRICS:
+        if key not in entry:
+            return False
+    try:
+        numeric = ("brightness", "edge", "occupancy", "margin_occupancy",
+                   "accent_pixel_ratio", "saturated_pixel_ratio", "background_luma")
+        if any(not math.isfinite(float(entry[k])) for k in numeric):
+            return False
+        centroid = entry["saliency_centroid"]
+        if (not isinstance(centroid, (list, tuple)) or len(centroid) != 2
+                or any(not math.isfinite(float(v)) for v in centroid)):
+            return False
+        if ("optical_alignment" in entry
+                and not isinstance(entry["optical_alignment"], dict)):
+            return False
+    except (TypeError, ValueError, OverflowError):
         return False
     return _file_sha(p) == want
 
@@ -146,51 +202,6 @@ def _png_name(work: Path, page_no: int, token: str | None = None) -> str | None:
     return None
 
 
-def _load_meta(work: Path) -> dict:
-    try:
-        import json
-        return json.loads((work / RENDER_META_NAME).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _patch_meta(work: Path, **fields) -> None:
-    """记不上只是下次多算一遍：元数据永远不是判定的依据。"""
-    try:
-        import json
-        meta = _load_meta(work)
-        meta.update(fields)
-        (work / RENDER_META_NAME).write_text(
-            json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def spec_view(spec: dict | None, base_path: str | Path | None = None) -> str:
-    """「会被编译成像素的那部分 spec」的指纹：与缓存键同一套投影口径。
-
-    只有这份指纹相同，才允许跳过编译与转换。它刻意**不包含** page_intent /
-    source_zone / 备注等声明字段——改它们不改变像素，因此也不该重付一轮渲染；
-    这些字段仍会被 guard / qa 按当前值读取，判定不会因此变松。
-    """
-    import hashlib
-    import json
-    spec = spec or {}
-    canvas = dict(spec.get("canvas") or {})
-    theme = _pixel_view(spec.get("theme"), NON_PIXEL_THEME_KEYS)
-    views = []
-    for s in (spec.get("slides") or []):
-        views.append({"background": _pixel_view(s, NON_PIXEL_SLIDE_KEYS).get("background"),
-                      "elements": (s or {}).get("elements") or [],
-                      # 编译器有两条告警会带页号，故 id 也要进「编译视图」
-                      "id": (s or {}).get("id"),
-                      # 图片内容也进视图：换了底图就必须重编译，光看 src 路径不够
-                      "media": _media_stamp(s, base_path)})
-    payload = json.dumps({"canvas": canvas, "theme": theme, "slides": views, "v": 3},
-                         ensure_ascii=False, sort_keys=True, default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
-
-
 def _pdf_is_reusable(pptx: Path, work: Path, renderer: str | None) -> Path | None:
     """PPTX 与上次转换逐字节相同 → 复用已有 PDF。
 
@@ -201,43 +212,28 @@ def _pdf_is_reusable(pptx: Path, work: Path, renderer: str | None) -> Path | Non
     if not renderer:
         return None
     meta = _load_meta(work).get("pdf") or {}
-    pdf = work / str(meta.get("name") or "")
-    if (meta.get("pptx_sha") == _file_sha(pptx) and meta.get("renderer") == str(renderer)
-            and pdf.exists() and _pdf_page_count(pdf) > 0):
+    if not isinstance(meta, dict):
+        return None
+    pdf = _safe_work_file(work, meta.get("name"))
+    # PDF 是像素证据的中间产物；仅核对 PPTX + renderer + 页数仍会接受
+    # 被替换的 PDF。旧 metadata 没有 pdf_sha 时安全 miss，重新转换并补戳。
+    pdf_sha = _file_sha(pdf) if pdf is not None and pdf.exists() else None
+    if (meta.get("pptx_sha") == _file_sha(pptx)
+            and meta.get("pdf_sha") and meta.get("pdf_sha") == pdf_sha
+            and meta.get("renderer") == renderer_identity(renderer)
+            and pdf is not None and pdf.exists() and _pdf_page_count(pdf) > 0):
         return pdf
     return None
 
 
 def _pdf_record(pptx: Path, work: Path, pdf: Path, renderer: str | None) -> None:
+    try:
+        pdf_bytes = pdf.stat().st_size
+    except OSError:
+        pdf_bytes = None
     _patch_meta(work, pdf={"name": pdf.name, "pptx_sha": _file_sha(pptx),
-                           "renderer": str(renderer or ""), "pptx_name": pptx.name})
-
-
-def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
-    """本轮像素视图与已编译产物一致 → 返回上次编译报告，跳过 compile_deck。
-
-    复用条件就是「编译的两项输入都没变」：spec 的像素视图指纹一致 + 磁盘上的
-    PPTX 内容指纹未变。因此手动改过 PPTX、换过图片或删过文件都不会命中；
-    编译器行为变了 → 产物字节变了 → 第二道关自动失效（不再需要
-    COMPILER_VERSION 之类的版本闸：视图 + 内容核验已经覆盖同一件事）。
-    `use_cache=False` 时调用方直接跳过本函数。
-    """
-    rec = _load_meta(work).get("compile") or {}
-    if rec.get("view") != view or not rec.get("report"):
-        return None
-    if _file_sha(pptx) != rec.get("pptx_sha"):
-        return None
-    if not Path(pptx).exists():
-        return None
-    rep = dict(rec["report"])
-    rep["reused"] = True
-    return rep
-
-
-def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
-    _patch_meta(work, compile={
-        "view": view, "pptx_sha": _file_sha(pptx), "pptx_name": Path(pptx).name,
-        "report": {k: v for k, v in (report or {}).items() if k != "guard"}})
+                           "pdf_sha": _file_sha(pdf), "pdf_bytes": pdf_bytes,
+                           "renderer": renderer_identity(renderer), "pptx_name": pptx.name})
 
 
 def _load_cache(work: Path) -> dict[str, dict]:
@@ -247,19 +243,18 @@ def _load_cache(work: Path) -> dict[str, dict]:
     try:
         import json
         data = json.loads(f.read_text(encoding="utf-8"))
-        return data.get("entries") or {}
-    except Exception:
+        entries = data.get("entries") if isinstance(data, dict) else {}
+        return entries if isinstance(entries, dict) else {}
+    except (OSError, ValueError, TypeError):
         return {}          # 缓存损坏 → 静默按未命中处理，绝不影响判定
 
 
 def _save_cache(work: Path, entries: dict[str, dict]) -> None:
     try:
-        import json
-        (work / RENDER_CACHE_NAME).write_text(
-            json.dumps({"renderer": str(find_renderer() or ""),
-                        "entries": entries}, ensure_ascii=False, indent=1),
-            encoding="utf-8")
-    except Exception:
+        _atomic_json_write(work / RENDER_CACHE_NAME,
+                           {"renderer": renderer_identity(find_renderer()),
+                            "entries": entries})
+    except (OSError, TypeError, ValueError):
         pass               # 写失败只是下次再算一遍
 
 
@@ -447,19 +442,6 @@ def _plan_jobs(page_numbers: list[int], workers: int) -> tuple[list[tuple[int, i
         runs[i:i + 1] = [(a, m), (m + 1, b)]
     n = min(n, len(runs))
     return sorted(runs), n
-
-
-def _file_sha(path: Path) -> str | None:
-    """文件内容指纹：缓存命中必须连像素一起核对，文件名相等不能算数。"""
-    import hashlib
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 16), b""):
-                h.update(chunk)
-        return h.hexdigest()[:16]
-    except Exception:
-        return None
 
 
 def _run_token(src: Path, page_numbers: list[int]) -> str:
@@ -1144,6 +1126,8 @@ def resolve_anchor(slide: dict, cw: float, ch: float) -> tuple[str | None, dict 
     优先级：page_intent.focus / focus_subject_id → gravity_anchor → None（由
     render_evidence 回退到启发式）。声明意图是评分基准，启发式只是兜底。
     """
+    if not isinstance(slide, dict):
+        return None, None
     intent = slide.get("page_intent") if isinstance(slide.get("page_intent"), dict) else {}
     focus = intent.get("focus") or slide.get("focus_subject_id") or slide.get("focus")
     if focus:
@@ -1166,7 +1150,8 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
                     dpi: int = 96, pages: list[int] | None = None,
                     workers: int = MAX_RENDER_WORKERS,
                     use_cache: bool = True,
-                    raster: str = "auto") -> dict[str, Any]:
+                    raster: str = "auto",
+                    spec_path: str | Path | None = None) -> dict[str, Any]:
     """
     编译产物 + spec → 每页渲染证据。
     返回 {"rendered", "reason", "pages", "coverage"}；pages[i]["index"] 与
@@ -1188,20 +1173,36 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
     work = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="pptx-render-"))
     work.mkdir(parents=True, exist_ok=True)
     work = work.resolve()      # 证据目录统一绝对化：相对路径会让 LibreOffice 卡死
-    slides = spec.get("slides") or []
-    canvas = spec.get("canvas") or {}
-    cw = float(canvas.get("width", DEFAULT_WIDTH))
-    ch = float(canvas.get("height", DEFAULT_HEIGHT))
-    theme = spec.get("theme") or {}
-    accent_hex = str((theme.get("colors") or {}).get("accent") or "").strip() or None
-    renderer = str(find_renderer() or "")
+    spec = spec if isinstance(spec, dict) else {}
+    raw_slides = spec.get("slides")
+    slides = ([s if isinstance(s, dict) else {} for s in raw_slides]
+              if isinstance(raw_slides, list) else [])
+    raw_canvas = spec.get("canvas")
+    canvas = dict(raw_canvas) if isinstance(raw_canvas, dict) else {}
+    try:
+        cw, ch = float(canvas.get("width", DEFAULT_WIDTH)), float(canvas.get("height", DEFAULT_HEIGHT))
+        if not all(math.isfinite(v) and v > 0 for v in (cw, ch)):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        cw, ch = DEFAULT_WIDTH, DEFAULT_HEIGHT
+        canvas = {**canvas, "width": cw, "height": ch}
+    raw_theme = spec.get("theme")
+    theme = raw_theme if isinstance(raw_theme, dict) else {}
+    colors = theme.get("colors") if isinstance(theme.get("colors"), dict) else {}
+    accent_hex = str(colors.get("accent") or "").strip() or None
+    renderer = renderer_identity(find_renderer())
     base = Path(pptx).parent          # 与编译器同口径：相对 src 以产物所在目录为基准
+    try:
+        dpi = max(1, int(dpi))
+    except (TypeError, ValueError, OverflowError):
+        dpi = 96
 
     def _key(n: int) -> str:
         s = slides[n - 1] if n <= len(slides) else None
+        intent = s.get("page_intent") if isinstance(s, dict) and isinstance(s.get("page_intent"), dict) else {}
         return _slide_key(s, canvas, int(dpi), theme, renderer,
-                          _media_stamp(s, base),
-                          focus=str(((s or {}).get("page_intent") or {}).get("focus") or ""))
+                          _media_stamp(s, base, spec_path),
+                          focus=str(intent.get("focus") or ""))
 
     keys = {n: _key(n) for n in range(1, len(slides) + 1)}
     cache = _load_cache(work) if use_cache else {}
@@ -1212,7 +1213,47 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
             if entry and _png_present(work, entry):
                 live[n] = entry
 
-    wanted = list(range(1, len(slides) + 1)) if not pages else sorted({int(n) for n in pages})
+    if pages is None:
+        wanted = list(range(1, len(slides) + 1))
+        request_kind = "all"
+    else:
+        request_kind = "subset"
+        wanted = []
+        invalid_requested = []
+        try:
+            raw_pages = list(pages)
+        except (TypeError, ValueError):
+            raw_pages = []
+            invalid_requested = [pages]
+        for raw in raw_pages:
+            # bool 是 int 的子类，但不是合法页码意图；拒绝它，避免 True
+            # 悄悄变成第 1 页并制造一份错误证据。
+            if isinstance(raw, bool):
+                invalid_requested.append(raw)
+                continue
+            try:
+                n = int(raw)
+            except (TypeError, ValueError, OverflowError):
+                invalid_requested.append(raw)
+                continue
+            if n != raw or not 1 <= n <= len(slides):
+                invalid_requested.append(raw)
+                continue
+            wanted.append(n)
+        wanted = sorted(set(wanted))
+    # 显式空集/全部越界是「跳过」，不是「成功渲染了零页」。这条语义
+    # 必须在 cache hit 分支之前返回，否则 review 的错误页码会伪装成 rendered=True。
+    if not wanted:
+        reason = ("no slides to render" if request_kind == "all"
+                  else "no valid requested pages")
+        coverage = {"rendered_pages": 0, "total_pages": len(slides),
+                    "rendered_ids": [], "requested": [], "workers": 0,
+                    "cache_hits": 0, "cache_misses": 0, "unrendered": [],
+                    "request_kind": request_kind}
+        if request_kind == "subset":
+            coverage["invalid_requested"] = invalid_requested
+        return {"rendered": False, "skipped": True, "reason": reason,
+                "pages": [], "coverage": coverage}
     need = [n for n in wanted if n not in live]
     if not need:                        # 全命中：一次进程都不起
         out = [_reuse_entry(live[n], n, slides, cw, ch) for n in wanted]
@@ -1221,7 +1262,7 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
                              "rendered_ids": [p["slide"] for p in out],
                              "requested": wanted, "workers": 0,
                              "cache_hits": len(out), "cache_misses": 0,
-                             "unrendered": None}}
+                             "unrendered": None, "request_kind": request_kind}}
 
     token = _run_token(Path(pptx), need)
     # 冷测（use_cache=False）不清空证据目录：清它会把别人的热缓存打回冷态。

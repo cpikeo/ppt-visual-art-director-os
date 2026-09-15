@@ -13,6 +13,33 @@
 9. 最终标准：更少规则更强判断，更少代码更高审美，更少复杂度更高质量
 
 
+## v4.23 语义身份与证据可观测批（2026-09-15）：根因聚合、来源门控、热路径收敛
+
+**案源**：第一轮深度审计已经完成工程修复；本轮不扩充设计模板，而是把剩余的执行契约和观测缺口收口。
+
+**修复**
+
+- `review/release` 在未显式覆盖时对 factual numeric chart 默认 `require_provenance=true`；ordinal/process/illustrative 非数值表达不被一律误判为业务数据。
+- compile cache 把 `semantic_view` 与最终 PPTX `artifact/output SHA-256` 分开命名；热命中复用已核验完整 SHA，避免同一进程重复读取产物。
+- QA 新增 `cache_reason`、`render_cache_reason`、`output_attestation_ms`、`provenance_required`；renderer 探测按进程 memoize，缺 renderer 仍明确 `PREVIEW_ONLY`。
+- `pre_critic` 输出根因计数、影响页和最多 3 个代表页；`risk_strategy.pages` 默认只给代表页，逐页明细留在 `page_details`。
+- `route.plan_deck` 和页计划输出 `intent_interpretation.explicit/inferred/conflicts`，未知输入和文本/显式类型矛盾不再静默丢失。
+- PHENO 的 QA/Manifest/design review/plan 已按新 schema 重生成；无 LibreOffice 仍不宣称像素验收或 `release_eligible=true`。
+
+回归：`PYTHONPATH=scripts python3 scripts/selftest.py` **62/62 PASS**；`py_compile` 与 `git diff --check` PASS。
+
+## v4.22 案例门控批（2026-09-14）：串行过门，独立任务有界并行
+
+**案源**：PPT_CASE_002 的返工并非方向反复，而是 Guard、Compiler、QA、Advisory 串行暴露了不同根因。
+
+**修复**
+
+- `qa.py --advisory` 现在先完成工程 Guard/Compile；有阻断或编译失败时跳过风险建议并记录 `engineering_gate`，避免在坏结构上浪费预测成本。
+- 干净 spec 才追加设计契约与 `pre_critic/risk_strategy`；性能报告新增 `advisory_ms`，编译、建议、渲染耗时分开记录。
+- 技能契约明确阶段门串行（strategy → spec → draft → advisory → review/release）；同阶段独立资产 QC、渲染页和 selftest 可有界并行，但不得并发写同一产物或缓存。
+
+回归：selftest 60/60；PHENO 15 页 spec/draft 均 passed、0 blocking、编译 0 warning；无 renderer 时仍为 `PREVIEW_ONLY`。
+
 ## v4.21 release 首战批（2026-09-11）：像素档首跑，拿 11 条真命换两枚包修
 
 **案源**：沙盒补装 LibreOffice 25.2 + Noto CJK，2026 年终 deck 全量 release 档首跑。首报 62.9 分 7 条 READABILITY_FAIL——draft 只测声明层，这些病只有真相机拍得到。逐条收网后终版 REVISE 86.4 / blocking=0；残留的 3.6 分缺口全是设计判断事项（三卡页容量与非对称锚点），按 craft 案例 4 未为分数改设计。
@@ -183,7 +210,7 @@
 - `references/archive.md` 保留清单陈旧事实：design_dna.json「180 条」为 v4.0 前数字，实为 v4.5 起蒸馏精选条目制（8 条）——改为不随时间漂移的口径表述。
 - `references/design-system.md` References [4] 死链修复：`mckinsey.com/（storytelling)`（全角括号+残括被拼进 URL，实测 404）→ URL 归位主域、注释以全角成对括号移出。同列 [1][2][3][5] 经实网验证全部 200 有效。
 
-**判定（不修）**：lib `run_qa(mode=None)` 走 legacy 全量旧契约（usage 明示保留 `--level N` legacy），与 CLI 默认 draft 是两套受支持契约，仅记录认知项；`references/archive.md`（维护者考古档案，Appendix C 为 35 条微规则全文真源）与 `CHANGELOG.md`（演进史唯一时间线）均判定**有意义且不压缩**——不进生成上下文，压缩仅省包体积而损考古证据，收益不对等。
+**历史判定（已由后续优化 supersede）**：当时 lib `run_qa(mode=None)` 走 legacy 全量旧契约、CLI 默认 draft；当前统一为 API/CLI 均默认 draft，显式 `--level N` / `--fast` 仍保留 legacy 成本请求。`references/archive.md` 与本文件仍是考古记录，不进生成上下文。
 
 自检 56/56 全 PASS；hard_rule_lines=5 零漂移；zip 重新打包。
 

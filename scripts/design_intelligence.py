@@ -33,7 +33,10 @@ analyze(brief, spec) 把三条智能线（内容/视觉/风险与策略）汇合
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -70,19 +73,45 @@ DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json
 # ════════════════════════════════════════════════════════════════════════
 # ① Design DNA Memory
 # ════════════════════════════════════════════════════════════════════════
+def _atomic_store_write(path: Path, value: dict) -> None:
+    """经验库写入也走原子替换，避免进程中断留下半个 JSON。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
+                                    dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=1)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
 def _load_store(strict: bool = False) -> dict:
     """文件不存在 = 合法初态（空库）；存在但解析失败 = 数据损坏。
 
     读路径回落空库（召回失败安全）；strict 写路径抛错——写方必须在
     「损坏时拒绝写入」的最高层兜底，否则空库会被整体写回、经验全灭。"""
     try:
-        return json.loads(DNA_STORE.read_text(encoding="utf-8"))
+        value = json.loads(DNA_STORE.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or not isinstance(value.get("entries"), list):
+            raise ValueError("经验库顶层必须是对象且 entries 必须是数组")
+        if not all(isinstance(entry, dict) for entry in value["entries"]):
+            raise ValueError("经验库 entries 必须全部是对象")
+        return value
     except FileNotFoundError:
         return {"version": 1, "entries": []}
-    except Exception:
+    except Exception as exc:
         if strict:
             raise
-        return {"version": 1, "entries": []}
+        # 召回可安全降级为空库，但把损坏/权限问题带到结果里；不能让
+        # 「经验库读取失败」伪装成「没有经验」，否则判断链不可审计。
+        return {"version": 1, "entries": [],
+                "_load_error": f"{type(exc).__name__}: {exc}"}
 
 
 def recall_dna(brief: dict) -> dict:
@@ -94,25 +123,33 @@ def recall_dna(brief: dict) -> dict:
     """
     text = " ".join(str(v) for v in (brief or {}).values() if isinstance(v, (str, int, float)))
     low = text.lower()
+    store = _load_store()
+    load_error = store.get("_load_error")
     scored = []
-    for e in _load_store().get("entries", []):
-        sig = [s.lower() for s in
-               (e.get("signature", {}).get("keywords", []) or [])]
+    for e in store.get("entries", []):
+        signature = e.get("signature") if isinstance(e.get("signature"), dict) else {}
+        keywords = signature.get("keywords") if isinstance(signature.get("keywords"), list) else []
+        sig = [str(s).lower() for s in keywords if str(s).strip()]
         if not sig:
             continue
         hits = sum(1 for s in sig if s in low)
         scored.append((hits / len(sig), hits, e))
     scored.sort(key=lambda t: (-t[0], -t[1], t[2].get("id", "")))
     if not scored or scored[0][0] <= 0:
+        note = "无匹配 DNA：从主题种子起步，发布 PASS 后 record_dna 沉淀这条经验"
+        if load_error:
+            note += f"；经验库读取失败，已安全降级（{load_error}）"
         return {"matched": None, "confidence": 0.0, "dna": None,
-                "alternatives": [], "note": "无匹配 DNA：从主题种子起步，发布 PASS 后 record_dna 沉淀这条经验"}
+                "alternatives": [], "note": note,
+                **({"load_error": load_error} if load_error else {})}
     conf, hits, best = scored[0]
     alts = [{"id": e.get("id"), "confidence": round(c, 2)}
             for c, h, e in scored[1:3] if c > 0]
+    legacy_dna = best.get("dna") if isinstance(best.get("dna"), dict) else {}
     return {"matched": best.get("id"), "confidence": round(conf, 2),
             "dna": (best.get("judgment") or best.get("dna")),
             "design_problem": best.get("design_problem"),
-            "avoid": best.get("avoid") or best.get("dna", {}).get("forbidden"),
+            "avoid": best.get("avoid") or legacy_dna.get("forbidden"),
             "alternatives": alts,
             "proven": best.get("proven"),
             "note": ("DNA 是起点不是模板：按当前内容与受众重组，禁止照抄" if conf < 0.6
@@ -190,9 +227,11 @@ def record_dna(entry: dict) -> dict:
     entries.sort(key=lambda e: str(e.get("id")))
     store["entries"] = entries
     store["version"] = store.get("version", 1)
-    DNA_STORE.parent.mkdir(parents=True, exist_ok=True)
-    DNA_STORE.write_text(json.dumps(store, ensure_ascii=False, indent=1),
-                         encoding="utf-8")
+    try:
+        _atomic_store_write(DNA_STORE, store)
+    except (OSError, TypeError, ValueError) as e:
+        return {"ok": False, "reason":
+                f"经验库原子写入失败（{type(e).__name__}）：{e}"}
     return {"ok": True, "store": str(DNA_STORE), "entries": len(entries)}
 
 
@@ -217,7 +256,9 @@ def media_decision(page: dict) -> dict:
 
     输入含 elements 时做覆盖判定：已有图表的页降为「图表即锚点」；
     已有 layer=background 画心时记「画心已承担」。"""
-    raw = str((page.get("page_intent") or {}).get("page_family") or "").upper()
+    page = page if isinstance(page, dict) else {}
+    raw_intent = page.get("page_intent") if isinstance(page.get("page_intent"), dict) else {}
+    raw = str(raw_intent.get("page_family") or "").upper()
     family = normalize_family(raw)
     need, conf, reason = _MEDIA_MODEL.get(family, (False, 0.20, "未知家族：默认不出图（媒体需要理由）"))
     has_chart = any(isinstance(e, dict) and e.get("type") in ("chart", "native_chart")
@@ -254,6 +295,9 @@ QUALITY_BUDGETS = {
     "EVIDENCE": {"primary": ["professional_quality", "consistency"],
                  "complexity": "medium", "media": "禁止",
                  "aim": "证据链可信：来源/单位/口径齐全"},
+    "CASE_STUDY": {"primary": ["evidence", "professional_quality"],
+                   "complexity": "medium", "media": "仅 proof 功能",
+                   "aim": "图像只证明现场/人物/结果，不承担装饰"},
     "STRUCTURE": {"primary": ["alignment", "visual_hierarchy"],
                   "complexity": "low", "media": "禁止",
                   "aim": "结构关系一眼可读"},
@@ -273,7 +317,9 @@ QUALITY_BUDGETS = {
 
 
 def quality_budget(page: dict) -> dict:
-    raw = str((page.get("page_intent") or {}).get("page_family") or "").upper()
+    page = page if isinstance(page, dict) else {}
+    raw_intent = page.get("page_intent") if isinstance(page.get("page_intent"), dict) else {}
+    raw = str(raw_intent.get("page_family") or "").upper()
     family = _FAMILY_ALIASES.get(raw, raw)
     b = dict(QUALITY_BUDGETS.get(family, {"primary": ["professional_quality"],
                                           "complexity": "medium", "media": "按需",
@@ -287,7 +333,9 @@ def quality_budget(page: dict) -> dict:
 # ④ Pre-Critic Engine
 # ════════════════════════════════════════════════════════════════════════
 def _theme_colors(spec: dict) -> dict:
-    return dict(((spec.get("theme") or {}).get("colors") or {}))
+    theme = spec.get("theme") if isinstance(spec, dict) and isinstance(spec.get("theme"), dict) else {}
+    colors = theme.get("colors") if isinstance(theme.get("colors"), dict) else {}
+    return dict(colors)
 
 
 def _hex_of(color: Any, colors: dict) -> str | None:
@@ -355,11 +403,16 @@ def _est_overflow(e: dict) -> float | None:
     if not isinstance(text, str) or not text.strip():
         return None
     for k in ("size", "width", "height"):
-        if not isinstance(e.get(k), (int, float)):
+        if isinstance(e.get(k), bool) or not isinstance(e.get(k), (int, float)):
             return None
-    size = float(e["size"])
-    lh = float(e.get("line_height") or 1.2)
-    pad = float(e.get("padding") or 0)
+    try:
+        size = float(e["size"])
+        lh = float(e.get("line_height") or 1.2)
+        pad = float(e.get("padding") or 0)
+        if not all(math.isfinite(v) for v in (size, lh, pad)) or size <= 0 or lh <= 0:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
     wrap = e.get("wrap") is not False
     lines = 0
     for seg in str(text).split("\n"):
@@ -451,13 +504,29 @@ def pre_critic(spec: dict) -> dict:
     predicted(下游失败码), root_cause(与交付失败码同分类法), confidence}。
     """
     t0 = time.time()
+    if not isinstance(spec, dict):
+        return {"risks": [], "summary": {"high": 0, "med": 0, "low": 0,
+                                           "pages_at_risk": 0, "total_pages": 0},
+                "by_root_cause": {}, "root_cause_summary": [], "predicted_codes": [],
+                "pages_at_risk": [], "first_fix": None, "elapsed_ms": 0,
+                "error": "spec 顶层必须是对象/dict"}
     colors = _theme_colors(spec)
-    canvas = spec.get("canvas") or {}
-    cw = float(canvas.get("width", DEFAULT_WIDTH))
-    ch = float(canvas.get("height", DEFAULT_HEIGHT))
-    accent_max = float((spec.get("theme") or {}).get("constraints", {}).get(
-        "accent_max", 0.05)) or 0.05
-    slides = spec.get("slides") or []
+    canvas = spec.get("canvas") if isinstance(spec.get("canvas"), dict) else {}
+    try:
+        cw = float(canvas.get("width", DEFAULT_WIDTH))
+        ch = float(canvas.get("height", DEFAULT_HEIGHT))
+        if not math.isfinite(cw) or not math.isfinite(ch) or cw <= 0 or ch <= 0:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        cw, ch = DEFAULT_WIDTH, DEFAULT_HEIGHT
+    try:
+        accent_max = float((spec.get("theme") or {}).get("constraints", {}).get(
+            "accent_max", 0.05)) or 0.05
+        if not math.isfinite(accent_max) or accent_max <= 0:
+            raise ValueError
+    except (TypeError, ValueError, AttributeError, OverflowError):
+        accent_max = 0.05
+    slides = [s for s in (spec.get("slides") or []) if isinstance(s, dict)]
     risks: list[dict] = []
     pages_at_risk: set[str] = set()
     fps: list[tuple[str, tuple]] = []      # (页 id, 布局指纹)
@@ -473,7 +542,7 @@ def pre_critic(spec: dict) -> dict:
     for i, slide in enumerate(slides):
         sid = str(slide.get("id") or f"page_{i + 1}")
         elems = [e for e in (slide.get("elements") or []) if isinstance(e, dict)]
-        pi = slide.get("page_intent") or {}
+        pi = slide.get("page_intent") if isinstance(slide.get("page_intent"), dict) else {}
 
         # 0. 意图不清 / 焦点未绑定（原 guard preflight 信号并入 risk_prediction）
         insight = pi.get("insight") or slide.get("insight")
@@ -535,8 +604,14 @@ def pre_critic(spec: dict) -> dict:
                     if bhex:
                         backing = bhex
             ratio = contrast(fg, backing)
+            try:
+                _text_size = float(e.get("size") or 16)
+                if not math.isfinite(_text_size):
+                    _text_size = 16.0
+            except (TypeError, ValueError, OverflowError):
+                _text_size = 16.0
             if worst is None or ratio < worst[1]:
-                worst = (str(e.get("id")), ratio, float(e.get("size") or 16))
+                worst = (str(e.get("id")), ratio, _text_size)
         if worst and worst[1] < 3.0:
             _add(code="CONTRAST_FAIL_RISK", level="high", slides=[sid],
                  why=f"「{worst[0]}」与底色预估对比 {worst[1]:.2f}:1 < 3.0:1 阻断线",
@@ -561,12 +636,24 @@ def pre_critic(spec: dict) -> dict:
                  confidence=0.9)
         if focus_el is not None:
             fsize = focus_el.get("size") if focus_el.get("type") == "text" else None
-            others = [float(e.get("size") or 0) for e in elems
-                      if e is not focus_el and e.get("type") == "text"]
-            if isinstance(fsize, (int, float)) and others and max(others) > 0 \
-                    and fsize / max(others) < FOCUS_LEAD:
+            others = []
+            for e in elems:
+                if e is focus_el or e.get("type") != "text":
+                    continue
+                try:
+                    _size = float(e.get("size") or 0)
+                    if math.isfinite(_size):
+                        others.append(_size)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+            try:
+                _fsize = float(fsize)
+            except (TypeError, ValueError, OverflowError):
+                _fsize = 0.0
+            if math.isfinite(_fsize) and others and max(others) > 0 \
+                    and _fsize / max(others) < FOCUS_LEAD:
                 _add(code="FOCUS_SCALE_RISK", level="med", slides=[sid],
-                     why=f"焦点 {fsize:.0f}px 领先第二大文字 {fsize / max(others):.2f}× < {FOCUS_LEAD}×",
+                     why=f"焦点 {_fsize:.0f}px 领先第二大文字 {_fsize / max(others):.2f}× < {FOCUS_LEAD}×",
                      prevention="拉开尺度比（焦点 ≥1.25× 第二大文字）或降级竞争文字",
                      predicted="CRITIC_LOW(visual_hierarchy)", cause="focus_anchor",
                      confidence=0.85)
@@ -681,8 +768,17 @@ def pre_critic(spec: dict) -> dict:
                  predicted="gravity_drift", cause="balance_composition", confidence=0.5)
 
         # 10. 字阶纪律（每页 ≤4 级；驻点 64/44/32/22/17/12.5）
-        page_sizes = sorted({float(e["size"]) for e in elems
-                             if e.get("type") == "text" and e.get("size")})
+        page_sizes = []
+        for e in elems:
+            if e.get("type") != "text" or e.get("size") is None:
+                continue
+            try:
+                size = float(e.get("size"))
+                if math.isfinite(size) and size > 0:
+                    page_sizes.append(size)
+            except (TypeError, ValueError, OverflowError):
+                continue
+        page_sizes = sorted(set(page_sizes))
         if len(page_sizes) > 4:
             _add(code="TYPE_LADDER_RISK", level="med", slides=[sid],
                  why=f"本页 {len(page_sizes)} 个不同字号 {page_sizes}，超过每页 4 级上限",
@@ -738,21 +834,75 @@ def pre_critic(spec: dict) -> dict:
     for r in risks:
         by_cause.setdefault(r["root_cause"], []).append(r["code"])
     high = [r for r in risks if r["level"] == "high"]
+    _level_rank = {"high": 0, "med": 1, "low": 2}
+    cause_rank = {}
+    for cause, codes in by_cause.items():
+        members = [r for r in risks if r["root_cause"] == cause]
+        cause_rank[cause] = (
+            min(_level_rank.get(r.get("level"), 3) for r in members),
+            -max(float(r.get("confidence") or 0) for r in members),
+            -len(members), cause)
+    root_cause_order = sorted(by_cause, key=lambda c: cause_rank[c])
+    ranked_risks = sorted(risks, key=lambda r: (
+        _level_rank.get(r.get("level"), 3),
+        -float(r.get("confidence") or 0),
+        str(r.get("root_cause") or ""), str(r.get("code") or "")))
+    first = ranked_risks[0] if ranked_risks else None
+
+    # advisory 的消费面以根因为主：逐页风险仍保留作可追溯原始证据，但默认展示
+    # 每个根因的代表页与批量修复入口，避免同一根因刷满整份报告。
+    slide_order = {str(s.get("id") or f"page_{i + 1}"): i
+                   for i, s in enumerate(slides)}
+    root_cause_summary = []
+    for cause in root_cause_order:
+        members = [r for r in risks if r.get("root_cause") == cause]
+        page_stats: dict[str, dict] = {}
+        for r in members:
+            for page in r.get("slides") or []:
+                sid = str(page)
+                stat = page_stats.setdefault(sid, {"count": 0, "level": 3,
+                                                   "confidence": 0.0})
+                stat["count"] += 1
+                stat["level"] = min(stat["level"], _level_rank.get(r.get("level"), 3))
+                stat["confidence"] = max(stat["confidence"],
+                                          float(r.get("confidence") or 0))
+        representative_pages = [sid for sid, _ in sorted(
+            page_stats.items(), key=lambda kv: (
+                kv[1]["level"], -kv[1]["count"], -kv[1]["confidence"],
+                slide_order.get(kv[0], 10 ** 9), kv[0]))[:3]]
+        top_member = sorted(members, key=lambda r: (
+            _level_rank.get(r.get("level"), 3),
+            -float(r.get("confidence") or 0), str(r.get("code") or "")))[0]
+        root_cause_summary.append({
+            "root_cause": cause,
+            "priority": len(root_cause_summary) + 1,
+            "risk_count": len(members),
+            "codes": sorted({str(r.get("code")) for r in members}),
+            "affected_pages": sorted(page_stats, key=lambda p: (slide_order.get(p, 10 ** 9), p)),
+            "representative_pages": representative_pages,
+            "fix_first": top_member.get("prevention"),
+            "predicted": sorted({str(r.get("predicted")) for r in members
+                                  if r.get("predicted")}),
+        })
     return {"risks": risks,
             "summary": {"high": len(high), "med": sum(1 for r in risks if r["level"] == "med"),
                         "low": 0, "pages_at_risk": len(pages_at_risk),
                         "total_pages": len(slides)},
-            "by_root_cause": {k: sorted(set(v)) for k, v in sorted(by_cause.items())},
+            "by_root_cause": {k: sorted(set(by_cause[k])) for k in root_cause_order},
+            "root_cause_order": root_cause_order,
+            "root_cause_summary": root_cause_summary,
             "predicted_codes": sorted({r["predicted"] for r in high}),
             "pages_at_risk": sorted(pages_at_risk),
-            "first_fix": ({"root_cause": high[0]["root_cause"],
-                           "batch": [r["code"] for r in high
-                                     if r["root_cause"] == high[0]["root_cause"]]}
-                          if high else None),
+            "first_fix": ({"root_cause": first["root_cause"],
+                           "code": first["code"],
+                           "level": first["level"],
+                           "batch": [r["code"] for r in ranked_risks
+                                     if r["root_cause"] == first["root_cause"]]}
+                          if first else None),
             "elapsed_ms": int((time.time() - t0) * 1000)}
 
 
-def forecast_risk(brief: dict) -> dict:
+def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
     """起草之前：brief → 风险预测（0–1 向量）→ 生成政策。
 
     这是「Risk Prediction 在 Design Intelligence 内部」的落点——不是生成前审核
@@ -760,17 +910,18 @@ def forecast_risk(brief: dict) -> dict:
     并把结论变成预算：文本密度风险高 → 收紧 text_budget / 全局 auto_fit；
     图片不足风险高 → 提高 generate 预算；布局复杂风险高 → 降低并行构图算子。
 
-    纯函数、零渲染、~0.1ms（复用 route 的决策缓存）。任何异常都返回「零风险 + 空政策」，
-    绝不阻断生成（预测是加速器，不是门槛）。
+    传入已计算的 plan 可复用 route 结果。纯函数、零渲染、~0.1ms（复用 route 的决策缓存）。
+    任何异常都返回「零风险 + 空政策」，绝不阻断生成（预测是加速器，不是门槛）。
     """
     out = {"risks": {}, "policies": {}, "notes": []}
-    try:
-        import route as _route
-        plan = _route.plan_deck(brief if isinstance(brief, dict) else {})
-    except Exception as exc:                       # 预测失败不阻断主链
-        out["error"] = str(exc)
-        out["notes"].append("route 不可用：跳过预测，按默认骨架起草")
-        return out
+    if plan is None:
+        try:
+            import route as _route
+            plan = _route.plan_deck(brief if isinstance(brief, dict) else {})
+        except Exception as exc:                   # 预测失败不阻断主链
+            out["error"] = str(exc)
+            out["notes"].append("route 不可用：跳过预测，按默认骨架起草")
+            return out
     pages = plan.get("pages") or []
     n = max(1, len(pages))
     text_dense = sum(1 for p in pages
@@ -778,12 +929,15 @@ def forecast_risk(brief: dict) -> dict:
                      or int(p.get("text_budget") or 0) >= 4) / n
     media_short = sum(1 for p in pages
                       if str((p.get("asset") or {}).get("decision")) == "none") / n
+    def _page_family(page: dict) -> str:
+        return str(page.get("family") or page.get("page_family") or "").upper()
+
     complex_layout = sum(1 for p in pages
-                         if str(p.get("family")) in
+                         if _page_family(p) in
                          ("FRAMEWORK", "COMPARISON", "TIMELINE", "NARRATIVE",
-                          "PROCESS", "EXECUTIVE_SUMMARY")) / n
+                          "PROCESS", "EXECUTIVE_SUMMARY", "CASE_STUDY")) / n
     mono = 0.0
-    fams = [str(p.get("family")) for p in pages]
+    fams = [_page_family(p) for p in pages]
     streak = 1
     for i in range(1, len(fams)):
         streak = streak + 1 if fams[i] == fams[i - 1] else 1
@@ -837,7 +991,9 @@ def risk_strategy(spec: dict, report: dict | None = None) -> dict:
       risk_scores   : 归一化风险向量（0–1，供对比不同方向/候选骨架）
       predicted     : 若不调整将命中的下游失败码（QA 侧）
     """
+    spec = spec if isinstance(spec, dict) else {}
     report = report or pre_critic(spec)
+    report = report if isinstance(report, dict) else pre_critic(spec)
     slides = [s for s in (spec.get("slides") or []) if isinstance(s, dict)]
     ids = [str(s.get("id") or f"page_{i + 1}") for i, s in enumerate(slides)]
     by_page: dict[str, list[dict]] = {sid: [] for sid in ids}
@@ -864,29 +1020,103 @@ def risk_strategy(spec: dict, report: dict | None = None) -> dict:
 
     n = max(1, len(ids))
     top_score = max(list(per_page_score.values()) + [0.0])
-    pages = [{"slide": sid, "risk_weight": round(per_page_score[sid], 2),
-              "risks": sorted({str(r.get("code")) for r in by_page[sid]}),
-              "fix_first": (by_page[sid][0].get("prevention") if by_page[sid] else None)}
-             for sid in ids if by_page[sid]]
     order = {"color_policy": 0, "text_policy": 1, "type_policy": 2, "media_policy": 3,
              "hierarchy_policy": 4, "focus_anchor": 5, "rhythm_policy": 6,
              "composition_policy": 7, "type_color_policy": 8, "continuity_policy": 9,
              "general_policy": 99}
+    level_order = {"high": 0, "med": 1, "low": 2}
+
+    def risk_sort_key(risk: dict):
+        meta = _RISK_CATALOG.get(str(risk.get("code"))) or {}
+        strategy_key = (meta.get("strategy") or ("general_policy",))[0]
+        return (level_order.get(str(risk.get("level")), 3),
+                order.get(strategy_key, 98),
+                -float(risk.get("confidence") or 0),
+                str(risk.get("root_cause") or ""),
+                str(risk.get("code") or ""))
+
+    # 页级修正仍保留作可追溯明细，但默认出口先给根因和代表页：先修高置信/高影响
+    # 的根因，再处理由它派生的 medium 症状，减少「逐页刷屏 + 往返调参」。
+    page_details = []
+    for sid in ids:
+        if not by_page[sid]:
+            continue
+        ranked = sorted(by_page[sid], key=risk_sort_key)
+        page_details.append({"slide": sid, "risk_weight": round(per_page_score[sid], 2),
+                             "risks": [str(r.get("code")) for r in ranked],
+                             "root_causes": [str(r.get("root_cause")) for r in ranked],
+                             "fix_first": ranked[0].get("prevention") if ranked else None})
+    root_cause_summary = [x for x in (report.get("root_cause_summary") or [])
+                          if isinstance(x, dict)]
+    if not root_cause_summary:
+        # 外部调用方可能传入旧版 report；在这里做一次兼容聚合，不另起诊断脚本。
+        grouped: dict[str, list[dict]] = {}
+        for risk in report.get("risks") or []:
+            grouped.setdefault(str(risk.get("root_cause") or "general"), []).append(risk)
+        for priority, (cause, members) in enumerate(grouped.items(), start=1):
+            pages_for_cause = []
+            for risk in members:
+                for sid in risk.get("slides") or []:
+                    sid = str(sid)
+                    if sid not in pages_for_cause:
+                        pages_for_cause.append(sid)
+            top = sorted(members, key=risk_sort_key)[0]
+            root_cause_summary.append({"root_cause": cause, "priority": priority,
+                                       "risk_count": len(members),
+                                       "codes": sorted({str(r.get("code")) for r in members}),
+                                       "affected_pages": pages_for_cause,
+                                       "representative_pages": pages_for_cause[:3],
+                                       "fix_first": top.get("prevention"),
+                                       "predicted": sorted({str(r.get("predicted"))
+                                                             for r in members if r.get("predicted")})})
+    # 代表页按根因优先级合并，同一页可承担多个根因，但不会重复打印多次。
+    representative_by_page: dict[str, dict] = {}
+    for cause in root_cause_summary:
+        name = str(cause.get("root_cause") or "general")
+        for sid in cause.get("representative_pages") or []:
+            sid = str(sid)
+            row = representative_by_page.setdefault(
+                sid, {"slide": sid, "root_causes": [], "risks": [], "fix_first": None})
+            if name not in row["root_causes"]:
+                row["root_causes"].append(name)
+            for code in cause.get("codes") or []:
+                if code not in row["risks"]:
+                    row["risks"].append(str(code))
+            if row["fix_first"] is None:
+                row["fix_first"] = cause.get("fix_first")
+    representative_pages = list(representative_by_page.values())
+    representative_pages.sort(key=lambda row: (
+        min((next((int(c.get("priority", 10 ** 9)) for c in root_cause_summary
+                   if str(c.get("root_cause")) == name), 10 ** 9)
+             for name in row["root_causes"]), default=10 ** 9),
+        ids.index(row["slide"]) if row["slide"] in ids else 10 ** 9,
+        row["slide"]))
     adjusted = {k: policies[k] for k in sorted(policies, key=lambda x: (order.get(x, 98), x))}
     summary = report.get("summary") or {}
     first = summary.get("high", 0)
+    root_lines = [
+        f"{c.get('root_cause')}（代表页 {','.join(c.get('representative_pages') or []) or 'deck'}）→"
+        f"{c.get('fix_first') or '按该根因批量修复'}"
+        for c in root_cause_summary
+    ]
+    policy_lines = [f"{k}→{'、'.join(v['deck_policies'])}" for k, v in adjusted.items()
+                    if v["deck_policies"]]
     generation = (
-        "按策略起草，不要先出稿再等检查：" + "；".join(
-            f"{k}→{'、'.join(v['deck_policies'])}" for k, v in adjusted.items()
-            if v["deck_policies"])[:600]
-        if adjusted else "无预测风险：按页面骨架直接起草，一次通过")
-    return {"adjusted": adjusted, "pages": pages,
+        "按根因优先、代表页取样起草，不要先出稿再等检查：" +
+        "；".join(root_lines or policy_lines)[:600]
+        if (root_lines or policy_lines) else "无预测风险：按页面骨架直接起草，一次通过")
+    return {"adjusted": adjusted,
+            "pages": representative_pages,
+            "page_details": page_details,
+            "root_causes": root_cause_summary,
             "generation": generation,
             "risk_scores": {sid: round(v / max(1e-6, top_score), 3)
                             for sid, v in per_page_score.items() if v},
             "predicted": sorted(predicted),
             "applied_before": "spec 起草/修订（不是渲染前的审核闸）",
-            "summary": {"policies": len(adjusted), "pages_adjusted": len(pages),
+            "summary": {"policies": len(adjusted), "pages_adjusted": len(representative_pages),
+                        "page_details": len(page_details),
+                        "root_causes": len(root_cause_summary),
                         "high": first, "total_pages": n}}
 
 
@@ -913,10 +1143,23 @@ def apply_fit_ladder(spec: dict) -> tuple[dict, dict]:
     未声明 auto_fit 的元素零改动（编译器仍只警告不修改——本函数是 spec 层的
     显式授权，不是编译器行为）。
     """
+    # Most specs do not opt into auto_fit. Avoid a full deepcopy in that common path:
+    # this resolver is advisory and must be zero-copy when it has nothing to change.
+    slides = (spec or {}).get("slides") or []
+    has_auto_fit = any(
+        isinstance(e, dict) and e.get("auto_fit") is True
+        for slide in slides if isinstance(slide, dict)
+        for e in (slide.get("elements") or [])
+    )
+    if not has_auto_fit:
+        return spec, {"applied": 0, "items": [], "needs_rewrite": []}
+
     import copy
     out = copy.deepcopy(spec)
     items: list[dict] = []
     for slide in (out.get("slides") or []):
+        if not isinstance(slide, dict):
+            continue
         for e in (slide.get("elements") or []):
             if not isinstance(e, dict) or e.get("auto_fit") is not True:
                 continue
@@ -999,12 +1242,14 @@ def main(argv):
         for key, val in strat["adjusted"].items():
             for d in val["deck_policies"]:
                 print(f"  [{key}] 政策 → {d}")
-        for r in rep["risks"]:
-            if r["level"] == "high":
-                pages = "、".join(r["slides"])
-                print(f"  [{r['code']:22s}] {pages}: {r['why']}")
-                print(f"      prevent → {r['prevention'][:90]}")
-        if not rep["risks"]:
+        if rep.get("root_cause_summary"):
+            for root in rep["root_cause_summary"]:
+                pages = "、".join(str(s) for s in (root.get("representative_pages") or [])) or "deck"
+                print(f"  [root:{root.get('root_cause')}] 代表页 {pages} · "
+                      f"{root.get('risk_count', 0)} 条")
+                if root.get("fix_first"):
+                    print(f"      fix → {root['fix_first'][:110]}")
+        elif not rep["risks"]:
             print("  ✓ 无可预测风险——按当前 spec 大概率一次通过")
         return 0
     print(json.dumps(analyze({}, spec), ensure_ascii=False, indent=2))
@@ -1043,7 +1288,7 @@ def color_plan(direction, brief: dict | None = None) -> dict:
     派生顺序（判断，不是模板）：brand_colors > visual_world 材质/光性 >
     方向种子骨架。返回的约束来自参考空间实测律（色相族/饱和/明度域）。
     """
-    brief = brief or {}
+    brief = brief if isinstance(brief, dict) else {}
     fam = str(brief.get("color_family") or "")
     if not fam:
         raw = direction if isinstance(direction, str) else str(

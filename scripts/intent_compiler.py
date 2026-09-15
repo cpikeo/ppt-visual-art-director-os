@@ -123,32 +123,48 @@ STYLE_OVERLAYS = {
 
 
 def _pick_world(need: dict) -> dict:
-    text = " ".join(str(need.get(k) or "") for k in
-                   ("occasion", "subject", "audience", "decision",
-                    "tone_hint")).lower()
-    for key, world in OCCASION_WORLDS.items():
-        if any(_token_hit(text, m) for m in world["match"]):
-            return {"world_key": key, **world}
+    """场合优先，其次才看 subject/decision/audience，避免交叉词抢路由。"""
+    # 先在显式 occasion 内判定；一个「董事会年度总结 + 品牌故事 subject」
+    # 仍然是 board world，而不是被 subject 的故事词改成 emotion world。
+    fields = ["occasion", "subject", "decision", "audience"]
+    for field in fields:
+        text = str(need.get(field) or "").lower()
+        if not text:
+            continue
+        for key, world in OCCASION_WORLDS.items():
+            if any(_token_hit(text, m) for m in world["match"]):
+                return {"world_key": key, **world}
     world = OCCASION_WORLDS[DEFAULT_WORLD]
     return {"world_key": DEFAULT_WORLD, **world}
 
 
 def _apply_style_overlay(world: dict, need: dict) -> dict:
-    """在 occasion world 之上应用审美覆写层（确定性查表，显式视觉声明永远赢）。"""
-    text = " ".join(str(need.get(k) or "") for k in
-                   ("occasion", "subject", "audience", "decision",
-                    "tone_hint", "design_direction")).lower()
+    """在 occasion world 之上应用审美覆写层（显式视觉声明优先）。"""
+    def apply(key, so):
+        w = dict(world)
+        w["style_key"] = key
+        for f in ("visual_world", "composition_grammar", "type_voice",
+                  "color_behavior", "background_scene"):
+            if f in so:
+                w[f] = so[f]
+        w["avoid"] = sorted(set(world.get("avoid") or []) | set(so.get("avoid") or []))
+        w["family_hint"] = so.get("family_hint")
+        return w
+
+    # Explicit design_direction/style_key is a hard overlay, not merely another
+    # keyword in the occasion soup. Contextual words are consulted only if no
+    # explicit style was declared.
+    explicit = " ".join(str(need.get(k) or "") for k in
+                         ("design_direction", "style_key")).lower()
+    context = " ".join(str(need.get(k) or "") for k in
+                        ("occasion", "subject", "audience", "decision",
+                         "tone_hint")).lower()
     for key, so in STYLE_OVERLAYS.items():
-        if any(_token_hit(text, m) for m in so["match"]):
-            w = dict(world)
-            w["style_key"] = key
-            for f in ("visual_world", "composition_grammar", "type_voice",
-                      "color_behavior", "background_scene"):
-                if f in so:
-                    w[f] = so[f]
-            w["avoid"] = sorted(set(world.get("avoid") or []) | set(so.get("avoid") or []))
-            w["family_hint"] = so.get("family_hint")
-            return w
+        if explicit and any(_token_hit(explicit, m) for m in so["match"]):
+            return apply(key, so)
+    for key, so in STYLE_OVERLAYS.items():
+        if any(_token_hit(context, m) for m in so["match"]):
+            return apply(key, so)
     return dict(world)
 
 
@@ -162,11 +178,12 @@ def estimate_tokens(obj) -> int:
     return int(round(total))
 
 
-def compile_brief(need: dict | str) -> dict:
+def compile_brief(need: dict | str, route_plan: dict | None = None) -> dict:
     """需求 → Design Brief（确定性；显式字段永远赢过推断）。
 
     need 可为 dict（audience/decision/occasion/subject/slides/
     constraints/tone_hint/visual_world/brand_colors）或一段自然语言。
+    route_plan 可传入统一 pipeline 已计算的 route 结果，避免重复推导。
     返回 {design_intent, strategy_seed, direction_seed, slides_seed,
     token_estimate, source_hash}。
     """
@@ -177,14 +194,20 @@ def compile_brief(need: dict | str) -> dict:
     tone = str(need.get("tone_hint") or world["tone"])
     visual_world = str(need.get("visual_world") or world["visual_world"])
 
-    # 家族/密度/能量复用 route 真源（本层不维护第二套路由表）
-    from route import plan_deck
-    plan = plan_deck({"audience": need.get("audience", ""),
-                      "decision": need.get("decision", ""),
-                      "occasion": need.get("occasion", ""),
-                      "design_direction": need.get("design_direction", ""),
-                      "quality_level": need.get("quality_level", ""),
-                      "slides": need.get("slides") or []})
+    # 家族/密度/能量复用 route 真源（本层不维护第二套路由表）。
+    # 统一 pipeline 已经算过 route 时直接传入，避免同一任务在同一进程重复推导。
+    if route_plan is None:
+        from route import plan_deck
+        route_plan = plan_deck({"audience": need.get("audience", ""),
+                               "decision": need.get("decision", ""),
+                               "occasion": need.get("occasion", ""),
+                               "subject": need.get("subject", ""),
+                               "brief": need.get("brief", ""),
+                               "purpose": need.get("purpose", ""),
+                               "design_direction": need.get("design_direction", ""),
+                               "quality_level": need.get("quality_level", ""),
+                               "slides": need.get("slides") or []})
+    plan = route_plan
     slides_seed = [{"id": p.get("id") or p.get("content_type"),
                     "family": p.get("page_family") or p.get("family"),
                     "density": p.get("density"), "energy": p.get("energy"),
@@ -220,11 +243,17 @@ def compile_brief(need: dict | str) -> dict:
             "media_role": world["media_role"],
             "background_scene": world["background_scene"],
             "motion_posture": world["motion_posture"],
+            # style_key 保留意图层的语义标签；route_direction 是实际可执行的
+            # route/theme canonical key，避免 quiet_luxury → quiet_minimal 的漂移。
+            "route_direction": plan.get("design_direction") or "quiet_minimal",
             **({"family_hint": world["family_hint"], "style_key": world["style_key"],
                 "avoid": world["avoid"]} if world.get("style_key") else {}),
         },
+
         "slides_seed": slides_seed,
         "route": {"path": plan.get("path"),
+                  "direction": plan.get("design_direction"),
+                  "warnings": plan.get("warnings") or [],
                   "execution": (plan.get("execution") or {}).get("mode")},
     }
     brief["token_estimate"] = estimate_tokens(brief)

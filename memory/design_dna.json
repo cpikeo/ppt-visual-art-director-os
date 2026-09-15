@@ -33,14 +33,14 @@
    "proven": {
     "qa": "release：accent 像素 4.4–29.3% → ≤1.5%",
     "revisions": 2,
-    "project": "SUYU AR2025 (PPT_CASE_002)",
+    "project": "anonymized editorial validation fixture",
     "measurements": {
      "rgb_tolerance": 0.3,
      "accent_area_max": 0.04
     }
    },
    "works_because": "像素色距是物理事实不是口味：色距跨过容差 accent 才在照片色簇里可辨识；低彩度冷信号在暖世界里反而成为最高级的单一信号，审美与指标同向",
-   "source_case": "PPT_CASE_002"
+   "source_case": "anonymized_validation_fixture"
   },
   {
    "id": "comparison_single_decision",
@@ -77,7 +77,7 @@
    ],
    "when_not_to": "尚无答案的探索期对比（染色即撒谎，应全灰并写明评估中）；视觉叙事型 deck（矩阵密度与留白语言冲突）",
    "proven": {
-    "source": "用户提供 6 套世界级样本：Concept 03（FT 战略报告）option 比较页——被推荐列单一底色、结论句压页脚、深色 KPI 带收全页",
+    "source": "匿名化参考材料：方案比较页的单一决策强调观察",
     "qa": null,
     "critic": null,
     "revisions": null,
@@ -91,7 +91,7 @@
     "keywords": [
      "咨询",
      "麦肯锡",
-     "mckinsey",
+     "匿名化咨询机构",
      "board",
      "董事会",
      "汇报",
@@ -123,7 +123,7 @@
    ],
    "when_not_to": "情绪导向的品牌宣言与发布会（会杀死叙事留白）；非决策型分享（证据密度成为负担）",
    "proven": {
-    "source": "咨询报告 exhibit 纪律的可观察行为提炼（非模板）",
+    "source": "匿名化咨询 exhibit 的可观察证据纪律（非模板）",
     "qa": null,
     "critic": null,
     "revisions": null,
@@ -163,14 +163,14 @@
    "proven": {
     "qa": "release 100.0 PASS（改前 76.0，gravity_drift warn ×8）",
     "revisions": 2,
-    "project": "SUYU AR2025 (PPT_CASE_002)",
+    "project": "anonymized editorial validation fixture",
     "measurements": {
      "drift_before": "0.29–0.46",
      "drift_after": "<0.28 all pages"
     }
    },
    "works_because": "显著性重心只认眼睛真正落的地方：照片先 landing、标题后发声是编辑页的真实阅读路径；focus 声明与落点同一后，实测重心与声明主语合一，drift 报警自然消失",
-   "source_case": "PPT_CASE_002"
+   "source_case": "anonymized_validation_fixture"
   },
   {
    "id": "executive_voice_authority",
@@ -209,7 +209,7 @@
    ],
    "when_not_to": "无真人发声的机构 deck（虚构发言人比没有权威更糟）；匿名或合规敏感场合",
    "proven": {
-    "source": "用户提供第三批样本：Concept 03（黑金策略）CEO VISION 页——衬线大引言 + 纪实侧脸人像 + CEO 职衔署名",
+    "source": "匿名化领导发声页的可观察编辑语法（非模板）",
     "qa": null,
     "critic": null,
     "revisions": null,
@@ -292,7 +292,7 @@
     "60dpi 缩略图裁决截断"
    ],
    "when_not_to": "目标渲染器仅 PowerPoint 且不做 LO 预览时（缺陷不触发）",
-   "source_case": "PPT_CASE_002"
+   "source_case": "anonymized_validation_fixture"
   },
   {
    "id": "monochrome_photo_carries_color",
@@ -330,7 +330,7 @@
    ],
    "when_not_to": "数据密集汇报（图表需要语义色）；品牌色必须系统出现的场合（改走人格矩阵混血纪律）",
    "proven": {
-    "source": "用户提供第二批 6 套样本：Direction 04（Hermès×Chanel×Pentagram）——酒红丝绒只住在摄影里，版式全黑白灰，深浅底跨页交替",
+    "source": "匿名化高端摄影编辑页的可观察色彩纪律（非模板）",
     "qa": null,
     "critic": null,
     "revisions": null,
@@ -348,7 +348,6 @@
      "人文",
      "documentary",
      "杂志",
-     "kinfolk",
      "画册",
      "安静",
      "自然"
@@ -373,7 +372,7 @@
    ],
    "when_not_to": "数据叙事与决策汇报（图表几乎缺席）；需要精确对齐口径的对比页",
    "proven": {
-    "source": "编辑/画册语法的可观察行为提炼（非模板）",
+    "source": "匿名化编辑/画册语法的可观察行为提炼（非模板）",
     "qa": null,
     "critic": null,
     "revisions": null,
@@ -415,7 +414,7 @@
    ],
    "when_not_to": "科技产品发布会（水墨语汇与产品舞台冲突）；信息密度高的运营复盘（留白阶梯装不下高密度证据）",
    "proven": {
-    "source": "观澜科技 2026 年度总结（11 页，起承转合）",
+    "source": "匿名化技术年度报告观察（11 页，起承转合）",
     "qa": 99.5,
     "critic": 90.9,
     "revisions": 6,
@@ -457,7 +456,7 @@
    ],
    "when_not_to": "季度/月度执行排期（那是计划表不是时间叙事，用表格）；无阶段意义的流水记录",
    "proven": {
-    "source": "用户提供 6 套世界级样本：Concept 06（博物馆档案）1960–2035 四分期轴 + Fig. 物证照；Concept 01 roadmap 页 01–04 命名阶段",
+    "source": "匿名化博物馆档案与路线图样本的时期命名观察",
     "qa": null,
     "critic": null,
     "revisions": null,

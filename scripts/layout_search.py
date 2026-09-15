@@ -226,6 +226,7 @@ def search(intent: dict, profile: dict | None = None,
     返回按总分降序：[{archetype, grammar, score, breakdown, elements, rationale}]
     """
     t0 = time.time()
+    intent = intent if isinstance(intent, dict) else {}
     profile = dict(profile or {})
     family = str(intent.get("page_family") or "").upper()
     profile.setdefault("title", True)
@@ -268,6 +269,7 @@ FAMILY_FAST_PATH = {
     "STATEMENT": "statement_center_stage",
     "SECTION": "quiet_progression",
     "STORY": "editorial_asymmetric",
+    "CASE_STUDY": "editorial_asymmetric",
     "EVIDENCE": "editorial_asymmetric",
     "DATA": "full_width_evidence",
     "PROCESS": "quiet_progression",
@@ -286,15 +288,20 @@ def recommend(intent: dict, profile: dict | None = None,
     微调；search 档带全量候选。判断标准是确定性的：家族在快速通道表内 +
     无 secondary_focus（focus 为单值）即 L1。
     """
+    intent = intent if isinstance(intent, dict) else {}
     family = str(intent.get("page_family") or "").strip().upper()
     # 内容家族（COVER/DATA_STORY/…）经归一层映射到 route 家族——两套命名
     # 共享同一映射源（design_intelligence.normalize_family，禁止各自维护别名表）
+    intelligence_error = None
     try:
         from design_intelligence import normalize_family
         fam_norm = normalize_family(family)
-    except Exception:
+    except Exception as exc:
         fam_norm = family
+        intelligence_error = f"{type(exc).__name__}: {exc}"
     complex_reasons = []
+    if intelligence_error:
+        complex_reasons.append(f"family normalization unavailable（{intelligence_error}）")
     if not family:
         complex_reasons.append("page_family 未分类")
     if intent.get("secondary_focus"):

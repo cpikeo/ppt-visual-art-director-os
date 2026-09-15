@@ -44,6 +44,15 @@ PX_TO_EMU = 9525
 # spec 档禁加载编译层，集合不能住在编译层——未知 type 会在编译期被静默跳过，
 # 必须在治理层前置拦截）。
 ELEMENT_TYPES = frozenset({"text", "shape", "image", "chart", "native_chart"})
+# 图表 kind 的 schema 白名单与 Guard/compiler 共用；Guard 另维护容量上限，
+# compiler 维护 native/shape 的实现映射，但未知 kind 不允许各层各自放行。
+CHART_KINDS = frozenset({
+    "kpi", "executive_kpi", "big_number", "big_number_row",
+    "bar", "horizontal_bar", "column", "comparison_bar", "line", "trend",
+    "single_trend_line", "area", "donut", "donut_composition", "pie",
+    "waterfall", "ranked_bar", "progress_bar", "stacked_bar", "bubble",
+    "process_flow", "timeline", "steps", "matrix", "architecture", "sparkline",
+})
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 
@@ -656,12 +665,15 @@ def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,
         run.text = text
     P = _p()
     qn = P["qn"]
-    run.font.size = P["Pt"](size_pt)
-    run.font.bold = bool(bold)
-    run.font.italic = bool(italic)
+    # python-pptx 的 run.font 是描述符；同一 run 重复取它会反复走 XML
+    # 父链查找。缓存一次对象，属性写入语义不变但可明显降低大 deck 编译成本。
+    font = run.font
+    font.size = P["Pt"](size_pt)
+    font.bold = bool(bold)
+    font.italic = bool(italic)
     if color is not None:
-        run.font.color.rgb = color
-    run.font.name = latin_family
+        font.color.rgb = color
+    font.name = latin_family
     rPr = run._r.get_or_add_rPr()
     if spacing:
         rPr.set("spc", str(int(round(float(spacing) * 100))))

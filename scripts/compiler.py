@@ -9,20 +9,16 @@ from pathlib import Path
 import math
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-from pptx.util import Emu
+from pptx.util import Emu, Pt
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSITION, XL_MARKER_STYLE
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Emu, Pt
 from primitives import (
-    RenderContext, emu, pt, split_runs, is_cjk, estimate_lines,
+    RenderContext, emu, pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
+    split_runs, is_cjk, estimate_lines,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
     align_of, anchor_of,
-)
-from primitives import (
-    RenderContext, emu, pt, set_para_font, solid_fill, align_of, anchor_of,
 )
 
 
@@ -328,10 +324,14 @@ def _fit_cache_key(src: Path, w: float, h: float, fit: str, crop, bg) -> str:
     import hashlib
     try:
         st = src.stat()
-        stamp = f"{st.st_mtime_ns}:{st.st_size}"
-    except OSError:
-        stamp = "?"
-    payload = "|".join([str(src), stamp, str(int(round(float(w)))),
+        hsrc = hashlib.sha256()
+        with src.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 16), b""):
+                hsrc.update(chunk)
+        stamp = f"{st.st_mtime_ns}:{st.st_size}:{hsrc.hexdigest()[:16]}"
+    except (OSError, ValueError):
+        stamp = "unreadable"
+    payload = "|".join([str(src.resolve()), stamp, str(int(round(float(w)))),
                         str(int(round(float(h)))), str(fit), str(crop), str(bg)])
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:32]
 
@@ -353,6 +353,7 @@ def _fit_cache_prune() -> None:
 def _fit_image_cached(src: Path, w: float, h: float, fit: str, crop=None,
                       bg: tuple | None = None) -> tuple:
     """_fit_image 的缓存版。返回 (path, from_cache)；from_cache=True 时勿删。"""
+    import os as _os
     import shutil as _sh
     if _fit_cache_disabled():
         return _fit_image(src, w, h, fit, crop, bg=bg), False
@@ -360,19 +361,32 @@ def _fit_image_cached(src: Path, w: float, h: float, fit: str, crop=None,
     hit = _FIT_CACHE_DIR / (key + ".png")
     try:
         if hit.exists() and hit.stat().st_size > 0:
+            # size>0 不足以证明上次进程没有在 copy 中断；验证 PNG，坏条目按 miss 重建。
+            from PIL import Image
+            with Image.open(hit) as _probe:
+                _probe.verify()
             return hit, True
-    except OSError:
-        pass
+    except (OSError, ValueError):
+        try:
+            hit.unlink(missing_ok=True)
+        except OSError:
+            pass
     tmp = _fit_image(src, w, h, fit, crop, bg=bg)
     try:
         _FIT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        _sh.copyfile(str(tmp), str(hit))
+        staging = _FIT_CACHE_DIR / f".{key}.{_os.getpid()}.tmp"
+        _sh.copyfile(str(tmp), str(staging))
+        _os.replace(staging, hit)
         _fit_cache_prune()
     except Exception:
+        try:
+            staging.unlink(missing_ok=True)
+        except (OSError, UnboundLocalError):
+            pass
         return tmp, False          # 缓存不可写：退回临时文件，正确性优先
     try:
         tmp.unlink(missing_ok=True)
-    except Exception:
+    except OSError:
         pass
     return hit, True
 
@@ -568,9 +582,11 @@ def _rows(element: dict) -> list[dict]:
             missing = raw is None
             invalid = False
             try:
+                if isinstance(raw, bool):
+                    raise ValueError
                 num = float(raw) if raw is not None else 0.0
                 invalid = not math.isfinite(num)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 num, invalid = 0.0, not missing
             if invalid:
                 num = 0.0
@@ -581,7 +597,8 @@ def _rows(element: dict) -> list[dict]:
             rows.append({"label": str(it["label"]), "value": num,
                          "display": display, "_index": i,
                          "missing": missing, "invalid": invalid})
-        elif isinstance(it, (int, float)) and math.isfinite(float(it)):
+        elif (isinstance(it, (int, float)) and not isinstance(it, bool)
+              and math.isfinite(float(it))):
             rows.append({"label": str(i), "value": float(it), "display": it,
                          "_index": i, "missing": False, "invalid": False})
     return rows
@@ -654,14 +671,24 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     series_list = list(element.get("series") or [])
     parsed = []
     for s in series_list:
+        if not isinstance(s, dict):
+            ctx.warn(f"chart '{eid}': series 项必须是对象/dict，已跳过")
+            continue
         name = str(s.get("name", ""))
-        vals = s.get("values") or []
+        vals = s.get("values")
+        if not isinstance(vals, list) or not vals:
+            ctx.warn(f"chart '{eid}': 序列 '{name}' 缺少 values，已跳过")
+            vals = []
         nums = []
         for v in vals:
             try:
+                if isinstance(v, bool):
+                    raise ValueError
                 n = float(v)
-                nums.append(n if math.isfinite(n) else 0.0)
-            except (TypeError, ValueError):
+                if not math.isfinite(n):
+                    raise ValueError
+                nums.append(n)
+            except (TypeError, ValueError, OverflowError):
                 nums.append(0.0)
                 ctx.warn(f"chart '{eid}': 序列 '{name}' 含无法解析为数字的值，已按 0 计算")
         parsed.append((name, nums))
@@ -1402,8 +1429,12 @@ def add_chart(slide, element: dict, ctx: RenderContext) -> None:
     if kind in SHAPE_CHARTS:
         add_shape_chart(slide, element, ctx, kind)
         return
-    if kind not in NATIVE_CHART_TYPES:
+    if kind not in CHART_KINDS:
         ctx.warn(f"chart '{element.get('id')}': 不支持的 chart_kind {kind!r}，已跳过")
+        return
+    # schema 白名单已通过；实现映射仍决定是 native 还是可编辑 shape chart。
+    if kind not in NATIVE_CHART_TYPES:
+        ctx.warn(f"chart '{element.get('id')}': chart_kind {kind!r} 尚未实现，已跳过")
         return
     add_native_chart(slide, element, ctx)
 
@@ -1439,16 +1470,12 @@ COMPILER_VERSION = "1.1"
 
 import importlib.util
 import sys
-from pathlib import Path
 
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from pptx import Presentation  # noqa: E402
-from pptx.util import Emu  # noqa: E402
-
-from primitives import RenderContext, emu, DEFAULT_WIDTH, DEFAULT_HEIGHT  # noqa: E402
 
 # 元素类型 → 绘制层函数（编排层只做映射，改绘制实现不影响此表）
 DISPATCH = {
@@ -1476,10 +1503,31 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
     启用 checks 时追加 "guard"（治理明细），旧调用不受影响。
     """
     output_path = Path(output_path)
-    canvas = dict(spec.get("canvas") or {"width": DEFAULT_WIDTH, "height": DEFAULT_HEIGHT})
-    theme = spec.get("theme") or {}
+    _spec_warning = None
+    if not isinstance(spec, dict):
+        _spec_warning = "spec 顶层必须是对象/dict，已按空 spec 处理"
+        spec = {}
+    raw_canvas = spec.get("canvas")
+    canvas = dict(raw_canvas) if isinstance(raw_canvas, dict) else {}
+    if raw_canvas is not None and not isinstance(raw_canvas, dict):
+        _spec_warning = "spec.canvas 必须是对象/dict，已使用默认画布"
+    canvas_warnings = []
+    for key, default in (("width", DEFAULT_WIDTH), ("height", DEFAULT_HEIGHT)):
+        try:
+            value = float(canvas.get(key, default))
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError
+            canvas[key] = value
+        except (TypeError, ValueError, OverflowError):
+            canvas[key] = default
+            canvas_warnings.append(f"canvas.{key} 非法，已回落 {default}")
+    theme = spec.get("theme") if isinstance(spec.get("theme"), dict) else {}
 
     ctx = RenderContext(theme, canvas)
+    if _spec_warning:
+        ctx.warn(_spec_warning)
+    for _warning in canvas_warnings:
+        ctx.warn(_warning)
 
     guard = None
     if checks:
@@ -1494,8 +1542,14 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
     blank = prs.slide_layouts[6]
 
     slides = spec.get("slides") or []
+    if not isinstance(slides, list):
+        ctx.warn("spec.slides 必须是数组/list，已按空 deck 处理")
+        slides = []
     for si, slide_spec in enumerate(slides):
         slide = prs.slides.add_slide(blank)
+        if not isinstance(slide_spec, dict):
+            ctx.warn(f"slide[{si}] 必须是对象/dict，已保留空白页")
+            continue
         bg = slide_spec.get("background", ctx.colors.get("background"))
         applied = False
         if bg is not None:
@@ -1512,16 +1566,23 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
         if not applied:
             try:
                 apply_fill(slide.background, "background", ctx)
-            except Exception:
-                pass
+            except Exception as exc:
+                ctx.warn(f"slide[{si}] 背景回退失败（{exc}）")
 
-        _ordered = list(slide_spec.get("elements") or [])
+        _raw_elements = slide_spec.get("elements") or []
+        if not isinstance(_raw_elements, list):
+            ctx.warn(f"slide[{si}].elements 必须是数组/list，已按空页处理")
+            _raw_elements = []
+        _ordered = list(_raw_elements)
         # z-order 安全网：声明为 background/backdrop 层的画心永远先绘制，
         # 使文字与图表稳定位于其上；作者无需记忆元素顺序。
         _ordered.sort(key=lambda e: 0 if isinstance(e, dict) and (
             str(e.get("layer", "")).lower() in {"background", "backdrop"}
             or str(e.get("role", "")).lower() in {"background", "backdrop"}) else 1)
         for ei, element in enumerate(_ordered):
+            if not isinstance(element, dict):
+                ctx.warn(f"slide[{si}].elements[{ei}]: 元素必须是对象/dict，已跳过")
+                continue
             fn = DISPATCH.get(str(element.get("type", "text")))
             if fn is None:
                 ctx.warn(f"slide[{si}].elements[{ei}]: 未知 type="
@@ -1535,12 +1596,15 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
             except Exception as exc:  # 只记录，不静默改稿
                 ctx.warn(f"slide[{si}].elements[{ei}] ({element.get('id')}): {exc}")
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
     report = {
         "passed": len(ctx.warnings) == 0,
         "slides": len(slides),
         "warnings": list(ctx.warnings),
         "file_bytes": output_path.stat().st_size,
+        "output_path": str(output_path),
+        "output_exists": output_path.exists(),
     }
     if guard is not None:
         report["guard"] = {"score": guard["score"],

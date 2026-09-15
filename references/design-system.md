@@ -61,7 +61,7 @@
 
 ### Editorial default（全局编辑微语言）
 
-章节编号三段式（11–13px、muted）作跨页锚点，页码固定同一象限；`evidence_field` 下标题/图表/来源共栏宽、共左缘轴线；每页 ≤三段文字（主张 Statement + 证据 Body + 来源 Caption，来源固定左下 `x=48,y=672,w=1184,h=32`）；留白声明职责（protect_focus/create_authority/separate_chapter/hold_emotion），同职责不连续 3 页；Hero 图宽与标题栏取 1.618/1/0.618。 页脚箴言（motto）若启用，全套同一位置、同一句式、逐页复诵——箴言只在不变中生效；第二语言退为文化注释（竖排小字角落/副标），不与主信息争层级。
+章节编号三段式（11–13px、muted）作跨页锚点，页码固定同一象限；`evidence_field` 下标题/图表/来源共栏宽、共左缘轴线；每页 ≤三段文字（主张 Statement + 证据 Body + 来源 Caption）；页脚采用对侧 footer rail：引用左对齐内容版心、页码右对齐同一安全边界、二者同一基线，`source_zone` 覆盖整行；留白声明职责（protect_focus/create_authority/separate_chapter/hold_emotion），同职责不连续 3 页；Hero 图宽与标题栏取 1.618/1/0.618。 页脚箴言（motto）若启用，全套同一位置、同一句式、逐页复诵——箴言只在不变中生效；第二语言退为文化注释（竖排小字角落/副标），不与主信息争层级。
 
 ### 混血与适配
 

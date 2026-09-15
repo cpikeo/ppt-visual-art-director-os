@@ -18,6 +18,8 @@ Release Gate 与迭代对比。数据流（只读，不修改 spec）：
 """
 from __future__ import annotations
 
+import hashlib
+import sys
 from pathlib import Path
 
 from primitives import (spec_fingerprint,
@@ -59,6 +61,18 @@ DEFAULT_THRESHOLDS = {
 KEY_PAGE_CAP = 6
 
 
+def _sha256_file(path: Path) -> str | None:
+    """输出 attestation：与 file_bytes 一起证明 QA 看到的确是这份 PPTX。"""
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 16), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 # ════════════════════════════════════════════════════════════════════════
 # 执行模式（流程控制）：draft 不渲染 · review 只测变化页 · release 全量 + Manifest
 # Mode 决定「渲染不渲染、状态给到哪一级」；与 Fast/Advanced（预算控制：资产数/dpi）
@@ -78,15 +92,15 @@ EXECUTION_MODES = {
         "qa_level": 1,
         "render": False,
         "compile": False,
-        "aim": "只读 spec 数据：Normalizer + Guard + 风险预测与策略，零编译零渲染零 import pptx。"
+        "aim": "只读 spec 数据：Normalizer + Guard，零编译零渲染零 import pptx；设计建议仅在 --advisory 显式开启。"
                "用于「每改一版先看契约」的高频回环；产物是 PPTX 的轮次请走 draft",
-        "deliver": "判定 + 风险政策（不产出 .pptx，也不写渲染目录）"
+        "deliver": "工程判定（不产出 .pptx，也不写渲染目录）"
     },
     "draft": {
         "label": "Creative Draft · 创作链",
         "qa_level": 1, "render": False,
-        "aim": "初稿/方向探索/多方案：结构合法 + 可编译 + 可编辑 PPTX，零渲染成本",
-        "deliver": "PPTX + Guard 报告 + 风险预测与生成策略 + ghost 预览（~1ms/页）",
+        "aim": "初稿/方向探索/多方案：结构合法 + 可编译 + 可编辑 PPTX，零渲染成本；默认不跑设计建议",
+        "deliver": "PPTX + Guard 报告 + 工程验证 + ghost 预览（~1ms/页）；需要时另加 --advisory",
     },
     "review": {
         "label": "Design Review · 审查链",
@@ -104,8 +118,20 @@ EXECUTION_MODES = {
 
 
 def mode_profile(mode: str | None) -> dict:
-    """mode 名 → 执行档案（未知/None 一律回落 release：宁严勿松）。"""
-    return dict(EXECUTION_MODES.get(str(mode or "").strip().lower(), EXECUTION_MODES["release"]))
+    """mode 名 → 执行档案。
+
+    未显式指定 mode 时走 draft：API 与 CLI 必须共享同一默认成本，不能因为
+    调用方漏传参数就静默升级到 release（LibreOffice + 全量像素渲染）。
+    未知 mode 直接报错，避免拼写错误把任务送进最慢档。
+    """
+    key = "draft" if mode is None else str(mode).strip().lower()
+    if not key:
+        key = "draft"
+    if key not in EXECUTION_MODES:
+        raise ValueError(
+            f"unknown execution mode {mode!r}; "
+            f"choose one of {', '.join(EXECUTION_MODES)}")
+    return dict(EXECUTION_MODES[key])
 
 
 # ── 语义变更分类：把「改了什么」翻译成「要重跑什么」───────────────────
@@ -222,12 +248,10 @@ def _load_last_spec(render_dir: Path) -> dict | None:
 
 
 def _save_last_spec(render_dir: Path, spec: dict) -> None:
-    import json
     try:
-        Path(render_dir).mkdir(parents=True, exist_ok=True)
-        (Path(render_dir) / LAST_SPEC_NAME).write_text(
-            json.dumps(spec, ensure_ascii=False, default=str), encoding="utf-8")
-    except Exception:
+        from compile_cache import _atomic_json_write
+        _atomic_json_write(Path(render_dir) / LAST_SPEC_NAME, spec)
+    except (OSError, TypeError, ValueError, ImportError):
         pass     # 它是加速器不是契约：写不进就退化为「无从对比」，本轮按关键页渲染
 
 
@@ -290,6 +314,17 @@ def verdict_of(status: str, score: float, items: list[dict],
 _verdict_of = verdict_of     # 内部短名
 
 
+def _has_auto_fit(spec: dict | None) -> bool:
+    """轻量探测 auto_fit，避免普通 QA 为一次显式可选功能导入整套设计智能。"""
+    for slide in (spec or {}).get("slides") or []:
+        if not isinstance(slide, dict):
+            continue
+        for element in slide.get("elements") or []:
+            if isinstance(element, dict) and element.get("auto_fit") is True:
+                return True
+    return False
+
+
 def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
            thresholds: dict | None = None, guard_rules: dict | None = None,
            render_dir: str | Path | None = None, dpi: int = 96,
@@ -298,7 +333,9 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
            workers: int = 2, use_cache: bool = True,
            raster: str = "auto", mode: str | None = None,
            normalize: bool = True,
-           compile: bool | None = None) -> dict:
+           compile: bool | None = None,
+           include_advisory: bool = False,
+           spec_path: str | Path | None = None) -> dict:
     """
     完整 QA：guard + compile + render（可选）。
 
@@ -313,7 +350,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     `--no-cache` 一律绕过，也不写回任何记录。
 
     Progressive QA：qa_level=1 只看文件/元素/页数（不渲染），=2 只渲染关键页
-    （`render_pages` 缺省时按 spec 自动挑选），=3（默认）全量渲染 + 全部检查。
+    （`render_pages` 缺省时按 spec 自动挑选），=3 全量渲染 + 全部检查；draft 默认
+    为 level 1，需像素证据时显式使用 review/release。
     发布资格与证据完整是两件事：证据不全（子集渲染）→ status 降到 REVISE；
     证据齐但链不是 release（`qa_level < 3`）→ status 可为 PASS，但 `release_eligible=False`，
     因为 Release Manifest 只在发布链生成。
@@ -322,10 +360,11 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     判定阈值时可忽略；"auto" 会在**指标贴着阈值**的页上自动改用无损 PNG 复测，
     因此判定与全程 PNG 一致。传 "png" 可强制全程无损（取证/排障）。
 
-    执行模式（流程控制）：mode=sketch|draft|review|release。render/qa_level 传 None
-    时由 mode 档案派生（不传 mode 则维持旧行为：全量渲染、L3）。
-    判断叙事已退出运行时（v4.15）：审美维度的措辞归 references/design-craft.md
-    §判断基线，本函数只产契约判定与像素事实。
+    执行模式（流程控制）：mode=spec|sketch|draft|review|release。render/qa_level 传 None
+    时由 mode 档案派生；不传 mode 与 CLI 一致默认 draft（零渲染），需要像素证据时
+    必须显式传 review/release。
+    默认只产契约判定与像素事实，不运行设计建议/风险预测。需要设计建议时显式
+    include_advisory=True（CLI 对应 --advisory）；它不是发布门槛。
 
     normalize=True（默认）：入口先过 Normalizer（生产链第 0 级，现并入 guard.py）。
     归一化是确定性的，报告记录 hash_before/after——release_manifest 依此接受
@@ -339,51 +378,52 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     thr = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     output_path = Path(output)
     t0 = time.time()
+    if not isinstance(spec, dict):
+        # API 边界也要给出可消费的 QA 证据，而不是把 AttributeError 泄漏给
+        # CLI/调用方；guard 仍是唯一的 schema 判定真源。
+        spec = {"slides": [],
+                "_input_error": "spec 顶层必须是对象/dict"}
 
-    # 0) Normalizer（生产链第 0 级）：机械偏差吸附后再进入 Guard/Compile/Render。
+    # 0) 模式先规范化并校验：未知 mode 在任何 spec 深拷贝/编译前失败。
+    # 这既保护 API 调用方，也避免拼写错误先支付一轮 Normalizer 成本。
+    mode = "draft" if mode is None else str(mode).strip().lower()
+    if not mode:
+        mode = "draft"
+    prof = mode_profile(mode)
+    if render is None:
+        render = prof["render"]
+    if qa_level is None:
+        qa_level = prof["qa_level"]
+    do_compile = compile if compile is not None else bool(prof.get("compile", True))
+    if not do_compile:
+        render = False
+
+    # 0.1) Normalizer（生产链第 0 级）：机械偏差吸附后再进入 Guard/Compile/Render。
     #    归一化确定性 + 报告留痕（hash_before/after），发布清单据此接受证明链。
     norm_report = None
     if normalize:
         from guard import normalize_spec
         spec, norm_report = normalize_spec(spec)
 
-    # 0.2) Smart Fit Resolver（显式 opt-in）：auto_fit:true 的文本按阶梯
-    #      吸附（padding→line_height→字号），留痕；未声明者零改动（编译器仍只警告）。
-    from design_intelligence import apply_fit_ladder
-    spec, fit_report = apply_fit_ladder(spec)
+    # 0.2) Smart Fit Resolver（显式 opt-in）：普通 spec 不导入整套 Design Intelligence；
+    #      只有声明 auto_fit:true 时才做阶梯吸附（padding→line_height→字号）。
+    if _has_auto_fit(spec):
+        from design_intelligence import apply_fit_ladder
+        spec, fit_report = apply_fit_ladder(spec)
+    else:
+        fit_report = {"applied": 0, "items": [], "needs_rewrite": []}
 
-    # 0.5) 执行模式档案：None 参数由 mode 派生；显式实参永远优先（API 兼容）
-    prof = mode_profile(mode) if mode else None
-    if prof:
-        if render is None:
-            render = prof["render"]
-        if qa_level is None:
-            qa_level = prof["qa_level"]
-    if render is None:
-        render = True
-    if qa_level is None:
-        qa_level = 3
     # 编译契约：spec 档（或显式 compile=False）完全不碰 pptx/compiler —— 判
     # 「spec 是否合理」是数据工作，不该付 152ms 的 import 成本。需要 PPTX 产物时
     # 用 draft（它只 import 编译层，不渲染）。
-    do_compile = compile if compile is not None else bool(
-        (prof or {}).get("compile", True))
-    if not do_compile:
-        render = False
-    else:
-        from compiler import compile_deck
-        from render_check import compile_reuse, record_compile, spec_view
+    if do_compile and use_cache:
+        # draft 先只加载轻量编译缓存；命中时连 python-pptx/compiler 都不加载。
+        # PIL/numpy/LibreOffice 相关代码留给渲染阶段。
+        from compile_cache import compile_reuse, record_compile, spec_view
 
-    # 0.4) 风险预测（Design Intelligence 内部的预测子模块）：产出的不是「能不能过」，
-    #      而是「下一轮该怎么改」——risks + strategy 一起给出，供起草/修订消费。
-    #      它不阻断任何阶段（release 也跑：预测 vs 实测的差异本身就是有用的对照）。
+    # advisory 是后置层：先过工程 Guard/Compile，避免在结构错误上浪费预测成本。
+    # 这里只声明，实际计算放到编译完成后；默认 include_advisory=False 不付这笔成本。
     risk_report = None
-    try:
-        from design_intelligence import pre_critic, risk_strategy
-        risk_report = pre_critic(spec)
-        risk_report["strategy"] = risk_strategy(spec, risk_report)
-    except Exception as exc:      # 预测层失败不阻断主链（它是大脑不是门槛）
-        risk_report = {"error": str(exc), "risks": [], "summary": {}, "strategy": None}
 
     # 渲染证据目录先定下来（编译/PDF/页级指标缓存与上一版 spec 都住在这里）
     render_dir = (Path(render_dir) if render_dir
@@ -391,9 +431,18 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     last_spec = (_load_last_spec(render_dir)
                  if (use_cache and do_compile) else None)
 
-    # 1) 静态治理（guard_rules 独立传入，qa 不解读内部结构）
+    # 1) 静态治理（guard_rules 独立传入，qa 不解读内部结构）。同一轮只跑一次
+    # Guard：显式 advisory 让它一次返回「工程事实 + advisory 证据」，避免旧路径
+    # 在编译后再完整扫描第二遍；风险预测仍以后置 compile gate 控制。
+    # 事实图表的来源/单位/期间/口径在 review/release 进入硬门；draft 仍给
+    # 作者留 warning 空间。显式 guard_rules 优先，调用方可覆盖这个默认策略。
+    effective_guard_rules = dict(guard_rules or {})
+    if mode in ("review", "release") and "require_provenance" not in effective_guard_rules:
+        effective_guard_rules["require_provenance"] = True
+    provenance_required = bool(effective_guard_rules.get("require_provenance", False))
     t_guard = time.time()
-    guard = check_spec(spec, rules=guard_rules)
+    guard = check_spec(spec, rules=effective_guard_rules,
+                       include_advisory=bool(include_advisory and mode != "sketch"))
     # sketch 档：只守「错」（error 级），不守「不好」（warn/hint）——探索期免除
     # 设计契约（颜色/媒体/文字合同都在 warn/hint 层），数据诚实性与结构合法性
     # 仍在（取舍序：事实与语义 > 一切，不参与降档）。
@@ -407,30 +456,143 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     # 先问一句「像素视图变了吗」：没变就连 compile 与 soffice 都省掉（决策先于生成）。
     compile_report = None
     view = None
-    if not do_compile:
+    cache_reason = "not_compiled" if not do_compile else ("cache_disabled" if not use_cache else "cache_miss")
+    guard_has_errors = any(c.get("level") == "error" for c in guard.get("checks", []))
+    if do_compile and guard_has_errors:
+        # Guard 是编译前阻断门：无效 spec 不支付 python-pptx/XML 成本，也不让旧
+        # output.pptx 被误认作本轮产物；修复后重跑才进入 compiler。
         t_compile = time.time()
+        cache_reason = "guard_error"
+        compile_report = {"passed": False, "skipped": True, "warnings": [],
+                          "slides": len(spec.get("slides") or []), "file_bytes": None,
+                          "reason": "engineering_gate"}
+    elif not do_compile:
+        t_compile = time.time()
+        cache_reason = "not_compiled"
         compile_report = {"passed": True, "skipped": True, "warnings": [],
                           "slides": len(spec.get("slides") or []), "file_bytes": None,
                           "reason": "mode_spec_no_compile"}
     elif use_cache:
         try:
             render_dir.mkdir(parents=True, exist_ok=True)
-            view = spec_view(spec, base_path=output_path.parent)
+            view = spec_view(spec, base_path=output_path.parent, spec_path=spec_path)
             compile_report = compile_reuse(render_dir, output_path, view)
+            if compile_report is not None:
+                cache_reason = "view_and_output_attestation_match"
         except Exception:
+            cache_reason = "cache_probe_failed"
             compile_report = None
     if do_compile and compile_report is None:
-        compile_report = compile_deck(spec, output_path, checks=False,
-                                      guard_rules=guard_rules)
-        if use_cache and view is not None:
-            record_compile(render_dir, output_path, view, compile_report)
-    else:
+        # 只有缓存未命中才支付 compiler/python-pptx 的导入成本。
+        try:
+            from compiler import compile_deck
+            compile_report = compile_deck(spec, output_path, checks=False,
+                                          guard_rules=effective_guard_rules,
+                                          spec_path=str(spec_path) if spec_path else None)
+        except ModuleNotFoundError as exc:
+            if exc.name in {"pptx", "lxml", "PIL", "numpy"}:
+                compile_report = {
+                    "passed": False, "slides": len(spec.get("slides") or []),
+                    "warnings": [
+                        f"[dependency] 缺少编译依赖 {exc.name!r}；请运行 "
+                        "python -m pip install -r requirements.txt"],
+                    "file_bytes": None, "dependency_missing": exc.name,
+                }
+            else:
+                raise
+    elif do_compile and not compile_report.get("skipped"):
+        # spec/compile=False 不能读取旧 PPTX 的大小冒充本轮编译证据。
         try:
             compile_report["file_bytes"] = output_path.stat().st_size
         except OSError:
             pass
-    t_render = time.time()
+    # 编译证据必须能对上实际产物：缓存报告不能凭旧的 file_bytes 冒充本轮输出。
+    t_output_attestation = time.time()
+    if do_compile and not compile_report.get("skipped"):
+        try:
+            actual_bytes = output_path.stat().st_size
+            actual_sha = compile_report.pop("_cache_verified_sha256", None)
+            if not actual_sha:
+                actual_sha = _sha256_file(output_path)
+            expected_bytes = compile_report.get("file_bytes")
+            expected_sha = compile_report.get("output_sha256")
+            if expected_bytes is not None and int(expected_bytes) != actual_bytes:
+                compile_report.setdefault("warnings", []).append(
+                    f"[output] 编译报告 file_bytes={expected_bytes} 与实际文件 {actual_bytes} 不一致")
+                compile_report["passed"] = False
+            if expected_sha and actual_sha and expected_sha != actual_sha:
+                compile_report.setdefault("warnings", []).append(
+                    "[output] 编译报告 output_sha256 与实际 PPTX 不一致（文件可能被替换）")
+                compile_report["passed"] = False
+            if not actual_sha:
+                compile_report.setdefault("warnings", []).append(
+                    f"[output] 无法计算 PPTX SHA-256: {output_path}")
+                compile_report["passed"] = False
+            compile_report["file_bytes"] = actual_bytes
+            compile_report["output_sha256"] = actual_sha
+            compile_report["output_path"] = str(output_path.resolve())
+            compile_report["output_exists"] = True
+        except (OSError, TypeError, ValueError):
+            compile_report.setdefault("warnings", []).append(
+                f"[output] 编译输出不存在或不可读取: {output_path}")
+            compile_report["passed"] = False
+            compile_report["output_exists"] = False
+            compile_report["output_sha256"] = None
+    else:
+        compile_report["output_exists"] = False
+    t_output_attestation_end = time.time()
+    semantic_view = view
+    if do_compile and not compile_report.get("skipped") and semantic_view is None:
+        try:
+            from compile_cache import spec_view as _spec_view
+            semantic_view = _spec_view(spec, base_path=output_path.parent, spec_path=spec_path)
+        except Exception:
+            semantic_view = None
+    if semantic_view is not None:
+        # semantic compile view 是输入/引擎的确定性投影；它不是最终 PPTX 的
+        # artifact attestation。两者并列留痕，避免把 ZIP 字节 SHA 当作可复现构建哈希。
+        compile_report["semantic_compile_view"] = semantic_view
+    # 只有完成 output_sha256 attestation 后才写编译缓存；否则下一进程不能
+    # 证明 PPTX 与报告是同一产物，命中会被拒绝并重新编译。
+    if (use_cache and semantic_view is not None and compile_report.get("output_exists", False)
+            and compile_report.get("output_sha256")):
+        record_compile(render_dir, output_path, semantic_view, compile_report)
     compile_warnings = list(compile_report.get("warnings", []))
+    t_compile_end = time.time()
+
+    # 3) advisory 后置：工程错误/编译失败时明确跳过，不把软建议混进返工队列。
+    # 干净时才补跑设计契约扫描与风险策略；显式 advisory 仍不改变发布门槛。
+    if include_advisory:
+        core_errors = [c for c in guard.get("checks", [])
+                       if c.get("level") == "error" and not c.get("advisory")]
+        compile_ok = bool(compile_report.get("passed", False))
+        if core_errors or not compile_ok:
+            risk_report = {
+                "skipped": True,
+                "reason": "engineering_gate",
+                "gate": {"guard_errors": len(core_errors),
+                         "compile_passed": compile_ok},
+                "risks": [],
+                "summary": {"high": 0, "med": 0, "pages_at_risk": 0,
+                            "total_pages": len(spec.get("slides") or [])},
+                "strategy": None,
+            }
+        else:
+            try:
+                # Guard advisory 已在第 1 步同轮产出；这里只运行不重复的
+                # Design Intelligence 根因排序与策略，不再造第二条诊断链。
+                from design_intelligence import pre_critic, risk_strategy
+                risk_report = pre_critic(spec)
+                risk_report["strategy"] = risk_strategy(spec, risk_report)
+                risk_report["gate"] = {"guard_errors": 0,
+                                       "compile_passed": compile_ok}
+            except Exception as exc:      # 建议层失败不阻断主链
+                risk_report = {"error": str(exc), "risks": [], "summary": {},
+                               "strategy": None,
+                               "gate": {"guard_errors": 0,
+                                        "compile_passed": compile_ok}}
+    t_advisory_end = time.time()
+    t_render = t_advisory_end
 
     # 4) 渲染证据（环境缺失时降级；按 Progressive 级别只测需要的页）
     evidence = {"rendered": False, "reason": None, "pages": []}
@@ -439,6 +601,13 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         qa_level = max(1, min(3, int(qa_level)))
     except (TypeError, ValueError):
         qa_level = 3
+    # Guard/compile 是渲染的前置门：对已知无效 spec 继续付 soffice/PIL 成本
+    # 只会制造无效 evidence，并可能把旧像素误读成新结果。
+    engineering_errors = any(c.get("level") == "error"
+                             for c in guard.get("checks", []))
+    engineering_compile_failed = not bool(compile_report.get("passed", False))
+    if render and (engineering_errors or engineering_compile_failed):
+        render, skip_render_reason = False, "engineering_gate"
     if qa_level == 1 and render:
         render, skip_render_reason = False, "qa_level_1"
     # 语义变更分类：上一版 spec → 本版 spec，哪些页需要像素复核。
@@ -450,10 +619,11 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
             # 调用方（或 route.plan_deck 的 verification.pixel_page_ids）给了页码就用它
             wanted_pages = [int(n) for n in render_pages]
         elif change_classes is not None:
-            # 已知上一版：只渲染「像素真的变了」的页——改一句 insight 不重渲染，
-            # 是显式决策，不是缓存副作用。纯声明修改（deck=narrative/identical）
-            # 时渲染集为空，页级缓存在 review 里也就无从失效。
-            wanted_pages = sorted({int(n) for n in (change_classes.get("render_needed") or [])})
+            # 已知上一版：只重渲染「像素真的变了」的页——改一句 insight 不会
+            # 使像素缓存失效。若没有像素变化，让 render_check 自己复用全量缓存；
+            # 缓存不完整时它会补齐证据，而不是用空页集伪造 full coverage。
+            _changed_pages = sorted({int(n) for n in (change_classes.get("render_needed") or [])})
+            wanted_pages = None if not _changed_pages else _changed_pages
         else:
             # 没有上一版可比（首次 review / 冷跑 / --no-cache）：退回关键页
             wanted_pages = key_pages(spec)
@@ -463,7 +633,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
             evidence = render_evidence(output_path, spec, render_dir, dpi,
                                        pages=wanted_pages, workers=workers,
                                        use_cache=use_cache,
-                                       raster=raster)
+                                       raster=raster, spec_path=spec_path)
             evidence.setdefault("coverage", {})
             evidence["coverage"].update({"qa_level": qa_level,
                                          "total_slides": len(spec.get("slides") or []),
@@ -472,7 +642,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
             evidence = {"rendered": False, "reason": f"render evidence failed: {exc}",
                         "pages": []}
     else:
-        evidence = {"rendered": False, "reason": "render disabled for fast iteration",
+        evidence = {"rendered": False,
+                    "reason": skip_render_reason or "render disabled for fast iteration",
                     "pages": [],
                     "coverage": {"qa_level": qa_level, "rendered_pages": 0,
                                  "total_pages": len(spec.get("slides") or [])}}
@@ -621,11 +792,23 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
                                   f"（「{worst.get('id', '?')}」）"),
                           "penalty": pen["render_contrast_low"]})
 
+    _render_cov = evidence.get("coverage") or {}
+    if not evidence.get("rendered"):
+        render_cache_reason = "not_rendered"
+    elif not use_cache:
+        render_cache_reason = "cache_disabled"
+    elif int(_render_cov.get("cache_hits") or 0) and int(_render_cov.get("cache_misses") or 0):
+        render_cache_reason = "partial_hit"
+    elif int(_render_cov.get("cache_hits") or 0):
+        render_cache_reason = "full_hit"
+    else:
+        render_cache_reason = "miss"
     _t_end = time.time()
     perf = {
         "total_ms": int((_t_end - t0) * 1000),
         "guard_ms": int((t_compile - t_guard) * 1000),
-        "compile_ms": int((t_render - t_compile) * 1000),
+        "compile_ms": int((t_compile_end - t_compile) * 1000),
+        "advisory_ms": int((t_advisory_end - t_compile_end) * 1000),
         "compile_reused": bool(compile_report.get("reused")),
         "render_ms": int((_t_end - t_render) * 1000),
         "slides": len(slides_count),
@@ -643,6 +826,12 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "cache_misses": ((evidence.get("coverage") or {}).get("cache_misses")
                          if evidence.get("rendered") else 0),
         "cache_enabled": bool(use_cache),
+        "cache_reason": cache_reason,
+        "render_cache_reason": render_cache_reason,
+        "provenance_required": provenance_required,
+        "semantic_compile_view_available": bool(semantic_view),
+        "artifact_attested": bool(compile_report.get("output_sha256")),
+        "output_attestation_ms": int((t_output_attestation_end - t_output_attestation) * 1000),
     }
 
     if not evidence.get("rendered"):
@@ -663,7 +852,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "overlap": "OVERLAP", "source_zone": "SOURCE_COLLISION",
         "chart_label_collision": "CHART_LABEL_COLLISION",
         "text_capacity": "TEXT_OVERFLOW", "contrast": "READABILITY_FAIL",
-        "data_integrity": "DATA_INTEGRITY_FAIL", "safety": "GUARD_FAIL",
+        "data_integrity": "DATA_INTEGRITY_FAIL", "chart_type": "CHART_TYPE_FAIL",
+        "safety": "GUARD_FAIL",
     }
     for check in guard["checks"]:
         if check.get("level") != "error":
@@ -686,7 +876,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         failure_codes.append("RENDER_UNAVAILABLE")
     blocking = bool(failure_codes and any(c in failure_codes for c in {
         "OVERLAP", "SOURCE_COLLISION", "CHART_LABEL_COLLISION", "TEXT_OVERFLOW",
-        "READABILITY_FAIL", "DATA_INTEGRITY_FAIL", "COMPILE_FAIL", "GUARD_FAIL"}))
+        "READABILITY_FAIL", "DATA_INTEGRITY_FAIL", "CHART_TYPE_FAIL",
+        "COMPILE_FAIL", "GUARD_FAIL"}))
     passed = score >= thr["pass"] and not blocking
     status = "BLOCKED" if blocking else (
         "SKETCH" if mode == "sketch" else
@@ -704,7 +895,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     partial_pixel = bool(evidence.get("rendered")) and rendered_n < total_n
     release_eligible = (status == "PASS" and rendered_n >= total_n
                         and not blocking and not partial_pixel
-                        and (mode is None or qa_level >= 3))
+                        and qa_level >= 3 and mode == "release")
     if status == "PASS" and partial_pixel:
         status = "REVISE"        # 证据不全才降级；证据全但链不对，只削发布资格
     if partial_pixel:
@@ -729,17 +920,15 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "profile": prof["label"] if prof else None,
         "change_classes": change_classes,
         "render_plan_pages": wanted_pages,
+        "provenance_required": provenance_required,
     }
 
-    return {
+    result = {
         "qa_version": "3.2",
         # 自证戳：报告属于哪一份 spec。清单会核对，防止拿旧报告/旁路产物冒充新结果
         "source_spec_hash": spec_fingerprint(spec),
         "normalization": norm_report,
         "auto_fit": fit_report,
-        # 风险预测 + 生成策略（Design Intelligence 的预测子模块；不是审核闸）
-        "risk": risk_report,
-        "pre_critic": risk_report,          # 兼容别名（同对象，不复制）
         "execution": exec_block,
         "verdict": _verdict_of(status, score, items, failure_codes),
         "score": round(score, 1),
@@ -753,7 +942,11 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "compile": {"passed": compile_report.get("passed"),
                     "warnings": len(compile_warnings),
                     "slides": compile_report.get("slides"),
-                    "file_bytes": compile_report.get("file_bytes")},
+                    "file_bytes": compile_report.get("file_bytes"),
+                    "semantic_compile_view": compile_report.get("semantic_compile_view"),
+                    "output_sha256": compile_report.get("output_sha256"),
+                    "artifact_sha256": compile_report.get("output_sha256"),
+                    "output_path": compile_report.get("output_path")},
         "render": {"rendered": evidence.get("rendered"),
                    "reason": evidence.get("reason"),
                    "dir": str(render_dir) if render else None,
@@ -768,6 +961,9 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "next_action": next_action,
         "elapsed_ms": int((time.time() - t0) * 1000),
     }
+    if include_advisory:
+        result["risk"] = risk_report
+    return result
 
 
 def release_manifest(spec: dict, qa_report: dict,
@@ -782,10 +978,18 @@ def release_manifest(spec: dict, qa_report: dict,
     """
     from datetime import datetime, timezone
 
+    input_issue = None
+    if not isinstance(spec, dict):
+        input_issue = "spec 顶层必须是对象/dict"
+        spec = {}
+    if not isinstance(qa_report, dict):
+        qa_report = {}
     spec_hash = spec_fingerprint(spec)
-    issues: list[str] = []
+    issues: list[str] = [input_issue] if input_issue else []
     notes: list[str] = []
-    page_ids = {str(s.get("id")) for s in (spec.get("slides") or []) if s.get("id")}
+    slides = spec.get("slides") if isinstance(spec.get("slides"), list) else []
+    page_ids = {str(s.get("id")) for s in slides
+                 if isinstance(s, dict) and s.get("id")}
 
     def _attest(report: dict | None, name: str) -> None:
         """报告必须能被追溯到当前 spec：盖过戳的要一致，声称 PASS 的必须有戳。"""
@@ -819,7 +1023,11 @@ def release_manifest(spec: dict, qa_report: dict,
             return
         seen = {str(x.get("slide")) for x in (report.get("slides") or [])
                 if isinstance(x, dict) and x.get("slide") is not None}
-        cov = report.get("coverage") or (report.get("render") or {}).get("coverage") or {}
+        cov = report.get("coverage")
+        if not isinstance(cov, dict):
+            render_block = report.get("render")
+            cov = render_block.get("coverage") if isinstance(render_block, dict) else {}
+        cov = cov if isinstance(cov, dict) else {}
         seen |= {str(x) for x in (cov.get("rendered_ids") or []) if x is not None}
         seen |= {str(p.get("slide")) for p in (report.get("pages") or [])
                  if isinstance(p, dict) and p.get("slide") is not None}
@@ -833,29 +1041,87 @@ def release_manifest(spec: dict, qa_report: dict,
 
     qa_status = str(qa_report.get("status", "BLOCKED"))
     status = qa_status          # v4.15 单引擎：QA 判定即发布判定
-    cov = ((qa_report.get("render") or {}).get("coverage")
-           or ((qa_report.get("render_evidence") or {}).get("coverage")) or {})
+    _render_block = qa_report.get("render")
+    _evidence_block = qa_report.get("render_evidence")
+    cov = ((_render_block.get("coverage") if isinstance(_render_block, dict) else None)
+           or (_evidence_block.get("coverage") if isinstance(_evidence_block, dict) else None)
+           or {})
+    cov = cov if isinstance(cov, dict) else {}
     ver = {
         "qa_level": (qa_report.get("performance") or {}).get("qa_level"),
         "pixel_pages": cov.get("rendered_pages"),
         "pixel_total": cov.get("total_pages"),
         "release_eligible": bool(qa_report.get("release_eligible")),
     }
-    ver.update(verification or {})
+    # Manifest 是发布边界的最后一道证明，不接受「status=PASS」但没有完整
+    # release 资格/像素覆盖的旁路报告。旧版只复制 qa_status，攻击者可以伪造
+    # 一个 PASS + partial evidence；现在把资格声明与最小事实重新核对。
+    # 即使当前是 PREVIEW_ONLY，也核对已经存在的 PPTX attestation：没有
+    # renderer 不等于可以接受一个被替换的编译产物。
+    compile_claim = qa_report.get("compile")
+    if isinstance(compile_claim, dict):
+        output_path = compile_claim.get("output_path")
+        output_sha = compile_claim.get("output_sha256")
+        if output_path or output_sha:
+            if not output_path or not output_sha:
+                issues.append("qa_report 的 PPTX attestation 不完整：需要 output_path 与 output_sha256")
+            else:
+                try:
+                    h = hashlib.sha256()
+                    with Path(output_path).open("rb") as handle:
+                        for chunk in iter(lambda: handle.read(1 << 16), b""):
+                            h.update(chunk)
+                    if h.hexdigest() != output_sha:
+                        issues.append("qa_report 的 PPTX output_sha256 与文件当前内容不一致")
+                except (OSError, TypeError, ValueError):
+                    issues.append(f"qa_report 的 PPTX output_path 不可读取: {output_path}")
+    if qa_status.upper() == "PASS":
+        if not qa_report.get("release_eligible"):
+            issues.append("qa_report 声称 PASS 但 release_eligible=false")
+        execution = qa_report.get("execution") or {}
+        if str(execution.get("mode", "")).lower() != "release":
+            issues.append("qa_report 声称 PASS 但 execution.mode 不是 release")
+        perf = qa_report.get("performance") or {}
+        try:
+            qa_level_claim = int(perf.get("qa_level"))
+        except (TypeError, ValueError, OverflowError):
+            qa_level_claim = 0
+        if qa_level_claim < 3:
+            issues.append("qa_report 声称 PASS 但 qa_level < 3")
+        rendered_claim = bool(((_render_block or {}).get("rendered")
+                               if isinstance(_render_block, dict) else False)
+                              or (( _evidence_block or {}).get("rendered")
+                                  if isinstance(_evidence_block, dict) else False))
+        try:
+            pixel_pages = int(cov.get("rendered_pages") or 0)
+            pixel_total = int(cov.get("total_pages") or 0)
+        except (TypeError, ValueError, OverflowError):
+            pixel_pages = pixel_total = 0
+        if not rendered_claim or pixel_total <= 0 or pixel_pages < pixel_total:
+            issues.append("qa_report 声称 PASS 但没有完整像素渲染覆盖")
+        if not isinstance(compile_claim, dict) or not compile_claim.get("passed"):
+            issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")
+    if isinstance(verification, dict):
+        ver.update(verification)
     if issues:
         status = "BLOCKED"          # 报告与 spec 对不上时，任何 PASS 都不作数
+    try:
+        revision_num = int(revision_count)
+    except (TypeError, ValueError, OverflowError):
+        revision_num = 0
     return {
         "source_spec_hash": spec_hash,
         "validation": {"issues": issues, "notes": notes, "page_count": len(page_ids)},
-        "theme_id": theme_id or (spec.get("theme") or {}).get("id"),
-        "slide_count": len(spec.get("slides") or []),
+        "theme_id": theme_id or ((spec.get("theme") or {}).get("id")
+                                  if isinstance(spec.get("theme"), dict) else None),
+        "slide_count": len(slides),
         "verification": ver,
         "compile_report": compile_report or qa_report.get("compile"),
         "qa_report": qa_report,
         "render_evidence_path": (render_evidence_path
                                  or (qa_report.get("render") or {}).get("dir")),
-        "revision_count": int(revision_count),
-        "revision_log": list(revision_log or []),
+        "revision_count": revision_num,
+        "revision_log": list(revision_log or []) if isinstance(revision_log, (list, tuple)) else [],
         "status": status,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -872,11 +1138,12 @@ def main(argv):
               "[--mode spec|sketch|draft|review|release] [--no-compile] "
               "[--no-normalize] [--no-render] [--fast] "
               "[--quick | --key-pages | --manifest | --level N] [--no-cache] "
-              "[--raster auto|png|jpeg] [--json]\n"
+              "[--raster auto|png|jpeg] [--advisory] [--json]\n"
               "  执行模式：spec=零成本档（只读 spec：不 import pptx、不编译、不渲染）· "
 "      sketch=草图链（契约免除）· draft=创作链（零渲染，初稿探索）· "
               "review=审查链（只测变化页）· release=发布链（全量+Manifest，唯一给发布资格的一档）\n"
-              "  默认：不传 --mode 即 draft（零渲染秒级 + 风险预测与生成策略首屏）\n"
+              "  默认：不传 --mode 即 draft（零渲染秒级；不运行设计建议）\n"
+              "  --advisory / --risk：显式运行设计风险建议（非发布门槛）\n"
               "  --level N / --fast 维持 legacy 全量\n"
               "  --no-compile：任何模式下只判 spec（不写 PPTX、不 import 编译层）\n"
               "  legacy：--quick≡--mode draft · --key-pages≡--mode review · "
@@ -890,12 +1157,26 @@ def main(argv):
               "裸 spec baseline 校验请用 --mode spec。")
         return 1
     mod = importlib.util.module_from_spec(spec_mod)
-    spec_mod.loader.exec_module(mod)
-    spec = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
+    try:
+        spec_mod.loader.exec_module(mod)
+    except ModuleNotFoundError as exc:
+        print(f"qa.py: build 模块缺少依赖 {exc.name!r}；请检查 requirements.txt",
+              file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"qa.py: build 模块执行失败 {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+        return 2
+    try:
+        spec = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
+    except Exception as exc:
+        print(f"qa.py: build_spec() 失败 {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
     if spec is None:
         print("build module must define build_spec() or SPEC")
         return 1
     fast = "--fast" in argv
+    include_advisory = "--advisory" in argv or "--risk" in argv
     # 执行模式：legacy 旗标映射为模式别名；--level N 可在模式内微调
     mode = None
     for i, a in enumerate(argv):
@@ -911,11 +1192,15 @@ def main(argv):
     for i, a in enumerate(argv):
         if a == "--level" and i + 1 < len(argv):
             level = int(argv[i + 1])
-    # 默认生成走创作链（draft）：不传 mode 即零渲染秒级产出可编辑 PPTX +
-    # 风险预测/生成策略首屏。显式 --level N / --fast 是「明确要测」的信号，
-    # 维持 legacy 全量行为，不因默认值被降级。
+    # 默认生成走创作链（draft）：不传 mode 即零渲染产出可编辑 PPTX；设计建议
+    # 只有 --advisory/--risk 显式开启。--level N / --fast 是明确的 legacy 成本请求。
     if mode is None and level is None and not fast:
         mode = "draft"
+    try:
+        mode_profile(mode)
+    except ValueError as exc:
+        print(f"qa.py: {exc}", file=sys.stderr)
+        return 2
     do_normalize = "--no-normalize" not in argv
     # --no-compile：只判 spec（任何模式下有效）。spec 档隐含它。
     no_compile = "--no-compile" in argv or mode == "spec"
@@ -927,7 +1212,7 @@ def main(argv):
         elif a == "--lossless":
             raster = "png"
     # 生产链第 0 级：Normalizer 在一切之前（Guard 只确认，不负责发现机械偏差）。
-    # CLI 只归一化一次，后续 run_qa/critic/manifest 共用同一份归一化 spec。
+    # CLI 只归一化一次，后续 run_qa/manifest 共用同一份归一化 spec。
     if do_normalize:
         from guard import normalize_spec
         spec, norm = normalize_spec(spec)
@@ -938,21 +1223,33 @@ def main(argv):
                   + ("" if norm["idempotent"] else " · 幂等校验失败！"))
     else:
         norm = None
-    prof = mode_profile(mode) if mode else None
-    result = run_qa(spec, argv[2],
-                    render=False if "--no-render" in argv else None,
-                    dpi=72 if fast else 96,
-                    qa_level=level, use_cache="--no-cache" not in argv,
-                    raster=raster, mode=mode, normalize=False,
-                    compile=False if no_compile else None)
+    # --fast / --level 是显式 legacy 成本请求：保留旧的「允许全量渲染」语义，
+    # 但不把 API 的隐式 None 再解释成 release，也不自动生成 Manifest。
+    legacy_full = fast or level is not None
+    render_arg = (False if "--no-render" in argv
+                  else (True if legacy_full else None))
+    qa_level_arg = (3 if fast and level is None else level)
+    try:
+        result = run_qa(spec, argv[2],
+                        render=render_arg,
+                        dpi=72 if fast else 96,
+                        qa_level=qa_level_arg, use_cache="--no-cache" not in argv,
+                        raster=raster, mode=mode, normalize=False,
+                        compile=False if no_compile else None,
+                        include_advisory=include_advisory,
+                        spec_path=str(mod_path))
+    except ValueError as exc:
+        print(f"qa.py: {exc}", file=sys.stderr)
+        return 2
     if norm and result.get("normalization") is None:
         result["normalization"] = norm      # CLI 已归一化：报告仍要留痕（证明链）
     want_manifest = "--manifest" in argv or (mode == "release")
     if want_manifest:
         manifest = release_manifest(spec, result)
         manifest_path = Path(argv[2]).with_suffix(".manifest.json")
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
-                                 encoding="utf-8")
+        # 清单是发布证据的一部分，和 render_meta 一样不能留下半个 JSON。
+        from compile_cache import _atomic_json_write
+        _atomic_json_write(manifest_path, manifest)
         # --json 保持纯净：manifest 落盘为凭，
         # 文本行只在人类可读模式打印 stdout，机器管道直接 json.loads 不得被污染。
         if "--json" not in argv:
@@ -966,7 +1263,7 @@ def main(argv):
             print("hint: 本轮 release 通过，可 design_intelligence.record_dna() "
                   "沉淀此 deck 的判断经验 → memory/design_dna.json")
     # 风险预测 → 生成策略（首屏）：先按策略改，再谈渲染。它是决策输入，不是审核闸。
-    if mode in ("sketch", "draft", "review", "release") and "--json" not in argv:
+    if include_advisory and mode in ("sketch", "draft", "review", "release") and "--json" not in argv:
         pc = result.get("risk") or {}
         s = pc.get("summary") or {}
         strat = pc.get("strategy") or {}
@@ -976,10 +1273,17 @@ def main(argv):
             for key, val in (strat.get("adjusted") or {}).items():
                 for d in val.get("deck_policies") or []:
                     print(f"  [{key}] 政策 → {d}")
-            for r in (pc.get("risks") or []):
-                if r.get("level") == "high":
-                    print(f"  [{r['code']:22s}] {'、'.join(r['slides'])}: {r['why'][:80]}")
-                    print(f"      prevent → {r['prevention'][:86]}")
+            for root in (pc.get("root_cause_summary") or []):
+                reps = "、".join(str(s) for s in (root.get("representative_pages") or [])) or "deck"
+                print(f"  [root:{root.get('root_cause')}] 代表页 {reps} · "
+                      f"{root.get('risk_count', 0)} 条")
+                if root.get("fix_first"):
+                    print(f"      fix → {root['fix_first'][:110]}")
+            if not pc.get("root_cause_summary"):
+                for r in (pc.get("risks") or []):
+                    if r.get("level") == "high":
+                        print(f"  [{r['code']:22s}] {'、'.join(r['slides'])}: {r['why'][:80]}")
+                        print(f"      prevent → {r['prevention'][:86]}")
         fit = result.get("auto_fit") or {}
         if fit.get("applied"):
             print(f"auto-fit: {fit['applied']} 处按阶梯吸附"

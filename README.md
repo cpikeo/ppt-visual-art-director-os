@@ -35,8 +35,9 @@ ppt-visual-art-director-os/
 ├── scripts/
 │   ├── intent_compiler.py        # 意图压缩层：需求 → Design Brief
 │   ├── design_intelligence_rules.py  # 机器口径：风险目录/密度带/取舍表
-│   ├── route.py  design_intelligence.py  layout_search.py  # 决策层
-│   ├── compiler.py  primitives.py                          # 编译层（elements/charts 已并入）
+│   ├── route.py  pipeline.py  design_intelligence.py       # 决策层（pipeline 单进程汇合）
+│   ├── layout_search.py
+│   ├── compiler.py  primitives.py  compile_cache.py         # 编译层（elements/charts 已并入）
 │   ├── guard.py  qa.py  render_check.py                    # 验证层（normalizer 已并入 guard）
 │   ├── asset_prompt.py  ghost.py  selftest.py
 └── templates/
@@ -46,9 +47,9 @@ ppt-visual-art-director-os/
 
 ## 示例资产（Sample Assets）
 
-`assets/` 内 4 张示例资产（AI 生成，仅作演示，非模板、非规范）。它们覆盖不同的纸面/材质语言，可作 `asset_prompt.py --qc` 出图体检的输入示例——出图后跑一次定性体检（文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度，Issue + Suggestion，不打分），有问题再重出。
+`assets/` 内 4 张示例资产（AI 生成，仅作演示，非模板、非规范）。它们覆盖不同的纸面/材质语言，可作 `asset_prompt.py --qc` 出图体检的输入示例——出图后跑一次定性体检（文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度，Issue + Suggestion，不打分）。阻断问题最多定向重出 1 次；`review/release` 不由资产 QC 自动触发，最终资格仍由 `qa.py --mode release` 与 Manifest 判定。
 
-`asset_prompt.py` 是**通用**资产提示词组装器（13 个视觉家族），不是水墨专用；只有当资产卡选择水墨语言（subject/material/style 含水墨词，或 family ∈ song_elegance / zen_minimal）时，才自动注入水墨纪律闸门。
+`asset_prompt.py` 是**通用**资产提示词组装器（13 个视觉家族），不是水墨专用；只有当资产卡选择水墨语言（subject/material/style 含水墨词，或 family ∈ song_elegance / zen_minimal）时，才自动注入水墨纪律闸门。`--qc IMAGE --phase draft --attempt 0` 会输出有界动作：阻断问题最多重出一次；`review/release` 只标记，不自动升级流程。
 
 <p align="center">
   <img src="assets/1c2f20c6a78cd5c41dd344397e986f5b.png" alt="示例资产 1" height="240">
@@ -59,26 +60,41 @@ ppt-visual-art-director-os/
 
 ## 工作流
 
-P1 内容理解 → P2 视觉策略（Strategy/Direction/Page Intent）→ P3 布局决策 → P4 关键细节优化（1 根因 = 1 轮）→ P5 质量检查。先 `intent_compiler` 产 Brief，再 `route` 定家族与预算，再写 spec。
+P1 内容理解 → P2 视觉策略（Strategy/Direction/Page Intent）→ P3 布局决策 → P4 spec 批量修结构、draft 一次验证、advisory 后置 → P5 review/release。默认由 `pipeline.py` 单进程产 Brief/route/layout/risk，再写 spec；独立脚本仅按需诊断。
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-python3 scripts/intent_compiler.py brief.yml --json   # 需求 → Design Brief
-python3 scripts/route.py brief.yml --json             # 内容 → 家族 / 密度 / 资产预算
-python3 scripts/guard.py build_mydeck.py --json       # 静态诊断 + 风险预测（0.2s 级）
-python3 scripts/compiler.py build_mydeck.py out.pptx  # 编译可编辑 PPTX
-python3 scripts/qa.py build_mydeck.py out.pptx        # 默认 draft（零渲染）
-python3 scripts/qa.py build_mydeck.py out.pptx --mode review    # 只测变化页
-python3 scripts/qa.py build_mydeck.py out.pptx --mode release   # 全量 + Manifest
+# 同一进程完成 Brief / route / layout / risk；后续 spec 编写消费 plan.json
+python3 scripts/pipeline.py brief.yml --out plan.json
+
+# 默认创作入口：QA 内部已包含 Normalizer + Guard + Compile，零渲染
+python3 scripts/qa.py build_mydeck.py out.pptx --mode draft
+
+# 用户确认方向后才升级；发布链只在最终交付时运行
+python3 scripts/qa.py build_mydeck.py out.pptx --mode review
+python3 scripts/qa.py build_mydeck.py out.pptx --mode release
+```
+
+上述是默认热路径，不要再串行执行 Guard/Compiler。仅需查看单层诊断或做安装/CI
+回归时才单独调用：
+
+```bash
+python3 scripts/intent_compiler.py brief.yml --json
+python3 scripts/route.py brief.yml --json
+python3 scripts/guard.py build_mydeck.py --json
+python3 scripts/compiler.py build_mydeck.py out.pptx
 python3 scripts/selftest.py
 ```
+
+`qa.py` 默认只做 Normalizer → Guard → Compile → 验证；设计风险建议不是默认步骤。
+需要时显式加 `--advisory`（或兼容别名 `--risk`），修正链仍以 QA 的首个工程阻断项为主。
 
 渲染证据需系统级依赖：LibreOffice（`soffice`）+ `poppler-utils`（`pdftoppm`）；缺失时自动降级为 `PREVIEW_ONLY`，不阻塞静态治理。
 
 ## 质量与发布门
 
-QA 只判工程正确性（溢出/缺失/越界/重叠/数据/渲染），输出 PASS/FAIL/WARNING，不做审美评分。设计价值（层级/节奏/焦点/一致/记忆点）由判断层回答——人/AI 依据 `references/design-craft.md`，机器不打审美分；`pre_critic` 只给风险预测与生成策略（建议，非闸门）。发布阻断项由 QA 持有：不可读、溢出、未声明遮挡、来源冲突、事实数据不完整、图表失真、编译失败、资产侵入安全区、渲染证据缺失。失败码与 Manifest 验收见 `references/production-contract.md`。
+QA 只判工程正确性（溢出/缺失/越界/重叠/数据/渲染），输出 PASS/FAIL/WARNING，不做审美评分。设计价值（层级/节奏/焦点/一致/记忆点）由判断层回答——人/AI 依据 `references/design-craft.md`；默认 `run_qa` 不运行设计建议，先做最小修正再立即验证。需要风险策略时显式使用 `--advisory`，它不是发布闸门。发布阻断项由 QA 持有：不可读、溢出、未声明遮挡、来源冲突、事实数据不完整、图表失真、编译失败、资产侵入安全区、渲染证据缺失。失败码与 Manifest 验收见 `references/production-contract.md`。
 
 ## 设计边界
 

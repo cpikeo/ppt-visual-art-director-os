@@ -46,9 +46,9 @@ description: >
 
 ## 三条腿（谁做什么，不要越界）
 
-- **QA（代码）** 只答「能不能正确交付」：溢出、越界、数据完整性、对比度底线、来源区。产出 PASS/FAIL/WARNING。
+- **QA（代码）** 只答「能不能正确交付」：溢出、越界、数据完整性、对比度底线、来源区。默认跳过设计契约 advisory；产出 PASS/FAIL/WARNING。
 - **判断（你 + `references/design-craft.md`）** 答「有没有设计价值」：机器不打审美分，九维评审坐标系 + 七条判断原则 + 案例库是你的眼睛。
-- **预测（`design_intelligence.pre_critic` + `risk.strategy`）** 答「会挂在哪里、先改什么」：建议，不是闸门。
+- **预测（可选）** 只在新建/复杂 deck 或用户明确要求时调用；默认 `run_qa` 不跑设计建议，直接修正并验证工程事实。
 
 判断优先级：事实与语义 > 可读性 > 内容任务 > 情绪 > 品牌。下层手法不修上层问题。
 
@@ -61,11 +61,15 @@ Audience / Decision / Evidence / Emotion
 ```
 
 ```bash
-python3 scripts/intent_compiler.py brief.yml --json   # 需求 → Design Brief
-python3 scripts/route.py brief.yml --json             # 内容 → 家族 / 密度 / 资产预算
+# 默认单进程规划，产出可复用计划
+python3 scripts/pipeline.py brief.yml --out plan.json
+# intent_compiler/route 仅按需
 ```
 
-Brief 之后所有步骤只消费 Brief + Page Intent，不再回读原始需求。每页一个 `page_intent`：`insight`（一页一句可复述结论）+ `focus`（唯一）+ `reading_order` + `energy` + `density`。字段契约见 `references/production-contract.md`，判断依据见 `references/design-craft.md`。
+Brief 之后消费 `plan.json`，不要重启 route/layout；每页保留 `page_intent` 的
+`insight/focus/reading_order/energy/density`；plan 区分
+`intent_interpretation` 的 explicit/inferred/conflicts。契约见
+`references/production-contract.md`，判断见 `references/design-craft.md`。
 
 ## Color Decision Chain（色彩从内容推导，不查表）
 
@@ -78,39 +82,48 @@ Brief 之后所有步骤只消费 Brief + Page Intent，不再回读原始需求
 - **P1 理解**：冻结输入（受众/决策/口径/来源；不可验证标 `unknown`）→ 产出 Brief + Strategy。
 - **P2 策略**：Direction（visual_world 一句话隐喻：材质/光影/空间）+ Story Map（声明情绪弧线：opening 建世界观 → 章节页制造情绪变化 → 内容页给证据 → closing 成记忆点；深浅强弱服务叙事段落）+ 逐页 Page Intent。系统级判断（色彩/字阶/母题/节奏词汇）在此判一次，全稿继承。
 - **P3 落地**：内容定 Family → 写 spec（数值几何 + `text` 字段，样式平铺顶层；页面只继承 P2 系统判断，不重议）→ 媒体闸门（图须有功能：先答「它证明这页哪句话」）→ compile 出可编辑 PPTX。
-- **P4 修正**：1 根因 = 1 轮。只修本轮 `items` 里唯一/首个 error（或 `risk.strategy` 的首杠杆），其余排队；为分数调参数 = 把对的地方改坏。
-- **P5 验证**：`qa.py --mode draft`（默认，零渲染）→ `review`（只渲染变化页）→ `release`（全量 + Manifest，唯一给发布资格）。
+- **P4 修正+验证**：spec 阶段按根因组批量修结构；draft 只做一轮最小修正并验证，advisory 后置。
+- **P5 升级**：`draft`（零渲染）→ 确认方向后 `review`（变化页）→ 交付时 `release`（全量 + Manifest）。
 
-## Modes（流程控制；预算 Fast/Advanced 与其正交）
+## Modes（流程控制，预算 Fast/Advanced 与其正交）
 
 | Mode | 做什么 | 状态上限 |
 |---|---|---|
-| `spec` | 只判读：归一化 + Guard + 风险预测，不编译不写文件 | PREVIEW_ONLY |
+| `spec` | 只判读：归一化 + Guard，不编译不写文件；`--advisory` 才加风险建议 | PREVIEW_ONLY |
 | `sketch` | 结构探索：只守 error 级，秒级出 PPTX | SKETCH（不可发布） |
 | `draft`（默认） | 创作链：Guard + Compile 出可编辑 PPTX，零渲染 | PREVIEW_ONLY |
 | `review` | 只渲染变化页 + QA | PASS 可达，`release_eligible=False` |
 | `release` | 全量渲染 + QA + Manifest | 唯一可发布 |
 
-迭代期看方向用 `ghost.py`（~1ms/页），真渲染只留给收口与发布。
+迭代看方向用 `ghost.py`（~1ms/页），真渲染留给收口/发布。
+
+## Fast path
+
+已有 `plan.json/spec` 直接跑 `qa.py --mode spec` 或 `draft`；复杂案例按
+`pipeline → strategy → build → spec → draft` 过门，按根因批量修结构，advisory 后置；
+同阶段独立资产 QC/渲染页可有界并行，不并发写产物。契约见 `production-contract.md`。
 
 ## Hard Boundaries（工程事实，不是品味）
 
 - 事实与口径完整 > 构图 > 风格 > 装饰；数据不可为构图造假、为留白删减。
 - 视觉复杂度必须服务阅读路径；说不清功能的装饰删除。
-- 文本/图表/图片/来源区几何不相交；来源区独立保留，不被侵入。
-- 图表声明 `source/unit/period/basis`；同一指标全 deck 同口径。
-- 16:9、1280×720、8 单位网格（自动吸附）；字体家族 ≤2。
+- 文本/图表/图片/来源区不相交；页脚引用与页码同基线、左右对侧。
+- 图表声明 `source/unit/period/basis`；同一指标全 deck 同口径；review/release 的 factual numeric chart 缺 provenance 即 error。
+- 16:9、1280×720、8 单位网格；字体家族 ≤2；semantic view 只作缓存身份，PPTX 另盖 artifact SHA。
 
 ## Load Routing（按需加载，不要通读）
 
+默认按需读本文件与命中资料；README/CHANGELOG/archive/memory/assets/selftest 属非生产资料。render/asset/layout 脚本只在对应阶段调用，不进 draft/spec 默认路径。
+`references/design-system.md` 正文完整保留，仅主题/材质/证据校准时读取，不能删。
+
 | 任务 | 读 | 调 |
 |---|---|---|
-| 新建/重构 deck | 本文件 + `references/design-intelligence.md` | `intent_compiler` → `route` → `layout_search` → `--mode draft` |
-| 写 spec 字段 | `references/production-contract.md`（契约表） | `qa.py --mode spec` 先问代码 |
-| 设计品味判断 | `references/design-craft.md` | —（判断依据，不是规则） |
-| 主题参考（可选） | `references/design-system.md`（Theme DNA 节） | 只作材质/光影灵感，seed 落进 `spec.theme`（先走 Design Intent First + Color Decision Chain） |
-| 出图 | 契约 asset 行 + `scripts/asset_prompt.py` | 每张图先走 asset_prompt 组装、CHECK OK 再出图（禁手写裸 prompt——裸 prompt 漠视纪律闸门；摄影语言卡自动过摄影写实纪律闸门：光方向/空气感/真实尺度/胶片性格，与水墨闸门同源）；出图后跑 `asset_prompt.py --qc <图>` 体检（亮度/留白/主体位置/文字区/对比度，Issue+Suggestion 不打分），有问题再重出 |
+| 新建/重构 deck | 本文件 + `design-intelligence.md` | `pipeline.py` 单进程规划 → spec → `draft`；只有复杂页才做 layout search |
+| 写 spec 字段 | `production-contract.md` | `qa.py --mode spec` 先问代码 |
+| 设计品味判断 | `design-craft.md` | 判断依据，不是规则 |
+| 主题参考（可选） | `design-system.md`（Theme DNA） | 只作材质/光影灵感，seed 落进 `spec.theme` |
+| 出图 | 契约 asset 行 + `asset_prompt.py` | 组装→CHECK→出图→`--qc`；阻断问题最多定向重出 1 次，不自动升级 |
 | 方向确认/改布局 | 契约对应行 | `ghost.py` 看方向 → `--mode review` |
 | 发布 | 契约 Release Manifest | `qa.py --mode release` |
 
-脚本按入口调用，不读源码；输出存 JSON 摘要。阈值唯一来源是代码常量，档位只改「测多少」不改「放宽什么」。
+按入口调用脚本，输出 JSON；阈值以代码常量为准，档位不放宽规则。
