@@ -2174,6 +2174,103 @@ def check_sketch_mode():
           and sk.get("release_eligible") is False and exists)
     return {"status": "PASS" if ok else "FAIL", "sketch_status": sk["status"],
             "guard_checks_sketch_vs_draft": f"{sk['guard']['checks']}/{dr['guard']['checks']}"}
+
+
+def check_round_governance():
+    """v4.26 轮次治理批回归锁：门槛去分数化 + fix_plan 报告自足 + warn 聚合 + 骨架序列化。
+
+    ① 状态/发布门只由阻断项决定：warn-only deck 在重罚分下 passed 仍为 True、
+       score<90 只影响 verdict=WARNING 信号，不再拖动状态（消灭追警告轮）。
+    ② fix_plan：阻断项按根因分组、内嵌契约行；干净 deck 组为空。
+    ③ warn_summary：同规则聚合计数，不逐条刷屏。
+    ④ skeleton：plan 已决策字段确定性序列化；elements 留空（技能包≠设计系统）。
+    """
+    import copy
+    import tempfile
+    qa = load("qa", SCRIPTS / "qa.py")
+    pl = load("pipeline", SCRIPTS / "pipeline.py")
+    fails = []
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#CCCCCC",
+                        "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
+
+    def _page(sid):
+        return {"id": sid,
+                "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
+                "page_intent": {"insight": f"{sid} 结论", "focus": "st",
+                                "density": "sparse", "energy": "high",
+                                "empty_space_role": "hold_emotion"},
+                "elements": [{"type": "text", "id": "st", "x": 400, "y": 300,
+                              "width": 480, "height": 120, "size": 48,
+                              "text": f"{sid} statement", "color": "ink",
+                              "max_lines": 1, "line_height": 1.2, "padding": 0}]}
+
+    # muted #CCCCCC 对白底 <1.8:1 → contrast warn（非阻断）
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": copy.deepcopy(theme),
+            "slides": [_page("s01"), _page("s02")]}
+    with tempfile.TemporaryDirectory() as d:
+        rep = qa.run_qa(copy.deepcopy(spec), pathlib.Path(d) / "w.pptx", mode="draft",
+                        penalties={"guard_warn": 30.0},
+                        render_dir=pathlib.Path(d) / "rw")
+        warns = [it for it in rep["items"] if it["level"] == "warn"]
+        if not warns:
+            fails.append("expected_warn")
+        if not (rep["passed"] is True and rep["score"] < 90):
+            fails.append("gate_decoupling")       # 分数不再构成门槛
+        if rep["verdict"]["verdict"] != "WARNING":
+            fails.append("verdict_signal")        # WARNING 信号保留
+        ws = rep["warn_summary"]
+        if not ws or any(w["level"] not in ("warn", "hint") for w in ws):
+            fails.append("warn_summary_scope")
+        if len({(w["domain"], w["rule"]) for w in ws}) != len(ws):
+            fails.append("warn_summary_not_aggregated")
+        if rep["fix_plan"]["groups"]:
+            fails.append("clean_deck_fix_plan_nonempty")
+
+        bad = copy.deepcopy(spec)
+        bad["slides"][0]["elements"].append(
+            {"type": "text", "id": "clash", "x": 400, "y": 300, "width": 480,
+             "height": 120, "size": 24, "text": "故意重叠", "color": "ink",
+             "max_lines": 1, "line_height": 1.2, "padding": 0})
+        rep2 = qa.run_qa(bad, pathlib.Path(d) / "b.pptx", mode="draft",
+                         render_dir=pathlib.Path(d) / "rb")
+        groups = {g["root_cause"]: g for g in rep2["fix_plan"]["groups"]}
+        if "OVERLAP" not in groups or groups["OVERLAP"]["count"] < 1:
+            fails.append("fix_plan_overlap_group")
+        elif "不相交" not in groups["OVERLAP"].get("fix", ""):
+            fails.append("fix_plan_contract_line")
+        if not (rep2["passed"] is False and rep2["status"] == "BLOCKED"):
+            fails.append("blocking_gate")
+
+        # ④ skeleton：确定性 + 边界（elements 留空、page_intent 骨架已填）
+        need = {"occasion": "董事会年度复盘", "audience": "董事会",
+                "decision": "批准预算",
+                "slides": ["封面：年度复盘", "执行摘要",
+                           {"title": "产品线表现", "content": "四条产品线数据",
+                            "type": "data"}]}
+        text_a = pl.build_skeleton_module(pl.build_plan_bundle(copy.deepcopy(need)))
+        text_b = pl.build_skeleton_module(pl.build_plan_bundle(copy.deepcopy(need)))
+        if text_a != text_b:
+            fails.append("skeleton_not_deterministic")
+        ns = {}
+        try:
+            exec(compile(text_a, "skeleton", "exec"), ns)
+        except Exception as exc:
+            fails.append(f"skeleton_not_executable:{type(exc).__name__}")
+            ns = {}
+        sk_spec = ns.get("SPEC") or {}
+        slides = sk_spec.get("slides") or []
+        if len(slides) != 3:
+            fails.append("skeleton_page_count")
+        if any(s.get("elements") != [] for s in slides):
+            fails.append("skeleton_elements_preset")   # 越界=设计系统，必须留空
+        if any(not s.get("source_zone") or "insight" not in (s.get("page_intent") or {})
+               or "focus" not in (s.get("page_intent") or {}) for s in slides):
+            fails.append("skeleton_intent_missing")
+        colors = (sk_spec.get("theme") or {}).get("colors") or {}
+        if not {"background", "ink", "muted", "primary", "secondary", "accent"} <= set(colors):
+            fails.append("skeleton_theme_tokens")
+    return {"status": "PASS" if not fails else "FAIL", "fails": fails}
+
 def check_visual_calibration_v3():
     """V3 校准闭环：律内联唯一真源、色彩引擎确定、比例自洽、草稿链与提示词三层生效。"""
     import design_intelligence as di
@@ -2689,6 +2786,7 @@ def main():
             "brand_seed": check_brand_seed(),
             "layout_recommend": check_layout_recommend(),
             "sketch_mode": check_sketch_mode(),
+            "round_governance": check_round_governance(),
             "pre_critic_v2": check_pre_critic_v2(),
             "intent_skeleton": check_intent_skeleton(),
             "deck_decision": check_deck_decision(),

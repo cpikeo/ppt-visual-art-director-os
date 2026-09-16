@@ -13,6 +13,57 @@
 9. 最终标准：更少规则更强判断，更少代码更高审美，更少复杂度更高质量
 
 
+## v4.26 轮次治理批（2026-09-15）：两代两验、门槛去分数化、报告自足、骨架序列化
+
+**案源**：外部深度性能审计（沙箱实测 + 本档案 v4.15 解剖互证）坐实：确定性链全毫秒级
+（12 页 draft 冷 271ms/热 57ms、pipeline 71ms、review 全热 0.1s），慢的真相在**轮次面**——
+六段串行阶段门（strategy→spec→draft→advisory→review→release）把一次交付推到 8–20 轮
+Agent 回合；且分数门把良性观察变成事实闸门（实测复现：12 页 deck 每页重力漂移 0.29 vs
+阈值 0.28 → 12×3.0=−36 分 → score 46 → REVISE → 逼出整轮追警告修正）。第 8 原则
+（主链单次）此前只治了进程内重复，本轮把它治到**轮次**粒度。
+
+**修复（契约层，零新模块）**
+
+- **两代两验轮次契约**：R1 规划（`pipeline.py --skeleton`）→ R2 一次性生成（strategy+全量
+  spec 填骨架；资产出图请求同轮批量发出，与写 spec 并行）→ R3 `draft` → R4 唯一修正轮
+  （照 fix_plan 一次改完，零文档回读）→ R5 直接 `release`。预算 ≤6 轮（简单案例 4 轮）。
+  `spec`/`review` 降为诊断与单页抽查工具，**退出阶段门**——draft 内 Guard 本就是编译前
+  阻断门，release(qa_level 3) ⊇ review(qa_level 2)，页级缓存让 release 修复复跑只重渲变化页。
+  advisory 挂在同一次 draft 调用，不独占轮次。SKILL.md/README/契约表/`route.plan_deck`
+  的 workflow 输出四处同步改写。
+- **门槛去分数化**（qa.py）：`passed = not blocking`。发布门 = 0 error 级阻断 + 全量像素 +
+  完整性（可读性/数据/attestation）；score 与非阻断 warn/hint 降级为记录性观察
+  （`thresholds.pass` 保留为参考刻度）。`verdict_of` 的 WARNING 信号不动——信号保留，
+  状态门只看阻断。REVISE 仅剩「像素证据不全」一条路径。
+- **报告自足**（qa.py）：新增 `fix_plan`——阻断项按根因码分组（OVERLAP/TEXT_OVERFLOW/
+  DATA_INTEGRITY_FAIL/…），每组带 count/ids/samples(≤3)/fix，fix 内嵌 production-contract
+  契约行原文；证据类码（RENDER_UNAVAILABLE/PIXEL_COVERAGE_PARTIAL）不是 spec 修正对象，
+  不进组。新增 `warn_summary`——非阻断项按 (domain,rule) 聚合计数。CLI 默认输出只逐条
+  error + fix_plan + 一行 warn-summary，明细留在 --json（报告面 −60~80%，消除逐条刷屏的
+  修分诱因）。qa_version 3.2→3.3。
+- **骨架序列化**（pipeline.py `--skeleton`）：把 plan 已决策字段确定性写成 build 模块——
+  canvas 契约值、color_plan 种子四槽→theme 六 token 机械映射、每页 id/page_intent 骨架
+  （insight/focus 留空）/source_zone/background 占位 + 内容参考注释；`elements` 一律留空。
+  边界即第 4 原则：几何、构图、字阶、媒体是生成侧判断，骨架零预设（技能包 ≠ 设计系统）。
+  schema 类 error（element_schema/page_intent 缺字段/source_zone role）在源头归零，
+  LLM 输出 token 面 −30~50%。
+- **锁 fail-fast**（render_check.py）：`_LO_LOCK_TIMEOUT` 120→8s（拿不到锁立即走私有
+  profile 回退，代价一次冷 profile ~0.55s，比排队低一个量级）；`_LO_LOCK_STALE` 300→60s
+  （死锁自愈不再让新一轮白等 5 分钟）。
+- **上下文纪律升禁令**（SKILL.md Load Routing）：非生产资料（README/CHANGELOG/archive/
+  memory/assets/selftest，合计 ~92KB）禁止进入任何执行轮上下文；修正轮零文档回读，
+  契约表会话内只读一次。
+
+**数字**：同一 12 页 warn-only deck 的 release 判定 REVISE/release_eligible=False/rc=2 →
+**PASS/release_eligible=True/rc=0**（24 条逐页 warn 聚合为一行）；骨架生成 10 页 deck
+确定性可执行（exec→SPEC 结构断言全过）；轮次预算 8–20 → 4–6。代码净增 ~190 行
+（fix_plan/skeleton/回归锁），零新脚本、零新模块、零新依赖。
+
+**验证**：新增 selftest `round_governance` 回归锁（门槛去分数化/fix_plan 分组与契约行/
+warn_summary 聚合/骨架确定性与留空边界）PASS；全量自检 61 PASS，仅余 2 项与本批无关的
+环境性 FAIL（draft_import_contract/hairline_grid，纯净 HEAD 同样 FAIL，字体/子进程探针
+环境依赖）。渲染翼治理（页缓存/PDF 复用/workers/TIFF）已到收益极限，本轮不动。
+
 ## v4.25 间距一致性批（2026-09-15）：色块-文字间距处处相等
 
 **案源**：评审红框：S06 图例两项「色块-文字」间距不一（12px vs 8px）——文字 x 被网格吸附而

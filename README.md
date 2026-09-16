@@ -60,20 +60,23 @@ ppt-visual-art-director-os/
 
 ## 工作流
 
-P1 内容理解 → P2 视觉策略（Strategy/Direction/Page Intent）→ P3 布局决策 → P4 spec 批量修结构、draft 一次验证、advisory 后置 → P5 review/release。默认由 `pipeline.py` 单进程产 Brief/route/layout/risk，再写 spec；独立脚本仅按需诊断。
+P1 内容理解 → P2 视觉策略（Strategy/Direction/Page Intent）→ P3 落地（骨架填充 + spec + 批量出图）→ P4 draft 验证 + 按 fix_plan 一轮修正 → P5 直接 release 收口。默认由 `pipeline.py` 单进程产 Brief/route/layout/risk 并把已决策字段序列化进 build 骨架；`spec`/`review` 是诊断与抽查工具，不是阶段门；独立脚本仅按需诊断。
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-# 同一进程完成 Brief / route / layout / risk；后续 spec 编写消费 plan.json
-python3 scripts/pipeline.py brief.yml --out plan.json
+# R1 规划：同一进程完成 Brief/route/layout/risk；--skeleton 把已决策字段序列化进
+# build 骨架（canvas/theme 种子/page_intent/source_zone 已填，elements 留空零预设）
+python3 scripts/pipeline.py brief.yml --out plan.json --skeleton build_mydeck.py
 
-# 默认创作入口：QA 内部已包含 Normalizer + Guard + Compile，零渲染
+# R2 一次性生成：Strategy/Direction/全量 spec 填入骨架；资产出图请求同轮批量发出
+# R3 验证①：QA 内部已包含 Normalizer + Guard + Compile，零渲染；报告含 fix_plan
 python3 scripts/qa.py build_mydeck.py out.pptx --mode draft
+# R4 唯一修正轮：按 fix_plan 根因组一次改完（内嵌契约行，零文档回读）→ 复跑 draft
 
-# 用户确认方向后才升级；发布链只在最终交付时运行
-python3 scripts/qa.py build_mydeck.py out.pptx --mode review
+# R5 收口：方向确认后直接 release（全量渲染 + Manifest；页级缓存让修复复跑只重渲变化页）
 python3 scripts/qa.py build_mydeck.py out.pptx --mode release
+# 工具（非阶段门）：review=单页像素抽查 · spec=不写文件诊断 · ghost.py=零渲染看方向
 ```
 
 上述是默认热路径，不要再串行执行 Guard/Compiler。仅需查看单层诊断或做安装/CI

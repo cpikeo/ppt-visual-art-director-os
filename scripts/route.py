@@ -503,14 +503,21 @@ def _plan_deck(brief: dict) -> dict:
     assets = {"generate": needed[:cap], "generate_extra": needed[cap:], "reuse": reused,
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
     assets["planned_calls"] = len(assets["generate"])
-    workflow = ["pipeline.py → 在单进程冻结 Brief / route / layout / risk（写 plan.json）",
-                "初稿/探索（默认）：qa.py <build> out.pptx --mode draft"
-                "（Normalizer → Guard → Compile → PPTX，零渲染；布局方向用 ghost.py）",
-                "方向确认：qa.py <build> out.pptx --mode review"
-                "（只渲染变化页 ∪ 关键页；直接给 verdict）",
-                "发布（唯一给发布资格的一档）：qa.py <build> out.pptx --mode release"
-                "（全量渲染 → QA → Manifest）",
-                "独立诊断（按需）：guard.py / compiler.py，不要与 qa.py 默认串行执行"]
+    # 轮次契约（v4.26 两代两验）：默认链只有 draft 与 release 两道验证门；
+    # spec/review 是诊断与抽查工具，advisory 挂在同一次 draft 调用上，不各占一轮。
+    workflow = ["R1 规划：pipeline.py brief.yml --out plan.json --skeleton build_mydeck.py"
+                "（单进程冻结 Brief/route/layout/risk；已决策字段序列化进骨架）",
+                "R2 一次性生成：Strategy/Direction/全量 spec 填入骨架；"
+                "资产出图请求同轮批量发出（与写 spec 并行，draft 前收齐 QC）",
+                "R3 验证①：qa.py <build> out.pptx --mode draft"
+                "（Normalizer → Guard → Compile → PPTX，零渲染；报告含 fix_plan）",
+                "R4 唯一修正轮：按 fix_plan 根因组一次改完（零文档回读）→ 复跑 draft",
+                "R5 验证②/收口：方向确认后直接 qa.py <build> out.pptx --mode release"
+                "（全量渲染 → QA → Manifest；发布门=0 阻断+全量像素+完整性，"
+                "score 与非阻断警告仅记录）",
+                "工具（非阶段门）：ghost.py 看方向（~1ms/页，零渲染）· --mode review "
+                "单页像素抽查 · --mode spec 不写文件诊断 · guard.py/compiler.py 独立诊断，"
+                "不要与默认链串行执行"]
     if quality == "advanced":
         workflow.append("资产：仅对 assets.generate 中的页面调用图像模型，逐页绑定留白锚点")
     # 哪些页面值得付渲染成本：首尾页 + 需要画心的页（图表与遮挡由 QA 从 spec 兜底挑选）

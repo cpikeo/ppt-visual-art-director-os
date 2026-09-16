@@ -43,7 +43,7 @@ DEFAULT_PENALTIES = {
     "design_advisory": 0.0,    # guard 的设计契约条目：观察，不是扣分项
 }
 DEFAULT_THRESHOLDS = {
-    "pass": 90.0,              # passed = score >= pass
+    "pass": 90.0,              # 记录性观察阈值（v4.26 起不再单独构成发布门）
     "gravity_drift": 0.28,     # 归一化漂移上限
     # accent_pixel 缺省时回落主题 constraints.accent_max（见下方解析），
     # 不再硬编码 0.08——与 guard/route 同一把尺子（OS §06 Accent 克制）。
@@ -323,6 +323,105 @@ def _has_auto_fit(spec: dict | None) -> bool:
             if isinstance(element, dict) and element.get("auto_fit") is True:
                 return True
     return False
+
+
+# ── fix_plan（v4.26 轮次治理批）：报告自足性 ─────────────────────────────
+# 阻断码 → 一句首修 + 内嵌契约行。目标：修正轮照单一次改完（每阶段 1 轮），
+# 零文档回读——production-contract.md 的对应行直接进报告，Agent 不必再翻文档。
+FIX_CONTRACT_HINTS = {
+    "OVERLAP": "文本/图表/图片/来源区墨迹不相交；挪几何或删元素，不缩字号。"
+               "契约行：所有可见对象数值 x/y/width/height；墨迹相交即 OVERLAP。",
+    "SOURCE_COLLISION": "来源区（source_zone）内只放 role∈{source,method,metadata} 的文字，"
+                        "任何可见对象不得侵入。契约行：来源区永不许遮挡。",
+    "CHART_LABEL_COLLISION": "用 label_collision_policy:hide_redundant|move_outside|fail 处置，"
+                             "不缩字号。契约行：图表标签放不下用 policy。",
+    "TEXT_OVERFLOW": "框高 ≥ 字号×行高×行数；减行数/减字数/加框高，三选一。"
+                     "契约行：text 放内容，样式平铺顶层。",
+    "READABILITY_FAIL": "实测文字 vs 下方像素 <3:1 阻断：加深文字色或加遮罩/底衬，"
+                        "不动构图。契约行：正文 <4.5:1 提示，任何角色 <3:1 阻断。",
+    "DATA_INTEGRITY_FAIL": "每行 label + 有限 value；factual numeric chart 齐 "
+                           "source/unit/period/basis。契约行：数据不可为构图造假。",
+    "CHART_TYPE_FAIL": "图表类型在白名单内且数据形态匹配（占比≠趋势）。",
+    "COMPILE_FAIL": "编译诊断给出具体元素与字段；按 warnings 修 schema，不绕过 Guard。",
+    "GUARD_FAIL": "按 checks 中 error 级条目逐项修；element_schema/focus/几何合法性优先。",
+}
+# 证据类失败码不是 spec 修正对象（跑对模式/装对渲染器即可），不进 fix_plan
+_EVIDENCE_CODES = {"RENDER_UNAVAILABLE", "PIXEL_COVERAGE_PARTIAL"}
+
+
+def _rule_to_code(rule):
+    return {"overlap": "OVERLAP", "source_zone": "SOURCE_COLLISION",
+            "chart_label_collision": "CHART_LABEL_COLLISION",
+            "text_capacity": "TEXT_OVERFLOW", "contrast": "READABILITY_FAIL",
+            "data_integrity": "DATA_INTEGRITY_FAIL",
+            "data_provenance": "DATA_INTEGRITY_FAIL",
+            "chart_type": "CHART_TYPE_FAIL",
+            "safety": "GUARD_FAIL"}.get(rule, "GUARD_FAIL")
+
+
+def build_fix_plan(failure_codes, guard_checks, compile_report):
+    """阻断项按根因分组：{root_cause, count, ids, samples, fix}。确定性、零新依赖。"""
+    by_code = {}
+
+    def _g(code):
+        return by_code.setdefault(code, {"root_cause": code, "count": 0,
+                                         "ids": [], "samples": []})
+    for chk in guard_checks:
+        if not isinstance(chk, dict) or chk.get("level") != "error":
+            continue
+        if chk.get("advisory"):
+            continue
+        g = _g(_rule_to_code(chk.get("rule")))
+        g["count"] += 1
+        pid = str(chk.get("id") or "")
+        if pid and pid not in g["ids"]:
+            g["ids"].append(pid)
+        if len(g["samples"]) < 3 and chk.get("msg"):
+            g["samples"].append(str(chk["msg"])[:160])
+    if isinstance(compile_report, dict) and not compile_report.get("passed", False) \
+            and not compile_report.get("skipped"):
+        g = _g("COMPILE_FAIL")
+        g["count"] += 1
+        for w in (compile_report.get("warnings") or [])[:3]:
+            g["samples"].append(str(w)[:160])
+    # 兜底码只在有真实条目时成组：engineering_gate 跳过编译时的 COMPILE_FAIL、
+    # 已被具体码（OVERLAP 等）覆盖的 GUARD_FAIL，空组只会稀释 fix_plan 信号。
+    for code in failure_codes or []:
+        if code in _EVIDENCE_CODES or code in ("COMPILE_FAIL", "GUARD_FAIL"):
+            continue
+        _g(code)                      # 渲染侧码（如 READABILITY_FAIL）无 checks 也成组
+    groups = []
+    for code in list(failure_codes or []) + [c for c in by_code if c not in (failure_codes or [])]:
+        g = by_code.get(code)
+        if g is None or code in _EVIDENCE_CODES:
+            continue
+        if not g["count"] and code in ("COMPILE_FAIL", "GUARD_FAIL"):
+            continue
+        g["fix"] = FIX_CONTRACT_HINTS.get(code, "见 production-contract.md Contract Map 对应行")
+        if g not in groups:
+            groups.append(g)
+    return {"round_budget": "本轮一次修完全部组，修完直接复跑同档（每阶段 1 个修正轮；"
+                            "零文档回读，修法以内嵌契约行为准）",
+            "groups": groups}
+
+
+def build_warn_summary(items):
+    """非阻断项按 (domain, rule, level) 聚合：记录在案，不构成门槛、不逐条刷屏。"""
+    agg = {}
+    order = []
+    for it in items or []:
+        if it.get("level") not in ("warn", "hint"):
+            continue
+        key = (it.get("domain"), it.get("rule"), it.get("level"))
+        if key not in agg:
+            agg[key] = {"domain": key[0], "rule": key[1], "level": key[2],
+                        "count": 0, "penalty": 0.0}
+            order.append(key)
+        agg[key]["count"] += int(it.get("count") or 1)
+        agg[key]["penalty"] += float(it.get("penalty") or 0.0)
+    for entry in agg.values():
+        entry["penalty"] = round(entry["penalty"], 1)
+    return [agg[k] for k in order]
 
 
 def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
@@ -845,6 +944,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
 
     score = max(0.0, 100.0 - deduction)
     failure_codes = []
+    # （v4.26 轮次治理批）score 自此只是记录性观察：状态与发布资格由
+    # 「有无阻断项 + 像素证据完整性」决定，不再被分数拖动。
     # 只有 error 级 Guard 检查才映射为阻断性失败码；warn/hint 只通过扣分影响
     # score，不改变发布状态（否则安全区余量提示等建议级检查会把整套 deck
     # 误判为 BLOCKED，违背「阻断错误 → BLOCKED」的状态优先级契约）。
@@ -852,7 +953,9 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "overlap": "OVERLAP", "source_zone": "SOURCE_COLLISION",
         "chart_label_collision": "CHART_LABEL_COLLISION",
         "text_capacity": "TEXT_OVERFLOW", "contrast": "READABILITY_FAIL",
-        "data_integrity": "DATA_INTEGRITY_FAIL", "chart_type": "CHART_TYPE_FAIL",
+        "data_integrity": "DATA_INTEGRITY_FAIL",
+        "data_provenance": "DATA_INTEGRITY_FAIL",   # 来源/单位/期间/口径缺失=事实数据不完整
+        "chart_type": "CHART_TYPE_FAIL",
         "safety": "GUARD_FAIL",
     }
     for check in guard["checks"]:
@@ -878,7 +981,10 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "OVERLAP", "SOURCE_COLLISION", "CHART_LABEL_COLLISION", "TEXT_OVERFLOW",
         "READABILITY_FAIL", "DATA_INTEGRITY_FAIL", "CHART_TYPE_FAIL",
         "COMPILE_FAIL", "GUARD_FAIL"}))
-    passed = score >= thr["pass"] and not blocking
+    # 门槛去分数化（v4.26）：分数门曾把「逐页重力漂移 0.29 vs 阈值 0.28」这类
+    # 良性观察变成事实闸门（12 页 ×3.0 分 = −36 → REVISE），逼出整轮追警告修正。
+    # verdict_of 仍按 warnings/score 给 WARNING 信号——信号保留，状态门只看阻断。
+    passed = not blocking
     status = "BLOCKED" if blocking else (
         "SKETCH" if mode == "sketch" else
         ("PREVIEW_ONLY" if not do_compile else
@@ -924,7 +1030,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     }
 
     result = {
-        "qa_version": "3.2",
+        "qa_version": "3.3",
         # 自证戳：报告属于哪一份 spec。清单会核对，防止拿旧报告/旁路产物冒充新结果
         "source_spec_hash": spec_fingerprint(spec),
         "normalization": norm_report,
@@ -958,6 +1064,11 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "failure_codes": failure_codes,
         "blocking_items": sum(1 for it in items if it.get("level") == "error"),
         "affected_slides": sorted({str(it.get("id")) for it in items if it.get("id")}),
+        # 报告自足（v4.26）：阻断项按根因分组 + 内嵌契约行；非阻断项聚合记录。
+        # 修正轮照 fix_plan 一次改完，warn_summary 只留痕不构成门槛。
+        "fix_plan": build_fix_plan(failure_codes, guard.get("checks") or [],
+                                   compile_report),
+        "warn_summary": build_warn_summary(items),
         "next_action": next_action,
         "elapsed_ms": int((time.time() - t0) * 1000),
     }
@@ -1301,8 +1412,21 @@ def main(argv):
               f"pixel={cov.get('rendered_pages', result['render']['pages'])}/"
               f"{cov.get('total_pages', result['performance']['slides'])}"
               + ("" if result["release_eligible"] else " [非发布级]"))
+        # 报告面治理（v4.26）：error 逐条 + fix_plan 照单；warn/hint 聚合成一行
+        # summary（明细仍在 --json 的 items/warn_summary 里）——默认输出不再刷屏，
+        # 也不给「追警告」留视觉诱因。
         for it in result["items"]:
-            print(f"  [{it['domain']}/{it['level']:5s}] -{it['penalty']:.1f}  {it['msg']}")
+            if it.get("level") == "error":
+                print(f"  [{it['domain']}/{it['level']:5s}] -{it['penalty']:.1f}  {it['msg']}")
+        for g in (result.get("fix_plan") or {}).get("groups") or []:
+            ids = "、".join(g.get("ids") or []) or "deck"
+            print(f"  fix[{g['root_cause']}] ×{g['count']}（{ids}）→ {g.get('fix', '')}")
+            for s in (g.get("samples") or [])[:2]:
+                print(f"      · {s[:110]}")
+        ws = result.get("warn_summary") or []
+        if ws:
+            agg = "，".join(f"{w['rule']}×{w['count']}" for w in ws)
+            print(f"  warn-summary（非阻断，仅记录，不构成门槛）: {agg}")
     return 0 if result["passed"] else 2
 
 

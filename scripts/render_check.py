@@ -523,8 +523,13 @@ def _run_pipeline(pdf: Path, out_dir: Path, dpi: int, page_numbers: list[int],
 # 慢一点可以，转换失败不行。
 # ─────────────────────────────────────────────────────────────────────────
 _LO_PROFILE_ROOT = Path(tempfile.gettempdir()) / "ppt-vao-lo-profile"
-_LO_LOCK_TIMEOUT = 120.0        # 等锁上限：一次转换约 2s，等得起
-_LO_LOCK_STALE = 300.0          # 锁文件僵死阈值（进程被 kill 时兜底）
+# 等锁上限（v4.26 fail-fast）：拿不到锁立即走私有 profile 回退——代价仅一次
+# 冷 profile 新建（~0.55s），比排队等共享锁低一个量级；旧值 120s 在并发轮
+# 会把「偶发慢」放大成分钟级。
+_LO_LOCK_TIMEOUT = 8.0
+# 锁文件僵死阈值（进程被 kill 时兜底）：60s 足够覆盖一次整份转换（实测 ≤2.1s）
+# 加冷 profile 新建，旧值 300s 会让新一轮为死锁白等 5 分钟。
+_LO_LOCK_STALE = 60.0
 
 
 def _acquire_profile_lock(lock: Path, timeout: float) -> bool:
