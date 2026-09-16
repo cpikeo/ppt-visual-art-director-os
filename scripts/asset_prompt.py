@@ -143,7 +143,7 @@ def ink_gate_active(card: dict) -> bool:
 # 闸门不做审美决策——拍还是画是调用方的事；它只压「选了摄影感却滑向
 # 塑料商业图」的默认分布。廉价症状的反向清单住在 UNIVERSAL_CHEAP_REJECTS
 # （heavy HDR / plastic skin / oversaturated / generic stock photo 已有案源），
-# 这里只补过度锐化与均匀布光两条新案源（TerraForma 校准）。
+# 这里只补过度锐化与均匀布光两条新案源（高端品牌项目校准）。
 # 守门纪律不变：排除廉价，不堆砌高级词——正向仅 3 句。
 # --------------------------------------------------------------------------
 _PHOTO_STYLE_EXCLUDE = ("illustration", "3d", "vector", "render", "painting",

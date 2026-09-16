@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ppt-visual-art-director-os"
+version = "4.29.0"
+description = "证据驱动的 PPT 视觉艺术指导 OS：内容与决策 → 视觉策略 → 原生可编辑 PPTX，含确定性治理与渲染证据"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["presentation", "design-system", "pptx", "art-direction", "information-design"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Designers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Office/Business :: Office Suites",
+]
+
+dependencies = [
+  "python-pptx>=1.0.2,<2.0",
+  "Pillow>=10.0,<13.0",
+  "numpy>=1.24",
+  "PyYAML>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/cpikeo/ppt-visual-art-director-os"
+Source = "https://github.com/cpikeo/ppt-visual-art-director-os"
+
+# 本包不是库，而是一组**同目录平铺的脚本模块**（它们之间就是按顶层名互相 import 的，
+# 例如 compiler 里 `from primitives import ...`）。因此显式声明 py-modules 而不声明
+# packages：`pip install -e .` 后 `import qa` 等在任意工作目录可用，与仓库内
+# `python scripts/qa.py` 的行为完全一致，不引入第二套导入路径。
+[tool.setuptools]
+package-dir = { "" = "scripts" }
+py-modules = [
+  "asset_prompt", "compile_cache", "compiler", "design_intelligence",
+  "design_intelligence_rules", "ghost", "guard", "intent_compiler",
+  "layout_search", "pipeline", "primitives", "qa", "render_check", "route", "selftest",
+]
+
+# 参考文档与模板是「随仓库分发」的生产资料，不作为 site-packages 数据安装：
+# 包内文档之间按相对路径互相引用，复制进 site-packages 会破坏这些引用。
+# 需要它们时用仓库克隆（或 `pip install -e .` 的 editable 安装）。

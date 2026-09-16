@@ -13,6 +13,156 @@
 9. 最终标准：更少规则更强判断，更少代码更高审美，更少复杂度更高质量
 
 
+## v4.30 开源化配套（2026-09-16）：匿名化 + 可安装 + CI
+
+**案源**：发布前做了七维审计。干净项：MIT 许可、零密钥凭据、代码与文档零绝对路径/用户名、
+历史里从未提交过 pptx/pdf/xlsx/docx 客户交付物、被删的历史文件均为通用方法论、
+`design_dna.json` 不含客户代号、自包含（不依赖任何私有技能包）、`.gitignore` 正确排除构建产物。
+据此补三件事：
+
+- **匿名化**：随包分发的文档里出现过的项目代号改通用描述——`SUYU`/`TerraForma`（`design-craft.md`、
+  `asset_prompt.py`）与 `PHENO`（本档案）→「年报项目 / 高端品牌项目 / 基准稿」。改的是名字，
+  判断与教训一字未动（对照 `references/design-craft.md` 案例 6 与摄影校准表）。另在 README 明确：
+  文中提及的 Apple/Pentagram/IDEO/McKinsey/Kinfolk 仅作**可观察设计行为的引证**，不含商标、
+  素材与授权暗示。
+- **可安装**：新增 `pyproject.toml`。只声明运行时依赖与**平铺的脚本模块**（15 个，它们之间按顶层名
+  互相 import），不声明 packages——`pip install -e .` 与仓库内 `python scripts/qa.py` 走同一条导入
+  路径，不引入第二套；`references/` 与 `templates/` 按相对路径互相引用，因此不复制进 site-packages。
+- **CI**：新增 `.github/workflows/ci.yml`。Linux 与 **Windows** 双平台 × Python 3.10/3.12/3.13 跑
+  `selftest.py`（全 PASS 退 0、任一 FAIL 退 1，退出码即门槛；缺 LibreOffice 时相关用例自行降级，
+  所以不需要装渲染器），外加一个 spec 档冒烟用例把「spec 档不得拖入 python-pptx」这条红线钉在
+  流水线上。Windows 必须进矩阵：渲染链探测、路径归一化、profile URI 都是平台相关分支。
+
+**未做的事**：未改 LICENSE 署名（现为泛化的 "contributors"），未设版本 tag / Release，
+未加 CONTRIBUTING / SECURITY。这些属于发布动作而非包内容，留给仓库所有者决定。
+
+## v4.29 轮次治理补完（2026-09-16）：让每一步知道「这是第几轮、该不该停」
+
+**案源**：用户追问「是不是与 AI 多轮对话浪费了太多时间，能否减少对话次数」。这问题问在
+要点上——v4.26 自己就判定过「慢的真相在轮次面（六段阶段门 → 8–20 轮 Agent 回合）」，v4.28
+的时序体检也印证「设计判断链只有 95 ms」。但 v4.26 只写了契约，**没有给 CLI 任何可知情渠道**：
+每一步都不知道自己是第几轮、预算还剩多少、什么时候该停。
+
+**修复（零新模块）**
+
+- **轮次账本**（`compile_cache.load_rounds/note_round` + `qa.py` 打印）。口径经推敲后定为
+  **「改稿次数」＝同一产物上 spec 变了的 QA 调用数**，而不是 R1–R5 的「轮」——后者含规划与
+  授权两段非 QA 步骤，用 QA 调用数不出来。同一 spec 复跑（缓存命中）**不记修改**，否则
+  「复跑确认」会被记成浪费，作者反而不敢复核。
+- CLI 每轮报价并给停止信号：`改稿账本 2/6 · draft · 已改稿 2 次（第 3 版）`；draft 出现
+  0 阻断时明确写「可直接进 release，不必再改稿换一轮」；**超过预算 6 次时喊停**——
+  「应停下与用户确认方向，而不是继续打磨细节，继续改的边际收益已低于一轮对话的成本」。
+  这三句正是压轮次的关键：一轮对话的成本远高于一次 qa 调用。
+- **顺手补上 v4.27 记录过的缺口**：`revision_count` / `revision_log` 此前 CLI 没有写入通道、
+  恒为 0；现在由账本供给，发布清单带真实修订流水。同时把那条 `revision_count=0` 的旧提示
+  改准——账本为空才是缺口；有账本而计数为 0 意味着「首稿即通过、零修订」，那是好结果，
+  不该被报成缺失。
+
+**预期效果（口径可核对）**：典型交付从「8–20 轮」收敛到
+R1 规划 → R2 写 spec → R3 draft（0 阻断即被告知可进）→ R4 release ＝ **3 次调用 / 1 次改稿**。
+账本是提示不是门禁：越界只喊话，不改任何判定。
+
+**回归**：`selftest.py` 0 FAIL；`--json` 输出纯净（账本行只在人类模式打印）。
+
+## v4.28 时序体检批（2026-09-16）：先量后改，把「慢」落到具体阶段
+
+**案源**：用户提问「为什么执行速度特别慢」。做法是先全链计时、再决定改什么。结论与
+直觉相反——**决定性的设计判断链只有 95 ms，慢的感觉来自渲染地板与 Agent 读契约**。
+
+**实测（12 页 deck，Windows + LibreOffice）**
+
+| 阶段 | 实测 | 性质 |
+|---|---|---|
+| `pipeline.py` 规划 | 96 ms 导入 + 25 ms 计算 | 毫秒级 |
+| `qa --mode draft`（Guard+Compile 出 PPTX） | 60 ms（另有 `import compiler` 约 1.29 s，python-pptx 占 617 ms） | 毫秒级 |
+| `qa --mode release` 冷跑 | ≈ 26 s | 秒级 |
+| ├ LibreOffice → PDF | **9.7 s（1 页）/ 9.9 s（6 页）/ 10.6 s（12 页）** | **固定地板，与页数无关** |
+| ├ 图片编码开销 | PNG 版 15.9 s → JPEG 版 11.5 s（−28%） | 可优化 |
+| ├ PDF → 12 张位图 | 3.3 s | — |
+| └ 逐页像素度量 | 1.8 s | — |
+| 复跑（未改稿） | **3.8 s**，`render_cache_reason=full_hit` | 页级缓存有效 |
+| `selftest.py` | 45.7 s，**14 个用例占 91.9%**（Top: `sketch_mode` 6.8 s） | 多为真起子进程的集成用例；本沙箱裸解释器启动即 401 ms |
+
+**据此的改动（只改有证据的两处）**
+
+- **资产交付编码写进 `design-system.md` §Image**：照片类资产用 JPEG q92 4:4:4，不用 PNG。
+  实测同一份 12 页稿 PPTX 2.23→1.78 MB、LO 转换 15.9→11.5 s；PSNR 43.8–49.0 dB（>40 dB
+  即视觉无损）。PNG 存照片 ≈9 bit/px，是纯粹的等待与体积。附带一条：落位分辨率 ×2 封顶。
+- **压缩自己上一批加进去的内容**：`design-system.md` §First-Pass Correct 由 2525 B 压到约
+  1300 B（−48%），阈值与出路一条未删。
+
+**没改的，以及为什么**
+
+- `design-craft.md`(21.9 KB)/`SKILL.md`/`production-contract.md` **不动**。实测行密度已是
+  64–88 B/行（`参考刻度`表 142 B/行），再删就是在删判断内容——那违反「质量不许下降」。
+  文档侧真正的杠杆是**读什么**（必读面 24,185 B ≈ 9.3k tokens；再读 design-system +
+  design-craft 共 63,397 B），不是把已有的字再压一遍。
+- **LibreOffice 的 ~10 s 地板不治**：它与页数无关（1 页≈12 页），是进程启动成本，
+  包内无解；正确做法是缓存（已有，复跑 3.8 s）。别再往「让 LO 更快」上投时间。
+- 保留 `_density_class` 的元素计数口径：它现在只驱动「声明与结构同时重复」这一条可测信号，
+  不再被拿去质疑密度声明（v4.27 已收窄）。
+
+**回归**：`selftest.py` 0 FAIL；交付 deck 与 v4.27 一致（除 Office 内部时间戳外部件全同）。
+
+## v4.27 渲染链与几何一致性批（2026-09-16）：Windows 像素链修复 + 反过度设计两处
+
+**案源**：12 页「静奢 × 编辑体」年度报告实战（Windows，装了 LibreOffice 但无 poppler）。
+现象坐实：release 必然失败（88s 白烧后 `libreoffice convert failed`），status 恒
+`PREVIEW_ONLY`、`pixel=0/12`——即**这台机器上永远拿不到像素证据**。逐段探针定位到四个
+独立缺陷，任一单独存在都足以让整条链降级；另有两处「把良性设计判成问题」的过描述。
+
+**修复（零新模块）**
+
+- **保边尺寸吸附混用吸附前/后原点**（`guard.normalize`）。`far` 按**吸附前**的 x/y 选格，
+  长度却减去**吸附后**的 x/y → 块体被静默缩小最多 7px，缩量与画布相位有关、不可预期，
+  直接违反注释写明的「只增不减」。改为以吸附后原点为基准。`selftest.hairline_grid` 锁的
+  正是这条：`301×87 → 304×88`（旧实现给 304×80），该用例由 FAIL 转 PASS。
+- **profile URI 用了反斜杠**（`render_check._pdf_from_pptx`）。`Path.resolve()` 在 Windows
+  带 `\`，拼成 `file://C:\Users\…` 不是合法 URI（RFC 8089）。实测同一份 PPTX：反斜杠形态
+  45s 卡死且**永不产出 PDF**；`file:///C:/Users/…` 正常产出。新增 `_file_uri()`。
+- **等进程退出 + 把已产出的 PDF 判成失败**。LibreOffice `--headless` 转换完成后进程常驻不
+  退（实测 45s 仍在运行而 PDF 早已落盘），旧实现 `subprocess.run(timeout=300)` 语义上必须
+  等进程结束：① 每次 release 白等满超时；② 超时抛异常后把**已经产出的** PDF 丢弃。改为
+  `_run_soffice_until_pdf()`：轮询产物、字节稳定即收工、随后 terminate 常驻进程；超时上限
+  300s → 180s（只需覆盖冷启动 + 转换本身）。
+- **页数回退只认 `/Type /Page`**（`_pdf_page_count`）。LibreOffice 写的是 `/Type/Page`
+  （无空格）→ 计数恒 0 → `max(1, 0)` 抬成 1 → 12 页的稿子被报成 1 页、渲染只覆盖首页，
+  Windows（无 poppler ⇒ 无 pdfinfo）永远拿不到全量像素。改为先读页树根 `/Count`，再正则
+  `/Type\s*/Page\b`（`\b` 保证 `/Pages` 不被算进去）。实测 1 → 12。
+- **Accent 像素半径过松**（0.30 RGB 欧氏距离）。暖调影像页里任何中间调都会被计成强调
+  （实测暖岩石照片页 `#7A7060` 距目标 0.239 即命中 → 误报 8.2% / 6.9% / 3.0%）。用真实
+  渲染页做阈值敏感性：**设计出的强调**（排行条高亮、发丝线）距离≈0，在 0.10–0.25 区间恒为
+  0.31–0.40%；照片误报只在 ≥0.25 炸开。取 **0.16**（新常量 `_ACCENT_MATCH_DIST`）干净分开
+  两者——真信号不丢，照片不再被算成强调。
+- **rhythm 提示去掉「声明密度变了但结构密度没变」分支**。结构密度是元素构成代理，量不出
+  真实留白（实测：大留白的英雄页被判 dense、97% 像素空白的文字页被判 overloaded），拿它
+  质疑作者的密度声明等于让作者为一个测不准的数改稿；而「渲染后复核真实留白」是静态工具
+  给不出的证据，属设计判断（第 2 原则：能不加就不加）。
+
+**文档（第 3 原则：减 token 提决策质量）**
+
+- `design-system.md` 新增 **Spec 字段速查**：元素信封、text/shape/image 专属字段、
+  `chart_kind` 全表含每页上限、图表五组字段、填充四形态、role 白名单与来源区规则。这些
+  此前只能靠读 `compiler.py`/`guard.py` 反推——是生成侧最大的隐性回合成本。放在
+  `design-system.md`（「落地时查」，不占必读面预算）而非 `production-contract.md`：
+  后者卡在 8192B 上限，`selftest.judgment_diet` 的第一版修订正是被这条拦下的。
+- `production-contract.md` 的 Calls 段由 python 代码块压成三行指路（**净减 136B**，
+  文件 8192→8056B），腾出位置指向上面那张速查表——受限文档只许瘦不许胖。
+- `design-system.md` 新增 **First-Pass Correct**：`accent_hue_min` 陷阱（暖纸+暖炭+金必然
+  失败）、accent 不承载文字、muted 的 WCAG 取值（浅底 #6E6A5F / 深底 #A9B4AA）、整幅保护层
+  两条路、发丝线位置吸附导致组合标记无法对中、字号只落阶梯驻点。六条都是「一次设对就不用
+  返工」的量。
+
+**回归**
+
+- `selftest.py`：**2 FAIL → 0 FAIL**（`hairline_grid`、`draft_import_contract` 均转 PASS）。
+- 12 页实战 deck：release 由「必然失败 / PREVIEW_ONLY / pixel 0-12 / 88s 白烧」变为
+  **status=PASS / release_eligible=true / pixel 12-12 / 冷跑 31s**；Guard 100、阻断 0、
+  网格 348-348、`normalization.changed` 0 全部保持。
+- 像素评级首次可用后暴露的 5 条 warn 已逐条定性：3 条为上述照片误报（已修口径），
+  2 条 `gravity_drift` 0.29–0.30 系 `soft_asymmetry` 版面下质心与焦点锚点的固有差异，
+  按 v4.26 已去门槛化，保持 warn 记录、不改阈值。
+
 ## v4.26 轮次治理批（2026-09-15）：两代两验、门槛去分数化、报告自足、骨架序列化
 
 **案源**：外部深度性能审计（沙箱实测 + 本档案 v4.15 解剖互证）坐实：确定性链全毫秒级
@@ -100,7 +250,7 @@ grid_exempt 色块未吸附，配对间距被撕开。
 - QA 新增 `cache_reason`、`render_cache_reason`、`output_attestation_ms`、`provenance_required`；renderer 探测按进程 memoize，缺 renderer 仍明确 `PREVIEW_ONLY`。
 - `pre_critic` 输出根因计数、影响页和最多 3 个代表页；`risk_strategy.pages` 默认只给代表页，逐页明细留在 `page_details`。
 - `route.plan_deck` 和页计划输出 `intent_interpretation.explicit/inferred/conflicts`，未知输入和文本/显式类型矛盾不再静默丢失。
-- PHENO 的 QA/Manifest/design review/plan 已按新 schema 重生成；无 LibreOffice 仍不宣称像素验收或 `release_eligible=true`。
+- 基准稿的 QA/Manifest/design review/plan 已按新 schema 重生成；无 LibreOffice 仍不宣称像素验收或 `release_eligible=true`。
 
 回归：`PYTHONPATH=scripts python3 scripts/selftest.py` **62/62 PASS**；`py_compile` 与 `git diff --check` PASS。
 
@@ -114,7 +264,7 @@ grid_exempt 色块未吸附，配对间距被撕开。
 - 干净 spec 才追加设计契约与 `pre_critic/risk_strategy`；性能报告新增 `advisory_ms`，编译、建议、渲染耗时分开记录。
 - 技能契约明确阶段门串行（strategy → spec → draft → advisory → review/release）；同阶段独立资产 QC、渲染页和 selftest 可有界并行，但不得并发写同一产物或缓存。
 
-回归：selftest 60/60；PHENO 15 页 spec/draft 均 passed、0 blocking、编译 0 warning；无 renderer 时仍为 `PREVIEW_ONLY`。
+回归：selftest 60/60；基准稿 15 页 spec/draft 均 passed、0 blocking、编译 0 warning；无 renderer 时仍为 `PREVIEW_ONLY`。
 
 ## v4.21 release 首战批（2026-09-11）：像素档首跑，拿 11 条真命换两枚包修
 

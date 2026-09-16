@@ -47,7 +47,7 @@ ppt-visual-art-director-os/
 
 ## 示例资产（Sample Assets）
 
-`assets/` 内 4 张示例资产（AI 生成，仅作演示，非模板、非规范）。它们覆盖不同的纸面/材质语言，可作 `asset_prompt.py --qc` 出图体检的输入示例——出图后跑一次定性体检（文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度，Issue + Suggestion，不打分）。阻断问题最多定向重出 1 次；`review/release` 不由资产 QC 自动触发，最终资格仍由 `qa.py --mode release` 与 Manifest 判定。
+`assets/` 内 4 张示例资产（AI 生成，仅作演示，非模板、非规范）。版权归本仓库作者，随本包以 MIT 许可一并分发，可自由用于试跑出图体检。示例与正文中提及的第三方品牌、网站与作品（Apple、Pentagram、IDEO、McKinsey、Kinfolk 等）仅作**可观察设计行为的引证**，不含其商标、素材或任何授权暗示；文中案例均以通用描述指代，不指涉具体客户。它们覆盖不同的纸面/材质语言，可作 `asset_prompt.py --qc` 出图体检的输入示例——出图后跑一次定性体检（文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度，Issue + Suggestion，不打分）。阻断问题最多定向重出 1 次；`review/release` 不由资产 QC 自动触发，最终资格仍由 `qa.py --mode release` 与 Manifest 判定。
 
 `asset_prompt.py` 是**通用**资产提示词组装器（13 个视觉家族），不是水墨专用；只有当资产卡选择水墨语言（subject/material/style 含水墨词，或 family ∈ song_elegance / zen_minimal）时，才自动注入水墨纪律闸门。`--qc IMAGE --phase draft --attempt 0` 会输出有界动作：阻断问题最多重出一次；`review/release` 只标记，不自动升级流程。
 
@@ -98,6 +98,24 @@ python3 scripts/selftest.py
 ## 质量与发布门
 
 QA 只判工程正确性（溢出/缺失/越界/重叠/数据/渲染），输出 PASS/FAIL/WARNING，不做审美评分。设计价值（层级/节奏/焦点/一致/记忆点）由判断层回答——人/AI 依据 `references/design-craft.md`；默认 `run_qa` 不运行设计建议，先做最小修正再立即验证。需要风险策略时显式使用 `--advisory`，它不是发布闸门。发布阻断项由 QA 持有：不可读、溢出、未声明遮挡、来源冲突、事实数据不完整、图表失真、编译失败、资产侵入安全区、渲染证据缺失。失败码与 Manifest 验收见 `references/production-contract.md`。
+
+## 本地开发与测试
+
+```bash
+python -m pip install -r requirements.txt   # 只跑脚本的话，装依赖即可
+python -m pip install -e .                  # 让 15 个脚本模块在任意目录可 import
+python -m compileall -q scripts             # 语法自检
+PYTHONPATH=scripts python scripts/selftest.py   # 回归套件：全 PASS 退 0，任一 FAIL 退 1
+```
+
+`selftest.py` **不需要 LibreOffice**：缺渲染器时相关用例自行降级，不会误报失败——所以它可以直接进 CI。
+CI（`.github/workflows/ci.yml`）在 Linux 与 **Windows** 双平台 × Python 3.10/3.12/3.13 上跑回归，
+外加一个 spec 档冒烟用例（把「spec 档不得拖入 python-pptx」这条红线钉在流水线上）。
+
+`pyproject.toml` 只声明运行时依赖与**平铺的脚本模块**（它们之间是按顶层名互相 import 的），
+不声明 packages：`pip install -e .` 与仓库内 `python scripts/qa.py` 走同一条导入路径，
+不引入第二套。`references/` 与 `templates/` 是随仓库分发的生产资料，包内文档按相对路径互相引用，
+因此不复制进 site-packages。
 
 ## 设计边界
 
