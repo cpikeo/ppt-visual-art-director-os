@@ -1355,8 +1355,39 @@ def main(argv):
     if norm and result.get("normalization") is None:
         result["normalization"] = norm      # CLI 已归一化：报告仍要留痕（证明链）
     want_manifest = "--manifest" in argv or (mode == "release")
+
+    # 轮次账本：把「这是第几轮 / 是否超预算 / 该不该停」变成可读的数。
+    # v4.26 已判定慢的真相在轮次面（六段阶段门 → 8–20 轮 Agent 回合），
+    # 但 CLI 一直没有这个通道（发布清单的 revision_count 因此恒为 0）。
+    # 账本只提示、不设门：越界只喊话，绝不改判定。
+    from compile_cache import note_round
+    work_dir = Path(argv[2]).with_name(Path(argv[2]).stem + "_render")
+    ledger = note_round(work_dir, mode=mode,
+                        spec_hash=str(result.get("source_spec_hash") or ""),
+                        status=result.get("status"),
+                        blocking=result.get("blocking_items"),
+                        warnings=len(result.get("warn_summary") or []))
+    if "--json" not in argv:
+        # 措辞纪律：账本记的是**改稿次数**（spec 版本数），不是 R1–R5 的「轮」——
+        # 后者含规划/授权两段非 QA 步骤，只在 spec 变了的 QA 调用里数不出来。
+        tail = ("首稿尚未改稿" if ledger["n"] == 1
+                else f"已改稿 {ledger['revisions']} 次（第 {ledger['n']} 版）")
+        print(f"改稿账本 {ledger['revisions']}/{ledger['budget']} · {mode} · {tail}"
+              + ("" if ledger["new_round"] else "（同一 spec 复跑，不计修改）"))
+        if ledger["over_budget"]:
+            print(f"  ⚠ 改稿 {ledger['revisions']} 次已超预算 {ledger['budget']}："
+                  f"按 SKILL §Round Budget 应停下与用户确认方向，而不是继续打磨细节——"
+                  f"继续改的边际收益已低于一轮对话的成本")
+        elif mode == "draft" and not result.get("blocking_items"):
+            warn_n = len(result.get("warn_summary") or [])
+            print(f"  → 本轮 0 阻断"
+                  + (f"、{warn_n} 类非阻断观察（仅记录，不构成门槛）" if warn_n else "")
+                  + "：可直接进 release，不必再改稿换一轮")
+
     if want_manifest:
-        manifest = release_manifest(spec, result)
+        manifest = release_manifest(spec, result,
+                                    revision_count=ledger["revisions"],
+                                    revision_log=ledger["log"])
         manifest_path = Path(argv[2]).with_suffix(".manifest.json")
         # 清单是发布证据的一部分，和 render_meta 一样不能留下半个 JSON。
         from compile_cache import _atomic_json_write
@@ -1365,8 +1396,9 @@ def main(argv):
         # 文本行只在人类可读模式打印 stdout，机器管道直接 json.loads 不得被污染。
         if "--json" not in argv:
             print(f"manifest: {manifest_path} (status={manifest['status']})")
-        # 修订流水提示：占位 0 不再静默通过——发布链要求真实流水
-        if not manifest.get("revision_count") and "--json" not in argv:
+        # 修订流水：账本为空才是缺口；有账本而 revision_count=0 意味着
+        # 「首稿即通过、零修订」——那是好结果，不是缺失，别报成提示。
+        if not ledger["log"] and "--json" not in argv:
             print("hint: revision_count=0（发布清单应携带真实修订流水："
                   "observation → minimal_fix → recheck × N 轮）")
         # 判断记忆沉淀提示（不自动写：记忆归人/AI，机器不替判断）

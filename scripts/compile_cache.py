@@ -216,3 +216,60 @@ def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
         "pptx_name": Path(pptx).name,
         "report": {k: v for k, v in (report or {}).items() if k != "guard"},
     })
+
+
+# --------------------------------------------------------------------------
+# 轮次账本（round ledger）：把「交付用了几个 Agent 回合」变成可读的数
+# --------------------------------------------------------------------------
+# 动机（CHANGELOG v4.26 自己写下的判断）：确定性链是毫秒级，慢的真相在**轮次面**
+# ——六段串行阶段门把一次交付推到 8–20 轮。要压轮次，先得让每一步知道「这是第几轮、
+# 预算还剩多少、现在该不该停」。此前 CLI 完全没有这个通道，发布清单里的
+# revision_count 因此恒为 0。
+#
+# 口径：**一轮 = 同一产物上 spec 变了的一次 QA 调用**。同一 spec 复跑（缓存命中）
+# 不记新轮——否则「复跑确认」会被记成浪费，作者反而不敢复核。
+ROUNDS_NAME = "rounds.json"
+ROUND_BUDGET = 6                 # SKILL.md Round Budget 上限
+ROUND_LOG_CAP = 24
+
+
+def load_rounds(work) -> dict:
+    """读轮次账本；坏文件按空账本处理（账本是提示，不是门禁，绝不炸链）。"""
+    try:
+        data = json.loads((Path(work) / ROUNDS_NAME).read_text(encoding="utf-8"))
+    except Exception:
+        return {"rounds": []}
+    if not isinstance(data, dict) or not isinstance(data.get("rounds"), list):
+        return {"rounds": []}
+    return data
+
+
+def note_round(work, *, mode: str, spec_hash: str, status: str | None = None,
+               blocking: int | None = None, warnings: int | None = None) -> dict:
+    """记一轮并返回账本摘要。返回值供 CLI 打印与 Manifest 取 revision_count。"""
+    work = Path(work)
+    data = load_rounds(work)
+    rounds = data["rounds"]
+    last = rounds[-1] if rounds else None
+    new_round = not (isinstance(last, dict) and last.get("spec") == spec_hash)
+    if new_round:
+        rounds.append({"n": len(rounds) + 1, "mode": str(mode),
+                       "spec": str(spec_hash), "status": status,
+                       "blocking": blocking, "warnings": warnings})
+        del rounds[:-ROUND_LOG_CAP]
+        try:
+            work.mkdir(parents=True, exist_ok=True)
+            _atomic_json_write(work / ROUNDS_NAME, data)
+        except Exception:
+            pass                      # 写不进账本不该影响交付
+    n = len(rounds)
+    return {
+        "n": n if new_round else max(n, 1),
+        "new_round": new_round,
+        "budget": ROUND_BUDGET,
+        "over_budget": n > ROUND_BUDGET,
+        "revisions": max(0, n - 1),   # 首次出稿不算修订
+        "log": [{"round": r.get("n"), "mode": r.get("mode"),
+                 "status": r.get("status"), "blocking": r.get("blocking")}
+                for r in rounds],
+    }

@@ -87,8 +87,6 @@ explicit/inferred/conflicts。契约与判断见 `production-contract.md` / `des
 | `review` | 抽查（**非阶段门**）：只渲染指定/变化页 | PASS 可达，`release_eligible=False` |
 | `release` | 验证②收口：全量渲染 + QA + Manifest | 唯一可发布 |
 
-看方向用 `ghost.py`(~1ms/页)，真渲染留给收口。
-
 ## Round Budget（两代两验执行契约）
 
 ```
@@ -99,7 +97,7 @@ R4 修正轮   按 fix_plan 根因组一次改完（零回读）→ 复跑 draft
 R5 收口     方向确认后直接 --mode release（复跑只重渲变化页）
 ```
 
-预算 ≤6 轮，简单案例跳过 R4（=4 轮）；有 plan/spec 直接进 R3。
+预算 ≤6 轮（`qa.py` 每轮打印改稿次数，超预算会喊停）；简单案例跳过 R4，有 plan/spec 直接进 R3。
 独立资产 QC/渲染页可有界并行，不并发写产物。
 
 ## Hard Boundaries（工程事实）
