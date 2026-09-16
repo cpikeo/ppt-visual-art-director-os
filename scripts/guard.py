@@ -1579,8 +1579,12 @@ def check_spec(spec: dict, rules: dict | None = None,
 
     if include_advisory:
         # ---- §12 跨页节奏：连续页面不得同密度 ----
-        # 声明密度（设计意图）与结构密度（元素构成）分别比对：两者都重复才是
-        # 真正的节奏趋平；仅结构重复但声明有变化时提示「渲染后复核真实留白」。
+        # 只在**声明与结构同时重复**时提示：那是一个可测的冗余信号（连着两页
+        # 同权重），提示作者换构图算子或留白。反过来「声明变了但结构计数没变」
+        # 不发——结构密度是元素构成代理，量不出真实留白（实测：大留白的英雄页
+        # 会被计成 dense、97% 空白的文字页会被计成 overloaded），拿它去质疑
+        # 作者的密度声明等于让作者为一个测不准的数改稿；而「渲染后复核真实留白」
+        # 是静态工具给不出的证据，属设计判断，归 design-craft.md 与像素复核。
         if check_rhythm and len(slides) > 1:
             prev_struct = prev_declared = None
             for si, s in enumerate(slides):
@@ -1590,14 +1594,9 @@ def check_spec(spec: dict, rules: dict | None = None,
                 intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
                 declared = intent.get("density") or s.get("density")
                 cur, _ = _density_class(s)
-                if prev_struct is not None:
-                    if cur == prev_struct and declared == prev_declared:
-                        add("rhythm", s.get("id", f"slide_{si}"), "hint",
-                            f"连续页面同为 {cur} 密度（OS §12，可拆页/留白调整）")
-                    elif cur == prev_struct and declared != prev_declared:
-                        add("rhythm", s.get("id", f"slide_{si}"), "hint",
-                            f"声明密度 {prev_declared}→{declared} 但结构密度未变（同为 {cur}），"
-                            f"渲染后复核真实留白是否支撑节奏声明")
+                if prev_struct is not None and cur == prev_struct and declared == prev_declared:
+                    add("rhythm", s.get("id", f"slide_{si}"), "hint",
+                        f"连续页面同为 {cur} 密度（OS §12，可拆页/换构图算子/加留白）")
                 prev_struct, prev_declared = cur, declared
 
 
@@ -1750,7 +1749,6 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
         el_id = el.get("id")
         # ① 网格吸附：只碰几何四元组，绝不碰语义
         if do_grid and not el.get("grid_exempt"):
-            _ox, _oy = el.get("x"), el.get("y")  # 吸附前的边，用于保边尺寸吸附
             for f in ("x", "y"):
                 v = el.get(f)
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -1776,11 +1774,17 @@ def _normalize_once(spec: dict, *, grid: bool, colors: bool, fonts: bool,
                         # 形状柱/色块按「远边就近吸附」取尺寸：与基线/邻块
                         # 共享的边保持精确对齐（柱底压线这类细节的根因修复）；
                         # 吸附后不足一格才回退只增不减。
+                        #
+                        # 基准必须是**位置吸附后**的原点（x/y 已在上一步吸附完），
+                        # 不能混用吸附前的旧边：混用时 far 按旧边选格、长度却减去
+                        # 新边，块体会被静默缩小最多 7px（违反本节「只增不减」），
+                        # 且缩小量与画布相位有关、不可预期。selftest.hairline_grid
+                        # 的 block 用例锁的正是这条（301×87 → 304×88，而非 304×80）。
                         axis = "y" if f == "height" else "x"
-                        orig = _oy if axis == "y" else _ox
-                        if isinstance(orig, (int, float)):
-                            far = _snap_pos(float(orig) + float(v), grid_unit)
-                            snapped = far - float(el[axis])
+                        base = el.get(axis)
+                        if isinstance(base, (int, float)) and not isinstance(base, bool):
+                            far = _snap_pos(float(base) + float(v), grid_unit)
+                            snapped = far - float(base)
                             if snapped < grid_unit:
                                 snapped = _snap_size(v, grid_unit)
                             snapped = int(snapped)

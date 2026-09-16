@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import os
+import re as _re
 import shutil
 import subprocess
 import tempfile
@@ -401,6 +402,12 @@ _RECHECK_EPS = {
     "gravity_drift": 0.030, "occupancy": 0.020, "accent_pixel_ratio": 0.010,
 }
 _ACCENT_MAX_DEFAULT = 0.05
+# 「算作强调色」的 RGB 欧氏距离半径。0.30 太松：暖调影像里任何中间调都会被计成
+# 强调（实测暖岩石照片页 #7A7060 距目标 0.239 即命中 → 误报 8.2%/6.9%）。用真实
+# 渲染页做过阈值敏感性：**设计出的金**（排行条高亮、发丝线）距离≈0，在 0.10–0.25
+# 区间恒为 0.31–0.40%；照片误报只在 ≥0.25 才炸开。0.16 干净分开两者——真信号不丢，
+# 照片不再被算成强调。调它等于调「什么算强调色」，别为了过线调。
+_ACCENT_MATCH_DIST = 0.16
 
 
 def _near_threshold(item: dict, accent_max: float | None = None) -> bool:
@@ -530,6 +537,9 @@ _LO_LOCK_TIMEOUT = 8.0
 # 锁文件僵死阈值（进程被 kill 时兜底）：60s 足够覆盖一次整份转换（实测 ≤2.1s）
 # 加冷 profile 新建，旧值 300s 会让新一轮为死锁白等 5 分钟。
 _LO_LOCK_STALE = 60.0
+# PDF 转换的等待上限。产物落盘即收工（见 _run_soffice_until_pdf），只需覆盖
+# 「冷启动 + 转换」本身；旧实现等进程退出，300s 基本是白等。
+_LO_CONVERT_TIMEOUT = 180.0
 
 
 def _acquire_profile_lock(lock: Path, timeout: float) -> bool:
@@ -580,12 +590,77 @@ def _choose_profile(out_dir: Path) -> tuple[Path, Path | None]:
     return private, None
 
 
+def _file_uri(path) -> str:
+    """路径 → **合法** file URI（RFC 8089：正斜杠、三斜杠）。
+
+    这不是格式洁癖：Windows 上 Path.resolve() 带反斜杠，直接拼成
+    ``file://C:\\Users\\...`` 时 LibreOffice 会卡住不返回、且**永不产出 PDF**
+    （实测 45s 无产物）；换成 ``file:///C:/Users/...`` 后同一份 PPTX 正常产出。
+    跨平台统一走 as_posix()，POSIX 上结果不变。
+    """
+    p = Path(path).resolve()
+    return "file:///" + p.as_posix().lstrip("/")
+
+
+def _run_soffice_until_pdf(cmd: list[str], pdf: Path,
+                           timeout: float) -> tuple[bool, str | None]:
+    """跑 soffice，并在 PDF **落盘稳定**后立即返回——不等进程退出。
+
+    LibreOffice --headless 转换完成后进程常驻不退出（实测正斜杠 URI 下 45s 仍在
+    运行，而 PDF 早已产出）。旧实现用 ``subprocess.run(timeout=300)`` 语义上必须
+    等进程结束，于是：① 每次 release 白等满超时；② 超时抛异常后把**已经产出的
+    PDF 判为失败**，整条像素链降级 PREVIEW_OUT。改为轮询产物、稳定即收工，
+    收工后 terminate 常驻进程。
+    """
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+    except Exception as exc:                      # 可执行文件不可用等
+        return False, str(exc)
+    deadline = time.time() + timeout
+    last_size, stable = -1, 0
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None:           # 进程自己退了：看产物说话
+                break
+            try:
+                if pdf.exists():
+                    size = pdf.stat().st_size
+                    if size > 1024 and size == last_size:
+                        stable += 1
+                        if stable >= 2:           # 连续两轮字节不变 → 已写稳
+                            return True, None
+                    else:
+                        stable = 0
+                    last_size = size
+            except OSError:
+                pass
+            time.sleep(0.25)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+    try:
+        if pdf.exists() and pdf.stat().st_size > 1024:
+            return True, None
+    except OSError:
+        pass
+    return False, f"soffice 在 {timeout:g}s 内未产出 PDF"
+
+
 def _pdf_from_pptx(pptx: Path, out_dir: Path, keep_pngs=...) -> tuple[Path | None, str | None]:
     """PPTX → PDF（LibreOffice 单进程，整份文件，不可分页）。返回 (pdf, 失败原因)。
 
     LibreOffice 的 UserInstallation 需要绝对路径：相对目录会拼成非法 URI
     （file://relative/…），soffice 会卡在 profile 锁上直到超时（实测 300s），
-    因此进来第一件事就是把输出目录绝对化。
+    因此进来第一件事就是把输出目录绝对化；URI 本体的规范化见 `_file_uri`
+    （反斜杠形态在 Windows 上同样卡死且不产出）。
     """
     out_dir = Path(out_dir).resolve()
     soffice = find_renderer()
@@ -607,41 +682,50 @@ def _pdf_from_pptx(pptx: Path, out_dir: Path, keep_pngs=...) -> tuple[Path | Non
             stale.unlink()
         except OSError:
             pass
+    pdf = out_dir / f"{Path(pptx).stem}.pdf"
+    try:                                   # 上一轮残留的 PDF 不能当本轮产物
+        pdf.unlink(missing_ok=True)
+    except OSError:
+        pass
     profile, lock = _choose_profile(out_dir)
     cmd = [soffice, "--headless",
-           f"-env:UserInstallation=file://{profile}",
+           f"-env:UserInstallation={_file_uri(profile)}",
            "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
-    except Exception as exc:
-        first = str(exc)
-        if lock is not None:              # 共享 profile 疑似损坏 → 私有 profile 重试
-            _release_profile_lock(lock)
-            try:
-                private = out_dir / "lo-profile"
-                private.mkdir(exist_ok=True)
-                subprocess.run(
-                    [soffice, "--headless",
-                     f"-env:UserInstallation=file://{private}",
-                     "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)],
-                    check=True, capture_output=True, timeout=300)
-                return out_dir / f"{Path(pptx).stem}.pdf", None
-            except Exception as exc2:
-                return None, f"libreoffice convert failed: {first} / retry: {exc2}"
-        return None, f"libreoffice convert failed: {first}"
-    finally:
+    ok, why = _run_soffice_until_pdf(cmd, pdf, _LO_CONVERT_TIMEOUT)
+    if ok:
         if lock is not None:
             _release_profile_lock(lock)
-    pdf = out_dir / f"{Path(pptx).stem}.pdf"
-    if not pdf.exists():
-        return None, "pdf not produced"
-    return pdf, None
+        return pdf, None
+    first = why
+    if lock is not None:                   # 共享 profile 疑似损坏 → 私有 profile 重试
+        _release_profile_lock(lock)
+        try:
+            private = out_dir / "lo-profile"
+            private.mkdir(exist_ok=True)
+            ok2, why2 = _run_soffice_until_pdf(
+                [soffice, "--headless",
+                 f"-env:UserInstallation={_file_uri(private)}",
+                 "--convert-to", "pdf", "--outdir", str(out_dir), str(pptx)],
+                pdf, _LO_CONVERT_TIMEOUT)
+            if ok2:
+                return pdf, None
+            return None, f"libreoffice convert failed: {first} / retry: {why2}"
+        except Exception as exc2:
+            return None, f"libreoffice convert failed: {first} / retry: {exc2}"
+    return None, f"libreoffice convert failed: {first}"
 
 
 
 
 def _pdf_page_count(pdf: Path) -> int:
-    """尽量准确地拿到页数；缺 pdfinfo 时回退到对象计数（不额外起进程）。"""
+    """尽量准确地拿到页数；缺 pdfinfo 时回退到对象计数（不额外起进程）。
+
+    回退口径必须「容忍空白 + 不误吞 Pages」：LibreOffice 写出的 PDF 用
+    ``/Type/Page``（无空格）——旧实现只匹配 ``/Type /Page``，计数恒为 0，
+    ``max(1, 0)`` 又把 0 抬成 1，于是 12 页的稿子被报成 1 页、渲染只覆盖首页，
+    Windows（无 poppler ⇒ 无 pdfinfo）永远拿不到全量像素证据。改为先读页树根的
+    ``/Count``，再用正则数 ``/Page``（``\\b`` 保证 ``/Pages`` 不被算进去）。
+    """
     info = shutil.which("pdfinfo")
     if info:
         try:
@@ -654,9 +738,12 @@ def _pdf_page_count(pdf: Path) -> int:
             pass
     try:
         data = Path(pdf).read_bytes()
-        return max(1, data.count(b"/Type /Page") - data.count(b"/Type /Pages"))
     except Exception:
         return 1
+    counts = [int(n) for n in _re.findall(rb"/Count\s+(\d+)", data)]
+    if counts and max(counts) > 0:
+        return max(counts)
+    return max(1, len(_re.findall(rb"/Type\s*/Page\b", data)))
 
 
 # --------------------------------------------------------------------------
@@ -1041,7 +1128,7 @@ def measure_image(path: Path, accent_hex: str | None = None,
             target = np.asarray([int(accent_hex.lstrip("#")[i:i + 2], 16) / 255.0
                                  for i in (0, 2, 4)], dtype=np.float32)
             dist = np.sqrt(((rgb - target) ** 2).sum(2))
-            accent_pixels = float(np.mean(dist < 0.30))
+            accent_pixels = float(np.mean(dist < _ACCENT_MATCH_DIST))
             accent_method = "theme"
         except (ValueError, IndexError):
             accent_pixels = saturated_pixel_ratio

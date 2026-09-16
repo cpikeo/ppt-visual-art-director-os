@@ -24,13 +24,9 @@
 
 ## Calls（最小 API）
 
-```python
-from qa import run_qa, verdict_of        # run_qa(spec,out,mode=...) 唯一执行入口
-from route import plan_deck, one_pass_plan # 内容 → 家族/密度/预算/执行模式
-# 设计建议仅复杂/新建或明确要求时加载
-from design_intelligence import analyze, forecast_risk, risk_strategy, color_plan
-from layout_search import recommend        # 复杂页才做候选搜索
-```
+调用入口与按需加载见 SKILL.md §Load Routing——本表只留字段与契约。
+**元素字段、`chart_kind` 全表与每页上限、role 白名单 → `design-system.md` §Spec 字段速查**
+（写 elements 前查它，不必回读 `compiler.py`）。
 
 `run_qa` 内联 normalizer→guard→compile→render，不串行跑单脚本（诊断除外）；
 规划单进程入口与轮次契约见 SKILL Round Budget。

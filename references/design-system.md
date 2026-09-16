@@ -22,6 +22,10 @@
 
 图须声明功能（context/emotion/proof/hero）+ 主体/构图/留白锚点/裁切/溯源。相关性 > 构图 > 光线 > 材质 > 风格。图不烘焙文字/Logo/水印/数据；主体侵入文本区或改写重心时回退、重裁或换图。
 
+**交付编码**：照片类资产用 JPEG q92 4:4:4（PSNR ≥45dB，视觉无损），不要用 PNG——实测同一份
+12 页稿：PPTX 2.23→1.78 MB，LibreOffice 转换 15.9→11.5 s（−28%），而 PNG 存照片 ≈9 bit/px。
+只有图形、纯色、需要透明通道时才用 PNG。落位分辨率按 2× 交付即可，多出来的像素只买来等待。
+
 ## Grouping（分组四语言，由强到弱）
 
 场（48px+ 间距即边界）> 线（0.75–1px 发丝线）> 型（字号/字重/墨色层级）> 盒（卡片：同时花掉间距/边框/底色三重预算）。卡片三准入：需物理容器语义（数据模块/KPI）/ 需与复杂背景隔离 / 需被指认为独立对象；否则退回场/线/型。
@@ -81,6 +85,64 @@ theme = {"colors": {"background":"#...","surface":"#...","primary":"#...",
 ```
 
 换主题只换参数与家族表达，不改编译 API、数据口径与发布门。`route.DIRECTION_PRESETS` 的 `theme_seed` 是起点锚点（`derive_tokens` 展开全色阶，可覆盖）；方向族种子骨架以 `design_intelligence.COLOR_DIRECTIONS` 为真源，品牌色永远优先。
+
+### First-Pass Correct（首轮就该设对的值）
+
+六条「一次设对就不用返工」的量——会被确定性检查抓到，或逼后续工序改写设计。
+第一轮写 `theme` 与母题时按这里给值。
+
+1. **Accent 与 primary/secondary 必须拉开 ≥12° 色相角**（`accent_hue_min`，30° 一档）。
+   高频陷阱：**暖纸(#F4F1EA,~42°) + 暖炭(~43°) + 金(~41°)** 挤在同一色相族，强调色拿不到
+   「唯一重点」信号。出路两条：ink/primary/secondary 改**冷石墨**（#23252A，~220°），
+   或 accent 换异相色（深林绿 #2E3B33，~150°）。两边都不动＝第一轮后必然返工。
+2. **Accent 不承载文字。** 低饱和金在象牙底上仅 ~2.7:1；金只做发丝线/方点/高亮端点/目标线。
+3. **muted 按 WCAG AA 取值**：浅底象牙 #F4F1EA → **#6E6A5F（4.79:1）**；
+   深底深林绿 #2E3B33 → **#A9B4AA（5.47:1）**。3.2:1 的「高级浅灰」在投影上不可读。
+4. **整幅背景图的保护层二选一**：① `layer:background` + `overlay`(opacity ≥0.20) + 覆盖
+   ≥60% → 豁免重叠与来源区检查；② 用**形状**做全幅渐变罩则必须烘焙进画心——形状无此豁免，
+   与 source_zone 相交即 `SOURCE_COLLISION`。分幅画心（图只占一栏）不需要保护罩。
+5. **发丝线位置吸附、尺寸不吸附**（h≤2）：水平细线光心恒在 `8k+0.75`，8px 方块在 `8k+4`，
+   **不可能对中**。组合标记按**单元素**设计（一条细线，靠长度变奏承担页型）。
+6. **字号只落阶梯驻点**（L4 64 / L3 44 / L2 32 / L1 22 / L0 17 / L-1 12.5）。
+   14、11.5 这类「差一点」的值让一页字阶从 4 涨到 6，`type_budget` 命中、层级失焦。
+
+### Spec 字段速查（写 elements 前查）
+
+信封（每个元素）：`id`（页内唯一）、`type`、`x`/`y`/`width`/`height`（数值，落 8 网格；
+h≤2 或通栏豁免）、`role`（见下）。填充四种写法：`"#RRGGBB"` · theme token 名 ·
+`{"type":"solid","color":…,"opacity":0–1}` ·
+`{"type":"gradient","angle":0,"stops":[{"position":0,"color":…,"opacity":…},…]}` · `{"type":"none"}`。
+`stops` 至少两个；`angle` 0=左→右、90=上→下。**形状的填充走 `fill`、边框走 `stroke`**——
+顶层 `color`/`line` 在形状上被静默丢弃（元素渲染不可见）。
+
+| type | 专属字段 |
+|---|---|
+| `text` | `text` `size` `color` `align` `bold` `italic` `line_height` `max_lines` `wrap` `padding` `font` `family` `char_spacing` `uppercase` `opacity` `anchor` `space_before` `space_after` `fill` |
+| `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill` `stroke` `stroke_width` `stroke_opacity` `fill_opacity` `fill_role` `text` |
+| `image` | `src` `fit`(cover/contain) `crop` `asset_function`(hero/emotion/proof/context) `overlay` `content_protection` `negative` `readability_exempt` |
+
+`chart_kind` 全表（括号为每页上限）：原生 bar/horizontal_bar/comparison_bar(8) ·
+column(8) · line/trend/single_trend_line(8) · area(8) · donut/donut_composition/pie(8)；
+形状 process_flow(7) · timeline(7) · steps(6) · matrix(12) · waterfall(12) · architecture(3) ·
+bubble(12) · ranked_bar(8) · progress_bar(6) · stacked_bar(8) · big_number_row(5) ·
+sparkline(12) · kpi(1)。未知 kind 在 Guard 阻断，不会留半成品 PPTX。
+
+图表字段五组——**数据**：`data:[{label,value,display}]`，多序列用
+`series:[{name,values}]+categories:[…]`。**出处**（数值图必填）：`source` `unit` `period`
+`basis` `data_status`，可嵌套进 `provenance:{…}`；跨页同 `metric`（缺省用 `series_name`）
+单位与期间要一致。**配色**：`color_role`/`secondary_role` ∈ primary/secondary/neutral/
+accent/negative，逃生口 `primary_color`/`secondary_color`/`ink_color`/`muted_color`。
+**强调**：`highlight`(索引) `target`+`target_label` `show_values`
+`label_collision_policy`(hide_redundant/move_outside/fail)。**版式**：`label_size`
+`value_size` `label_ratio` `label_gap` `value_width` `value_gap` `bar_height` `gap_width`；
+环形另有 `hole_size`(默认 62) `center_value` `center_label`；折线另有 `smooth`
+`end_labels` `number_format`；`big_number_row`/`stacked_bar` 另有 `items` `legend`
+`ramp` `multi_color` `max`。
+
+`role` 决定三件事——行长豁免、注释类最小字号、能否进来源区。常用值：`title` `lead`
+`body` `caption` `annotation` `label` `metadata` `source` `method` `axis` `data_label`
+`legend` `decoration`。**来源区内只放 `source`/`method`/`metadata`**；其他角色的对象只要与
+source_zone 相交即 `SOURCE_COLLISION`（阻断，形状同样算；合格背景画心除外）。
 
 ---
 
