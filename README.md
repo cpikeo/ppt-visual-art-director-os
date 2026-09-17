@@ -2,6 +2,8 @@
 
 面向高端商业演示的视觉艺术指导、信息设计与原生可编辑 PPTX 生产技能包。链路：**理解内容 → 判断设计意图 → 预测视觉问题 → 选择设计策略 → 生成高质量页面**——一次通过，而非生成后反复修复。
 
+> **生产只调用 `scripts/vao.py`。** 内部 `scripts/` 是实现模块，不是 Agent 的逐个调用清单。`scripts/vao.py` 默认不读取 `references/`、不把 warning 变成对话、不逐条修复，并且不使用 LibreOffice / soffice / poppler。完整时序图、性能诊断和上下文契约见 [`OPTIMIZATION.md`](OPTIMIZATION.md)。
+
 设计哲学与执行纪律以 `SKILL.md` 为唯一权威：高级感来自精准、克制、秩序、空间与细节。
 
 ## 核心能力
@@ -19,6 +21,8 @@
 
 ```text
 ppt-visual-art-director-os/
+├── scripts/vao.py                # 唯一生产入口：plan / assets / asset-qc / check / run / preview / doctor
+├── OPTIMIZATION.md               # 性能诊断、完整时序图、AI 上下文与修正预算
 ├── SKILL.md                      # Core Brain：10 原则 / 决策框架 / P1–P5 / 模式 / 路由
 ├── CHANGELOG.md                  # 演进史与路线图（唯一档案）
 ├── README.md
@@ -47,9 +51,16 @@ ppt-visual-art-director-os/
 
 ## 示例资产（Sample Assets）
 
-`assets/` 内 4 张示例资产（AI 生成，仅作演示，非模板、非规范）。版权归本仓库作者，随本包以 MIT 许可一并分发，可自由用于试跑出图体检。示例与正文中提及的第三方品牌、网站与作品（Apple、Pentagram、IDEO、McKinsey、Kinfolk 等）仅作**可观察设计行为的引证**，不含其商标、素材或任何授权暗示；文中案例均以通用描述指代，不指涉具体客户。它们覆盖不同的纸面/材质语言，可作 `asset_prompt.py --qc` 出图体检的输入示例——出图后跑一次定性体检（文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度，Issue + Suggestion，不打分）。阻断问题最多定向重出 1 次；`review/release` 不由资产 QC 自动触发，最终资格仍由 `qa.py --mode release` 与 Manifest 判定。
+`assets/` 内 4 张示例资产（AI 生成，仅作演示，非模板、非规范）。版权归本仓库作者，随本包以 MIT 许可一并分发，可自由用于试跑出图体检。示例与正文中提及的第三方品牌、网站与作品（Apple、Pentagram、IDEO、McKinsey、Kinfolk 等）仅作**可观察设计行为的引证**，不含其商标、素材或任何授权暗示；文中案例均以通用描述指代，不指涉具体客户。它们覆盖不同的纸面/材质语言，可用统一入口跑资产清单和体检：
 
-`asset_prompt.py` 是**通用**资产提示词组装器（13 个视觉家族），不是水墨专用；只有当资产卡选择水墨语言（subject/material/style 含水墨词，或 family ∈ song_elegance / zen_minimal）时，才自动注入水墨纪律闸门。`--qc IMAGE --phase draft --attempt 0` 会输出有界动作：阻断问题最多重出一次；`review/release` 只标记，不自动升级流程。
+```bash
+python scripts/vao.py assets brief.yml --out asset_manifest.json --cache asset_prompt_cache.json
+python scripts/vao.py asset-qc asset_manifest.json --input generated_assets --phase draft
+```
+
+QC 检查文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度，输出 Issue + Suggestion，不打审美分数。阻断问题最多定向重出 1 次；`review/release` 不由资产 QC 自动触发，最终资格由 `scripts/vao.py check --mode release` 与 Manifest 判定。带 `asset_id` 的 image element 可在 check 时用 `--assets-manifest` + `--assets-dir` 自动绑定，不改 build.py。
+
+`asset_prompt.py` 是**通用**资产提示词翻译器（13 个视觉家族），不是水墨专用；只有当资产卡选择水墨语言时，才注入水墨纪律闸门。生产不直接调用它，而是由 `scripts/vao.py assets` 消费 brief、plan 和页面资产决策。
 
 <p align="center">
   <img src="assets/1c2f20c6a78cd5c41dd344397e986f5b.png" alt="示例资产 1" height="240">
@@ -60,40 +71,50 @@ ppt-visual-art-director-os/
 
 ## 工作流
 
-P1 内容理解 → P2 视觉策略（Strategy/Direction/Page Intent）→ P3 落地（骨架填充 + spec + 批量出图）→ P4 draft 验证 + 按 fix_plan 一轮修正 → P5 直接 release 收口。默认由 `pipeline.py` 单进程产 Brief/route/layout/risk 并把已决策字段序列化进 build 骨架；`spec`/`review` 是诊断与抽查工具，不是阶段门；独立脚本仅按需诊断。
+P1 内容理解 → P2 deck-level 视觉策略 → P3 一次性生成 → P4 一次静态验证 → P5 根因分组修正（如有）→ P6 直接 release。生产侧只调用 `scripts/vao.py`；规划、归一化、Guard、编译和修复包在一个 Python 进程中完成。
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-# R1 规划：同一进程完成 Brief/route/layout/risk；--skeleton 把已决策字段序列化进
-# build 骨架（canvas/theme 种子/page_intent/source_zone 已填，elements 留空零预设）
-python3 scripts/pipeline.py brief.yml --out plan.json --skeleton build_mydeck.py
 
-# R2 一次性生成：Strategy/Direction/全量 spec 填入骨架；资产出图请求同轮批量发出
-# R3 验证①：QA 内部已包含 Normalizer + Guard + Compile，零渲染；报告含 fix_plan
-python3 scripts/qa.py build_mydeck.py out.pptx --mode draft
-# R4 唯一修正轮：按 fix_plan 根因组一次改完（内嵌契约行，零文档回读）→ 复跑 draft
+# R1 规划：brief → plan + build 骨架；route 只计算一次
+python3 scripts/vao.py plan brief.yml --out plan.json --skeleton build_mydeck.py
 
-# R5 收口：方向确认后直接 release（全量渲染 + Manifest；页级缓存让修复复跑只重渲变化页）
-python3 scripts/qa.py build_mydeck.py out.pptx --mode release
-# 工具（非阶段门）：review=单页像素抽查 · spec=不写文件诊断 · ghost.py=零渲染看方向
+# R2a 资产：brief + plan → 去重后的批量资产清单；相同视觉需求只出一次图
+python3 scripts/vao.py assets brief.yml \
+  --plan plan.json \
+  --out asset_manifest.json \
+  --cache asset_prompt_cache.json
+#    外部图像模型只消费 asset_manifest.json；出图后统一 QC
+python3 scripts/vao.py asset-qc asset_manifest.json \
+  --input generated_assets --phase draft
+
+# R2b SPEC binding：不改 build.py，按 asset_id 绑定 manifest 的实际文件
+python3 scripts/vao.py check build_mydeck.py out.pptx --mode draft \
+  --assets-manifest asset_manifest.json --assets-dir generated_assets
+
+# R2 一次性生成：把 Strategy/Direction/内容/全量 elements 填进 build_mydeck.py
+#    资产请求同轮批量发出；不要为每页再次读取 references
+
+# R3 唯一工程检查：Normalizer → Guard → Compile；warning 只聚合留痕
+python3 scripts/vao.py check build_mydeck.py out.pptx --mode draft --preview vao_preview
+
+# R4 最多一轮根因修正：只读 out.repair.json，全部 groups 一次改完；再运行同一命令
+#    无 error 时不因 warning 开对话，直接进入收口
+
+# R5 收口：可编辑 PPTX + 静态发布检查 + ghost 方向预览；不需要 LibreOffice
+python3 scripts/vao.py check build_mydeck.py out.pptx --mode release --preview vao_preview
 ```
 
-上述是默认热路径，不要再串行执行 Guard/Compiler。仅需查看单层诊断或做安装/CI
-回归时才单独调用：
+机器/Agent 需要完整 JSON 时显式使用 `--json`；日常默认输出只显示 verdict、error 根因组和 repair packet 路径，不逐条刷 warning：
 
 ```bash
-python3 scripts/intent_compiler.py brief.yml --json
-python3 scripts/route.py brief.yml --json
-python3 scripts/guard.py build_mydeck.py --json
-python3 scripts/compiler.py build_mydeck.py out.pptx
-python3 scripts/selftest.py
+python3 scripts/vao.py check build_mydeck.py out.pptx --mode draft --json
+python3 scripts/vao.py preview build_mydeck.py --out vao_preview --pages 1,5,12
+python3 scripts/vao.py doctor
 ```
 
-`qa.py` 默认只做 Normalizer → Guard → Compile → 验证；设计风险建议不是默认步骤。
-需要时显式加 `--advisory`（或兼容别名 `--risk`），修正链仍以 QA 的首个工程阻断项为主。
-
-渲染证据需系统级依赖：LibreOffice（`soffice`）+ `poppler-utils`（`pdftoppm`）；缺失时自动降级为 `PREVIEW_ONLY`，不阻塞静态治理。
+`references/` 是按需查阅的设计知识库，不由 `vao.py` 自动加载。`ghost` 是快速方向预览，不冒充 Office 像素渲染证据。生产链不安装、不探测、不调用 LibreOffice、soffice 或 poppler；所需能力仅是 Python 依赖。
 
 ## 质量与发布门
 
@@ -108,7 +129,7 @@ python -m compileall -q scripts             # 语法自检
 PYTHONPATH=scripts python scripts/selftest.py   # 回归套件：全 PASS 退 0，任一 FAIL 退 1
 ```
 
-`selftest.py` **不需要 LibreOffice**：缺渲染器时相关用例自行降级，不会误报失败——所以它可以直接进 CI。
+`scripts/vao.py` 与 `selftest.py` **不需要 LibreOffice**：生产路径不启用外部渲染器，ghost 预览使用 PIL；因此可以直接进 CI。
 CI（`.github/workflows/ci.yml`）在 Linux 与 **Windows** 双平台 × Python 3.10/3.12/3.13 上跑回归，
 外加一个 spec 档冒烟用例（把「spec 档不得拖入 python-pptx」这条红线钉在流水线上）。
 

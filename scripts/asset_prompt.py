@@ -19,6 +19,7 @@ asset_prompt.py · 视觉资产提示词组装器（纯函数层）
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import sys
@@ -45,6 +46,13 @@ UNIVERSAL_QC: tuple[str, ...] = (
     "no UI elements",
     "no clutter",
     "16:9 presentation background",
+)
+
+# 组装时使用的紧凑质量尾段；泛化的 luxury/premium 词不应稀释主体、空间和材质。
+# 完整 UNIVERSAL_QC 保留作为兼容词库，但生产 prompt 只取这组最小契约。
+PROMPT_QC_COMPACT: tuple[str, ...] = (
+    "clean composition", "no text", "no logo", "no watermark",
+    "no UI elements", "no clutter",
 )
 
 # 基础反向约束（与 UNIVERSAL_QC 的 no-* 项对应，供支持独立 negative 的模型使用）
@@ -166,9 +174,15 @@ def photo_gate_active(card: dict) -> bool:
         return False
     if ink_gate_active(card):
         return False
+    medium = str(card.get("medium") or card.get("render_mode") or "").strip().lower()
     blob = " ".join(str(card.get(k) or "") for k in
-                    ("style", "subject", "material")).lower()
-    return not any(w in blob for w in _PHOTO_STYLE_EXCLUDE)
+                    ("style", "subject", "material", "lighting")).lower()
+    if medium:
+        # A declared medium wins.  "background" alone must not silently
+        # turn an abstract/editorial card into a stock-photography prompt.
+        return medium in {"photo", "photography", "photographic", "film"}
+    return ("photograph" in blob or "photographic" in blob
+            or "film" in blob) and not any(w in blob for w in _PHOTO_STYLE_EXCLUDE)
 
 
 NEGATIVE_SPACE_PHRASES = {
@@ -178,6 +192,45 @@ NEGATIVE_SPACE_PHRASES = {
     "bottom": "quiet empty area in the lower part",
     "center": "quiet calm center area, activity pushed to the edges",
 }
+
+# Normalized safe zones are shared by prompt generation and asset QC.  The
+# prompt receives both a human direction and the geometric fraction so a model
+# can preserve a usable text field instead of merely hearing "leave space".
+SAFE_AREA_PRESETS = {
+    "left": {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78},
+    "right": {"x": 0.60, "y": 0.08, "width": 0.34, "height": 0.78},
+    "top": {"x": 0.08, "y": 0.06, "width": 0.84, "height": 0.27},
+    "bottom": {"x": 0.08, "y": 0.67, "width": 0.84, "height": 0.25},
+    "center": {"x": 0.30, "y": 0.28, "width": 0.40, "height": 0.44},
+}
+
+
+def normalize_safe_area(value=None, anchor: str = "left") -> dict:
+    """Return a bounded x/y/width/height fraction for prompt and QC."""
+    raw = value if isinstance(value, dict) else SAFE_AREA_PRESETS.get(anchor, SAFE_AREA_PRESETS["left"])
+    try:
+        x = max(0.0, min(1.0, float(raw.get("x", 0.0))))
+        y = max(0.0, min(1.0, float(raw.get("y", 0.0))))
+        w = max(0.01, min(1.0 - x, float(raw.get("width", 0.3))))
+        h = max(0.01, min(1.0 - y, float(raw.get("height", 0.3))))
+    except (TypeError, ValueError, AttributeError):
+        return dict(SAFE_AREA_PRESETS.get(anchor, SAFE_AREA_PRESETS["left"]))
+    return {"x": round(x, 4), "y": round(y, 4),
+            "width": round(w, 4), "height": round(h, 4)}
+
+
+def safe_area_phrase(area: dict, text_color: str | None = None) -> str:
+    """Compact geometric instruction; kept short to avoid prompt inflation."""
+    pct = lambda n: f"{round(float(n) * 100):g}%"
+    phrase = (f"keep the text-safe zone at x {pct(area['x'])}, y {pct(area['y'])}, "
+              f"width {pct(area['width'])}, height {pct(area['height'])}, "
+              "free of high-frequency detail")
+    if text_color:
+        phrase += (" with an even light tonal field for dark typography"
+                   if str(text_color).lower() == "dark" else
+                   " with an even dark tonal field for light typography")
+    return phrase
+
 
 LIGHT_PHRASES = {
     "left": "soft directional light from the upper left",
@@ -283,10 +336,10 @@ TEXTURE_DISCIPLINE: tuple[str, ...] = (
     "texture faint and low-contrast, perceivable only at close range",
     "no obvious pattern, no grunge, no heavy grain")
 FUSION_LAYERS: tuple[str, ...] = (
+    "image melts into the layout background, no sticker edges, no hard rectangle",
     "negative space reserved and aligned to the text-safe area",
     "lighting direction consistent with the page light source",
     "depth hierarchy: foreground subject, midground material, background atmosphere",
-    "image melts into the layout background, no sticker edges, no hard rectangle",
     "foreground and background separated by gentle defocus")
 FAMILY_MOTION: dict[str, tuple[str, ...]] = {
     "nature_luxury": ("natural", "spatial"), "nordic_quiet": ("spatial",),
@@ -314,7 +367,7 @@ def enhance_asset_card(card: dict, family: str | None = None,
                        fusion: bool = True) -> dict:
     """纯函数：为资产卡注入动势/微浮雕/融合三层（确定性、去重、限量）。
 
-    motion ≤3 句、texture ≤2 句（+纪律 2 句）、fusion ≤4 句——
+    默认 motion 1 句、texture 1 句、fusion 1–2 句——
     提示词密度也是克制的一部分；调用方显式传入时永远赢。
     """
     out = dict(card)
@@ -325,16 +378,16 @@ def enhance_asset_card(card: dict, family: str | None = None,
         pool: list[str] = []
         for k in m_keys:
             pool.extend(MOTION_LAYERS.get(k, ()))
-        motion = pool[:3]
+        motion = pool[:1]
     if texture is None:
         pool = []
         for k in t_keys:
             pool.extend(TEXTURE_LAYERS.get(k, ()))
-        texture = pool[:2]
+        texture = pool[:1]
     out["motion"] = list(motion)
     out["texture"] = list(texture) + list(TEXTURE_DISCIPLINE)
     if fusion:
-        out["fusion"] = list(card.get("fusion") or FUSION_LAYERS[:4])
+        out["fusion"] = list(card.get("fusion") or FUSION_LAYERS[:2])
     return out
 
 
@@ -427,8 +480,22 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
             segments.append(f"{layers['organic_shapes']} organic shapes")
 
     # --- 三层：动势 / 微浮雕 / 空间融合（enhance_asset_card 注入）---
-    for key in ("motion", "texture", "fusion"):
-        segments.extend(_as_list(card.get(key)))
+    # 融合只对背景/框景类资产默认开启；icon、产品主体和明确分离的
+    # 资产保留边界，避免「无贴纸边缘」变成所有图片的同一种质感。
+    function_hint = str(asset_function or page.get("asset_function")
+                         or card.get("asset_function") or "frame").lower()
+    fusion_allowed = card.get("fusion_enabled")
+    if fusion_allowed is None:
+        fusion_allowed = asset_type == "background" or function_hint in {
+            "frame", "separate", "context", "contextualize"
+        }
+    segments.extend(_as_list(card.get("motion"))[:1])
+    texture = _as_list(card.get("texture"))
+    # One material cue + one discipline cue is enough; prompt length is part
+    # of visual direction and excess adjectives reduce model fidelity.
+    segments.extend(texture[:2])
+    if fusion_allowed:
+        segments.extend(_as_list(card.get("fusion"))[:2])
 
     # --- 水墨纪律闸门：已选水墨语言 → 注入工艺纪律 + 廉价症状反向清单 ---
     if ink_gate_active(card):
@@ -437,11 +504,16 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         segments.extend(PHOTO_REALISM_DISCIPLINE)
 
     # --- 3. OS 强制三段 --------------------------------------------------
-    anchor = negative_space or page.get("negative_space_anchor") or "left"
-    light = light_direction or page.get("light_direction") or "left"
-    level = (energy or page.get("energy") or "low").lower()
-    function = asset_function or page.get("asset_function") or "frame"
+    anchor = str(negative_space or page.get("negative_space_anchor") or "left").lower()
+    light = str(light_direction or page.get("light_direction") or "left").lower()
+    level = str(energy or page.get("energy") or "low").lower()
+    function = str(asset_function or page.get("asset_function") or function_hint).lower()
+    area = normalize_safe_area(page.get("safe_area"), anchor)
+    text_color = page.get("text_color") or page.get("safe_area_text_color")
+    medium = str(card.get("medium") or card.get("render_mode") or "").strip().lower()
 
+    if medium:
+        segments.append(f"{medium} medium")
     if anchor in NEGATIVE_SPACE_PHRASES:
         segments.append(NEGATIVE_SPACE_PHRASES[anchor])
     if light in LIGHT_PHRASES:
@@ -450,10 +522,14 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         segments.append(ENERGY_PHRASES[level])
     if function in ASSET_FUNCTION_PHRASES:
         segments.append(ASSET_FUNCTION_PHRASES[function])
+    segments.append(safe_area_phrase(area, text_color))
 
     # --- 4. Universal QC + 类型后缀 + 对比度防护 -------------------------
     if include_qc:
-        segments.extend(UNIVERSAL_QC)
+        # The old constant is intentionally kept as a reusable vocabulary, but
+        # production uses a compact tail and resolves ratio at the call site.
+        segments.extend(PROMPT_QC_COMPACT)
+        segments.append(f"{ratio} presentation background")
     segments.extend(ASSET_TYPE_SUFFIX[asset_type])
     # 仅对透明资产（illustration / icon）追加对比度防护
     segments.extend(ASSET_CONTRAST_GUARD.get(asset_type, ()))
@@ -483,12 +559,37 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
             "asset_type": asset_type,
             "ratio": ratio,
             "negative_space_anchor": anchor,
+            "safe_area": area,
+            "text_color": text_color,
             "light_direction": light,
             "energy": level,
             "asset_function": function,
+            "medium": medium or None,
+            "fusion_enabled": bool(fusion_allowed),
             "issues": validate_asset_card(card),
         },
     }
+
+
+def asset_fingerprint(card: dict, page: dict | None = None) -> str:
+    """Stable visual-demand fingerprint used to deduplicate cross-page assets.
+
+    Content copy is deliberately excluded: two pages can share one visual
+    asset when their visual demand is the same.  The page id is never part of
+    the key, so reuse is deterministic across deck revisions.
+    """
+    page = page if isinstance(page, dict) else {}
+    keys = ("asset_type", "medium", "family", "subject", "color", "material",
+            "lighting", "composition", "motion", "texture", "negative",
+            "asset_function", "fusion_enabled")
+    payload = {k: card.get(k) for k in keys if card.get(k) is not None}
+    payload["negative_space_anchor"] = page.get("negative_space_anchor") or "left"
+    payload["safe_area"] = normalize_safe_area(
+        page.get("safe_area"), payload["negative_space_anchor"])
+    payload["light_direction"] = page.get("light_direction") or "left"
+    payload["energy"] = page.get("energy") or "low"
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return "asset-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
 # --------------------------------------------------------------------------
@@ -576,7 +677,8 @@ _SAFE_ZONES = {
 }
 
 
-def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None) -> dict:
+def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None,
+             safe_rect: dict | None = None) -> dict:
     """对一张出图结果做定性体检（Issue + Suggestion，不打分）。"""
     from PIL import Image  # 懒加载：纯组装路径不引入像素依赖
     import numpy as np
@@ -606,7 +708,11 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
                        "issue": None if ok else issue,
                        "suggestion": None if ok else suggestion})
 
-    x0, y0, x1, y1 = _SAFE_ZONES.get(safe_area, _SAFE_ZONES["left"])
+    normalized = normalize_safe_area(safe_rect, safe_area)
+    x0 = normalized["x"]
+    y0 = normalized["y"]
+    x1 = x0 + normalized["width"]
+    y1 = y0 + normalized["height"]
     bh, bw = blk_std.shape
     sx0, sy0, sx1, sy1 = int(x0 * bw), int(y0 * bh), max(int(x1 * bw), 1), max(int(y1 * bh), 1)
     safe_std = blk_std[sy0:sy1, sx0:sx1]

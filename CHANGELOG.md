@@ -13,6 +13,12 @@
 9. 最终标准：更少规则更强判断，更少代码更高审美，更少复杂度更高质量
 
 
+## v4.31 资产决策链（2026-09-17）：brief → plan → manifest → QC
+
+- 新增唯一入口 `scripts/vao.py assets` / `asset-qc`：按页面意图生成资产决策、去重 fingerprint、批量 manifest、缓存与有限重出预算。
+- `asset_prompt.py` 仅做确定性的视觉语言翻译；safe area 同时进入 prompt 与 QC，避免图像主体和文字区判定漂移。
+- 资产 QC 只聚合阻断根因，不启动逐条对话；`run` 可在同一进程产出 plan、asset manifest 与 build 检查结果。
+
 ## v4.30 开源化配套（2026-09-16）：匿名化 + 可安装 + CI
 
 **案源**：发布前做了七维审计。干净项：MIT 许可、零密钥凭据、代码与文档零绝对路径/用户名、

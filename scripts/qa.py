@@ -398,6 +398,10 @@ def build_fix_plan(failure_codes, guard_checks, compile_report):
         if not g["count"] and code in ("COMPILE_FAIL", "GUARD_FAIL"):
             continue
         g["fix"] = FIX_CONTRACT_HINTS.get(code, "见 production-contract.md Contract Map 对应行")
+        # 渲染/编译侧可能只有 failure code，没有逐项 check；用 1 表示
+        # 「至少一处根因待处理」，不要向 Agent 暴露一个误导性的 ×0。
+        if not g["count"]:
+            g["count"] = 1
         if g not in groups:
             groups.append(g)
     return {"round_budget": "本轮一次修完全部组，修完直接复跑同档（每阶段 1 个修正轮；"
@@ -434,7 +438,8 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
            normalize: bool = True,
            compile: bool | None = None,
            include_advisory: bool = False,
-           spec_path: str | Path | None = None) -> dict:
+           spec_path: str | Path | None = None,
+           visual: str = "external") -> dict:
     """
     完整 QA：guard + compile + render（可选）。
 
@@ -444,7 +449,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
 
     复用（use_cache=True）只覆盖两处——缓存全部家当：
       ① 页级渲染指标缓存（键 = 本页像素视图 + 主题 + 画布 + dpi + 图片指纹 + 渲染器）
-      ② 编译/PDF 复用（PPTX 逐字节未变 → 不再调 soffice；像素视图未变 → 不再编译）
+      ② 编译/证据复用（PPTX 逐字节未变 → 不再编译；native 模式不启动外部渲染）
     改 insight / density 这类声明字段不动像素，因此一整轮重跑只需几十毫秒。
     `--no-cache` 一律绕过，也不写回任何记录。
 
@@ -489,7 +494,13 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     if not mode:
         mode = "draft"
     prof = mode_profile(mode)
-    if render is None:
+    # visual="native" is the production policy exposed by vao.py: use the
+    # editable PPTX plus deterministic structural checks/ghost preview.  It
+    # never probes or starts an external office renderer.
+    native_evidence = str(visual or "external").strip().lower() in {"native", "ghost", "static"}
+    if native_evidence:
+        render = False
+    elif render is None:
         render = prof["render"]
     if qa_level is None:
         qa_level = prof["qa_level"]
@@ -552,7 +563,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
 
     # 2) 编译。Guard 已在本函数完成，关闭编译器内的重复静态扫描以减少一次全 deck 遍历。
     # 发布仍会在 compile_report 中保留 guard 摘要，口径由本函数唯一掌握。
-    # 先问一句「像素视图变了吗」：没变就连 compile 与 soffice 都省掉（决策先于生成）。
+    # 先问一句「像素视图变了吗」：没变就连 compile 与外部渲染都省掉（决策先于生成）。
     compile_report = None
     view = None
     cache_reason = "not_compiled" if not do_compile else ("cache_disabled" if not use_cache else "cache_miss")
@@ -695,12 +706,13 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
 
     # 4) 渲染证据（环境缺失时降级；按 Progressive 级别只测需要的页）
     evidence = {"rendered": False, "reason": None, "pages": []}
-    skip_render_reason = None if render else "render_disabled"
+    skip_render_reason = None if render else (
+        "native_structural_evidence" if native_evidence else "render_disabled")
     try:
         qa_level = max(1, min(3, int(qa_level)))
     except (TypeError, ValueError):
         qa_level = 3
-    # Guard/compile 是渲染的前置门：对已知无效 spec 继续付 soffice/PIL 成本
+    # Guard/compile 是视觉证据的前置门：对已知无效 spec 不支付额外证据成本
     # 只会制造无效 evidence，并可能把旧像素误读成新结果。
     engineering_errors = any(c.get("level") == "error"
                              for c in guard.get("checks", []))
@@ -743,9 +755,11 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     else:
         evidence = {"rendered": False,
                     "reason": skip_render_reason or "render disabled for fast iteration",
+                    "type": "native_structural" if native_evidence else "none",
                     "pages": [],
                     "coverage": {"qa_level": qa_level, "rendered_pages": 0,
-                                 "total_pages": len(spec.get("slides") or [])}}
+                                 "total_pages": len(spec.get("slides") or []),
+                                 "complete": bool(native_evidence)}}
 
     slides_count = [x for x in (spec.get("slides") or [])]
 
@@ -933,7 +947,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "output_attestation_ms": int((t_output_attestation_end - t_output_attestation) * 1000),
     }
 
-    if not evidence.get("rendered"):
+    if not evidence.get("rendered") and not native_evidence:
         deduction += pen["render_missing"]
         deduction_by_domain["render"] += pen["render_missing"]
         items.append({"domain": "render", "level": "hint",
@@ -975,7 +989,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         failure_codes.append("READABILITY_FAIL")
     if not compile_report.get("passed", False):
         failure_codes.append("COMPILE_FAIL")
-    if not evidence.get("rendered"):
+    if not evidence.get("rendered") and not native_evidence:
         failure_codes.append("RENDER_UNAVAILABLE")
     blocking = bool(failure_codes and any(c in failure_codes for c in {
         "OVERLAP", "SOURCE_COLLISION", "CHART_LABEL_COLLISION", "TEXT_OVERFLOW",
@@ -988,8 +1002,9 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     status = "BLOCKED" if blocking else (
         "SKETCH" if mode == "sketch" else
         ("PREVIEW_ONLY" if not do_compile else
-         ("PREVIEW_ONLY" if not evidence.get("rendered")
-          else ("PASS" if passed else "REVISE"))))
+         ("PASS" if native_evidence else
+          ("PREVIEW_ONLY" if not evidence.get("rendered")
+           else ("PASS" if passed else "REVISE")))))
     # 像素证据覆盖率决定「能不能发布」：Level 1/2（或任何子集渲染）都不给发布级结论，
     # 判定阈值一律不放宽：像素证据不全 → 不给 PASS（`PIXEL_COVERAGE_PARTIAL`）。
     # 但「发布资格」与「证据完整」是两件事：非 release 链即使本轮把 12 页
@@ -998,8 +1013,10 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
     coverage = evidence.get("coverage") or {}
     rendered_n = int(coverage.get("rendered_pages") or len(evidence.get("pages") or []))
     total_n = int(coverage.get("total_pages") or len(slides_count)) or 1
-    partial_pixel = bool(evidence.get("rendered")) and rendered_n < total_n
-    release_eligible = (status == "PASS" and rendered_n >= total_n
+    partial_pixel = (not native_evidence and bool(evidence.get("rendered"))
+                     and rendered_n < total_n)
+    evidence_complete = native_evidence or rendered_n >= total_n
+    release_eligible = (status == "PASS" and evidence_complete
                         and not blocking and not partial_pixel
                         and qa_level >= 3 and mode == "release")
     if status == "PASS" and partial_pixel:
@@ -1035,7 +1052,7 @@ def run_qa(spec: dict, output: str | Path, penalties: dict | None = None,
         "source_spec_hash": spec_fingerprint(spec),
         "normalization": norm_report,
         "auto_fit": fit_report,
-        "execution": exec_block,
+        "execution": {**exec_block, "visual_evidence": "native" if native_evidence else "external"},
         "verdict": _verdict_of(status, score, items, failure_codes),
         "score": round(score, 1),
         "passed": passed,
@@ -1203,12 +1220,17 @@ def release_manifest(spec: dict, qa_report: dict,
                                if isinstance(_render_block, dict) else False)
                               or (( _evidence_block or {}).get("rendered")
                                   if isinstance(_evidence_block, dict) else False))
+        native_claim = str((qa_report.get("execution") or {}).get("visual_evidence", "")).lower() in {
+            "native", "ghost", "static"
+        } or str((_evidence_block or {}).get("type", "")).lower() in {
+            "native_structural", "native_structural_only"
+        }
         try:
             pixel_pages = int(cov.get("rendered_pages") or 0)
             pixel_total = int(cov.get("total_pages") or 0)
         except (TypeError, ValueError, OverflowError):
             pixel_pages = pixel_total = 0
-        if not rendered_claim or pixel_total <= 0 or pixel_pages < pixel_total:
+        if not native_claim and (not rendered_claim or pixel_total <= 0 or pixel_pages < pixel_total):
             issues.append("qa_report 声称 PASS 但没有完整像素渲染覆盖")
         if not isinstance(compile_claim, dict) or not compile_claim.get("passed"):
             issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")

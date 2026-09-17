@@ -598,7 +598,7 @@ def _plan_deck(brief: dict) -> dict:
             "workers": 2,
             "mode": "caller-managed bounded parallel; stage gates remain serial",
             "design": ["route", "guard + risk_prediction", "spec 修正（只按静态项与风险预测改，不重排全篇）"],
-            "asset_render": ["asset_prompt → 图像模型（仅 assets.generate）", "compiler",
+            "asset_render": ["vao.py assets → asset_prompt → 图像模型（仅 manifest.generate）", "compiler",
                              f"render + measure（workers=2，Level {2 if quality == 'fast' else 3}）"],
             "join": "qa.run_qa（唯一同步点：静态结论 + 渲染证据在此合并计分）",
             "exchange": "单一 spec / plan JSON；禁止逐页往返通信",

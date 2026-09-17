@@ -7,12 +7,10 @@ Layer 3.5 · Render Check（渲染证据层）
 这是「只有真实渲染才能证明视觉质量」的实证层（借鉴 v6.2 render_evidence 思路），
 但与引擎一样：不做设计决策、不修改 spec、所有阈值由调用方传入。
 
-渲染链路（可用性检测，缺一环即优雅降级为结构证据）：
-    soffice/libreoffice --headless → PDF
-    → pdftoppm → PNG
-    → PIL + numpy 测量（cv2 可用时显著图更准，不可用时用确定性回退）
-
-无渲染环境时：rendered=False，QA 自动跳过渲染维度，不阻塞静态治理。
+外部 Office/PDF 渲染链路已永久关闭：生产路径不探测、不启动
+LibreOffice/soffice，也不依赖 poppler。vao.py 以原生 PPTX 结构、几何治理和
+PIL ghost preview 作为快速证据；该模块仅保留兼容 API，直接返回
+external_renderer_disabled_by_policy。
 """
 from __future__ import annotations
 
@@ -56,36 +54,14 @@ def clear_renderer_probe_cache() -> None:
     _RENDERER_PROBE_VALUE = None
 
 
-def find_renderer() -> str | None:
-    """定位 LibreOffice。Windows: soffice.exe；POSIX: soffice。
+# Deliberately disabled.  VAO produces native editable PPTX plus a deterministic
+# ghost preview; it never depends on a locally installed office suite.
+EXTERNAL_RENDERER_ENABLED = False
 
-    探测结果按 PATH/PATHEXT 在进程内记忆：一次 QA 可能同时经过
-    ``render_evidence``、PDF 复用和 cache 写回，找不到 renderer 时不应每个
-    分支都重复调用 ``shutil.which``。显式清缓存后才重新探测，避免把环境热插拔
-    误当成稳定事实。
-    """
-    global _RENDERER_PROBE_KEY, _RENDERER_PROBE_VALUE
-    probe_key = (os.environ.get("PATH", ""), os.environ.get("PATHEXT", ""))
-    if probe_key == _RENDERER_PROBE_KEY:
-        return _RENDERER_PROBE_VALUE
-    found = None
-    for name in ("soffice", "libreoffice"):
-        p = shutil.which(name)
-        if p:
-            found = p
-            break
-    if found is None:
-        for cand in (
-            r"C:\\Program Files\\LibreOffice\\program\\soffice.exe",
-            r"C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe",
-            "/usr/bin/soffice", "/usr/local/bin/soffice",
-        ):
-            if Path(cand).exists():
-                found = cand
-                break
-    _RENDERER_PROBE_KEY = probe_key
-    _RENDERER_PROBE_VALUE = found
-    return found
+
+def find_renderer() -> str | None:
+    """Return no renderer by policy; never probe or start LibreOffice."""
+    return None
 
 
 def renderer_identity(renderer: str | None) -> str:
@@ -1262,11 +1238,37 @@ def render_evidence(pptx: Path, spec: dict, out_dir: Path | None = None,
       "jpeg"                ＝ 有损快测，会对指标贴着判定阈值的页自动无损复检；
                               仅在超大 deck 追求极限速度时使用。
     """
+    spec = spec if isinstance(spec, dict) else {}
+    raw_slides = spec.get("slides")
+    if not EXTERNAL_RENDERER_ENABLED:
+        total = len(raw_slides) if isinstance(raw_slides, list) else 0
+        invalid_requested = []
+        requested = []
+        if pages is not None:
+            for raw in list(pages):
+                if isinstance(raw, bool):
+                    invalid_requested.append(raw)
+                    continue
+                try:
+                    n = int(raw)
+                except (TypeError, ValueError, OverflowError):
+                    invalid_requested.append(raw)
+                    continue
+                if n != raw or not 1 <= n <= total:
+                    invalid_requested.append(raw)
+                else:
+                    requested.append(n)
+        coverage = {"rendered_pages": 0, "total_pages": total,
+                    "complete": False, "requested": requested}
+        if pages is not None:
+            coverage["invalid_requested"] = invalid_requested
+        return {"rendered": False, "skipped": True,
+                "reason": "external_renderer_disabled_by_policy",
+                "type": "native_structural_only", "pages": [],
+                "coverage": coverage}
     work = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="pptx-render-"))
     work.mkdir(parents=True, exist_ok=True)
     work = work.resolve()      # 证据目录统一绝对化：相对路径会让 LibreOffice 卡死
-    spec = spec if isinstance(spec, dict) else {}
-    raw_slides = spec.get("slides")
     slides = ([s if isinstance(s, dict) else {} for s in raw_slides]
               if isinstance(raw_slides, list) else [])
     raw_canvas = spec.get("canvas")

@@ -75,7 +75,7 @@ explicit/inferred/conflicts。契约与判断见 `production-contract.md` / `des
 - **P2 策略**：Direction（visual_world 一句话隐喻：材质/光影/空间）+ Story Map（情绪弧线：opening 建世界观 → 章节页制造变化 → 内容页给证据 → closing 成记忆点）+ 逐页 Page Intent。系统级判断（色彩/字阶/母题/节奏词汇）在此判一次，全稿继承。
 - **P3 落地**：内容定 Family → spec 填入骨架（数值几何 + `text`，样式平铺顶层；只继承 P2 系统判断，不重议）→ 媒体闸门（图须有功能：先答「它证明这页哪句话」）→ compile 出 PPTX。
 - **P4 修正+验证**：spec 写完直接 `draft`（Guard 即编译前阻断门；`spec` 档仅诊断）；照报告 `fix_plan`（根因分组+内嵌契约行）**一轮**修完，零文档回读；advisory 挂同轮 draft（`--advisory`），不独占轮次。
-- **P5 收口**：方向确认后直接 `release`（全量渲染+Manifest；页级缓存让复跑只重渲变化页）；`review` 仅单页抽查。发布门 = 0 阻断 + 全量像素 + 完整性；score 与非阻断警告仅记录（`warn_summary`），不构成门槛。
+- **P5 收口**：方向确认后直接 `release`（静态完整性检查 + 可编辑 PPTX + ghost 方向预览 + Manifest）；不启动 LibreOffice/soffice/poppler。发布门 = 0 阻断 + 完整性；score 与非阻断警告仅记录（`warn_summary`），不构成门槛。
 
 ## Modes（与 Fast/Advanced 预算正交）
 
@@ -83,18 +83,18 @@ explicit/inferred/conflicts。契约与判断见 `production-contract.md` / `des
 |---|---|---|
 | `spec` | 诊断（**非阶段门**）：归一化 + Guard，不编译不写文件 | PREVIEW_ONLY |
 | `sketch` | 结构探索：只守 error 级，秒级出 PPTX | SKETCH（不可发布） |
-| `draft`（默认） | 验证①：Guard + Compile 出可编辑 PPTX，零渲染，报告含 fix_plan | PREVIEW_ONLY |
-| `review` | 抽查（**非阶段门**）：只渲染指定/变化页 | PASS 可达，`release_eligible=False` |
-| `release` | 验证②收口：全量渲染 + QA + Manifest | 唯一可发布 |
+| `draft`（默认） | 验证①：Guard + Compile 出可编辑 PPTX，零外部渲染，报告含 fix_plan | PASS/静态证据 |
+| `review` | 抽查（**非阶段门**）：ghost 指定/变化页 | PASS 可达，`release_eligible=False` |
+| `release` | 验证②收口：静态 QA + ghost 方向证据 + Manifest | 唯一可发布 |
 
 ## Round Budget（两代两验执行契约）
 
 ```
-R1 规划     pipeline.py brief.yml --out plan.json --skeleton build_mydeck.py
-R2 一次性生成 Strategy/Direction/全量 spec 填骨架；出图同轮批量发出，draft 前收齐 --qc
-R3 验证①    qa.py build_mydeck.py out.pptx --mode draft
-R4 修正轮   按 fix_plan 根因组一次改完（零回读）→ 复跑 draft
-R5 收口     方向确认后直接 --mode release（复跑只重渲变化页）
+R1 规划     scripts/vao.py plan brief.yml --out plan.json --skeleton build_mydeck.py
+R2 一次性生成 Strategy/Direction/全量 spec 填骨架；出图同轮批量发出
+R3 验证①    scripts/vao.py check build_mydeck.py out.pptx --mode draft
+R4 修正轮   按 repair packet 根因组一次改完（零回读）→ 复跑 draft
+R5 收口     scripts/vao.py check build_mydeck.py out.pptx --mode release（静态 + ghost）
 ```
 
 预算 ≤6 轮（`qa.py` 每轮打印改稿次数，超预算会喊停）；简单案例跳过 R4，有 plan/spec 直接进 R3。
@@ -110,16 +110,16 @@ R5 收口     方向确认后直接 --mode release（复跑只重渲变化页）
 
 ## Load Routing（按需加载）
 
-默认按需读本文件与命中资料；README/CHANGELOG/archive/memory/assets/selftest 属非生产资料，禁入执行轮上下文。render/asset/layout 脚本只在对应阶段调用。**修正轮零文档回读**：以 `fix_plan` 内嵌契约行为准；契约表会话内只读一次。
+按需读本文件与命中资料；README/CHANGELOG/archive/memory/assets/selftest 禁入执行上下文。render/asset/layout 只在对应阶段调用。**修正轮零回读**：以 `fix_plan` 内嵌契约为准；契约表会话只读一次。
 
 | 任务 | 读 | 调 |
 |---|---|---|
-| 新建/重构 deck | 本文件 + `design-intelligence.md` | `pipeline.py --skeleton` 规划+骨架 → 一次性生成 → `draft` → `release`；复杂页才做 layout search |
-| 写 spec 字段 | `production-contract.md` | `qa.py --mode spec` 先问代码 |
-| 设计品味判断 | `design-craft.md` | 判断依据，不是规则 |
-| 主题参考（可选） | `design-system.md`（Theme DNA） | 只作材质/光影灵感，seed 落进 `spec.theme` |
-| 出图 | 契约 asset 行 + `asset_prompt.py` | R2 同轮批量出图→`--qc`；阻断最多定向重出 1 次，不自动升级 |
-| 方向确认/改布局 | 契约对应行 | `ghost.py` 看方向（零渲染）；单页抽查用 `--mode review` |
-| 发布 | 契约 Release Manifest | 方向确认后直接 `qa.py --mode release` |
+| 新建/重构 deck | brief + plan | `scripts/vao.py plan` 规划+骨架 → 一次性生成 → `scripts/vao.py check --mode draft` → `release` |
+| 写 spec 字段 | 当前 build + repair packet | `scripts/vao.py check --mode spec` 诊断，不回读全文 |
+| 设计品味判断 | `design-craft.md`（按需） | 判断依据，不是规则；不自动装载 |
+| 主题参考（可选） | `design-system.md`（按需） | 只作材质/光影灵感，seed 落进 `spec.theme` |
+| 出图 | brief + plan | `vao.py assets` → manifest → batch → `asset-qc` → bind；最多重出 1 次 |
+| 方向确认/改布局 | repair packet + ghost | `scripts/vao.py preview` 看方向（零外部渲染） |
+| 发布 | spec + static QA | 方向确认后直接 `scripts/vao.py check --mode release` |
 
-按入口调用脚本；阈值以代码常量为准，档位不放宽规则。
+生产只调用 `scripts/vao.py`；内部脚本仅作实现边界。

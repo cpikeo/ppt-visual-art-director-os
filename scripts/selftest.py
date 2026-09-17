@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 REFS = ROOT / "references"
 SCRIPTS = ROOT / "scripts"
 REQUIRED_REFS = {"design-intelligence.md", "design-system.md", "production-contract.md"}
-REQUIRED_SCRIPTS = {"compiler.py", "primitives.py", "guard.py", "render_check.py", "compile_cache.py", "qa.py", "asset_prompt.py", "route.py", "pipeline.py", "ghost.py", "design_intelligence.py", "layout_search.py", "intent_compiler.py", "design_intelligence_rules.py"}
+REQUIRED_SCRIPTS = {"vao.py", "compiler.py", "primitives.py", "guard.py", "render_check.py", "compile_cache.py", "qa.py", "asset_prompt.py", "route.py", "pipeline.py", "ghost.py", "design_intelligence.py", "layout_search.py", "intent_compiler.py", "design_intelligence_rules.py"}
 
 
 def load(name, path):
@@ -54,7 +54,7 @@ def check_references():
     # 同时扫描文档与脚本（docstring/注释里的引用同样必须可解析）
     docs = list(ROOT.rglob("*.md")) + sorted(SCRIPTS.glob("*.py"))
     # 不随包分发的引用：用户的构建模块占位名，以及工作区基准/尚未实现的路线图条目
-    allow_missing = {"build_mydeck.py", "build_module.py", "build_card.py",
+    allow_missing = {"build.py", "build_mydeck.py", "build_vao.py", "build_module.py", "build_card.py",
                      "build_page.py", "build_probe.py", "build_bench_deck.py"}
     for doc in docs:
         refs.update(re.findall(r"[\w./-]+\.(?:md|py)", doc.read_text(encoding="utf-8")))
@@ -2475,14 +2475,17 @@ def check_draft_import_contract():
         # ③ draft 缓存命中时，新的 Python 进程也不应加载 compiler/python-pptx。
         #    这是 draft 高频调用能否真正变快的关键，而不只是少一个 JSON 字段。
         cache_probe = (
-            "import sys, pathlib, json, importlib.util, qa\n"
+            "import sys, pathlib, json, importlib.util\n"
+            "sys.path.insert(0, %s)\n"
+            "import qa\n"
             "m = importlib.util.spec_from_file_location('b', %s)\n"
             "mod = importlib.util.module_from_spec(m); m.loader.exec_module(mod)\n"
             "p = pathlib.Path(%s)\n"
             "r = qa.run_qa(mod.SPEC, p / 'cached.pptx', mode='draft', render_dir=p / 'cached-render')\n"
             "print('CACHE', r['performance']['compile_reused'], 'compiler' in sys.modules, 'design_intelligence' in sys.modules, 'render_check' in sys.modules)\n"
         )
-        cache_probe_code = cache_probe % (repr(str(build)), repr(str(pathlib.Path(d) / "cache-work")))
+        cache_probe_code = cache_probe % (repr(str(SCRIPTS)), repr(str(build)),
+                                           repr(str(pathlib.Path(d) / "cache-work")))
         first = subprocess.run([sys.executable, "-c", cache_probe_code], capture_output=True,
                                text=True, cwd=str(ROOT), timeout=300)
         second = subprocess.run([sys.executable, "-c", cache_probe_code], capture_output=True,
