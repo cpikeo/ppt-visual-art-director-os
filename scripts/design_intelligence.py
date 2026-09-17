@@ -36,7 +36,6 @@ import json
 import math
 import os
 import re
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -50,18 +49,18 @@ from primitives import (memory_anchor as _memory_anchor,
                         RHYTHM_INK_DELTA, RHYTHM_INK_FLAT)
 # 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
 from design_intelligence_rules import (
+    COMPOSITION_BY_FAMILY, COMPOSITION_POOL,
     BAR_FAMILY as _BAR_FAMILY,
     SMALL_ACCENT_CHART_SHARE as _SMALL_ACCENT,
     TEXT_INK_FACTOR as _TEXT_INK_FACTOR,
     SHAPE_FILL_FACTOR as _SHAPE_FILL_FACTOR,
-    RESULT_MEMORY_KEYS as _RESULT_MEMORY_KEYS,
-    JUDGMENT_KEYS as _JUDGMENT_KEYS,
     MEDIA_MODEL as _MEDIA_MODEL, FAMILY_ALIASES as _FAMILY_ALIASES,
     LADDER_TOL as _LADDER_TOL, TYPE_WEIGHTS as _TYPE_WEIGHTS,
     ASYMMETRIC_OK_FAMILIES as _ASYMMETRIC_OK,
     DIRECTION_ALIAS as _DIRECTION_ALIAS,
-    DENSITY_BANDS, INTENT_PRESETS, LADDER_RUNGS,
+    DENSITY_BANDS, FAMILY_MOVES, LADDER_RUNGS, COMPLEX_LAYOUT_FAMILIES,
     CALIBRATION_LAWS, CALIBRATION_FAMILIES,
+    JUDGMENT_KEYS, RESULT_MEMORY_KEYS,
     COLOR_RATIO_TARGETS, COLOR_FORBIDDEN, COLOR_DIRECTIONS,
     RISK_CATALOG as _RISK_CATALOG)
 
@@ -73,31 +72,14 @@ DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json
 # ════════════════════════════════════════════════════════════════════════
 # ① Design DNA Memory
 # ════════════════════════════════════════════════════════════════════════
-def _atomic_store_write(path: Path, value: dict) -> None:
-    """经验库写入也走原子替换，避免进程中断留下半个 JSON。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
-                                    dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=1)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-    finally:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
-
-
-def _load_store(strict: bool = False) -> dict:
+def _load_store(path=None, strict: bool = False) -> dict:
     """文件不存在 = 合法初态（空库）；存在但解析失败 = 数据损坏。
 
     读路径回落空库（召回失败安全）；strict 写路径抛错——写方必须在
     「损坏时拒绝写入」的最高层兜底，否则空库会被整体写回、经验全灭。"""
+    target = Path(path) if path else DNA_STORE
     try:
-        value = json.loads(DNA_STORE.read_text(encoding="utf-8"))
+        value = json.loads(target.read_text(encoding="utf-8"))
         if not isinstance(value, dict) or not isinstance(value.get("entries"), list):
             raise ValueError("经验库顶层必须是对象且 entries 必须是数组")
         if not all(isinstance(entry, dict) for entry in value["entries"]):
@@ -125,8 +107,9 @@ def recall_dna(brief: dict) -> dict:
     low = text.lower()
     store = _load_store()
     load_error = store.get("_load_error")
+    entries = [e for e in (store.get("entries") or []) if isinstance(e, dict)]
     scored = []
-    for e in store.get("entries", []):
+    for e in entries:
         signature = e.get("signature") if isinstance(e.get("signature"), dict) else {}
         keywords = signature.get("keywords") if isinstance(signature.get("keywords"), list) else []
         sig = [str(s).lower() for s in keywords if str(s).strip()]
@@ -135,12 +118,18 @@ def recall_dna(brief: dict) -> dict:
         hits = sum(1 for s in sig if s in low)
         scored.append((hits / len(sig), hits, e))
     scored.sort(key=lambda t: (-t[0], -t[1], t[2].get("id", "")))
+    # 缺 signature.keywords 的条目永远命不中：这不是「没有经验」，是「经验写坏了」，
+    # 必须留痕，否则坏记忆会伪装成空库。
+    broken = len(entries) - len(scored)
+    broken_note = (f"；另有 {broken} 条经验缺 signature.keywords（永远不会命中），"
+                   f"运行 python scripts/vao.py dna --check 查看") if broken else ""
     if not scored or scored[0][0] <= 0:
-        note = "无匹配 DNA：从主题种子起步，发布 PASS 后 record_dna 沉淀这条经验"
+        note = ("无匹配 DNA：从主题种子起步，发布 PASS 后运行 "
+                "python scripts/vao.py dna --add <条目>.json 沉淀这条经验")
         if load_error:
             note += f"；经验库读取失败，已安全降级（{load_error}）"
         return {"matched": None, "confidence": 0.0, "dna": None,
-                "alternatives": [], "note": note,
+                "alternatives": [], "note": note + broken_note, "broken_entries": broken,
                 **({"load_error": load_error} if load_error else {})}
     conf, hits, best = scored[0]
     alts = [{"id": e.get("id"), "confidence": round(c, 2)}
@@ -152,20 +141,122 @@ def recall_dna(brief: dict) -> dict:
             "avoid": best.get("avoid") or legacy_dna.get("forbidden"),
             "alternatives": alts,
             "proven": best.get("proven"),
-            "note": ("DNA 是起点不是模板：按当前内容与受众重组，禁止照抄" if conf < 0.6
-                     else "高置信命中：以该经验为基线，只做内容级调整")}
+            "broken_entries": broken,
+            "note": (("DNA 是起点不是模板：按当前内容与受众重组，禁止照抄" if conf < 0.6
+                      else "高置信命中：以该经验为基线，只做内容级调整") + broken_note)}
 
 
-# DNA Schema 键集 → design_intelligence_rules（JUDGMENT_KEYS/RESULT_MEMORY_KEYS）。
-_HEX_RE = None  # 惰性编译（模块导入零成本）
+# ── 经验写入路径 ───────────────────────────────────────────────────────
+# 记忆是判断的沉淀，不是参数表：judgment 只写「可迁移的行为判断」，色值/字号/版式结果
+# 属于证据，放 proven.measurements。写错的记忆不会报错，只会永远命不中——所以写入时挡。
+
+DNA_SCHEMA_NOTE = ("经验库（非参数库）：每条 = pattern（模式名）+ design_problem（当时矛盾）+ "
+                   "judgment（可迁移的行为判断）+ works_because（为什么成立）+ avoid + when_not_to + "
+                   "proven（实测证据）。judgment 只写行为判断，不写色值/字号/版式结果——"
+                   "结果是证据，放 proven.measurements。")
+
+_HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
 
 
-def _hex_re():
-    global _HEX_RE
-    if _HEX_RE is None:
-        import re
-        _HEX_RE = re.compile(r"[#＃][0-9a-fA-F]{3,8}\b")
-    return _HEX_RE
+def validate_dna_entry(entry) -> tuple[list, list]:
+    """一条经验 → (errors, warnings)。errors 拒绝写入，warnings 只提醒。"""
+    if not isinstance(entry, dict):
+        return ["条目必须是对象（id / signature.keywords / judgment / pattern）"], []
+    errors, warnings = [], []
+    if not str(entry.get("id") or "").strip():
+        errors.append("缺 id：稳定标识，用于去重与人工引用")
+    if not str(entry.get("pattern") or "").strip():
+        errors.append("缺 pattern：这条经验的模式名（一句话说清它解决什么）")
+    judgment = entry.get("judgment")
+    if not judgment or (isinstance(judgment, str) and not judgment.strip()):
+        errors.append("缺 judgment：可迁移的行为判断（不是结果值）")
+    signature = entry.get("signature") if isinstance(entry.get("signature"), dict) else {}
+    keywords = [str(k).strip() for k in (signature.get("keywords") or []) if str(k).strip()]
+    if not keywords:
+        errors.append("缺 signature.keywords：召回只按关键词打分，空 = 这条经验永远命不中")
+    if isinstance(judgment, dict):
+        leaked = [str(k) for k in judgment if str(k) in RESULT_MEMORY_KEYS]
+        if leaked:
+            errors.append(f"judgment 里出现结果键 {leaked}：色值/字体/版式结果属于证据，"
+                          f"请移到 proven.measurements")
+        unknown = sorted(str(k) for k in judgment
+                         if str(k) not in JUDGMENT_KEYS and str(k) not in RESULT_MEMORY_KEYS)
+        if unknown:
+            errors.append(f"judgment 维度 {unknown} 不在合法维度内：{sorted(JUDGMENT_KEYS)}")
+    hexes = sorted({h for leaf in _leaf_strings(judgment) for h in _HEX_COLOR.findall(leaf)})
+    if hexes:
+        errors.append(f"judgment 里写死了色值 {hexes}：判断要与具体值解耦，"
+                      f"证据放 proven.measurements")
+    for key, why in (("design_problem", "当时面对什么矛盾"),
+                     ("works_because", "为什么这个判断成立"),
+                     ("avoid", "什么做法要避开"),
+                     ("when_not_to", "什么情况下不适用")):
+        if not entry.get(key):
+            warnings.append(f"建议补 {key}（{why}）")
+    if not entry.get("proven"):
+        warnings.append("建议补 proven（project / qa / measurements）——没有证据的经验只是主张")
+    return errors, warnings
+
+
+def validate_dna_store(path=None) -> dict:
+    """经验库体检：结构问题点名到条目，返回 {ok, entries, errors, warnings}。"""
+    store = _load_store(path)
+    load_error = store.get("_load_error")
+    if load_error:
+        return {"ok": False, "entries": 0, "errors": [{"id": None, "reason": load_error}],
+                "warnings": []}
+    errors, warnings, seen = [], [], set()
+    for i, entry in enumerate(store.get("entries") or []):
+        eid = entry.get("id") if isinstance(entry, dict) else None
+        label = str(eid) if eid else f"#{i}"
+        if eid is not None and str(eid) in seen:
+            errors.append({"id": label, "reason": "id 重复（同 id 只会在召回里互相遮蔽）"})
+        seen.add(str(eid))
+        e_errs, e_warns = validate_dna_entry(entry)
+        errors += [{"id": label, "reason": m} for m in e_errs]
+        warnings += [{"id": label, "reason": m} for m in e_warns]
+    return {"ok": not errors, "entries": len(store.get("entries") or []),
+            "errors": errors, "warnings": warnings}
+
+
+def record_dna(entry, path=None, replace: bool = False) -> dict:
+    """写入一条经验：校验 → 去重 → 原子替换。返回 {added, id, errors, warnings, …}。
+
+    写坏记忆比不写更贵（它会被当成经验参与判断），因此：结构不合法一律拒收；
+    库文件损坏时拒写（避免把空库整体写回、经验全灭）；写盘走临时文件 + 原子替换。
+    """
+    errors, warnings = validate_dna_entry(entry)
+    if errors:
+        return {"added": False, "id": (entry or {}).get("id") if isinstance(entry, dict) else None,
+                "errors": errors, "warnings": warnings}
+    target = Path(path) if path else DNA_STORE
+    store = _load_store(target, strict=True)
+    entries = [e for e in (store.get("entries") or []) if isinstance(e, dict)]
+    eid = str(entry["id"]).strip()
+    same = next((e for e in entries if str(e.get("id") or "").strip() == eid), None)
+    if same is not None and not replace:
+        if same == entry:
+            return {"added": False, "id": eid, "entries": len(entries), "warnings": warnings,
+                    "note": "同 id 且内容一致，已是库中条目（幂等，未改动）"}
+        return {"added": False, "id": eid, "errors": ["同 id 条目已存在且内容不同："
+                                                      "确认覆盖时加 --replace"],
+                "warnings": warnings}
+    if same is not None:
+        entries[entries.index(same)] = entry
+        action = "replaced"
+    else:
+        entries.append(entry)
+        action = "added"
+    store["entries"] = entries
+    store["version"] = max(int(store.get("version") or 1), 2)
+    store.setdefault("schema_note", DNA_SCHEMA_NOTE)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(json.dumps(store, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, target)
+    return {"added": True, "action": action, "id": eid, "entries": len(entries),
+            "warnings": warnings,
+            "note": f"{action} {eid} · 经验库现有 {len(entries)} 条"}
 
 
 def _leaf_strings(v):
@@ -180,61 +271,6 @@ def _leaf_strings(v):
             yield from _leaf_strings(x)
 
 
-def record_dna(entry: dict) -> dict:
-    """发布 PASS 后沉淀设计经验（Schema v2 判断记忆；去重替换同 id 条目）。
-
-    entry = {id, signature:{keywords:[...]},
-             design_problem: str（这个场景的设计矛盾是什么）,
-             judgment: {hierarchy|space|media|color_behavior|charts|
-                        anchor_rule|structure|type_voice 中 ≥2 项},
-             avoid: [...], when_not_to: str,
-             proven: {qa, critic, revisions, project, measurements?}}
-    拒收结果记忆：judgment 含 palette/font/版式结果字段或色值 → ok:False
-    （色值与实测放 proven——判断进 judgment，证据进 proven）。
-    只有真实发布过的经验才值得记忆——调用方应仅在上游校验 PASS 后调用。
-    """
-    try:
-        store = _load_store(strict=True)
-    except Exception as e:
-        return {"ok": False, "reason":
-                f"经验库存在但无法解析（{type(e).__name__}）——拒绝写入以防"
-                f"整库覆盖毁灭；请人工修复 {DNA_STORE.name} 后重试"}
-    if not entry.get("id") or not entry.get("signature", {}).get("keywords"):
-        return {"ok": False, "reason": "entry 需要 id 与 signature.keywords"}
-    problem = entry.get("design_problem")
-    if not isinstance(problem, str) or not problem.strip():
-        return {"ok": False, "reason":
-                "Schema v2 需要 design_problem（这个场景的设计矛盾是什么）——"
-                "没有问题的判断是口号，不是经验"}
-    judgment = entry.get("judgment")
-    if not isinstance(judgment, dict) or len(set(judgment) & _JUDGMENT_KEYS) < 2:
-        return {"ok": False, "reason":
-                "Schema v2 需要 judgment（≥2 项：" + "/".join(sorted(_JUDGMENT_KEYS)) + "）"}
-    bad = set(judgment) & _RESULT_MEMORY_KEYS
-    if bad:
-        return {"ok": False, "reason":
-                f"judgment 含结果记忆字段 {sorted(bad)}：颜色/字体/版式结果会让 DNA "
-                "变模板。可迁移的行为判断放 judgment，色值与实测放 proven"}
-    for k, v in judgment.items():
-        for s in _leaf_strings(v):
-            m = _hex_re().search(s)
-            if m:
-                return {"ok": False, "reason":
-                        f"judgment.{k} 含色值 {m.group(0)}：色值是结果不是判断——"
-                        "具体色随品牌/材质/语境派生，实测色值放 proven.measurements"}
-    entries = [e for e in store.get("entries", []) if e.get("id") != entry["id"]]
-    entries.append(entry)
-    entries.sort(key=lambda e: str(e.get("id")))
-    store["entries"] = entries
-    store["version"] = store.get("version", 1)
-    try:
-        _atomic_store_write(DNA_STORE, store)
-    except (OSError, TypeError, ValueError) as e:
-        return {"ok": False, "reason":
-                f"经验库原子写入失败（{type(e).__name__}）：{e}"}
-    return {"ok": True, "store": str(DNA_STORE), "entries": len(entries)}
-
-
 # ════════════════════════════════════════════════════════════════════════
 # ② Media Decision Model
 # ════════════════════════════════════════════════════════════════════════
@@ -244,7 +280,7 @@ def record_dna(entry: dict) -> dict:
 def normalize_family(raw) -> str:
     """家族名归一（内容家族 COVER/DATA_STORY… → route/媒体家族 HERO/DATA…）。
 
-    两套命名的单一映射源：media_decision / pre_critic / layout_search.recommend
+    两套命名的单一映射源：media_decision / pre_critic / page_move
     都经此归一，禁止各自维护别名表（漂移的别名表 = 判断不一致）。
     """
     up = str(raw or "").strip().upper()
@@ -466,27 +502,65 @@ def _layout_fingerprint(elems: list[dict]) -> tuple:
 # 生成速度的大头不是渲染（毫秒级），是每页重新推理。骨架把「家族决定得了的」
 # （能量/密度/负空间职责/阅读序）确定性给出，AI 只填「内容决定得了的」
 # （insight / focus）；显式覆盖永远赢。deck 级判断见 route.deck_decision。
-# 意图骨架预设 → design_intelligence_rules.INTENT_PRESETS（真源）。
+
+
+def resolve_family(family: str) -> str:
+    """家族名解析：route 家族名（COVER / DATA_STORY …）优先，其次 di 归一名（HERO / DATA …）。
+
+    两套命名空间都必须认。只认一套时，表里的条目会静默落空、整页退回兜底句——
+    那是最贵的错：判断看起来发生了，其实没有。
+    """
+    raw = str(family or "").strip().upper()
+    if raw in FAMILY_MOVES or raw in COMPOSITION_BY_FAMILY:
+        return raw
+    fam = normalize_family(family)
+    if fam in FAMILY_MOVES or fam in COMPOSITION_BY_FAMILY:
+        return fam
+    return raw
+
+
+def page_move(family: str) -> dict:
+    """页面家族 → 叙事动作（判断线索，零几何）。生成侧据此自己构图。"""
+    key = resolve_family(family)
+    return {"family": key,
+            "move": FAMILY_MOVES.get(key, "先决定这页唯一的主语，再决定它如何被看见")}
+
+
+def composition_move(family: str = "", density: str = "", energy: str = "",
+                     content_type: str = "") -> dict:
+    """家族 × 疏密 × 能量 → 构图语法提案（描述视线如何被组织，零坐标）。
+
+    这是**起点**不是版式：生成侧可以整体推翻。它存在的理由只有一个——
+    避免每一页都从「元素该放哪」开始想，而先从「视线该怎样走」开始想。
+    """
+    key = resolve_family(family)
+    options = COMPOSITION_BY_FAMILY.get(key) or ("single_column", "quiet_center")
+    grammar = options[0]
+    if density == "sparse" and energy == "high":
+        grammar = "scale_contrast"
+    elif (density == "dense" or energy == "low") and key in (
+            "DATA_STORY", "COMPARISON", "FRAMEWORK", "EXECUTIVE_SUMMARY"):
+        grammar = options[1]
+    return {"family": key, "grammar": grammar,
+            "intent": COMPOSITION_POOL.get(grammar, ""),
+            "alternatives": [g for g in options if g != grammar]}
 
 
 def page_intent_skeleton(family: str, rhythm_stage: str = "body",
                          insight: str = "", focus: str | None = None,
                          **overrides) -> dict:
-    """家族 → 页面意图骨架（确定性；insight/focus 由内容填，显式覆盖赢）。
+    """家族 + 已决策的密度/能量 → 页面意图骨架（确定性；不给的值就不写）。
 
-    用法：skeleton = page_intent_skeleton("DATA_STORY", insight=…, focus="c1")，
-    再按当前页内容覆写（如 CLOSING 页 energy="low" 做情绪收束）。
-    未知家族给中性骨架（不猜）——家族判断本身是 Art Director 的职责。
+    density / energy / empty_space_role 由 route 的路由表决定，这里**不再自持第二张表**：
+    两处各写一份，迟早会给出互相矛盾的两页（曾经 s02 的注释说 low、骨架说 high）。
+    insight / focus 由生成侧按内容填；显式覆盖永远赢。
     """
-    fam = normalize_family(family)
     base = {"insight": insight, "focus": focus,
             "page_family": str(family or "").strip().upper(),
             "rhythm_stage": rhythm_stage}
-    base.update(INTENT_PRESETS.get(fam, {"energy": "medium", "density": "balanced",
-                                         "empty_space_role": "protect_focus"}))
+    base.update({k: v for k, v in overrides.items() if v not in (None, "")})
     if focus:
         base["reading_order"] = [focus]
-    base.update(overrides)     # 显式覆盖永远赢
     return base
 
 
@@ -933,9 +1007,7 @@ def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
         return str(page.get("family") or page.get("page_family") or "").upper()
 
     complex_layout = sum(1 for p in pages
-                         if _page_family(p) in
-                         ("FRAMEWORK", "COMPARISON", "TIMELINE", "NARRATIVE",
-                          "PROCESS", "EXECUTIVE_SUMMARY", "CASE_STUDY")) / n
+                         if _page_family(p) in COMPLEX_LAYOUT_FAMILIES) / n
     mono = 0.0
     fams = [_page_family(p) for p in pages]
     streak = 1
@@ -1188,79 +1260,6 @@ def apply_fit_ladder(spec: dict) -> tuple[dict, dict]:
 # ════════════════════════════════════════════════════════════════════════
 # Parallel Intelligence：一次调用汇合三条智能线
 # ════════════════════════════════════════════════════════════════════════
-def analyze(brief: dict, spec: dict | None = None) -> dict:
-    """内容线（brief）/ 视觉线（DNA）/ 风险线（预测 + 策略）单次汇合。
-
-    Parallel Intelligence：三条判断互不依赖——不要「P1 完成才 P2、P2 完成才 P3」
-    的串行等待。**spec 起草之前**就该拿到 `strategy`：无 spec 时用 `risk_strategy`
-    的同类目（媒体/字阶/构图政策）从 brief 直接推导，有 spec 时按真实几何预测。
-    """
-    out = {"dna": recall_dna(brief)}
-    if spec:
-        rep = pre_critic(spec)
-        out["pre_critic"] = rep
-        out["strategy"] = risk_strategy(spec, rep)
-        out["media"] = [{"slide": s.get("id"), **media_decision(s)}
-                        for s in (spec.get("slides") or []) if isinstance(s, dict)]
-        out["budgets"] = [{"slide": s.get("id"), **quality_budget(s)}
-                          for s in (spec.get("slides") or []) if isinstance(s, dict)]
-    else:
-        out["forecast"] = forecast_risk(brief or {})
-        out["note"] = ("spec 未提供：先按 forecast 的风险政策起草"
-                       "（media/hierarchy/rhythm/typography 四条先定，再落 spec），"
-                       "落稿后跑 analyze(brief, spec) 拿逐页预测与策略")
-    return out
-
-
-# ── CLI：python design_intelligence.py <build_module.py> [--dna|--risks|--analyze] ──
-def main(argv):
-    import importlib.util
-    if len(argv) < 2:
-        print("usage: python design_intelligence.py <build_module.py> "
-              "[--forecast|--risks|--analyze|--record-dna id]")
-        return 1
-    mod_path = Path(argv[1])
-    spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
-    mod = importlib.util.module_from_spec(spec_mod)
-    spec_mod.loader.exec_module(mod)
-    spec = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
-    if spec is None:
-        print("build module must define build_spec() or SPEC")
-        return 1
-    if "--forecast" in argv:
-        brief = getattr(mod, "BRIEF", {}) or {}
-        fc = forecast_risk(brief if isinstance(brief, dict) else {})
-        print(json.dumps(fc, ensure_ascii=False, indent=2))
-        return 0
-    if "--json" not in argv:
-        # 摘要输出：风险 + 生成策略（策略先读，风险单是清单）
-        rep = pre_critic(spec)
-        strat = risk_strategy(spec, rep)
-        s = rep["summary"]
-        print(f"risk-prediction: {s['high']} high / {s['med']} med · "
-              f"{s['pages_at_risk']}/{s['total_pages']} 页有风险 · {rep['elapsed_ms']}ms")
-        for key, val in strat["adjusted"].items():
-            for d in val["deck_policies"]:
-                print(f"  [{key}] 政策 → {d}")
-        if rep.get("root_cause_summary"):
-            for root in rep["root_cause_summary"]:
-                pages = "、".join(str(s) for s in (root.get("representative_pages") or [])) or "deck"
-                print(f"  [root:{root.get('root_cause')}] 代表页 {pages} · "
-                      f"{root.get('risk_count', 0)} 条")
-                if root.get("fix_first"):
-                    print(f"      fix → {root['fix_first'][:110]}")
-        elif not rep["risks"]:
-            print("  ✓ 无可预测风险——按当前 spec 大概率一次通过")
-        return 0
-    print(json.dumps(analyze({}, spec), ensure_ascii=False, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    import sys
-    raise SystemExit(main(sys.argv))
-
-
 # ════════════════════════════════════════════════════════════════════
 # 参考空间律（Calibration Laws · 判断阈值，不是模板）。
 # 阈值唯一真源 = design_intelligence_rules 内联常量；无外部存储/覆盖层。

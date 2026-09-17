@@ -1,119 +1,149 @@
-# Design System（执行默认值 · 落地时查）
+# Design System（执行默认值 · 写 elements 前查）
 
-判断顺序：语义与事实 → 一页一焦点 → 可读性 → 空间与重心 → 分组与对齐 → 跨页连续 → 图表降噪 → 装饰与动效。下层手法不修上层问题。
+这份文件只回答两件事：**落地时给什么值**（Spec 字段速查），以及**首轮就该设对、否则必然返工**的几条量。
+判断往哪走在 `design-intelligence.md`，品味与案例在 `design-craft.md`，运行时契约在 `production-contract.md`。
+这里没有主题目录、没有版式库、没有照抄即成立的公式——能用一个固定阈值描述的东西住在代码里，不在这里。
 
-## Canvas
+判断顺序：语义与事实 → 一页一焦点 → 可读性 → 空间与重心 → 分组与对齐 → 跨页连续 → 图表降噪 → 装饰与动效。
+下层手法不修上层问题。
 
-1280×720、16:9、12 列逻辑网格 + 8 单位基线。每页声明 `focus/gravity_anchor/empty_space_role/energy/density`。黄金比例/三分/对称只是候选工具：内容关系说不通就放弃。相邻两页换密度、重心或版式其一；全套走建立→聚焦→展开→证据→收束的空间曲线。
+## 执行默认值
 
-## Hierarchy
+### Canvas
 
-五层：背景 → 环境/媒体 → 结构/标题 → 内容/数据 → 焦点；焦点层原则上只有一个元素。字号阶梯见 `design-intelligence.md`（全库唯一真源）。标题写洞察，眉标只做弱导航；空间不够时减词、减类、拆页——压缩字号是最贵的退路。
+1280×720、16:9、12 列逻辑网格 + 8 单位基线。每页声明 `page_intent` 的
+`insight / focus / page_family / density / energy / empty_space_role`（可选 `reading_order`）。
+黄金比例/三分/对称只是候选工具：内容关系说不通就放弃。
+相邻两页换密度、重心或版式其一；全套走建立 → 聚焦 → 展开 → 证据 → 收束的空间曲线。
 
-## Color
+### Hierarchy
 
-颜色同时承担 brand/emotion/hierarchy，`color_intent` 声明当前优先者。Accent 稀缺才有强调（≤5%）；层级优先用同色相明度阶梯。黑底/金色/渐变本身不构成品质。 Accent 的合法职责只有指认：指认答案（对比/推荐项）、指认当前（流程节点/最新值）、指认印章（东方语义标记）、指认主题（色彩即内容主题本身时的一次性语义标记，如黑金策略封面金标题——一次有效，重复即装饰）——不承担指认的 accent 即装饰。
+跨页连续只靠三个锚：章标/眉标固定上缘、页码固定象限、来源区固定位置——锚不动，正文才可游走；
+`evidence_field` 构图语法下，标题、图表与来源共栏宽、共左缘。
 
-## Background
+五层：背景 → 环境/媒体 → 结构/标题 → 内容/数据 → 焦点；焦点层原则上只有一个元素。
+字号阶梯见 `design-intelligence.md`（全库唯一真源，不要在别处另立一套）。
+标题写洞察，眉标只做弱导航；空间不够时减词、减类、拆页——压缩字号是最贵的退路。
 
-按需组装 `Base → Image → Atmosphere/Light → Content Protection`，默认只开最少层。答不出「场景/焦点/文字安全区」就回退 `solid_world`。保护层只保可读，不把图片盖死。
+### Color
 
-## Image
+颜色同时承担 brand/emotion/hierarchy，`color_intent` 声明当前优先者。Accent 稀缺才有强调（≤5%）；
+层级优先用同色相明度阶梯。黑底/金色/渐变本身不构成品质。
 
-图须声明功能（context/emotion/proof/hero）+ 主体/构图/留白锚点/裁切/溯源。相关性 > 构图 > 光线 > 材质 > 风格。图不烘焙文字/Logo/水印/数据；主体侵入文本区或改写重心时回退、重裁或换图。
+中性色带冷暖（暖纸面 + 冷灰轨道），忌纯灰；渐变是留白手法——同族低对比，互补等彩度对撞会混出脏灰。
 
-**交付编码**：照片类资产用 JPEG q92 4:4:4（PSNR ≥45dB，视觉无损），不要用 PNG——实测同一份
-12 页稿：PPTX 2.23→1.78 MB，LibreOffice 转换 15.9→11.5 s（−28%），而 PNG 存照片 ≈9 bit/px。
-只有图形、纯色、需要透明通道时才用 PNG。落位分辨率按 2× 交付即可，多出来的像素只买来等待。
+Accent 的合法职责只有**指认**：指认答案（对比/推荐项）、指认当前（流程节点/最新值）、
+指认印章（东方语义标记）、指认主题（色彩即内容主题本身时的一次性语义标记，如黑金策略封面金标题
+——一次有效，重复即装饰）。不承担指认的 accent 即装饰。
 
-## Grouping（分组四语言，由强到弱）
+### Background
 
-场（48px+ 间距即边界）> 线（0.75–1px 发丝线）> 型（字号/字重/墨色层级）> 盒（卡片：同时花掉间距/边框/底色三重预算）。卡片三准入：需物理容器语义（数据模块/KPI）/ 需与复杂背景隔离 / 需被指认为独立对象；否则退回场/线/型。
+按需组装 `Base → Image → Atmosphere/Light → Content Protection`，默认只开最少层。
+答不出「场景 / 焦点 / 文字安全区」就回退 `solid_world`。保护层只保可读，不把图片盖死。
 
-## Charts
+### Image
 
-准确 > 清晰 > 美观 > 装饰。趋势折线、比较条形、构成 ≤5 类、桥接瀑布。一图一关系；单位/期间/口径/来源齐备；直接标注优先于图例；一个强调点、三种语义色、八个类别封顶。可读表达（环心 KPI/sparkline/瀑布小计/目标线/末端标注）不新增数据通道。 精确值归表、形状归图：两者都要时表图并置，不用数据标签把图堆成表；图不能被一句话领走时，图下加 Insight 行（→ Insight: …）兜底——但先自问图是否画错了。
+图须声明功能（context/emotion/proof/hero）+ 主体 / 构图 / 留白锚点 / 裁切 / 溯源。
+相关性 > 构图 > 光线 > 材质 > 风格。图不烘焙文字/Logo/水印/数据；主体侵入文本区或改写重心时
+回退、重裁或换图。
 
-## Motion
+交付编码：照片类资产用 JPEG q92 4:4:4（视觉无损），不用 PNG——同一份 12 页稿实测由 2.23 MB 降到
+1.78 MB，且 PNG 存照片多出的比特只买来等待；只有图形、纯色、需要透明通道时才用 PNG。落位按 2× 交付。
 
-全套 ≤2 种姿态，默认 `still`；动效只在改变阅读顺序/空间建立/数据理解时启用。静态交付下内容层级独立成立。
+### Grouping（分组四语言，由强到弱）
 
-## Anti-patterns（症状，不是禁令）
+场（48px+ 间距即边界）> 线（0.75–1px 发丝线）> 型（字号/字重/墨色层级）> 盒（卡片：同时花掉
+间距/描边/底色三重预算）。卡片三准入：需物理容器语义（数据模块/KPI）、需与复杂背景隔离、
+需被指认为独立对象；否则退回场/线/型。
 
-卡片墙/平均九宫格/过度阴影/图标堆砌/随机图库/竞争性高亮/伪 3D/背景压字/为填空加细节——看到症状先问「哪个判断缺席了」，再按「删 → 简化 → 恢复空间 → 重构重心 → 换媒体 → 微调装饰」修。
+### Charts
+
+准确 > 清晰 > 美观 > 装饰。趋势折线、比较条形、构成 ≤5 类、桥接瀑布。一图一关系；
+单位/期间/口径/来源齐备；直接标注优先于图例；一个强调点、三种语义色、八个类别封顶。
+可读表达（环心 KPI / sparkline / 瀑布小计 / 目标线 / 末端标注）不新增数据通道。
+精确值归表、形状归图：两者都要时表图并置，不用数据标签把图堆成表；
+图不能被一句话领走时，图下加 Insight 行兜底——但先自问图是否画错了。
+`highlight` 写索引或**类别名**都认（写「海外」比写「1」更接近判断本身）。
+
+### Motion
+
+全套 ≤2 种姿态，默认 `still`；动效只在改变阅读顺序/空间建立/数据理解时启用。
+静态交付下内容层级独立成立。
+
+### Anti-patterns（症状，不是禁令）
+
+卡片墙 / 平均九宫格 / 过度阴影 / 图标堆砌 / 随机图库 / 竞争性高亮 / 伪 3D / 背景压字 / 为填空加细节。
+看到症状先问「哪个判断缺席了」，再按「删 → 简化 → 恢复空间 → 重构重心 → 换媒体 → 微调装饰」修。
 
 ---
 
-## Theme DNA（人格矩阵 · 选型时查）
+## 方向（方向不是模板）
 
-主题只定义视觉人格：`perception_goal/spatial_grammar/typography_voice/color_behavior/media_behavior/chart_behavior/forbidden_signals` + 最小 token（colors/fonts/constraints）。选型比七维，不只比色板；只换色板的是变体，不是新主题。
+- 方向必须能回答三问：**什么材质 / 光从哪来、什么性格 / 元素并列还是层叠纵深**。
+  内容不需要隐喻时，`solid_world` + 编辑版心就是正确答案——诚实比意象重要。
+- 派生顺序：品牌色 > 材质与光性判断 > 方向种子（兜底）；图表色走语义角色，不写死色值。
+- 代码里的种子只是起点，不是待抄的版式，但**名字要对得上**（brief 里写 `design_direction` 时）
+  ——`route.DIRECTION_PRESETS` 有 4 个方向：`quiet_minimal / editorial_brand / product_stage /
+  evidence_first`（各带 material/light/chart/motion/background 与 seed 色板字体）；
+  `design_intelligence_rules.COLOR_DIRECTIONS` 有 13 个色彩方向族：`quiet_luxury / luxury_editorial /
+  song_elegance / zen_minimal / nordic_quiet / monochrome_noir / cinematic_narrative / nature_luxury /
+  organic_systems / precision_tech / precision_minimal / data_intelligence / editorial_intelligence`
+  （给 regime/sat/motion 约束）。名字不在表里会回落到 `quiet_minimal` 并在 plan 里留痕。
+  种子可整体推翻，品牌色永远优先。
+- 换方向只换参数与家族表达，不改编译 API、数据口径与发布门。
+- 一次只混一个维度（借排版人格，或借留白纪律）；说不清混的是什么就退回单方向。
 
-### Mature themes
+## 首轮设对（会被代码当场抓到的量，返工最贵）
 
-| ID | 人格 | 感知目标 | 空间/构图 | 排版/色彩 | 媒体/图表 | 适用 |
-|---|---|---|---|---|---|---|
-| VP-001 | Zen Minimalism | 安静权威 | 开放空间、柔和非对称、主焦点偏置 | 中性无衬线宽行距；低饱和，Accent 只标一处转折 | 建筑光/纸面/石材弱景；图表去边框去网格，直接标注 | 原则、品牌哲学、轻战略 |
-| VP-002 | Song Elegance | 人文含蓄 | 纵向游走、东方留白、单阅读轴 | 人文衬线标题 + 中性正文；墨纸色，朱砂只作语义标记 | 器物山水带真实环境材质；注释式图表、细轴收敛标记 | 文化、人文、品牌故事 |
-| VP-003 | Swiss Modern | 精确可信 | 严格列网格、左对齐、工程主轴 | 中性无衬线高识别数字；中性底 + 单一高对比信号 | 对象结构/截面/系统关系；水平条/斜率/结构图，口径明确 | 企业、系统、结构决策 |
-| VP-004 | Luxury Editorial | 稀缺编辑感 | 杂志版心、非对称大图、主图即重心 | 编辑衬线 + 中性正文；暖中性底，金属只作符号强调 | 高端对象摄影重材质环境；减类别放大关键比较 | 奢侈品、品牌叙事 |
-| VP-005 | Precision Minimal Future | 清洁期待 | 产品舞台、精密留白、单 Hero 短路径 | 中性无衬线冷白深字；信号色只担交互/状态/重点 | 产品媒体讲场景空间关系；KPI/趋势轻量化，藏重复读数 | 产品发布、功能演示 |
-| VP-006 | Organic Architecture | 触感纵深 | 有机层叠、建筑尺度、连续路径 | 人文衬线 + 高可读无衬线；土绿石色低饱和 | 建筑/自然材料/光影过渡；关系结构路径表达，线轻 | 空间、可持续、体验 |
-| VP-007 | Data Intelligence | 决策导向 | 40/60 证据分栏 + 结论锚点，全篇固定 | 中性无衬线高识别数字；单蓝信号配中性灰 | 低干扰背景结构纹理；条形/趋势/瀑布，直接标注口径齐 | 战略、分析、管理决策 |
-| VP-008 | Luxury Brand Identity | 戏剧记忆 | 电影大空间、尺度张力、一页一品牌动作 | 高对比编辑字 + 收敛正文；黑象牙金属作层级符号 | 单一 Hero 重材质光线逻辑；图表只留支撑宣言的一关系 | 品牌发布、宣言 |
-| VP-009 | Editorial Data Fusion | 研究可信 | 编辑栏式证据场，留白分论点 | 研究衬线观点 + 中性正文数字；编辑红/研究蓝只标关键证据 | 纪实摄影重现场语境来源；低噪声图表留轴线来源方法注 | 研究、洞察、趋势 |
-| VP-010 | Human Experience | 温暖具体 | 温暖呼吸、路径关系、人物作重心 | 人文无衬线/柔衬线，正文可读优先；暖中性 + 一行动信号 | 真实生活语境人物环境关系；简单路径流程对比 | 用户、服务、组织议题 |
+| 量 | 一次设对 | 谁抓你 |
+|---|---|---|
+| 强调色可辨 | Accent 与主/辅色**色相差 ≥12°**；暖纸 + 暖炭 + 金挤在同一色相族＝强调失效（出路：主色改冷石墨，或 accent 换异相色） | `accent_hue_min`（advisory） |
+| 强调色不载文字 | 低饱和金在象牙底上约 2.7:1；金只做发丝线/方点/高亮端点/目标线 | `contrast`（元素里真拿 accent 写字才会被点名） |
+| muted 可读 | 按 WCAG AA 取：浅底象牙 `#F6F5F1` → `#6E6A5F`（4.8:1）；深底深林绿 `#2E3B33` → `#A9B4AA`（5.5:1）。3.2:1 的「高级浅灰」投影上不可读；`chart_muted` 指到哪个 token，刻度就用哪个——别指到深面/浅面上 | `contrast`（<3:1 提示 / <1.8:1 警示） |
+| 整幅背景图可读 | 二选一：① `layer:background` + `overlay`（opacity ≥0.20）+ 覆盖 ≥60%（享免检）；② 用**形状**做全幅渐变罩则必须烘焙进画心——形状无豁免，与 `source_zone` 相交即 `SOURCE_COLLISION`。分幅画心（图只占一栏）不需要罩 | `BG_*` / `SOURCE_COLLISION` |
+| 发丝线对不上中心 | 位置吸附、尺寸不吸附（任一维 ≤2px 豁免）：水平细线光心恒在 `8k+0.75`，8px 方块在 `8k+4`，**二者不可能对中**。组合标记按单元素设计，靠长度变奏承担页型 | `grid_snap` + `alignment` |
+| 焦点抢戏 | `page_intent.focus` 指向的元素若是文字，必须是**页内最大字号**（设计上再留 ≥1.25× 领先余量，见 `primitives.FOCUS_LEAD`）。页眉大字、超大页码、巨型图表标签都会把焦点偷走 | `focus_scale`（hint） |
+| 字号落到驻点 | 只落 `64 / 44 / 32 / 22 / 17 / 12.5`；写 14、11.5 这类「差一点」的值，会让一页字阶从 4 涨到 6，层级失焦 | `type_budget`（hint）+ 阶梯归并 |
 
-### Editorial default（全局编辑微语言）
+---
 
-章节编号三段式（11–13px、muted）作跨页锚点，页码固定同一象限；`evidence_field` 下标题/图表/来源共栏宽、共左缘轴线；每页 ≤三段文字（主张 Statement + 证据 Body + 来源 Caption）；页脚采用对侧 footer rail：引用左对齐内容版心、页码右对齐同一安全边界、二者同一基线，`source_zone` 覆盖整行；留白声明职责（protect_focus/create_authority/separate_chapter/hold_emotion），同职责不连续 3 页；Hero 图宽与标题栏取 1.618/1/0.618。 页脚箴言（motto）若启用，全套同一位置、同一句式、逐页复诵——箴言只在不变中生效；第二语言退为文化注释（竖排小字角落/副标），不与主信息争层级。
+## Spec 字段速查（写 elements 前查）
 
-### 混血与适配
-
-一次只混一个维度（借排版人格，或借留白纪律），过七维自检否则退回单主题。主题 `composition_grammar` 与版式原型不适配（如 Zen × dashboard）不是禁令，但须在 `design_rationale` 说明为什么。
-
-### Runtime translation
+`theme` 真正被读的键只有这四个——多写的键不会报错，只是**无声忽略**（写了等于没写）：
 
 ```python
-theme = {"colors": {"background":"#...","surface":"#...","primary":"#...",
-  "secondary":"#...","accent":"#...","ink":"#...","muted":"#..."},
- "fonts": {"cn":"...","latin":"...","display":"..."},
- "constraints": {"accent_max":0.05,"max_colors":5,"min_whitespace":0.35},
- "chart_palette": {"primary":"...","secondary":"...","neutral":"...",
-  "accent":"...","negative":"..."},
- "differentiation": {"perception_goal":"...","spatial_grammar":"...",
-  "composition_grammar":"...","media_grammar":"...","chart_grammar":"..."}}
+theme = {"colors": {"background","surface","primary","secondary","ink","muted","accent","negative"},
+        "fonts": {"cn","latin"},          # 规范键；display/body 是等价别名（骨架旧写法）
+        "constraints": {"accent_max": 0.05, "whitespace_min": 0.62,   # 方向种子：见下
+                        "type_step_min": 1.25, "decoration_area_max": 0.06,
+                        "bg_layers_max": 1, "bold_ratio_max": 0.50},
+        "chart_palette": {"primary","secondary","neutral","accent","negative"}}
 ```
 
-换主题只换参数与家族表达，不改编译 API、数据口径与发布门。`route.DIRECTION_PRESETS` 的 `theme_seed` 是起点锚点（`derive_tokens` 展开全色阶，可覆盖）；方向族种子骨架以 `design_intelligence.COLOR_DIRECTIONS` 为真源，品牌色永远优先。
+未声明的色 token（panel / hairline / ramp1–5 / series1–6 / track / veil…）由 `primitives.derive_tokens`
+从 base 色一次性展开；`constraints` 不做审美裁决，只做「说过的数字」的执法。
 
-### First-Pass Correct（首轮就该设对的值）
+**`constraints` 是方向的数字部分**（plan 的 `theme.constraints` 原样落到 spec，骨架会照抄）：
 
-六条「一次设对就不用返工」的量——会被确定性检查抓到，或逼后续工序改写设计。
-第一轮写 `theme` 与母题时按这里给值。
+| 键 | 量的东西 | 越界后果 |
+|---|---|---|
+| `accent_max` | 每页强调色面积 | 强调色铺开＝没有重点 |
+| `whitespace_min` | deck 留白率下限（**元素框并集之外**的占比） | 页面被填满，读不出层次 |
+| `type_step_min` | 相邻字号级差下限 | 级差太小读成「没对齐」 |
+| `decoration_area_max` | 装饰面积上限 | 装饰抢走主焦点 |
+| `bg_layers_max` | 背景层数（≥60% 页面积的非文字元素） | 层叠过多，前景浮不起来 |
+| `bold_ratio_max` | 显式加粗的文本元素占比 | 全都加粗＝都没加粗 |
 
-1. **Accent 与 primary/secondary 必须拉开 ≥12° 色相角**（`accent_hue_min`，30° 一档）。
-   高频陷阱：**暖纸(#F4F1EA,~42°) + 暖炭(~43°) + 金(~41°)** 挤在同一色相族，强调色拿不到
-   「唯一重点」信号。出路两条：ink/primary/secondary 改**冷石墨**（#23252A，~220°），
-   或 accent 换异相色（深林绿 #2E3B33，~150°）。两边都不动＝第一轮后必然返工。
-2. **Accent 不承载文字。** 低饱和金在象牙底上仅 ~2.7:1；金只做发丝线/方点/高亮端点/目标线。
-3. **muted 按 WCAG AA 取值**：浅底象牙 #F4F1EA → **#6E6A5F（4.79:1）**；
-   深底深林绿 #2E3B33 → **#A9B4AA（5.47:1）**。3.2:1 的「高级浅灰」在投影上不可读。
-4. **整幅背景图的保护层二选一**：① `layer:background` + `overlay`(opacity ≥0.20) + 覆盖
-   ≥60% → 豁免重叠与来源区检查；② 用**形状**做全幅渐变罩则必须烘焙进画心——形状无此豁免，
-   与 source_zone 相交即 `SOURCE_COLLISION`。分幅画心（图只占一栏）不需要保护罩。
-5. **发丝线位置吸附、尺寸不吸附**（h≤2）：水平细线光心恒在 `8k+0.75`，8px 方块在 `8k+4`，
-   **不可能对中**。组合标记按**单元素**设计（一条细线，靠长度变奏承担页型）。
-6. **字号只落阶梯驻点**（L4 64 / L3 44 / L2 32 / L1 22 / L0 17 / L-1 12.5）。
-   14、11.5 这类「差一点」的值让一页字阶从 4 涨到 6，`type_budget` 命中、层级失焦。
+写错键名不会报错但**会被 `theme_constraints` 点名**（写了等于没写）。未声明的键不检查——
+手写 spec 不会被方向默认值吵到。
 
-### Spec 字段速查（写 elements 前查）
+**字体键只有 `cn` / `latin` 会被读**（`display` / `body` 认作别名）；两个都不写或写成别的名字，
+产物会回落 Arial / Microsoft YaHei——字体判断在产物里彻底消失，`theme_fonts` 会点名它。
 
-信封（每个元素）：`id`（页内唯一）、`type`、`x`/`y`/`width`/`height`（数值，落 8 网格；
-h≤2 或通栏豁免）、`role`（见下）。填充四种写法：`"#RRGGBB"` · theme token 名 ·
-`{"type":"solid","color":…,"opacity":0–1}` ·
-`{"type":"gradient","angle":0,"stops":[{"position":0,"color":…,"opacity":…},…]}` · `{"type":"none"}`。
-`stops` 至少两个；`angle` 0=左→右、90=上→下。**形状的填充走 `fill`、边框走 `stroke`**——
-顶层 `color`/`line` 在形状上被静默丢弃（元素渲染不可见）。
+**元素信封**：`id`（页内唯一）、`type`、`x`/`y`/`width`/`height`（数值，落 8 网格；任一维 ≤2px 或通栏豁免）、
+`role`。填充四种写法：`"#RRGGBB"` · theme token 名 · `{"type":"solid","color":…,"opacity":0–1}` ·
+`{"type":"gradient","angle":0,"stops":[{…}×≥2]}` · `{"type":"none"}`；`angle` 0=左→右、90=上→下。
+**形状的填充走 `fill`、描边走 `stroke`**——顶层 `color`/`line` 在形状上不生效（元素看起来没渲染）。
 
 | type | 专属字段 |
 |---|---|
@@ -121,73 +151,61 @@ h≤2 或通栏豁免）、`role`（见下）。填充四种写法：`"#RRGGBB"`
 | `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill` `stroke` `stroke_width` `stroke_opacity` `fill_opacity` `fill_role` `text` |
 | `image` | `src` `fit`(cover/contain) `crop` `asset_function`(hero/emotion/proof/context) `overlay` `content_protection` `negative` `readability_exempt` |
 
-`chart_kind` 全表（括号为每页上限）：原生 bar/horizontal_bar/comparison_bar(8) ·
-column(8) · line/trend/single_trend_line(8) · area(8) · donut/donut_composition/pie(8)；
-形状 process_flow(7) · timeline(7) · steps(6) · matrix(12) · waterfall(12) · architecture(3) ·
-bubble(12) · ranked_bar(8) · progress_bar(6) · stacked_bar(8) · big_number_row(5) ·
-sparkline(12) · kpi(1)。未知 kind 在 Guard 阻断，不会留半成品 PPTX。
+`chart_kind` 全表（括号为每页上限）：原生 bar/horizontal_bar/comparison_bar(8) · column(8) ·
+line/trend/single_trend_line(8) · area(8) · donut/donut_composition/pie(8)；形状 process_flow(7) ·
+timeline(7) · steps(6) · matrix(12) · waterfall(12) · architecture(3) · bubble(12) · ranked_bar(8) ·
+progress_bar(6) · stacked_bar(8) · big_number_row(5) · sparkline(12)。未知 kind 在 Guard 阻断；
+**缺载荷**同样阻断（空 `data`、matrix 无 `points`、architecture 无 `layers`、数字展示无 `value`）
+——空白页不会出门。
 
-图表字段五组——**数据**：`data:[{label,value,display}]`，多序列用
-`series:[{name,values}]+categories:[…]`。**出处**（数值图必填）：`source` `unit` `period`
-`basis` `data_status`，可嵌套进 `provenance:{…}`；跨页同 `metric`（缺省用 `series_name`）
-单位与期间要一致。**配色**：`color_role`/`secondary_role` ∈ primary/secondary/neutral/
-accent/negative，逃生口 `primary_color`/`secondary_color`/`ink_color`/`muted_color`。
-**强调**：`highlight`(索引) `target`+`target_label` `show_values`
-`label_collision_policy`(hide_redundant/move_outside/fail)。**版式**：`label_size`
-`value_size` `label_ratio` `label_gap` `value_width` `value_gap` `bar_height` `gap_width`；
-环形另有 `hole_size`(默认 62) `center_value` `center_label`；折线另有 `smooth`
-`end_labels` `number_format`；`big_number_row`/`stacked_bar` 另有 `items` `legend`
-`ramp` `multi_color` `max`。
+**数字展示**（`kpi` / `executive_kpi` / `big_number`）不读 `data`，只读元素级
+`value`（必填）`label`（建议填）`value_size` `label_size` `align`。
 
-`role` 决定三件事——行长豁免、注释类最小字号、能否进来源区。常用值：`title` `lead`
-`body` `caption` `annotation` `label` `metadata` `source` `method` `axis` `data_label`
-`legend` `decoration`。**来源区内只放 `source`/`method`/`metadata`**；其他角色的对象只要与
-source_zone 相交即 `SOURCE_COLLISION`（阻断，形状同样算；合格背景画心除外）。
+图表字段五组——**数据**：`data:[{label,value,display}]`，多序列用 `series:[{name,values}]+categories:[…]`。
+**出处**（数值图必填）：`source` `unit` `period` `basis` `data_status`，可嵌套进 `provenance:{…}`；
+跨页同 `metric`（缺省用 `series_name`）单位与期间一致。**配色**：`color_role`/`secondary_role` ∈
+primary/secondary/neutral/accent/negative，逃生口 `primary_color`/`secondary_color`/`ink_color`/`muted_color`。
+**强调**：`highlight`（索引或类别名/序列名）`target`+`target_label` `show_values`
+`label_collision_policy`(hide_redundant/move_outside/fail)。**差异可见**：零基长度编码
+（bar/column/horizontal_bar/comparison_bar/ranked_bar）里标了重点、两者又几乎等长（max/min <1.25×）
+＝这页的「差多少」观众看不见，`chart_argument` 会点名——改 waterfall / big_number 直接写差值，
+或索引化后放在共同基线上比长度。**版式**：`label_size` `value_size`
+`label_ratio` `label_gap` `value_width` `value_gap` `bar_height` `gap_width`；环形另有
+`hole_size`(默认 62) `center_value` `center_label`；折线另有 `smooth` `end_labels` `number_format`；
+`big_number_row`/`stacked_bar` 另有 `items` `legend` `ramp` `multi_color` `max`。
 
----
+`role` 决定三件事——行长豁免、注释类最小字号、能否进来源区。常用值：`title` `lead` `body` `caption`
+`annotation` `label` `metadata` `source` `method` `axis` `data_label` `legend` `decoration`
+`eyebrow`（眉标）`page_number`（页码）。
 
-## Evidence（证据 → 原则 → 动作 → 边界）
+**跨页锚**：plan 给每页发一个 `anchor`（≥4 页的成套 deck 才有），生成侧把它落成元素：
 
-引用协议：观察行为 → 提炼原则 → 写成动作 → 明确反例。每条引用补记来源/日期/强度；链失效降为 low，只作方向启发。
+```python
+"anchor": {"eyebrow": "DATA STORY", "page_number": 4, "figure": "Fig. 02"}
+```
 
-### Evidence Cards
+- 眉标：`role="eyebrow"`，用 plan 的家族词汇原文，**固定上缘**（全 deck 同一个 y）；
+- 页码：`role="page_number"`，**固定象限**（同一个 x/y），封面不编号；
+- 证据编号：写进该页 `caption` 开头（`Fig. 01/02…`），**按页序连续**；只有证据类页（数据/对比/案例/时间线）有。
 
-| ID | 可观察行为 | 原则 | 边界 |
-|---|---|---|---|
-| EVD-LAUNCH-001 | 发布语境以单一产品/能力 + 清晰章节组织注意力 | 发布页单一 Hero、一页一结论 | 不用于数据附录/多结论页 |
-| EVD-IDENTITY-001 | 跨媒介身份一致性（字体/比例/线条/图形语法） | 品牌转译为系统行为，不只取 logo 色板 | 一致 ≠ 每页同构图 |
-| EVD-TRIPLEI-001 | Inspiration → Ideation → Implementation + 原型迭代 | 方向冻结前理解受众场景；至少一轮渲染→批评→修正 | 以人为本 ≠ 每页放人物照 |
-| EVD-NARRATIVE-001 | 叙事先行建立理解与行动 | 结论先行，标题写洞察，顺序服务行动 | 不省略来源/限定/不确定性 |
-| EVD-EDITORIAL-001 | 编辑化留白、摄影语境、材质节奏 | 留白 + 统一摄影语言 + 稳定版心建气质 | 编辑感 ≠ 暖色衬线随机照 |
-
-### Craft Judgments（35 条微距蒸馏为 12 条判断）
-
-排版：中西混排留 1/8–1/4 em 间隙；大标题 Latin 微收、CJK 不加距；眉标加正字距显精致；行高标题贴紧、正文给呼吸；一页只有一个最大字号。
-构图：留白按页角色取型（仪式/舒适/密度）；图文取 1.618/1/0.618；焦点落轴；来源固定同一象限。
-色彩图表：Accent 稀缺（≤5%）且与主色拉开距离；层级用明度阶梯；图表直接标注、一个强调点、零轴诚实。
-
-全文 35 条见 `archive.md` Appendix C（备查，不进上下文）。证据只影响 Direction 与审查判断，不覆盖事实、可读性与品牌规则。
-
-### References
-
-[1] https://www.apple.com/apple-events/ · [2] https://www.pentagram.com/brand-identity · [3] https://www.ideo.com/ · [4] https://www.mckinsey.com/ （storytelling） · [5] https://www.kinfolk.com/
+`guard.deck_anchor` 只查三件事：声明了有没有落、位置是不是同一个、编号连不连续。
+**来源区内只放 `source`/`method`/`metadata`**；其他角色的对象只要与 `source_zone` 相交即
+`SOURCE_COLLISION`（形状同样算；合格背景画心除外）。
 
 ---
 
-## Taste Calibration（品味校准 · 经验增强，不是工程系统）
+## 经验记忆（判断的沉淀，不是参数表）
 
-审美不从阈值反推里长出来，从被记录的判断里长出来。本包不做「标注 → 反推 → 改常量」的校准工程：它只会长出更多规则、更多评分维度、固定审美标准与模板化输出，最终让 AI 只会检查、不会设计。
+审美不从阈值反推里长出来，从被记录的判断里长出来。当使用者对某一页给出判断——「这页好 / 不好，
+因为……」——把判断写成一条经验，用 `python scripts/vao.py dna --add entry.json` 入库（`--check` 体检）：
+`id`（可召回的场合键）、`signature.keywords`（召回只按它打分，空 = 永远命不中）、
+`pattern` / `when_not_to`（什么场合启用 / 收回）、`design_problem`（当时的张力）、
+`judgment`（只写行为判断，维度限 `hierarchy/space/media/color_behavior/charts/anchor_rule/structure/type_voice`）、
+`works_because` / `avoid`、`proven`（实测证据，数字放这里）。
 
-**做法**：当使用者对某一页给出判断——「这页好 / 不好，因为……」——把判断追加为 `memory/design_dna.json` 的一条经验条目，沿用现有 schema：
+写坏的记忆比不写更贵：它不报错，只会被静默忽略或误用。所以写入口只有这一个——`judgment` 里出现
+色值/字体/版式结果会被拒收（那些属于 `proven.measurements`），库文件损坏时拒绝写入。
 
-| 字段 | 写什么 |
-|---|---|
-| `id` | 可召回的场合键（如 `song_elegance_editorial`） |
-| `pattern` / `when_not_to` | 什么场合启用 / 什么场合收回 |
-| `design_problem` | 这页当时面对的张力 |
-| `judgment` | 一句话级别的判断（不参数化，不写成阈值） |
-| `works_because` / `avoid` | 为什么成立 / 什么会毁掉它 |
-| `proven` | 实测证据（可选；数字放这里，不放判断句里） |
-
-QA/guard 的静态阈值只守**物理底线**（对比度、溢出、色距、Accent 面积）：底线只升不调；底线之上不存在「审美分数线」。判断由 DNA 经验 + 当次上下文完成，校准不沉积为代码，评分维度不增加。
-
+不做「标注 → 反推 → 改常量」的校准工程：那只会长出更多规则、更多评分维度与模板化输出。
+guard/QA 的阈值只守**物理底线**（对比度、溢出、色距、accent 面积）：底线只升不调，
+底线之上不存在「审美分数线」。

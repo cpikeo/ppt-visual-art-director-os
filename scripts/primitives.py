@@ -54,6 +54,44 @@ CHART_KINDS = frozenset({
     "process_flow", "timeline", "steps", "matrix", "architecture", "sparkline",
 })
 
+def highlight_index(element, rows, default: int = -1) -> int:
+    """强调项解析：整数索引，或直接写类别名。
+
+    作者更可能说「强调海外」而不是「强调第 1 项」；写名字却被静默忽略
+    （或渲染层自作主张强调最大值），就是「看起来在判断、其实没判断」。
+    编译器与预览渲染器共用这一个语义。
+    """
+    raw = element.get("highlight") if isinstance(element, dict) else None
+    if raw is None:
+        return default
+    text = str(raw).strip()
+    for i, row in enumerate(rows or []):
+        if isinstance(row, dict) and str(row.get("label", "")).strip() == text:
+            try:
+                return int(row.get("_index", i))
+            except (TypeError, ValueError):
+                return i
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def series_highlight_index(element, names, default: int = -1) -> int:
+    """多序列图表的 highlight：整数索引，或写序列名。"""
+    raw = element.get("highlight") if isinstance(element, dict) else None
+    if raw is None:
+        return default
+    text = str(raw).strip()
+    for i, name in enumerate(names or []):
+        if str(name).strip() == text:
+            return i
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 
 # 设计系统基线网格（8 单位）：guard 归一化确认、normalizer 吸附、SKILL.md 契约三方同源
@@ -223,10 +261,11 @@ def contrast(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-# 辅助文字角色：语义上是注记/来源/轴标签，可读性门槛按「非正文」处理（3:1），
-# 不参与正文级 4.5:1 判定。guard 的行长豁免与渲染层对比度分级共用这一份名单。
+# 辅助文字角色：语义上是注记/来源/轴标签/页面家具（眉标·页码），可读性门槛按「非正文」处理
+# （3:1），不参与正文级 4.5:1 判定。**这是唯一真源**：guard 的 MEASURE_EXEMPT_ROLES 直接
+# 从这里导入（此前两处各写一份，值相同但注释宣称的同源关系并不存在）。
 AUX_TEXT_ROLES = frozenset({"source", "method", "metadata", "caption", "legend", "axis",
-                            "data_label", "annotation", "page_number"})
+                            "data_label", "annotation", "page_number", "eyebrow"})
 
 
 def spec_fingerprint(spec: dict) -> str:
@@ -318,45 +357,6 @@ def rounded_containers(elements) -> list[dict]:
     return [e for e in (elements or [])
             if isinstance(e, dict) and e.get("type") == "shape"
             and e.get("shape") in ROUNDED_SHAPES]
-
-
-def text_contrast_verdict(render_page: dict | None, fail: float = 3.0,
-                          warn: float = 4.5) -> dict:
-    """渲染实测「文字 vs 其下方像素」的最坏对比度 verdict。
-
-    返回 {"level", "value", "worst"}：level ∈ fail / soft / pass / unknown；
-    value 是触发该结论的对比度；worst 是正文级最坏框记录（id/字色/实测底色）。
-    fail 线看含注记的最坏值（注记允许低于 AA 但不能低于 3:1 —— 看不见就是看不见）；
-    soft / pass 看正文级最坏值。qa.py 与 guard.py 共用：同一页、同一证据，
-    永远得出同一结论（此前两处各写一遍 min() 逻辑，行为一致但无法保证永远一致）。
-    """
-    page = render_page or {}
-
-    def _f(v):
-        try:
-            return float(v) if v is not None else None
-        except (TypeError, ValueError):
-            return None
-
-    reading = _f(page.get("text_contrast_min"))
-    worst_all = _f(page.get("text_contrast_all_min"))
-    worst = page.get("text_contrast_worst") or {}
-    hard = (reading if worst_all is None
-            else (min(reading, worst_all) if reading is not None else worst_all))
-    if hard is not None and hard < fail:
-        # F14/v4.21：fail 由注记级（aux）最坏值驱动时，worst 必须指向
-        # 注记框——旧行为把 reading 级框贴到消息里，数字与元素对不上，
-        # 人会去修一个本来合格的元素（2026 实战被它指了四个小时）。
-        w_fail = worst
-        if (worst_all is not None and worst_all < fail
-                and (reading is None or worst_all <= reading)):
-            w_fail = page.get("text_contrast_aux_worst") or worst
-        return {"level": "fail", "value": hard, "worst": w_fail}
-    if reading is not None and reading < warn:
-        return {"level": "soft", "value": reading, "worst": worst}
-    if reading is not None:
-        return {"level": "pass", "value": reading, "worst": worst}
-    return {"level": "unknown", "value": None, "worst": worst}
 
 
 def with_alpha(hex_color: str, alpha: float) -> str:
@@ -832,8 +832,11 @@ class RenderContext:
 
     # -- 字体 -------------------------------------------------------------
     def families(self, element: dict):
-        cn = self.fonts.get("cn") or FALLBACK_CN
-        latin = self.fonts.get("latin") or FALLBACK_LATIN
+        # theme.fonts 的规范键是 cn / latin；display / body 是等价别名（历史写法：
+        # 骨架与早期夹具用过它们）。别名必须在这里认——否则写了 display 的 spec
+        # 会静默回落 FALLBACK 字体，字体判断在产物里彻底消失且毫无提示。
+        cn = self.fonts.get("cn") or self.fonts.get("body") or FALLBACK_CN
+        latin = self.fonts.get("latin") or self.fonts.get("display") or FALLBACK_LATIN
         f = element.get("font")
         if isinstance(f, str) and f:
             fam = self.fonts.get(f, f)
@@ -857,8 +860,6 @@ class RenderContext:
 # ── 设计判断基元（单一口径，v4.15 自 art_critic 下沉；该模块已移除）────────────
 # 这些常量与几何函数此前由 guard/qa 懒读取保持同源——真源理应住在基元层；
 # 9 维判断叙事归 references/design-craft.md §判断基线。移植保口径，零行为变化。
-CAPTION_ROLES = {"caption", "annotation", "source", "label", "axis",
-                 "footnote", "legend", "credit"}
 MEDIA_ROLES = {"hero", "emotion", "proof", "context"}
 STATEMENT_SIZE = 40          # 超过该字号的文字视为 Statement 级记忆锚点
 FOCUS_LEAD = 1.25            # 焦点文字需领先第二大文字的比例
@@ -881,8 +882,6 @@ LINE_MEASURE_LATIN_MAX = 75      # 每行拉丁字符上限
 LINE_MEASURE_FAIL_FACTOR = 2.0   # 超过上限 2× 视为不可读
 RHYTHM_INK_DELTA = 0.10          # 相邻页实测占用率差 ≥0.10 视为节奏成立
 RHYTHM_INK_FLAT = 0.03           # 标签变了但占用率差 ≤0.03 视为空转
-TEXT_CONTRAST_FAIL = 3.0         # 渲染实测文字对比度低于此值 → 阻断
-TEXT_CONTRAST_WARN = 4.5         # WCAG AA 正文门槛
 ASYMMETRIC_GRAMMARS = {"soft_asymmetry", "cinematic_stage", "path_sequence"}
 ANCHOR_DRIFT = 0.18              # 几何重心与声明锚点的归一化偏移阈值
 

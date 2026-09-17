@@ -45,16 +45,19 @@ MEDIA_MODEL = {
     "SECTION": (False, 0.25, "章节页：结构即节奏，安静是功能"),
     "DATA": (False, 0.05, "数据页：图表已是视觉锚点，再叠图 = 双焦点竞争"),
     "STRUCTURE": (False, 0.02, "结构页：结构关系比图像更清晰，出图必输"),
-    "PROCESS": (False, 0.05, "流程页：步骤序列自带视觉性"),
+    "PROCESS": (False, 0.05, "序列页：位置即步骤或时间，序列自带视觉性"),
     "COMPARISON": (False, 0.08, "对比页：左右张力来自内容本身"),
     "EVIDENCE": (False, 0.10, "证据页：数字与来源的可信度不需要装饰"),
     "CASE_STUDY": (True, 0.45, "案例页：仅在图像证明现场/人物/结果时使用 proof 媒体"),
 }
 
 # route 家族名 → 媒体模型家族（两套命名的一致层，唯一映射源）
+# 覆盖要求：每个 route 家族都必须落在一行上，否则该家族静默退回「未知家族」——
+# 判断看起来发生了，其实没有。缺项由 selftest 的 11/11 覆盖检查兜住。
 FAMILY_ALIASES = {
     "COVER": "HERO", "DATA_STORY": "DATA", "MINIMAL_STATEMENT": "STATEMENT",
     "EDITORIAL": "STORY", "NARRATIVE": "STORY", "FRAMEWORK": "STRUCTURE",
+    "TIMELINE": "PROCESS",
     "EXECUTIVE_SUMMARY": "EVIDENCE", "EVIDENCE_FIELD": "EVIDENCE",
     "CASE_STUDY": "CASE_STUDY",
     "HERO_COVER": "HERO", "SECTION_DIVIDER": "SECTION",
@@ -65,22 +68,65 @@ LADDER_RUNGS = (64.0, 44.0, 32.0, 22.0, 17.0, 12.5)  # 驻点字阶
 LADDER_TOL = 2.0          # 驻点吸附容差（34 视作 32，避 ±1px 噪声）
 TYPE_WEIGHTS = {"text": 1.0, "image": 1.2, "chart": 1.1,
                 "native_chart": 1.1, "shape": 0.7}
-# 声明型页面允许刻意偏轴——不对称是它们的语言，不是失衡
+# 声明型页面允许刻意偏轴——不对称是它们的语言，不是失衡（比较发生在媒体模型命名空间）
 ASYMMETRIC_OK_FAMILIES = {"HERO", "CLOSING", "STATEMENT", "SECTION"}
 
+# 复杂度家族（deck 级风险用 route 命名空间；必须 ⊆ FAMILY_MOVES，缺项由 selftest 兜住）
+COMPLEX_LAYOUT_FAMILIES = {"FRAMEWORK", "COMPARISON", "TIMELINE",
+                           "NARRATIVE", "EXECUTIVE_SUMMARY", "CASE_STUDY"}
+
+# ── 作者可写的枚举字段与合法值（写错必须被点名，不能被静默忽略）────────
+# 任何一处取值非法，对应判断都会静默失效：家族 → 媒体/动作/构图全回落；
+# 留白职责 → 免检与锚点判断失效；能量/密度 → 节奏与带位判断失效。
+EMPTY_SPACE_ROLES = ("protect_focus", "hold_emotion", "create_authority", "separate_chapter")
+ENERGY_LEVELS = ("high", "medium", "low")
+
 # ── Page Intent 骨架：家族 → 能量/密度/留白职责 ─────────────────────────
-INTENT_PRESETS = {
-    "HERO": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
-    "STATEMENT": {"energy": "high", "density": "sparse", "empty_space_role": "create_authority"},
-    "SECTION": {"energy": "medium", "density": "sparse", "empty_space_role": "separate_chapter"},
-    "DATA": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
-    "EVIDENCE": {"energy": "medium", "density": "dense", "empty_space_role": "protect_focus"},
-    "COMPARISON": {"energy": "medium", "density": "balanced", "empty_space_role": "separate_chapter"},
-    "PROCESS": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
-    "STRUCTURE": {"energy": "low", "density": "balanced", "empty_space_role": "separate_chapter"},
-    "STORY": {"energy": "medium", "density": "balanced", "empty_space_role": "hold_emotion"},
-    "CASE_STUDY": {"energy": "medium", "density": "balanced", "empty_space_role": "protect_focus"},
-    "CLOSING": {"energy": "high", "density": "sparse", "empty_space_role": "hold_emotion"},
+
+# ── 家族 → 叙事动作（"这页要完成什么"，不是"元素摆哪里"）────────────────
+# 刻意只写任务与判断线索，不给坐标：几何与构图归生成侧的设计判断。
+FAMILY_MOVES = {
+    "HERO": "一个尺度压倒性的事实或形象；除它之外全部降级或删除",
+    "COVER": "建立世界观：一句主张 + 一次材质/光线暗示，不放第二主题",
+    "DATA_STORY": "结论在上，证据在中，口径与来源在下；一图一个论点",
+    "EXECUTIVE_SUMMARY": "决策者只读这页也能行动：结论 → 依据 → 代价",
+    "COMPARISON": "共同基线下的取舍：先给判断标准，再给两侧差异",
+    "TIMELINE": "方向与节奏：起点、拐点、当前位；不罗列全部时点",
+    "FRAMEWORK": "系统关系：层次与依存，用最小结构表达最多信息",
+    "NARRATIVE": "路径与状态：谁在何时做什么，清晰到可执行",
+    "EDITORIAL": "主张 + 证据并置；文字决定版心，图只服务这句话",
+    "CASE_STUDY": "可信度来自细节：约束、取舍、结果与代价",
+    "MINIMAL_STATEMENT": "只留一句能被复述的话；留白替这句话工作",
+}
+# 键集必须与 route.ROUTES[*]["family"] 一一对应：曾经用 STRUCTURE / PROCESS 命名，
+# 全 deck 的架构页与流程页因此永远拿不到专属动作，只能吃兜底句。判断线索错位是最贵的错。
+
+# 构图语法池：**描述视线如何被组织**，不给坐标、不给栅格、不给装饰。
+# 生成侧可自由改写；这里的价值是给每个家族一个不同的起点，而不是一套固定版式。
+COMPOSITION_POOL = {
+    "scale_contrast": "一个尺度压倒性的主语（数字/形象/一句话），其余全部降级成注脚",
+    "single_column": "单栏顺序阅读，行宽本身构成节奏；不做并置，避免多重第一落点",
+    "split_field": "两个并列的场，用共同基线上的差异说话；不平均、不镜像",
+    "grid_evidence": "网格化证据面：把多个事实放在同一视线高度上比较",
+    "stacked_bands": "横向分层，每层收在一个结论上；层数由内容定，不由模板定",
+    "axis_sequence": "一条轴线承载序列与阶段：位置即时间，间隔即权重",
+    "edge_anchor": "元素贴边成锚，留白放在中间当主角；靠不对称取得张力",
+    "quiet_center": "极小元素居于安静中心，留白承担全部表达",
+    "figure_ground": "图与文互为底与图：文字成为画面的一部分，而不是压在图上",
+    "radial_focus": "中心聚焦、四周退成背景；只在必要处使用，一次一副即可",
+}
+COMPOSITION_BY_FAMILY = {
+    "COVER": ("scale_contrast", "figure_ground"),
+    "HERO": ("scale_contrast", "edge_anchor"),
+    "EDITORIAL": ("figure_ground", "single_column"),
+    "DATA_STORY": ("grid_evidence", "quiet_center"),
+    "EXECUTIVE_SUMMARY": ("stacked_bands", "single_column"),
+    "COMPARISON": ("split_field", "grid_evidence"),
+    "TIMELINE": ("axis_sequence", "stacked_bands"),
+    "FRAMEWORK": ("grid_evidence", "radial_focus"),
+    "NARRATIVE": ("stacked_bands", "edge_anchor"),
+    "CASE_STUDY": ("split_field", "figure_ground"),
+    "MINIMAL_STATEMENT": ("quiet_center", "scale_contrast"),
 }
 
 # ── 参考空间实测律（全局；内联唯一真源，无外部覆盖）─────
@@ -255,25 +301,3 @@ RISK_CATALOG = {
         "strategy": ("text_policy", "合并重复语句：一个文本框只承担一个语义角色", "阅读文本 ≤4/页（caption/annotation/source/axis 不计）")},
 }
 
-# ── 取舍顺序（低层永不为高层让位；判断冲突时的仲裁表）─────────────────
-TRADEOFF_ORDER = [
-    {"id": "fact_semantics", "zh": "事实与语义",
-     "rule": "数据不为构图造假、不为留白删减、不为美观换口径。无例外。"},
-    {"id": "readability", "zh": "可读性",
-     "rule": "与审美冲突时牺牲留白，不缩字号。"},
-    {"id": "content_task", "zh": "内容任务",
-     "rule": "比例/惯例说不通内容关系就放弃。"},
-    {"id": "emotion", "zh": "情绪",
-     "rule": "高潮页可主动打破节奏，需在 empty_space_role 说明。"},
-    {"id": "brand", "zh": "品牌",
-     "rule": "品牌规定的字体/色彩/构图优先于通用审美。"},
-]
-
-
-def risk_families() -> list[str]:
-    """12 个风险族（目录去重视图）。"""
-    seen: list[str] = []
-    for meta in RISK_CATALOG.values():
-        if meta["family"] not in seen:
-            seen.append(meta["family"])
-    return seen

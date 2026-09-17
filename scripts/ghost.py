@@ -3,21 +3,20 @@
 
 Ghost is not an Office renderer. It is a high-fidelity *art-direction* preview:
 real text, real local images, typography hierarchy, color roles, charts and
-layer order are represented without LibreOffice, poppler or a browser.
+layer order are represented with PIL alone — no office suite, no browser.
 Rendering is supersampled and downsampled once so thin rules and rounded forms
 remain clean at contact-sheet size.  It never invents decorative content.
 """
 from __future__ import annotations
 
-import importlib.util
-import json
 import math
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from primitives import RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT
+from primitives import (RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT,
+                        highlight_index)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -359,6 +358,23 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                         width=max(1, int(scale)))
     pad = max(8, int(18 * scale))
     left, top, right, bottom = x + pad, y + pad, x + w - pad, y + h - pad
+
+    # 数字展示（kpi/executive_kpi/big_number）读的是元素级 value/label，不是 data 行。
+    # 预览必须和产物说同一件事——否则「交付证据」会显示一个空框，与 PPTX 不符。
+    if kind in ("kpi", "executive_kpi", "big_number"):
+        value = str(e.get("value") or "").strip()
+        label = str(e.get("label") or "").strip()
+        big = _font(min(120.0, float(e.get("value_size", 56))) * scale * 0.75,
+                    cjk=_has_cjk(value), bold=True)
+        small = _font(float(e.get("label_size", 16)) * scale * 0.75, cjk=_has_cjk(label))
+        cy = (top + bottom) // 2
+        if value:
+            d.text((left, cy), value, font=big, fill=accent, anchor="lm")
+        if label:
+            d.text((left, cy + int(46 * scale)), label, font=small, fill=ink, anchor="lm")
+        img.alpha_composite(overlay)
+        return
+
     if not rows:
         d.line((left, bottom, right, top), fill=muted, width=max(1, int(scale)))
         d.line((left, top, right, bottom), fill=muted, width=max(1, int(scale)))
@@ -382,23 +398,38 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         total = sum(vals) or 1
         start = -90
         colors = [accent, ink, _rgba(ctx, "secondary", 0.7), _rgba(ctx, "muted", 0.5)]
+        hl = highlight_index(e, rows, 0)
         for i, val in enumerate(vals):
             end = start + 360 * val / total
             d.pieslice((left, top, right, bottom), start=start, end=end,
-                       fill=colors[i % len(colors)])
+                       fill=accent if i == hl else colors[(i + 1) % len(colors)])
             start = end
         hole = max(1, int(min(right - left, bottom - top) * 0.52))
         cx, cy = (left + right) // 2, (top + bottom) // 2
         bg = _rgb(ctx, "background", (255, 255, 255))
         d.ellipse((cx - hole // 2, cy - hole // 2, cx + hole // 2, cy + hole // 2), fill=(*bg, 255))
+    elif kind in ("bar", "horizontal_bar", "comparison_bar"):
+        # OOXML 里 barChart 的 barDir="bar" 是横向条：预览必须与产物同向，
+        # 否则「方向证据」给的是错的（曾经把横向条画成竖柱）。
+        gap = max(3, int(8 * scale))
+        bh = max(2, int((bottom - top - gap * max(0, len(values) - 1)) / max(1, len(values))))
+        hl = highlight_index(e, rows, -1)
+        for i, val in enumerate(values):
+            by = top + i * (bh + gap)
+            bw2 = int((val - lo) / span * (right - left))
+            d.rounded_rectangle((left, by, left + bw2, by + bh), radius=max(1, int(4 * scale)),
+                                fill=accent if i == hl else ink)
+        d.line((left, top, left, bottom), fill=muted, width=max(1, int(scale)))
     else:
         gap = max(3, int(8 * scale))
         bw = max(2, int((right - left - gap * max(0, len(values) - 1)) / max(1, len(values))))
+        hl = highlight_index(e, rows, -1)
         for i, val in enumerate(values):
             bx = left + i * (bw + gap)
             by = bottom - int((val - lo) / span * (bottom - top))
+            # 强调谁由 spec 决定；没声明就不强调（预览不替作者挑「最大的那条」）
             d.rounded_rectangle((bx, by, bx + bw, bottom), radius=max(1, int(4 * scale)),
-                                fill=accent if i == max(range(len(values)), key=lambda n: values[n]) else ink)
+                                fill=accent if i == hl else ink)
         d.line((left, bottom, right, bottom), fill=muted, width=max(1, int(scale)))
     img.alpha_composite(overlay)
 
@@ -491,34 +522,5 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
     return target
 
 
-def main(argv) -> int:
-    args = list(argv)
-    pages = None
-    if "--pages" in args:
-        i = args.index("--pages")
-        pages = [int(x) for x in args[i + 1].split(",") if x.strip()]
-        args = args[:i] + args[i + 2:]
-    if len(args) < 3:
-        print("usage: python ghost.py <build_module.py> <out_dir> [--pages 1,5,12]")
-        return 1
-    mod_path = Path(args[1]).resolve()
-    mod_spec = importlib.util.spec_from_file_location("buildmod", str(mod_path))
-    if mod_spec is None or mod_spec.loader is None:
-        return 1
-    mod = importlib.util.module_from_spec(mod_spec)
-    mod_spec.loader.exec_module(mod)
-    spec = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
-    if spec is None:
-        print("build module must define build_spec() or SPEC")
-        return 1
-    spec = dict(spec)
-    spec["_base_path"] = str(mod_path.parent)
-    paths = ghost_deck(spec, args[2], pages=pages)
-    contact = make_contact_sheet(paths, Path(args[2]) / "ghost-contact-sheet.png")
-    print(json.dumps({"pages": [str(p) for p in paths], "count": len(paths),
-                      "contact_sheet": str(contact) if contact else None}, ensure_ascii=False))
-    return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))

@@ -15,6 +15,7 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSI
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
     RenderContext, emu, pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
+    highlight_index, series_highlight_index,
     split_runs, is_cjk, estimate_lines,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
@@ -496,6 +497,9 @@ NATIVE_CHART_TYPES = {
     "donut_composition": XL_CHART_TYPE.DOUGHNUT,
     "pie": XL_CHART_TYPE.PIE,
 }
+# 载荷是元素级（不是 data 行）的形状图：判「有没有东西可画」要看 points / layers
+ELEMENT_PAYLOAD_CHARTS = {"matrix", "architecture"}
+
 SHAPE_CHARTS = {
     "process_flow", "timeline", "steps", "matrix",
     "waterfall", "architecture", "bubble",
@@ -516,9 +520,11 @@ def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
     tf.vertical_anchor = anchor_of("middle")
     p = tf.paragraphs[0]
-    p.text = str(text)
     p.alignment = align
-    set_para_font(p, latin, cn, size * 0.75, color, bold)
+    text = "" if text is None else str(text)
+    if text.strip():
+        p.text = text
+        set_para_font(p, latin, cn, size * 0.75, color, bold)
     return tb
 
 
@@ -611,13 +617,41 @@ def _safe_index(value, default=0):
         return default
 
 
+def _highlight_index(element: dict, rows: list[dict], default: int = -1) -> int:
+    """highlight 的解析：整数索引，或直接写类别名。
+
+    作者更可能说「强调海外」而不是「强调第 1 项」；写名字却拿到静默的
+    默认强调，是最坏的结果——所以两种都认。
+    """
+    raw = element.get("highlight")
+    if raw is None:
+        return default
+    text = str(raw).strip()
+    for row in rows:
+        if str(row.get("label")).strip() == text:
+            return int(row.get("_index", 0))
+    return _safe_index(raw, default)
+
+
+def _series_highlight(element: dict, series_names: list[str], default: int = -1) -> int:
+    """多序列图表的 highlight：整数索引，或写序列名。"""
+    raw = element.get("highlight")
+    if raw is None:
+        return default
+    text = str(raw).strip()
+    for i, name in enumerate(series_names):
+        if str(name).strip() == text:
+            return i
+    return _safe_index(raw, default)
+
+
 def _set_donut_hole_size(plot, pct: int) -> None:
     """写 c:doughnutHoleSize。python-pptx 1.0.2 的 DoughnutPlot 是空类：
     plot.hole_size = N 只是无声的实例属性赋值，序列化时丢失（实测 XML 无此元素，
     渲染器回落到默认孔比）。直接写 XML 元素；按 CT_DoughnutChart 子元素顺序
     （varyColors, ser*, dLbls, firstSliceAng, doughnutHoleSize）置于其后。
 
-    注意：PowerPoint 遵循该属性；LibreOffice 导入时忽略（对照实验 30/62/90
+    注意：PowerPoint 遵循该属性；部分阅读器会忽略（对照实验 30/62/90
     渲染孔比恒为其默认 ~0.50）——预览不变化属渲染器差异，不是本函数失效。"""
     from pptx.oxml.ns import qn
     el = plot._element
@@ -647,11 +681,13 @@ def _label(shape, text, element, ctx, color, default_size=14):
     tf.word_wrap = True
     tf.vertical_anchor = anchor_of("middle")
     p = tf.paragraphs[0]
-    p.text = str(text)
     p.alignment = PP_ALIGN.CENTER
-    cn, latin = ctx.families(element)
-    size = float(element.get("label_size", default_size))
-    set_para_font(p, latin, cn, size * 0.75, color, False)
+    text = "" if text is None else str(text)
+    if text.strip():
+        p.text = text
+        cn, latin = ctx.families(element)
+        size = float(element.get("label_size", default_size))
+        set_para_font(p, latin, cn, size * 0.75, color, False)
 
 
 # --------------------------------------------------------------------------
@@ -718,7 +754,8 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
         chart.category_axis.tick_labels.font.name = latin
     except Exception:
         pass
-    hl = _safe_index(element.get("highlight"), -1)
+    series_names = [name for name, _nums in parsed]
+    hl = series_highlight_index(element, series_names, -1)
     end_labels = bool(element.get("end_labels", True))
     # 每序列可声明语义角色（series_roles: ["primary","negative",...]）——
     # 「这条序列是风险」是判断，不该写死成某个 hex。
@@ -806,7 +843,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
             series.format.line.width = Pt(2.25)
             series.smooth = bool(element.get("smooth", False))
             # 折线图的唯一强调点：无标记则 highlight 形同虚设
-            hl = _safe_index(element.get("highlight"), -1)
+            hl = highlight_index(element, rows, -1)
             if 0 <= hl < len(rows):
                 try:
                     mk = series.points[hl].marker
@@ -827,13 +864,17 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
             except Exception:
                 pass
 
-        hl = _safe_index(element.get("highlight"), -1)
+        hl = highlight_index(element, rows, -1)
         if 0 <= hl < len(rows):
+            # 强调语义全库统一：高亮项 = accent（构成图/多序列/排行同理）。
+            # 之前这里用 secondary，等于把「结论那一项」画得比其余更浅，
+            # 与「一图一个强调」的设计判断相反。
+            accent = ctx.color("accent")
             point = series.points[hl]
             point.format.fill.solid()
-            point.format.fill.fore_color.rgb = secondary
+            point.format.fill.fore_color.rgb = accent
             try:
-                point.format.line.color.rgb = secondary
+                point.format.line.color.rgb = accent
             except Exception:
                 pass
 
@@ -875,7 +916,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
         if kind in ("donut", "donut_composition", "pie"):
             if kind != "pie":
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
-            hl = _safe_index(element.get("highlight"), 0)
+            hl = highlight_index(element, rows, 0)
             for i, point in enumerate(series.points):
                 point.format.fill.solid()
                 # 构成图各扇区用系列色区分（原先非高亮点统一 secondary，
@@ -922,7 +963,10 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     primary, secondary, ink, muted = chart_colors(element, ctx)
     rows = _rows(element)
     eid = str(element.get("id", kind))
-    if not rows:
+    # 元素级载荷的 kind（matrix→points / architecture→layers）不走数据行：
+    # 用「必须有 data 行」的通用门拦它们，会让这两种 kind 永远画不出来——
+    # 文档要求 points/layers、Guard 也只校验 points/layers，编译器却要 data = 三层口径打架。
+    if not rows and kind not in ELEMENT_PAYLOAD_CHARTS:
         ctx.warn(f"chart '{element.get('id')}': 没有可渲染的数据行，已跳过")
         return
     invalid = [r for r in rows if r.get("invalid")]
@@ -1003,14 +1047,17 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             p = tb.text_frame.paragraphs[0]
             p.text = row["label"]
             set_para_font(p, latin, cn, float(element.get("title_size", 18)) * 0.75, ink, True)
-            db = slide.shapes.add_textbox(
-                Emu(emu(cx)), Emu(emu(y + 48 + h * 0.36)),
-                Emu(emu(col_w * 0.9)), Emu(emu(h * 0.5)))
-            db.name = f"{eid}__d_{i}"
-            p = db.text_frame.paragraphs[0]
-            p.text = str(row.get("desc", ""))
-            p.line_spacing = pt(float(element.get("desc_size", 14)) * 1.3)
-            set_para_font(p, latin, cn, float(element.get("desc_size", 14)) * 0.75, muted, False)
+            desc = str(row.get("desc", "") or "").strip()
+            if desc:
+                db = slide.shapes.add_textbox(
+                    Emu(emu(cx)), Emu(emu(y + 48 + h * 0.36)),
+                    Emu(emu(col_w * 0.9)), Emu(emu(h * 0.5)))
+                db.name = f"{eid}__d_{i}"
+                p = db.text_frame.paragraphs[0]
+                p.text = desc
+                p.line_spacing = pt(float(element.get("desc_size", 14)) * 1.3)
+                set_para_font(p, latin, cn, float(element.get("desc_size", 14)) * 0.75,
+                              muted, False)
             if i < n - 1:
                 c = slide.shapes.add_connector(
                     MSO_CONNECTOR.STRAIGHT, Emu(emu(cx + col_w * 0.9)), Emu(emu(y + 22)),
@@ -1130,9 +1177,10 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         return
 
     if kind == "architecture":
-        layers = element.get("layers", [])
+        layers = element.get("layers") or []
         if not (1 <= len(layers) <= 3):
-            layers = ["Layer 1", "Layer 2"]
+            ctx.warn(f"chart '{element.get('id')}': architecture 缺少 layers，已跳过（不生成占位层名）")
+            return
         lh = h / len(layers) * 0.6
         for i, lt in enumerate(layers[:3]):
             ly = y + i * h / len(layers) + h / len(layers) * 0.2
@@ -1166,7 +1214,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         maxv = max((r["value"] for r in data), default=1) or 1
         track_c, track_a = ctx.paint("track")
         hairline_c, hairline_a = ctx.paint("hairline")
-        hl = _safe_index(element.get("highlight"), -1)
+        hl = highlight_index(element, data, -1)
         # 目标线：在已知刻度（span/maxv）上画一条竖向参考线，标注目标位置。
         # 这是「证据叙事」的可视化语言——让「现在在哪」与「要到哪」可一眼对比。
         target = element.get("target")
@@ -1368,7 +1416,8 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                 MSO_SHAPE.OVAL, Emu(emu(cx - rad)), Emu(emu(cy - rad)),
                 Emu(emu(rad * 2)), Emu(emu(rad * 2)))
             d.name = f"{eid}__b_{i}"
-            fill_rgb = primary if i == _safe_index(element.get("highlight"), 0) else secondary
+            fill_rgb = (primary if i == highlight_index(element, rows, 0)
+                        else secondary)
             d.fill.solid()
             d.fill.fore_color.rgb = fill_rgb
             d.line.fill.background()
@@ -1458,28 +1507,32 @@ def add_kpi(slide, element: dict, ctx: RenderContext) -> None:
     eid = str(element.get("id", "kpi"))
     align = element.get("align", "left")
 
+    value_text = str(element.get("value", "") or "").strip()
+    label_text = str(element.get("label", "") or "").strip()
+
     vb = slide.shapes.add_textbox(
         Emu(emu(x)), Emu(emu(y)), Emu(emu(w)), Emu(emu(h * 0.62)))
     vb.name = f"{eid}__value"
     p = vb.text_frame.paragraphs[0]
-    p.text = str(element.get("value", ""))
     p.alignment = align_of(align, PP_ALIGN.LEFT)
-    set_para_font(p, latin, cn, float(element.get("value_size", 56)) * 0.75, primary, True)
+    if value_text:
+        p.text = value_text
+        set_para_font(p, latin, cn, float(element.get("value_size", 56)) * 0.75, primary, True)
 
     lb = slide.shapes.add_textbox(
         Emu(emu(x)), Emu(emu(y + h * 0.66)), Emu(emu(w)), Emu(emu(h * 0.30)))
     lb.name = f"{eid}__label"
     p2 = lb.text_frame.paragraphs[0]
-    p2.text = str(element.get("label", ""))
     p2.alignment = align_of(align, PP_ALIGN.LEFT)
-    set_para_font(p2, latin, cn, float(element.get("label_size", 16)) * 0.75, muted, False)
+    if label_text:
+        p2.text = label_text
+        set_para_font(p2, latin, cn, float(element.get("label_size", 16)) * 0.75, muted, False)
 
 
 # ══════════════════ Layer 3 · Compiler（编排层）══════════════════
 
 COMPILER_VERSION = "1.1"
 
-import importlib.util
 import sys
 
 _HERE = str(Path(__file__).resolve().parent)
@@ -1498,31 +1551,76 @@ DISPATCH = {
 }
 
 
-def _strip_theme_shadows(output_path) -> None:
-    """默认 Office 主题的 effectStyleLst 携带 outerShdw，部分渲染器
-    （LibreOffice 等）会无视 spPr 的空 effectLst 仍套用主题投影。
-    直接在 theme XML 中移除 outerShdw，从根源保证 Quiet-luxury 无投影。"""
+_FIXED_ZIP_STAMP = (1980, 1, 1, 0, 0, 0)   # ZIP epoch：产物字节与编译时刻无关
+_EMBEDDED_OOXML = (".xlsx", ".xlsm", ".docx", ".pptx")
+
+
+def _normalize_embedded_ooxml(blob: bytes) -> bytes:
+    """内嵌 OOXML（图表工作簿）去时间化。
+
+    python-pptx 每次编译都把内嵌工作簿的 `dcterms:created/modified` 写成「当前时间」，
+    于是同一份 spec 隔一秒编译就得到不同字节：产物戳失去意义、编译缓存与预览缓存
+    的无变化复用随机失效。这里把内嵌包的时间戳与 core 时间统一压到固定值，
+    让「相同的输入」真的产出「相同的字节」。任何异常都退回原字节（不冒险改坏产物）。
+    """
+    import io as _io
+    import re as _re
+    import zipfile as _zip
+    stamp = _re.compile(r"(<dcterms:(?:created|modified)[^>]*>)[^<]*(</dcterms:(?:created|modified)>)")
+    try:
+        with _zip.ZipFile(_io.BytesIO(blob)) as zin:
+            buf = _io.BytesIO()
+            with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED) as zout:
+                for sub in zin.infolist():
+                    data = zin.read(sub.filename)
+                    if sub.filename == "docProps/core.xml":
+                        text = data.decode("utf-8")
+                        fixed = stamp.sub(r"\g<1>1980-01-01T00:00:00Z\g<2>", text)
+                        data = fixed.encode("utf-8")
+                    sub.date_time = _FIXED_ZIP_STAMP
+                    zout.writestr(sub, data)
+            return buf.getvalue()
+    except Exception:
+        return blob
+
+
+def _postprocess_package(output_path) -> None:
+    """包级后处理（一次解包，一次写回）：
+
+    1. 主题投影：默认 Office 主题的 effectStyleLst 携带 outerShdw，部分阅读器
+       会无视 spPr 的空 effectLst 仍套用投影 → 直接在 theme XML 移除 outerShdw。
+    2. 空 run：`<a:t></a:t>` 是「有对象、没内容」的痕迹，部分阅读器会渲染成空行/
+       占位方框。统一剔除空 run（不删形状），让每个残留对象都有来源。
+    3. 时间戳归零：python-pptx 写 zip 时用「当前本地时间」做条目时间；内嵌图表工作簿
+       更是把 `dcterms:created/modified` 写成当前时间。同一份 spec 隔一秒编译就得到
+       不同字节——产物戳失去意义，编译缓存与预览缓存的无变化复用随机失效。
+       外层与内嵌包一并压到固定时间，产物字节只由内容决定。
+    """
     import re as _re
     import zipfile as _zip
     import shutil as _shutil
     path = Path(output_path)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    changed = False
+    empty_run = _re.compile(r"<a:r>(?:(?!</a:r>).)*?<a:t(?:\s[^>]*)?>\s*</a:t>"
+                            r"(?:(?!</a:r>).)*?</a:r>", _re.S)
     with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w", _zip.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
-            if item.filename.startswith("ppt/theme/") and item.filename.endswith(".xml"):
+            if item.filename.endswith(_EMBEDDED_OOXML):
+                data = _normalize_embedded_ooxml(data)
+            if item.filename.endswith(".xml") and item.filename.startswith("ppt/"):
                 text = data.decode("utf-8")
-                stripped = _re.sub(r"<a:outerShdw\b.*?</a:outerShdw>", "", text,
-                                   flags=_re.S)
+                stripped = text
+                if item.filename.startswith("ppt/theme/"):
+                    stripped = _re.sub(r"<a:outerShdw\b.*?</a:outerShdw>", "", stripped,
+                                       flags=_re.S)
+                if "<a:r>" in stripped:
+                    stripped = empty_run.sub("", stripped)
                 if stripped != text:
                     data = stripped.encode("utf-8")
-                    changed = True
+            item.date_time = _FIXED_ZIP_STAMP
             zout.writestr(item, data)
-    if changed:
-        _shutil.move(str(tmp), str(path))
-    else:
-        tmp.unlink(missing_ok=True)
+    _shutil.move(str(tmp), str(path))
 
 
 def compile_deck(spec: dict, output_path, checks: bool = True,
@@ -1645,7 +1743,7 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(output_path))
-    _strip_theme_shadows(output_path)
+    _postprocess_package(output_path)
     report = {
         "passed": len(ctx.warnings) == 0,
         "slides": len(slides),
@@ -1655,38 +1753,10 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
         "output_exists": output_path.exists(),
     }
     if guard is not None:
-        report["guard"] = {"score": guard["score"],
-                           "checks": guard["checks"],
+        report["guard"] = {"checks": guard["checks"],
                            "passed": guard["passed"]}
     return report
 
 
-# --------------------------------------------------------------------------
-# 可选 CLI： python compiler.py <build_module.py> [output.pptx]
-# build_module 需定义 build_spec() -> dict 或顶层常量 SPEC
-# --------------------------------------------------------------------------
-def main(argv):
-    if len(argv) < 2 or argv[1] in ("-h", "--help"):
-        print("usage: python compiler.py <build_module.py> [output.pptx] [--json]")
-        return 1
-    mod_path = Path(argv[1])
-    spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
-    mod = importlib.util.module_from_spec(spec_mod)
-    spec_mod.loader.exec_module(mod)
-    deck = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
-    if deck is None:
-        print("build module must define build_spec() or SPEC")
-        return 1
-    rest = [a for a in argv[2:] if not a.startswith("--")]
-    out = rest[0] if rest else "deck.pptx"
-    report = compile_deck(deck, out, spec_path=str(mod_path))
-    if "--json" in argv:
-        import json
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-    else:
-        print(report)
-    return 0 if report["passed"] else 2
 
 
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))

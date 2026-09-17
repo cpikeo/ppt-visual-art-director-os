@@ -1,6 +1,6 @@
 # Design Intelligence Core（内容 → 意义 → 视觉策略 → 页面意图）
 
-判断顺序：先回答「观众需要理解、相信或决定什么」，再决定「这件事应该如何被看见」。路由/风险/色彩的机器口径在 `design_intelligence.py` 与 `design_intelligence_rules.py`，本文只留判断。
+判断顺序：先回答「观众需要理解、相信或决定什么」，再决定「这件事应该如何被看见」。路由/风险/色彩的机器口径在 `design_intelligence.py` 与 `design_intelligence_rules.py`，本文只留判断；页面得到的是家族与叙事动作，构图归生成侧判断。
 
 ## Strategy（内容意义）
 
@@ -42,7 +42,11 @@ direction:
 | 品牌/发布 | 记忆 | 单一 Hero、尺度张力 | 金色铺满、产品堆叠 |
 | 行动建议 | 明确 | 结论式标题、行动动词 | 装饰性标语 |
 
-内容类型 → 页面家族由 `route.py` 查表（cover/business/data/comparison/timeline/process/architecture/product/case/statement/closing）；数据/表格/流程/结构页不出图。
+内容类型 → 页面家族由 `route.py` 查表（13 类内容：cover / brand_story / product / case /
+statement / closing / business / agenda / data / comparison / timeline / architecture / process）；
+数据/表格/流程/结构页不出图。家族名以代码为准（11 个：COVER / HERO / EDITORIAL / NARRATIVE /
+DATA_STORY / COMPARISON / FRAMEWORK / TIMELINE / EXECUTIVE_SUMMARY / CASE_STUDY / MINIMAL_STATEMENT），
+别在文档里另造一套词汇。
 
 ## Page Intent（页面合同）
 
@@ -55,7 +59,7 @@ page_intent:
   energy: "low | medium | high"
   density: "sparse | balanced | dense"
   empty_space_role: "protect_focus | create_authority | separate_chapter | hold_emotion"
-  page_family: "COVER | HERO | EDITORIAL | NARRATIVE | DATA_STORY | COMPARISON | FRAMEWORK | TIMELINE | DASHBOARD | MINIMAL_STATEMENT | CASE_STUDY | CLOSING"
+  page_family: "COVER | HERO | EDITORIAL | NARRATIVE | DATA_STORY | COMPARISON | FRAMEWORK | TIMELINE | EXECUTIVE_SUMMARY | CASE_STUDY | MINIMAL_STATEMENT"
   design_rationale: "可选：一句为什么这样摆（选择 × 理由 × 否决项）"
 ```
 
@@ -85,7 +89,7 @@ page_intent:
 表达是否改变；图是文的证据、文是图的观点，两者皆可删则皆应删）。非对称平衡是允许的美，
 但要声明平衡靠什么承担对面（尺度/墨色/材质/留白之一）。
 
-留白三型循环：大（≥40%，opening/closing/insight）/ 标准（25–35%，context/solution/proof）/ 紧致（15–25%，evidence）。留白说不清职责即事故；有职责的大片空白常常是最贵的设计。
+留白三型循环（**结构留白** = 元素框并集之外的面积占比，实测刻度）：大 ≥60%（opening/closing/insight）/ 标准 40–60%（context/solution/proof）/ 紧致 25–45%（evidence、数据密集页）。别拿像素空白（文字笔画之间的那些）套这三个数——那是另一个量，两个口径不能换算。方向还会发一条 `whitespace_min` 下限，越界会被点名。留白说不清职责即事故；有职责的大片空白常常是最贵的设计。
 
 ## Deck Rhythm（九阶段一句话）
 
@@ -98,8 +102,9 @@ closing 形成记忆点（回收封面语言，愿景句即落款）。深色章
 哪个段落的交替，是效果不是叙事。
 
 页型节奏三手法（六套样本验证）：**章节过渡页是重置不是内容**——全幅视觉 + 单 statement、密度归零，负责换脑；**结尾页回收封面语言**——同级 statement、同轴线，愿景句即落款，不放谢谢页与联系方式；**跨页连续性三锚**——caps 眉标固定上缘、页码固定象限、证据编号（Fig./01–04）全文连续。锚不动，正文才可游走。
+（现在是可执行项：plan 逐页发 `anchor`，guard 的 `deck_anchor` 守「在不在 / 位置是否同一个 / 编号是否连续」。）
 
-**母题变奏（motif variation）**：一套 deck 只设计一个图形母题（圆/光球/编号方块），用它的变奏承担全部装饰语言——封面注册母题，章节页放大，数据页退成刻度，结尾页收束；母题之外的装饰元素全部删除。**页型标签**全场统一词汇表（COVER / NARRATIVE / DATA / STRATEGY / VISION / CLOSING，caps 小标固定页首），标签即节奏的可视化。（第二批六套样本验证）
+**母题变奏（motif variation）**：一套 deck 只设计一个图形母题（圆/光球/编号方块），用它的变奏承担全部装饰语言——封面注册母题，章节页放大，数据页退成刻度，结尾页收束；母题之外的装饰元素全部删除。**页型标签**全场统一词汇表——直接用 plan 给的 `page_family`（不要另造一套），caps 小标固定页首；标签即节奏的可视化。（第二批六套样本验证）
 
 ## Design Judgment（取舍优先级，低层永不为高层让位）
 

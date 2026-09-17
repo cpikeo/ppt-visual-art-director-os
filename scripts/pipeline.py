@@ -2,17 +2,16 @@
 # -*- coding: utf-8 -*-
 """Single-process planning entry point for PPT Visual Art Director OS.
 
-The old documented path launched intent_compiler, route and layout_search as
-separate Python processes.  Each process lost the in-memory decision cache and
-re-read the same input.  This entry point keeps the planning half in one
-process and emits one reusable JSON artifact for the spec-writing agent.
+Planning is one process, one pass: brief → route/decisions → plan.json (+ optional
+build skeleton).  Keeping it in-process preserves the decision cache and avoids
+re-reading the same input; the output artifact is the only handoff to the
+spec-writing author.
 
-It deliberately stops before compiling or rendering: planning is cheap and
-should not accidentally trigger LibreOffice or image generation.
+It stops before compiling: planning is cheap and must never trigger compilation,
+image generation, or any external renderer.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 import time
@@ -23,8 +22,8 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from intent_compiler import _load_need, compile_brief
-from route import one_pass_plan, plan_deck
+from intent_compiler import compile_brief
+from route import align_pages, explicit_content_type, one_pass_plan, plan_deck
 
 
 def build_plan_bundle(need: dict) -> dict:
@@ -34,6 +33,16 @@ def build_plan_bundle(need: dict) -> dict:
     plan = plan_deck(need)
     brief = compile_brief(need, route_plan=plan)
     intelligence = one_pass_plan(need, plan=plan)
+
+    # 页事实完整性：brief slides / plan.pages / 意图 pages 三份同出一次 route，
+    # id 必须一一对应。错配（页数不同、id 集合不同、被手工改过页序）一律留痕，
+    # 因为它会让骨架把 A 页的家族与骨架接到 B 页的内容上——错得无声无息。
+    plan_pages = plan.get("pages") or []
+    intel_pages = intelligence.get("pages") or []
+    raw_slides = need.get("slides") if isinstance(need.get("slides"), list) else []
+    align_warnings = alignment_warnings(plan_pages, intel_pages, raw_slides)
+    if align_warnings:
+        plan["warnings"] = list(plan.get("warnings") or []) + align_warnings
 
     # one_pass_plan returns the same plan for API convenience.  Do not duplicate
     # the large object in the persisted bundle.
@@ -58,18 +67,44 @@ def build_plan_bundle(need: dict) -> dict:
     return bundle
 
 
-def build_skeleton_module(bundle: dict) -> str:
-    """plan bundle → build 模块骨架（v4.26 轮次治理批）。
+def alignment_warnings(plan_pages: list[dict], intel_pages: list[dict],
+                       raw_slides: list | None = None) -> list[dict]:
+    """页事实没按 id 对齐时的留痕：可见、可批量修，但**不阻断**路由。
 
-    边界（技能包 ≠ 设计系统）：只把 plan.json 里**已决策的事实**序列化——
-    canvas 契约值、color_plan 种子槽位映射、每页 id/page_intent 骨架/source_zone。
+    这里的错配是「骨架张冠李戴」的前因（A 页的家族/骨架接到 B 页内容），
+    所以宁可吵一次也不能静默。
+    """
+    low = align_pages(plan_pages, intel_pages)
+    out = []
+    if low["mismatch"]:
+        out.append({"rule": "page_alignment", "scope": "deck",
+                    "msg": (f"路由页 {low['pages']} 页 / 意图页 {low['other_pages']} 页"
+                            f"未按 id 对齐（id 缺失或页序被改）：本次退回位置配对，"
+                            f"请重新生成 plan.json")})
+    slides = raw_slides if isinstance(raw_slides, list) else []
+    if slides and len(slides) != low["pages"]:
+        out.append({"rule": "page_alignment", "scope": "deck",
+                    "msg": (f"brief 声明 {len(slides)} 页，路由产出 {low['pages']} 页："
+                            f"骨架只落 {min(len(slides), low['pages'])} 页，先对齐页数")})
+    return out
+
+
+def build_skeleton_module(bundle: dict) -> str:
+    """plan bundle → build 模块骨架。
+
+    边界（技能包 ≠ 设计系统）：只把**已决策的事实**序列化——canvas 契约值、
+    color_plan 种子槽位映射、每页 id / page_intent 骨架 / source_zone。
     `elements` 一律留空：几何、构图、字阶、媒体是生成侧的设计判断，骨架不预设。
-    同 plan 必得同文本（确定性）。生成侧填完 TODO 直接 `qa.py --mode draft`。
+    同 plan 必得同文本（确定性）。生成侧填完后直接
+    `python scripts/vao.py check build.py deck.pptx --mode draft`。
     """
     need = bundle.get("need") or {}
     plan = bundle.get("plan") or {}
     plan_pages = plan.get("pages") or []
     intel_pages = bundle.get("pages") or []
+    # 骨架合并按 id 认页，不按位置：id 不可用时 align_pages 才退回位置配对，
+    # 且 mismatch 已由 build_plan_bundle 写进 plan.warnings。
+    pairs = align_pages(plan_pages, intel_pages)["pairs"]
     color = bundle.get("color_plan") or {}
     seed = color.get("seed_skeleton") or {}
     constraints = color.get("constraints") or {}
@@ -90,102 +125,85 @@ def build_skeleton_module(bundle: dict) -> str:
         accent_max = float(constraints.get("accent_area_max", 0.05))
     except (TypeError, ValueError):
         accent_max = 0.05
+    # 方向种子：plan 的 theme.constraints 是「方向的数字部分」（留白下限/字号级差/
+    # 装饰面积/背景层/粗体占比），骨架原样交给生成侧——写进 spec 才会被 guard 执法。
+    _SEED_KEYS = ("accent_max", "max_colors", "max_charts", "font_levels_max",
+                  "font_families_max", "whitespace_min", "type_step_min",
+                  "decoration_area_max", "bg_layers_max", "bold_ratio_max")
+    _plan_theme = plan.get("theme") if isinstance(plan.get("theme"), dict) else {}
+    _plan_cons = _plan_theme.get("constraints") if isinstance(_plan_theme.get("constraints"), dict) else {}
+    seed_cons = {k: _plan_cons[k] for k in _SEED_KEYS if k in _plan_cons}
+    if not seed_cons:
+        seed_cons = {"accent_max": accent_max}
 
     L = ['# -*- coding: utf-8 -*-',
-         '"""pipeline.py --skeleton 生成骨架：plan.json 已决策字段序列化，零布局/样式预设。',
+         '"""plan → build 骨架：只给出已决策的事实，零几何/样式预设。',
          '',
-         'TODO（填完直接 qa.py --mode draft；spec 档是诊断工具，不是阶段门）：',
+         '本骨架刻意不给坐标：构图、尺度、留白由你按内容判断。',
+         '落笔清单（一次做完，不要回来补第二遍）：',
          '  1) 每页 page_intent.insight（本页唯一结论）与 focus（视线第一落点元素 id）',
-         '  2) 每页 elements：数值几何 x/y/width/height（8 的倍数）+ text + 样式平铺顶层',
-         '  3) theme.fonts（字体家族 ≤2）与 direction.color_intent:[brand,emotion,hierarchy]',
-         '  4) 图表页齐 source/unit/period/basis；source_zone 内 role∈{source,method,metadata}',
+         '  2) elements 平铺写：x/y/width/height 数值（8 的倍数）+ text + size/color/',
+         '     bold/align/max_lines/line_height/padding；框高 ≥ 字号 × 行高 × 行数',
+         '  3) theme.fonts 写 {{cn, latin}}（家族 ≤2）；direction.color_intent: [brand, emotion, hierarchy]\n'
+         '     theme.constraints 是方向发下来的数字下限/上限，照抄别改——guard 会照着它执法',
+         '  4) 图表页齐 source/unit/period/basis；source_zone 内只放 role∈{source,method,metadata}',
+         '  5) 文本/图表/图片/来源区墨迹不相交；内容过多时先删句、再改写，不要缩字号',
+         '  6) 每页 anchor（眉标/页码/Fig. 编号）要落成元素：眉标 role=eyebrow（家族词汇原文）、'
+         '页码 role=page_number、证据编号写进该页 caption 开头；位置全 deck 一致、编号连续',
+         '',
+         '填完直接：python scripts/vao.py check <本文件> out.pptx --mode draft',
          '"""',
          '',
          'SPEC = {',
          '    "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},',
          '    "theme": {',
          f'        "colors": {colors!r},',
-         '        "fonts": {"display": "TODO", "body": "TODO"},',
-         f'        "constraints": {{"accent_max": {accent_max}}},',
+         '        "fonts": {"cn": "TODO", "latin": "TODO"},   # 家族 ≤2；display/body 是等价别名',
+         f'        "constraints": {seed_cons!r},   # 方向种子（数字约束）：写进 spec 才会被执法',
          '    },',
          '    "strategy": {},                      # TODO：P2 Strategy（受众/决策/张力/证据）',
          '    "direction": {"color_intent": []},  # TODO：[brand, emotion, hierarchy]',
          '    "slides": [']
-    for i, pg in enumerate(plan_pages):
-        intel = intel_pages[i] if i < len(intel_pages) else {}
+    for i in range(len(raw_slides)):
+        pg, intel = pairs[i] if i < len(pairs) else ({}, {})
         skel = dict(intel.get("skeleton") or {})
         skel["insight"] = ""          # 内容判断留给生成侧
         skel["focus"] = ""
-        sid = str(pg.get("id") or f"s{i + 1:02d}")
-        raw = raw_slides[i] if i < len(raw_slides) else ""
+        raw = raw_slides[i]
+        # 页面身份以**作者写的 slide** 为准：骨架不能比 brief 少一页，也不能替它换 id。
+        sid = str(raw["id"]) if isinstance(raw, dict) and raw.get("id") else str(
+            pg.get("id") or f"s{i + 1:02d}")
         if isinstance(raw, dict):
             ref = " ".join(str(raw.get(k) or "") for k in ("title", "content")).strip()
+            declared = explicit_content_type(raw)
+            if declared:
+                ref = f"{ref}（作者声明：{declared}）"
         else:
             ref = str(raw).strip()
         media = ((intel.get("media") or {}).get("decision")
                  or (pg.get("asset") or {}).get("decision") or "none")
-        L.append(f'        # ── {sid} · family={skel.get("page_family") or pg.get("page_family")}'
-                 f' · density={pg.get("density")} · energy={pg.get("energy")} · media={media}')
+        family = skel.get("page_family") or pg.get("page_family") or "TODO"
+        comp = (intel.get("composition") or {}).get("grammar")
+        L.append(f'        # ── {sid} · family={family}'
+                 f' · density={pg.get("density")} · energy={pg.get("energy")} · media={media}'
+                 + (f' · 构图语法建议={comp}（可推翻）' if comp else ''))
         if ref:
             L.append(f'        #    内容参考: {ref[:90]}')
         L.append('        {')
         L.append(f'            "id": {sid!r},')
         L.append(f'            "page_intent": {json.dumps(skel, ensure_ascii=False)},'
                  '  # TODO: insight/focus')
-        L.append('            "source_zone": {"x": 64, "y": 640, "width": 1152, "height": 40},')
-        L.append('            "background": {"color": "background"},')
-        L.append('            "elements": [')
-        L.append('                # TODO：x/y/width/height 全数值（8 的倍数）；text 放内容；')
-        L.append('                # 样式平铺顶层（size/color/bold/align/max_lines/line_height/padding）；')
-        L.append('                # 框高 ≥ 字号×行高×行数；文本/图表/图片/来源区墨迹不相交。')
+        anc = pg.get("anchor") if isinstance(pg.get("anchor"), dict) else None
+        if anc:
+            L.append(f'            "anchor": {json.dumps(anc, ensure_ascii=False)},'
+                     '  # 眉标固定上缘 / 页码固定象限 / Fig. 编号连续（落成对应 role 的元素）')
+        L.append('            "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},')
+        L.append('            "elements": [  # TODO：按本页构图语法落元素（几何与样式规则见文件头）')
         L.append('            ],')
         L.append('        },')
     L += ['    ],', '}', '']
     return "\n".join(L)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="PPT Visual Art Director OS · one-process planning pipeline")
-    parser.add_argument("brief", help="需求文件：yml / yaml / json / python module")
-    parser.add_argument("--out", help="写入可复用 plan JSON；不传则输出到 stdout")
-    parser.add_argument("--skeleton",
-                        help="另写 build 模块骨架：plan 已决策字段序列化，elements 留空待填")
-    parser.add_argument("--json", action="store_true",
-                        help="stdout 输出完整 JSON（默认同样输出 JSON，保留兼容旗标）")
-    args = parser.parse_args(argv)
-
-    try:
-        need = _load_need(args.brief)
-        bundle = build_plan_bundle(need)
-    except ModuleNotFoundError as exc:
-        parser.error(f"缺少依赖 {exc.name!r}；请运行 python -m pip install -r requirements.txt")
-        return 2
-    except Exception as exc:
-        parser.error(f"无法生成计划：{type(exc).__name__}: {exc}")
-        return 2
-
-    text = json.dumps(bundle, ensure_ascii=False, indent=2, default=str)
-    wrote_file = False
-    if args.out:
-        out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text + "\n", encoding="utf-8")
-        wrote_file = True
-        if not args.json:
-            print(f"plan: {out} ({bundle['performance']['planning_ms']}ms)")
-    if args.skeleton:
-        sk = Path(args.skeleton)
-        sk.parent.mkdir(parents=True, exist_ok=True)
-        sk.write_text(build_skeleton_module(bundle), encoding="utf-8")
-        wrote_file = True
-        if not args.json:
-            print(f"skeleton: {sk} ({len((bundle.get('plan') or {}).get('pages') or [])} 页，"
-                  f"elements 留空；填完 TODO 直接 qa.py --mode draft)")
-    if not wrote_file or args.json:
-        print(text)
-    return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())

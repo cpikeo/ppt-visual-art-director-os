@@ -3,12 +3,13 @@
 Layer 0.7 · Route（视觉智能决策层 / Visual Intelligence Layer）
 
 职责：把「内容类型 + 设计方向 + 质量等级」推导成页面级设计决策，替代逐页人工配置与
-逐轮渲染试错。它不做审美裁决（判断归 references/design-craft），也不持有主题（那是 spec.theme）。
+反复试错。它不做审美裁决（判断归 references/design-craft），也不持有主题（那是 spec.theme）。
 
-对外只有两个函数：
+对外只有两个函数（本模块无 CLI，生产入口只有 vao.py）：
 
-    plan_page(content_type, design_direction, quality_level) -> PagePlan
-    plan_deck(brief) -> {"path", "pages", "assets", "workflow", "budget"}
+    plan_page(page_intent, design_direction, quality_level) -> PagePlan
+    plan_deck(brief) -> {"path", "pages", "theme", "assets", "budget",
+                         "execution", "intent_interpretation", "warnings"}
 
 brief 最小集（plan_deck 的唯一输入，yml / json / 定义 BRIEF 的模块均可）：
 
@@ -16,8 +17,6 @@ brief 最小集（plan_deck 的唯一输入，yml / json / 定义 BRIEF 的模�
     occasion: 2026 年终总结      design_direction: editorial_brand   # 可省；缺省走中性 quiet_minimal
     quality_level: fast|advanced                                   # 可省
     slides: ["封面：年度总结", {"id": "s04", "type": "data", "title": "增长结构"}]
-
-CLI：``python3 scripts/route.py brief.yml --json``（``--demo`` 用内置示例 deck 验证行为）。
 
 设计约束（与 SKILL.md Decision Framework 一致）：
   * 纯函数、零配置、零外部依赖；不读写主题 Markdown，不产生文件。
@@ -105,6 +104,69 @@ ROUTES: dict[str, dict] = {
 }
 DEFAULT_ROUTE = ROUTES["business"]
 
+# 显式声明的内容类型/家族 → 路由 key。作者写 `family: DATA_STORY` 或 `type: 数据`
+# 都必须落到同一条路由；关键词嗅探只在作者什么都没写时才允许介入。
+CONTENT_TYPE_ALIASES: dict[str, str] = {
+    "title": "cover", "hero": "cover", "opening": "cover", "封面": "cover",
+    "editorial": "brand_story", "manifesto": "brand_story", "brand": "brand_story",
+    "launch": "product", "product_story": "product", "release": "product",
+    "case_study": "case", "proof": "case", "客户案例": "case",
+    "quote": "statement", "insight": "statement", "金句": "statement",
+    "data_story": "data", "chart": "data", "metric": "data", "数据页": "data",
+    "compare": "comparison", "versus": "comparison", "对比": "comparison",
+    "roadmap": "timeline", "milestone": "timeline", "时间轴": "timeline",
+    "framework": "architecture", "structure": "architecture", "system": "architecture",
+    "narrative": "process", "steps": "process", "流程": "process",
+    "executive_summary": "business", "summary": "business", "overview": "business",
+    "agenda": "agenda", "toc": "agenda", "目录": "agenda",
+    "closing": "closing", "cta": "closing", "ending": "closing", "结束页": "closing",
+}
+
+_EXPLICIT_TYPE_KEYS = ("type", "family", "page_family", "content_type")
+
+
+def _canonical_content_type(value) -> str | None:
+    """一个词 → 路由 key（认 ROUTES、别名表、包含匹配；不认识就 None，不猜）。"""
+    token = str(value or "").strip().lower()
+    if ":" in token:                       # 兼容 "family: data" 这类整串写法
+        token = token.split(":", 1)[1]
+    token = token.strip().replace("-", "_").replace(" ", "_")
+    if len(token) < 2:
+        return None
+    if token in ROUTES:
+        return token
+    if token in CONTENT_TYPE_ALIASES:
+        return CONTENT_TYPE_ALIASES[token]
+    for alias, ctype in CONTENT_TYPE_ALIASES.items():
+        if alias in token or (len(token) >= 2 and token in alias):
+            return ctype
+    return None
+
+
+def explicit_content_type(item) -> str | None:
+    """作者显式声明的内容类型（归一后）；没写返回 None。
+
+    只有这里判定「作者说了什么」——关键词嗅探永远不进这一步。
+    """
+    if not isinstance(item, dict):
+        return None
+    for key in _EXPLICIT_TYPE_KEYS:
+        raw = item.get(key)
+        if _intent_value(raw):
+            hit = _canonical_content_type(raw)
+            if hit:
+                return hit
+    return None
+
+
+def _alternative_route_key(item) -> str | None:
+    """作者写的是英文家族名但表里没有时的兜底提示（不改写，只用于留痕）。"""
+    if not isinstance(item, dict):
+        return None
+    raw = item.get("family") or item.get("type")
+    return str(raw).strip() if _intent_value(raw) else None
+
+
 # 设计方向 → 视觉推导（材质 / 光线 / 图表风格 / 背景策略）。只列可执行差异，不做形容词堆叠。
 # theme_seed：该方向的「成品种子色板 + 字体」。种子不是模板——spec.theme 拿到种子后仍由
 # primitives.derive_tokens 规则展开出完整色阶（panel/hairline/ramp/series…），调用方也仍可
@@ -122,7 +184,9 @@ DIRECTION_PRESETS: dict[str, dict] = {
                    "display": "Helvetica Neue"},
             text_default="ink",
             chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
-            constraints={"accent_max": 0.05, "max_colors": 5, "min_whitespace": 0.35},
+            constraints={"accent_max": 0.05, "max_colors": 5, "whitespace_min": 0.62, 
+                              "type_step_min": 1.25, "decoration_area_max": 0.06,
+                              "bg_layers_max": 1, "bold_ratio_max": 0.50},
             color_intent=["hierarchy", "emotion", "brand"],
         )),
     "editorial_brand": dict(
@@ -138,8 +202,10 @@ DIRECTION_PRESETS: dict[str, dict] = {
                     "ink": "#191510", "muted": "#7C7468"},
             fonts={"cn": "Songti SC", "latin": "Georgia", "display": "Georgia"},
             text_default="ink",
-            chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
-            constraints={"accent_max": 0.04, "max_colors": 5, "min_whitespace": 0.40},
+            chart_primary="primary", chart_secondary="accent", chart_muted="muted",
+            constraints={"accent_max": 0.04, "max_colors": 5, "whitespace_min": 0.58,
+                              "type_step_min": 1.25, "decoration_area_max": 0.08,
+                              "bg_layers_max": 1, "bold_ratio_max": 0.45},
             color_intent=["brand", "emotion", "hierarchy"],
         )),
     "product_stage": dict(
@@ -153,8 +219,10 @@ DIRECTION_PRESETS: dict[str, dict] = {
             fonts={"cn": "PingFang SC", "latin": "Helvetica Neue",
                    "display": "Helvetica Neue"},
             text_default="ink",
-            chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
-            constraints={"accent_max": 0.05, "max_colors": 5, "min_whitespace": 0.40},
+            chart_primary="primary", chart_secondary="accent", chart_muted="muted",
+            constraints={"accent_max": 0.05, "max_colors": 5, "whitespace_min": 0.48,
+                              "type_step_min": 1.30, "decoration_area_max": 0.12,
+                              "bg_layers_max": 2, "bold_ratio_max": 0.65},
             color_intent=["emotion", "brand", "hierarchy"],
         )),
     "evidence_first": dict(
@@ -172,10 +240,15 @@ DIRECTION_PRESETS: dict[str, dict] = {
                    "display": "Helvetica Neue"},
             text_default="ink",
             chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
-            constraints={"accent_max": 0.05, "max_colors": 5, "min_whitespace": 0.30},
+            constraints={"accent_max": 0.05, "max_colors": 5, "whitespace_min": 0.52,
+                              "type_step_min": 1.25, "decoration_area_max": 0.05,
+                              "bg_layers_max": 1, "bold_ratio_max": 0.60},
             color_intent=["hierarchy", "brand", "emotion"],
         )),
 }
+
+# 证据类家族：这些页的主张靠证据支撑，按页序给 Fig. 编号（KPI 大数字是数字，不是图）。
+FIGURE_FAMILIES = ("DATA_STORY", "COMPARISON", "CASE_STUDY", "TIMELINE")
 
 ADVANCED_TRIGGERS = ("发布会", "品牌", "年报", "旗舰", "形象", "高端", "launch", "brand",
                      "keynote", "manifesto", "premium", "campaign")
@@ -258,8 +331,6 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
         content_type = detect_type(content_type)
     r = ROUTES.get(content_type, DEFAULT_ROUTE)
     # 自由文本方向先规范化；未知方向仍安全回落，但由 plan_deck 留 warning。
-    direction, _direction_note = _canonical_direction(design_direction)
-    d = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"])
     quality = _quality(quality_level)
 
     asset = r["asset"]
@@ -271,11 +342,9 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
     if quality == "fast":        # 快速路径收一档尺度，降低构图与裁切复杂度
         statement = max(40, int(statement * 0.85) // 4 * 4)
 
-    pixel = asset == "required" or r["family"] == "COVER"
     return {
         "content_type": content_type,
         "mode": MODE_LABEL[quality],
-        "needs_pixel_evidence": pixel,
         "page_family": r["family"],
         "density": r["density"],
         "energy": r["energy"],
@@ -285,18 +354,9 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
         "type_scale": {"statement": statement, "body": body, "caption": caption},
         "asset": {"decision": asset, "function": r["asset_function"],
                   "why": _asset_reason(content_type, asset)},
-        "derived": {
-            "background": d["background"],
-            "material": d["material"],
-            "light": d["light"],
-            "chart_style": d["chart"],
-            "motion": d["motion"],
-            "composition_grammar": "soft_asymmetry" if d["asym"] else "evidence_field",
-        },
-        # 该方向的成品种子色板/字体：直接落进 spec.theme，derive_tokens 据此展开完整色阶。
-        # 种子可被调用方覆盖；它是「起点的锚点」，不是「终点的模板」。
-        "theme_seed": d.get("theme_seed", {}),
-        "focus": "statement",     # 焦点恒为 Statement 级结论（≥ STATEMENT_SIZE 且领先 1.25×）
+        # 焦点恒为 Statement 级结论（≥ STATEMENT_SIZE 且尺度领先 1.25×）；
+        # 元素 id 由生成侧决定，这里只给尺度关系，不给坐标、不给命名模板。
+        "focus": "statement",
     }
 
 
@@ -309,18 +369,24 @@ def _asset_reason(ctype: str, decision: str) -> str:
 
 
 _DECK_CACHE: dict[str, dict] = {}
-_CACHE_STATS = {"hits": 0, "misses": 0}
 MAX_DECK_CACHE = 32   # 只缓存整副 deck 的规划结果；有界，不演化成配置系统
 
 
-def cache_stats() -> dict:
-    """决策缓存命中情况（用于核对「修订循环里是否还在重复推导」）。"""
-    return {**_CACHE_STATS, "size": len(_DECK_CACHE), "max": MAX_DECK_CACHE}
+def _direction_execution(direction: str) -> dict:
+    """方向 → 执行参数（deck 级事实，逐页复制没有意义）。
 
-
-def clear_cache() -> None:
-    _DECK_CACHE.clear()
-    _CACHE_STATS["hits"] = _CACHE_STATS["misses"] = 0
+    这些词是介质/光照/图表手法的描述，不是模板：它们约束「用什么质感说话」，
+    不规定元素放在哪里。几何与构图永远归生成侧的设计判断。
+    """
+    d = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"])
+    return {
+        "background": d["background"],
+        "material": d["material"],
+        "light": d["light"],
+        "chart_style": d["chart"],
+        "motion": d["motion"],
+        "composition_grammar": "soft_asymmetry" if d["asym"] else "evidence_field",
+    }
 
 
 def _seed_from_brand(preset: dict, brand: dict | None) -> dict:
@@ -365,9 +431,7 @@ def plan_deck(brief: dict) -> dict:
         return _plan_deck(dict(brief))
     hit = _DECK_CACHE.get(key)
     if hit is not None:
-        _CACHE_STATS["hits"] += 1
         return _copy.deepcopy(hit)
-    _CACHE_STATS["misses"] += 1
     plan = _plan_deck(dict(brief))
     if len(_DECK_CACHE) >= MAX_DECK_CACHE:  # 有界缓存：先淘汰最早写入的一半
         for k in list(_DECK_CACHE)[: MAX_DECK_CACHE // 2]:
@@ -381,8 +445,9 @@ def _intent_value(value) -> bool:
 
 
 _PAGE_INTENT_FIELDS = (
-    "type", "title", "content", "insight", "focus", "page_family",
-    "density", "energy", "narrative_role", "asset", "media", "reading_order",
+    "type", "family", "title", "content", "insight", "focus", "page_family",
+    "content_type", "density", "energy", "empty_space_role", "narrative_role",
+    "asset", "asset_function", "media", "reading_order",
 )
 
 
@@ -392,10 +457,9 @@ def _page_intent_interpretation(item, text: str, explicit_type, page_plan: dict)
     if isinstance(item, dict):
         explicit = {k: item.get(k) for k in _PAGE_INTENT_FIELDS
                     if k in item and _intent_value(item.get(k))}
-    inferred_type = detect_type(text)
     inferred = {
         "content_type": {"value": page_plan.get("content_type"),
-                          "basis": "explicit type" if _intent_value(explicit_type)
+                          "basis": "explicit declaration" if _intent_value(explicit_type)
                                    else "keyword detection"},
         "page_family": {"value": page_plan.get("page_family"), "basis": "content_type route"},
         "density": {"value": page_plan.get("density"), "basis": "content_type route"},
@@ -404,20 +468,16 @@ def _page_intent_interpretation(item, text: str, explicit_type, page_plan: dict)
                   "basis": "quality and content route"},
     }
     conflicts = []
-    if _intent_value(explicit_type) and str(explicit_type) not in ROUTES:
-        conflicts.append({"field": "type", "explicit": explicit_type,
-                          "inferred": inferred_type,
-                          "reason": "unknown explicit type fell back to keyword/business route"})
-    elif _intent_value(explicit_type) and inferred_type != "business" \
-            and str(explicit_type) != inferred_type:
-        conflicts.append({"field": "type", "explicit": explicit_type,
-                          "inferred": inferred_type,
-                          "reason": "page text strongly signals a different content type; explicit type wins"})
-    for field in ("density", "energy"):
+    keyword_type = detect_type(text)
+    if explicit_type and explicit_type != keyword_type:
+        conflicts.append({"field": "content_type", "explicit": explicit_type,
+                          "keyword_signal": keyword_type,
+                          "reason": "关键词与显式声明不一致；显式声明生效（Content > Template），仅留痕"})
+    for field in ("density", "energy", "empty_space_role"):
         if field in explicit and str(explicit[field]) != str(page_plan.get(field)):
             conflicts.append({"field": field, "explicit": explicit[field],
                               "inferred": page_plan.get(field),
-                              "reason": "route output does not silently override explicit page intent"})
+                              "reason": "显式声明生效；推断值仅记录，不改写作者判断"})
     return {"explicit": explicit, "inferred": inferred, "conflicts": conflicts}
 
 
@@ -471,31 +531,37 @@ def _plan_deck(brief: dict) -> dict:
         raise TypeError("brief.slides must be a list of page briefs")
     pages = []
     for i, item in enumerate(raw):
-        ctype = item.get("type") if isinstance(item, dict) else None
         text = (str(item.get("title") or "") + " " + str(item.get("content") or "")) if isinstance(
             item, dict) else str(item)
-        plan = plan_page(ctype or text, direction, quality)
-        plan["index"] = i + 1
-        plan["id"] = (item.get("id") if isinstance(item, dict) and item.get("id")
+        declared_type = explicit_content_type(item)
+        page = plan_page(declared_type or text, direction, quality)
+        if isinstance(item, dict):
+            # 显式声明赢过推断：密度/能量/留白职责以作者为准，冲突只留痕不改写。
+            for field in ("density", "energy", "empty_space_role"):
+                value = item.get(field)
+                if _intent_value(value):
+                    page[field] = str(value).strip()
+                    if field == "density":
+                        page["density_explicit"] = True
+            if _intent_value(item.get("asset_function")):
+                page.setdefault("asset", {})["function"] = str(item["asset_function"]).strip()
+            if _intent_value(item.get("composition")):
+                page["composition_explicit"] = str(item["composition"]).strip()
+        page["index"] = i + 1
+        page["id"] = (item.get("id") if isinstance(item, dict) and item.get("id")
                       else f"s{i + 1:02d}")
-        plan["intent_interpretation"] = _page_intent_interpretation(
-            item, text, ctype, plan)
-        pages.append(plan)
+        page["declared_type"] = declared_type
+        page["intent_interpretation"] = _page_intent_interpretation(
+            item, text, declared_type, page)
+        pages.append(page)
     _alternate_density(pages)
     for pg in pages:
-        interp = pg.get("intent_interpretation") or {}
-        inferred = interp.get("inferred") or {}
+        inferred = (pg.get("intent_interpretation") or {}).get("inferred") or {}
         if "density" in inferred:
             inferred["density"]["value"] = pg.get("density")
-        if pg.get("density_declared_conflict"):
-            inferred["density"]["basis"] = "content route + deck rhythm adjustment"
-            (interp.setdefault("conflicts", [])).append({
-                "field": "density",
-                "explicit": (interp.get("explicit") or {}).get("density"),
-                "inferred_before": pg["density_declared_conflict"],
-                "inferred": pg.get("density"),
-                "kind": "inferred_adjustment",
-                "reason": "adjacent-page rhythm alternation changed the route suggestion"})
+            inferred["density"]["basis"] = (
+                "explicit declaration" if pg.get("density_explicit")
+                else "content_type route + deck rhythm pass")
 
     needed = [p["id"] for p in pages if p["asset"]["decision"] in ("required",)]
     reused = [p["id"] for p in pages if p["asset"]["decision"] == "reuse"]
@@ -503,30 +569,9 @@ def _plan_deck(brief: dict) -> dict:
     assets = {"generate": needed[:cap], "generate_extra": needed[cap:], "reuse": reused,
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
     assets["planned_calls"] = len(assets["generate"])
-    # 轮次契约（v4.26 两代两验）：默认链只有 draft 与 release 两道验证门；
-    # spec/review 是诊断与抽查工具，advisory 挂在同一次 draft 调用上，不各占一轮。
-    workflow = ["R1 规划：pipeline.py brief.yml --out plan.json --skeleton build_mydeck.py"
-                "（单进程冻结 Brief/route/layout/risk；已决策字段序列化进骨架）",
-                "R2 一次性生成：Strategy/Direction/全量 spec 填入骨架；"
-                "资产出图请求同轮批量发出（与写 spec 并行，draft 前收齐 QC）",
-                "R3 验证①：qa.py <build> out.pptx --mode draft"
-                "（Normalizer → Guard → Compile → PPTX，零渲染；报告含 fix_plan）",
-                "R4 唯一修正轮：按 fix_plan 根因组一次改完（零文档回读）→ 复跑 draft",
-                "R5 验证②/收口：方向确认后直接 qa.py <build> out.pptx --mode release"
-                "（全量渲染 → QA → Manifest；发布门=0 阻断+全量像素+完整性，"
-                "score 与非阻断警告仅记录）",
-                "工具（非阶段门）：ghost.py 看方向（~1ms/页，零渲染）· --mode review "
-                "单页像素抽查 · --mode spec 不写文件诊断 · guard.py/compiler.py 独立诊断，"
-                "不要与默认链串行执行"]
-    if quality == "advanced":
-        workflow.append("资产：仅对 assets.generate 中的页面调用图像模型，逐页绑定留白锚点")
-    # 哪些页面值得付渲染成本：首尾页 + 需要画心的页（图表与遮挡由 QA 从 spec 兜底挑选）
-    pixel_ids = sorted({p["id"] for p in pages if p["needs_pixel_evidence"]}
-                       | ({pages[0]["id"], pages[-1]["id"]} if pages else set()))
     exec_mode = recommend_mode(brief)
-    # V3：P1 就召回 Design DNA（视觉线与内容线并行，不串行等待）。
-    # 可选智能层失败可以降级，但必须留在 plan.warnings，不能把异常伪装成
-    # 「无 DNA/无媒体判断」；工程主链仍由 Guard/QA 负责。
+    # V3：P1 就召回 Design DNA（经验线并行，不串行等待）。可选智能层失败可以降级，
+    # 但必须留在 plan.warnings，不能把异常伪装成「无 DNA/无媒体判断」。
     intelligence_warnings = []
     try:
         from design_intelligence import recall_dna, media_decision, quality_budget
@@ -537,20 +582,36 @@ def _plan_deck(brief: dict) -> dict:
         dna_hit = {"matched": None, "confidence": 0.0, "dna": None,
                    "note": "design_intelligence 不可用，按主题种子起步；详见 warnings"}
     for pg in pages:
-        # 媒体决策模型：置信度 + 理由（与 asset 闸门互补——闸门管预算，模型管判断）
+        # 媒体判断：置信度 + 理由（闸门管预算，模型管判断）
         try:
-            md = media_decision({"page_intent": pg})
+            md = media_decision({"page_intent": {"page_family": pg.get("page_family"),
+                                                 "density": pg.get("density")}})
             pg["media_confidence"] = md["confidence"]
             pg["media_reason"] = md["reason"]
-            pg["quality_budget"] = quality_budget({"page_intent": pg})
+            pg["quality_budget"] = quality_budget(
+                {"page_intent": {"page_family": pg.get("page_family"),
+                                 "density": pg.get("density")}})
         except Exception as exc:
             intelligence_warnings.append({
                 "rule": "design_intelligence", "scope": pg.get("id"),
                 "error": f"{type(exc).__name__}: {exc}"})
+    # 跨页锚（deck 级事实）：成套 deck 才需要连续性装置，短 deck 不发锚——为两页做家具是浪费。
+    # 眉标用家族词汇原文（全场统一），页码从第 2 页起（封面不编号），证据编号只给证据类页。
+    # 这三样落成元素后由 guard 的 deck_anchor 查：在不在、是不是同一个位置、编号连不连续。
+    if len(pages) >= 4:
+        fig_no = 0
+        for idx, pg in enumerate(pages):
+            fam = str(pg.get("page_family") or "")
+            anchor = {"eyebrow": fam.replace("_", " ") or "PAGE"}
+            if idx > 0:
+                anchor["page_number"] = idx + 1
+            if fam in FIGURE_FAMILIES:
+                fig_no += 1
+                anchor["figure"] = f"Fig. {fig_no:02d}"
+            pg["anchor"] = anchor
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"]).get("theme_seed", {})
     # Color Intelligence 入口：品牌色一到，方向预设立即让位。「科技=蓝」这类
-    # 方向→色值的模板映射在入口处被切断；派生色阶由 RenderContext 的 OKLab
-    # derive_tokens 从覆盖后的种子派生。
+    # 方向→色值的模板映射在入口处被切断；派生色阶由 OKLab derive_tokens 从种子展开。
     seed = _seed_from_brand(seed, brief.get("brand_colors")
                             if isinstance(brief, dict) else None)
     plan_warnings = ([w for w in (direction_warning, quality_warning) if w]
@@ -562,79 +623,46 @@ def _plan_deck(brief: dict) -> dict:
         "path": quality,
         "mode": MODE_LABEL[quality],
         "dna": dna_hit,
-        "execution": {
-            "mode": exec_mode,
-            "modes": ["sketch", "draft", "review", "release"],
-            "rule": ("sketch=草图链（结构探索，只守数据诚实性与结构合法性，契约免除）；"
-                     "draft=创作链（零渲染，初稿/探索/多方案，guard+compile+PPTX）；"
-                     "review=审查链（只渲染变化页 ∪ 关键页）；"
-                     "release=发布链（全量像素+Manifest，唯一给发布资格的一档）；"
-                     "规则一句话：draft 零渲染，review 测变化页，release 全量"),
-            "escalate": {"to_review": ["用户确认方向", "改了布局/主题/图表结构"],
-                         "to_release": ["终版交付", "发布前复核"]},
-            "note": "模式是流程控制；Fast/Advanced 是预算控制——两者正交，可任意组合。",
-        },
+        "execution": {"recommended": exec_mode,
+                      "modes": ["spec", "draft", "release"],
+                      "note": ("深度由任务赢得：简单任务走 draft 即交付；"
+                               "只有终版收口才需要 release 的全量证据与 Manifest。")},
         "design_direction": direction,
         "direction_input": requested_direction,
         "quality_level": quality,
         "quality_input": quality_input,
         "warnings": plan_warnings,
         "intent_interpretation": intent_interpretation,
-        "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可覆盖）
+        "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可被作者覆盖）
+        "direction_execution": _direction_execution(direction),  # 介质/光照/图表手法（deck 级）
         "pages": pages,
         "assets": assets,
-        "verification": {
-            "iteration_level": 1,                    # 迭代期先看结构，不必每轮渲染
-            "release_level": 3,                      # 发布必须全量像素证据
-            "pixel_page_ids": pixel_ids,
-            "pixel_pages": len(pixel_ids),
-            "reason": ("迭代用 Level 1 静态判定 + 关键页渲染；发布用 Level 3 全量"
-                       if quality == "fast" else
-                       "发布级 deck：关键页先测，收口仍需 Level 3 全量复核"),
-        },
-        # 有界并行建议（严格上限 2）：独立资产 QC / 渲染页可并行；阶段门仍串行。
-        # render_check 真正执行页级并行；资产生成由调用方调度，不能并发写同一产物。
-        "pipelines": {
-            "workers": 2,
-            "mode": "caller-managed bounded parallel; stage gates remain serial",
-            "design": ["route", "guard + risk_prediction", "spec 修正（只按静态项与风险预测改，不重排全篇）"],
-            "asset_render": ["vao.py assets → asset_prompt → 图像模型（仅 manifest.generate）", "compiler",
-                             f"render + measure（workers=2，Level {2 if quality == 'fast' else 3}）"],
-            "join": "qa.run_qa（唯一同步点：静态结论 + 渲染证据在此合并计分）",
-            "exchange": "单一 spec / plan JSON；禁止逐页往返通信",
-            "forbidden": ["无限并发", "渲染等待预检的循环依赖", "每轮都跑全量渲染",
-                          "并发写同一 PPTX/cache/revision log"],
-        },
         "budget": {"max_asset_calls": cap,
                    "max_charts_per_page": 1,
-                   "max_text_objects_per_page": 4,
-                   "render_dpi": 72 if quality == "fast" else 96,
-                   "render_workers": 2,
-                   "review": quality == "advanced"},
-        "workflow": workflow,
+                   "max_text_objects_per_page": 4},
     }
 
 
 def _alternate_density(pages: list[dict]) -> None:
-    """疏密曲线：相邻页 density 互斥（与 guard DENSITY_FLAT / primitives rhythm 常量同口径）。
+    """疏密曲线：相邻页 density 相同则后一页让位。
 
-    优先级：首尾保留大留白（opening/closing 的仪式感）→ 中部自动避让 →
-    若末页与前页冲突，改前页而不是改末页，避免为了规则牺牲收束感。
+    只在**双方都没被作者声明**时生效；作者写了 density 的页面一个都不动——
+    判断权在内容，不在规则。
     """
     if not pages:
         return
     nxt = {"sparse": "balanced", "balanced": "dense", "dense": "balanced"}
-    pages[0]["density"] = "sparse"
-    pages[-1]["density"] = "sparse"
-    body = pages[1:-1]
-    for i, cur in enumerate(body):
-        prev = pages[i]
-        if cur["density"] == prev["density"]:
-            cur["density_declared_conflict"] = cur["density"]
+
+    def _free(pg: dict) -> bool:
+        """作者显式声明的密度不参与自动节奏调整——判断权在内容，不在规则。"""
+        return not pg.get("density_explicit")
+
+    # 只用家族自身的密度建议把相邻页拉开；被作者声明的页面完全不动。
+    # （曾经把首末页强制改成 sparse——那是规则替作者做设计。已删除。）
+    for i, cur in enumerate(pages[1:], start=1):
+        prev = pages[i - 1]
+        if _free(cur) and _free(prev) and cur["density"] == prev["density"]:
             cur["density"] = nxt[cur["density"]]
-    if len(pages) > 1 and pages[-1]["density"] == pages[-2]["density"]:
-        pages[-2]["density_declared_conflict"] = pages[-2]["density"]
-        pages[-2]["density"] = nxt[pages[-2]["density"]]
 
 
 # --------------------------------------------------------------------------
@@ -669,31 +697,13 @@ def recommend_mode(brief: dict) -> str:
     return "draft"
 
 
-def _load_brief(path: str) -> dict:
-    from pathlib import Path
-    p = Path(path)
-    if p.suffix in (".yml", ".yaml"):
-        import yaml
-        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    if p.suffix == ".json":
-        import json
-        return json.loads(p.read_text(encoding="utf-8"))
-    if p.suffix == ".py":
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("briefmod", str(p))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod.BRIEF if hasattr(mod, "BRIEF") else mod.build_brief()
-    raise ValueError("brief 需为 yml / json 数据文件或定义 BRIEF 的模块")
-
-
 def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     """Deck Decision Card：全 deck 判断一次，页面继承。
 
     生成速度的大头是「每页重新想」。这张卡把 deck 级判断（叙事弧线/方向/
     密度曲线/媒体政策/色彩行为/执行模式）一次固化，页面只做适配——
     意图用 design_intelligence.page_intent_skeleton 继承骨架后按内容覆写，
-    布局用 layout_search.recommend 直达家族原型。
+    页面拿到家族 + 叙事动作 + 意图骨架；构图由生成侧判断。
     纯确定性派生；卡上留的洞（visual_world / type_voice / 每页 insight）
     是内容级判断，仍是 Art Director 的职责。
     """
@@ -721,7 +731,7 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
         "visual": {"direction": plan.get("design_direction"),
                    "visual_world": None,      # 洞：一句话隐喻（材质/光影/空间）
                    "type_voice": None},       # 洞
-        "composition": {"rule": "页面用 layout_search.recommend 直达家族原型；"
+        "composition": {"rule": "页面拿到家族与叙事动作；几何与构图由生成侧判断；"
                                 "相邻页至少换一个构图算子"},
         "density_curve": density,
         "density_profile": dict(sorted(Counter(density).items())),
@@ -737,27 +747,8 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     }
 
 
-def main(argv=None) -> int:
-    import json
-    import sys
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv:
-        print(__doc__)
-        return 1
-    brief = {"slides": []} if argv[0] == "--demo" else _load_brief(argv[0])
-    if argv[0] == "--demo":
-        brief = {"occasion": "2026 年终总结 · 品牌与市场", "audience": "董事会",
-                 "slides": ["封面：2026 年度总结", "全年经营概览与四项 KPI",
-                            "预算结构对比 2024-2026", "增长的三处摩擦",
-                            "核心判断：品牌是本金，投放是利息", "数据：品牌搜索与线索转化趋势",
-                            "渠道效率排行", "三层内容体系", "年度 campaign 案例",
-                            "活动前后对比", "2027 目标", "请求两项决定"]}
-    print(json.dumps(plan_deck(brief), ensure_ascii=False, indent=2))
-    return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
@@ -766,26 +757,42 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
     plan 可由统一入口预先计算；传入后本函数不会再次调用 plan_deck，避免
     intent_compiler / route / forecast 在同一轮重复推导。
 
-    返回 {plan, deck_decision, color_plan, pages:[{family, skeleton, layout,
-    media, budget}]}。生成侧只填 insight / focus / 数据洞——
-    deck 级判断 O(1)，页面继承骨架填空，不再逐页往返推理。
+    返回 {plan, deck_decision, color_plan, pages:[{family, skeleton, move,
+    media, budget}]}。生成侧拿到的是**判断线索**（家族、意图骨架、叙事动作、
+    媒体闸门），不是预置坐标——几何与构图归生成侧的设计判断。
     """
     import design_intelligence as di
-    import layout_search as ls
     plan = plan if plan is not None else plan_deck(brief)
     card = deck_decision(brief, plan=plan)
     color = di.color_plan(plan.get("design_direction"), brief)
-    dna = (plan.get("dna") or {}).get("dna")
     pages = []
-    for pg in plan.get("pages") or []:
-        fam = pg.get("page_family")
-        intent = {"page_family": fam, "insight": "", "focus": ""}
+    plan_pages = plan.get("pages") or []
+    for idx, pg in enumerate(plan_pages):
+        fam = pg.get("page_family") or ""
+        intent = {"page_intent": {"page_family": fam, "density": pg.get("density")}}
+        # 节奏位由位置决定（开篇/主体/收束），密度与能量由路由表决定——
+        # 两者都来自 route，避免骨架自己再推一遍值。
+        stage = ("opening" if idx == 0 else
+                 "closing" if idx == len(plan_pages) - 1 else "body")
+        composition = ({"family": fam, "grammar": pg["composition_explicit"],
+                        "intent": "作者显式声明的构图语法", "alternatives": []}
+                       if pg.get("composition_explicit")
+                       else di.composition_move(fam, str(pg.get("density") or ""),
+                                                str(pg.get("energy") or ""),
+                                                str(pg.get("content_type") or "")))
         pages.append({
+            # 身份随事实一起传下去：顶层意图页与 plan.pages 用同一个 id 配对，
+            # 消费侧（骨架合并 / 资产生成）靠它对齐，不靠位置。
+            "id": pg.get("id"),
             "family": fam,
-            "skeleton": di.page_intent_skeleton(fam or ""),
-            "layout": ls.recommend(intent, plan, dna),
-            "media": di.media_decision(pg),
-            "budget": di.quality_budget(pg),
+            "skeleton": di.page_intent_skeleton(
+                fam or "", stage, density=pg.get("density"),
+                energy=pg.get("energy"),
+                empty_space_role=pg.get("empty_space_role")),
+            "move": di.page_move(fam or ""),
+            "composition": composition,
+            "media": di.media_decision(intent),
+            "budget": di.quality_budget(intent),
         })
     forecast = None
     try:
@@ -795,3 +802,36 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
     return {"plan": plan, "deck_decision": card, "color_plan": color,
             "forecast": forecast, "pages": pages,
             "policy": (forecast or {}).get("policies") or {}}
+
+
+def align_pages(plan_pages: list[dict], other_pages: list[dict]) -> dict:
+    """两份页事实按 id 对齐（错配不静默）。
+
+    `plan.pages`（路由事实）、`one_pass_plan` 顶层 pages（意图事实）、brief 的
+    slides 三份都由同一次 route 产出，id 一一对应。位置配对只在 id 不可用时
+    兜底：外部传入的 plan.json、手工改过页序的 bundle 都会在这里留下
+    `mismatch=True`，由调用方决定报错还是告警——**不允许悄悄把 A 页的骨架
+    接到 B 页的内容上**。
+
+    返回 {pairs: [(plan_page, other_page)], by: "id"|"index", pages,
+    other_pages, mismatch}；pairs 顺序 = plan_pages 顺序。
+    """
+    by_id: dict[str, dict] = {}
+    for pg in other_pages:
+        pid = pg.get("id") if isinstance(pg, dict) else None
+        if isinstance(pid, str) and pid:
+            by_id[pid] = pg
+    pairs: list[tuple[dict, dict]] = []
+    mismatch = len(plan_pages) != len(other_pages)
+    for i, pg in enumerate(plan_pages):
+        pid = pg.get("id") if isinstance(pg, dict) else None
+        mate = by_id.pop(pid, None) if isinstance(pid, str) and pid else None
+        if mate is None:
+            mate = other_pages[i] if i < len(other_pages) else {}
+            mismatch = True
+        pairs.append((pg, mate))
+    if by_id:                       # 对面有页没被认领：集合不一致
+        mismatch = True
+    return {"pairs": pairs, "by": "index" if mismatch else "id",
+            "pages": len(plan_pages), "other_pages": len(other_pages),
+            "mismatch": mismatch}

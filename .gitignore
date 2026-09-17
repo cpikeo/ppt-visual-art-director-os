@@ -4,10 +4,17 @@ __pycache__/
 .venv/
 venv/
 
-# 编译产物与渲染证据（本地迭代，不入库）
+# 产物与本地状态（可重新生成，不入库）
 *.pptx
-*_render/
 *.pdf
+*_vao/
+*_preview/
+*.repair.json
+*.manifest.json
+*.qc.json
+plan.json
+asset_manifest.json
+asset_prompt_cache.json
 
 # OS / 编辑器
 .DS_Store

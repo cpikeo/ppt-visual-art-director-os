@@ -1,0 +1,49 @@
+# Design Brief —— 唯一的需求契约（人写给技能包的一页纸）
+#
+# 纪律：写了的字段原样生效；没写的字段，技能包不会替你猜（会出现在 plan 的
+# unresolved 里，等一个判断）。所以：只写你真正知道的事。
+#
+#   python scripts/vao.py plan templates/brief.yml --out plan.json --skeleton build_deck.py
+#
+# ---------------------------------------------------------------------------
+# 必填最小集（决定这份 deck 的存在理由）
+# ---------------------------------------------------------------------------
+audience: ""            # 谁会看、在哪看（会议室大屏 / 打印 / 异步阅读）
+decision: ""            # 看完要支持的唯一决定（一个动词 + 一个对象）
+tension: ""             # 观众此刻的疑问、风险或阻力
+slides:                 # 逐页内容；family 决定页面家族，density/energy 写了就生效
+  - id: s01
+    family: cover       # cover|statement|data|comparison|case|process|timeline|
+                        # architecture|business|agenda|brand_story|product|closing
+    title: ""
+    content: ""
+    # density: sparse   # sparse|balanced|dense —— 显式声明不会被节奏规则改写
+    # energy: high      # low|medium|high
+  - id: s02
+    family: statement
+    title: ""
+  - id: s03
+    family: data
+    title: ""
+
+# ---------------------------------------------------------------------------
+# 可选：视觉方向。没有就在这里写 unknown 之外的答案，或者就留空——
+# 留空时技能包不做风格猜测，方向由内容判断产生。
+# ---------------------------------------------------------------------------
+visual_world: ""        # 一句话：材质 + 光影 + 空间（如"哑光纸面 + 冷灰轨道 + 单侧柔光"）
+tone_hint: ""           # calm_authority | constructive_urgency | human_trust | technical_clarity
+composition_grammar: "" # soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence
+type_voice: ""          # editorial_serif | neutral_sans | product_display | humanist_sans
+color_behavior: ""      # quiet_neutral | single_signal | warm_material | dark_luminous
+background_scene: ""    # solid_world | atmospheric | cinematic
+media_policy: ""        # none | context | emotion | proof | hero
+energy_curve: ""        # 如 sparse-opening → dense-evidence → sparse-closing
+avoid: []               # 明确不做的几件事（如 [dashboard feeling, decorative stock]）
+
+# ---------------------------------------------------------------------------
+# 可选：事实与品牌约束
+# ---------------------------------------------------------------------------
+evidence_posture: fact_led     # fact_led | hypothesis_led | exploratory
+brand_colors: []               # 品牌色一到，方向种子立刻让位（派生色阶自动展开）
+design_direction: ""           # 只在你有既定视觉方向时才写（如 quiet_minimal）
+quality_level: ""              # fast（默认）| advanced（更重的资产与证据预算）

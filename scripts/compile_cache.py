@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""轻量 PPTX 编译缓存。
+"""编译缓存与轮次账本（唯一的本地状态文件层）。
 
-这是 draft QA 唯一需要的缓存部分，故意不导入 PIL、numpy、LibreOffice
-或 render_check。像素渲染缓存仍属于 review/release 的 render_check。
+两件小事，都为零成本判断服务：
+  1) spec 的确定性投影 + 引擎指纹 + 产物字节戳一致时，跳过重复编译；
+  2) 记录「同一产物上第几轮」，让轮次预算可见（账本是提示，不是门禁）。
+故意不导入 PIL / numpy / python-pptx：判断"要不要重编"本身必须是零成本的。
 """
 from __future__ import annotations
 
@@ -12,23 +14,23 @@ import os
 import tempfile
 from pathlib import Path
 
-RENDER_META_NAME = "render_meta.json"
-# 编译器/底层 primitives 改变时，即使 spec 的像素投影不变，旧 PPTX 也不能继续冒充
-# 当前引擎产物。把实现指纹放进 view，而不是依赖手工清缓存。
+CACHE_NAME = "compile_cache.json"
+# 编译器/底层 primitives 改变时，即使 spec 投影不变，旧 PPTX 也不能继续冒充当前
+# 引擎产物。把实现指纹放进 view，而不是依赖手工清缓存。
 CACHE_ENGINE_FILES = ("compiler.py", "primitives.py")
 CACHE_VIEW_VERSION = 5
-NON_PIXEL_SLIDE_KEYS = (
+NON_GEOMETRIC_SLIDE_KEYS = (
     "page_intent", "source_zone", "notes", "speaker_notes", "comment",
     "comments", "annotations", "id", "label",
 )
-NON_PIXEL_THEME_KEYS = (
+NON_GEOMETRIC_THEME_KEYS = (
     "constraints", "notes", "description", "name", "metadata",
     "provenance", "id",
 )
 
 
 def _file_sha(path: Path) -> str | None:
-    """短指纹：用于页/PDF 缓存键与旧 metadata 兼容。"""
+    """短指纹：缓存键用，够快。"""
     try:
         h = hashlib.sha256()
         with open(path, "rb") as f:
@@ -40,7 +42,7 @@ def _file_sha(path: Path) -> str | None:
 
 
 def _file_sha_full(path: Path) -> str | None:
-    """完整 SHA-256：编译产物 attestation 不使用短缓存指纹。"""
+    """完整 SHA-256：产物凭证不使用短缓存指纹。"""
     try:
         h = hashlib.sha256()
         with open(path, "rb") as f:
@@ -91,14 +93,14 @@ def _media_stamp(slide: dict | None, base_path: str | Path | None,
     return stamps
 
 
-def _pixel_view(obj: dict | None, drop: tuple) -> dict:
+def _projection(obj: dict | None, drop: tuple) -> dict:
     return {k: v for k, v in (obj if isinstance(obj, dict) else {}).items()
             if k not in drop}
 
 
 def _load_meta(work: Path) -> dict:
     try:
-        value = json.loads((work / RENDER_META_NAME).read_text(encoding="utf-8"))
+        value = json.loads((work / CACHE_NAME).read_text(encoding="utf-8"))
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError, TypeError):
         # 损坏/半写入的 metadata 只使缓存失效，不应让 QA 或编译链崩溃。
@@ -106,7 +108,7 @@ def _load_meta(work: Path) -> dict:
 
 
 def _atomic_json_write(path: Path, value: dict) -> None:
-    """写临时文件后 replace，避免进程中断留下半个 render_meta.json。"""
+    """写临时文件后 replace，避免进程中断留下半个缓存文件。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
                                     dir=str(path.parent))
@@ -127,7 +129,7 @@ def _patch_meta(work: Path, **fields) -> None:
     try:
         meta = _load_meta(work)
         meta.update(fields)
-        _atomic_json_write(work / RENDER_META_NAME, meta)
+        _atomic_json_write(work / CACHE_NAME, meta)
     except (OSError, TypeError, ValueError):
         # cache metadata is an optimization; never hide the primary compile result
         pass
@@ -149,11 +151,11 @@ def _engine_stamp() -> list:
 
 def spec_view(spec: dict | None, base_path: str | Path | None = None,
               spec_path: str | Path | None = None) -> str:
-    """与 render_check 相同的编译像素投影，但不加载渲染依赖。"""
+    """spec → 确定性编译投影（决定"要不要重编"的唯一身份）。"""
     spec = spec if isinstance(spec, dict) else {}
     raw_canvas = spec.get("canvas")
     canvas = dict(raw_canvas) if isinstance(raw_canvas, dict) else {}
-    theme = _pixel_view(spec.get("theme"), NON_PIXEL_THEME_KEYS)
+    theme = _projection(spec.get("theme"), NON_GEOMETRIC_THEME_KEYS)
     views = []
     raw_slides = spec.get("slides")
     if not isinstance(raw_slides, list):
@@ -162,7 +164,7 @@ def spec_view(spec: dict | None, base_path: str | Path | None = None,
         slide = raw_slide if isinstance(raw_slide, dict) else {}
         elements = slide.get("elements") if isinstance(slide.get("elements"), list) else []
         views.append({
-            "background": _pixel_view(slide, NON_PIXEL_SLIDE_KEYS).get("background"),
+            "background": _projection(slide, NON_GEOMETRIC_SLIDE_KEYS).get("background"),
             "elements": elements,
             "id": slide.get("id"),
             "media": _media_stamp(slide, base_path, spec_path),
@@ -178,11 +180,11 @@ def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
     rec = _load_meta(work).get("compile") or {}
     if not isinstance(rec, dict) or not isinstance(rec.get("report"), dict):
         return None
-    semantic_view = rec.get("semantic_view", rec.get("view"))
+    semantic_view = rec.get("semantic_view")
     if semantic_view != view or not rec.get("report"):
         return None
-    # 旧 metadata 没有完整输出 attestation，不能让它冒充当前 compiler 的
-    # 产物；宁可重编一次，也不把同大小的被替换 PPTX 认作命中。
+    # 旧记录没有完整产物凭证，不能让它冒充当前 compiler 的产物；
+    # 宁可重编一次，也不把同大小的被替换 PPTX 认作命中。
     if not rec["report"].get("output_sha256"):
         return None
     stored_sha = str(rec.get("pptx_sha") or "")
@@ -197,8 +199,7 @@ def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
         return None
     report = dict(rec["report"])
     report["reused"] = True
-    # QA 仍会输出 artifact SHA，但不必在同一热命中路径再次读取整份 PPTX。
-    # 完整戳优先复用报告中的全 SHA；旧记录则至少已通过短戳核对。
+    # 命中路径不再读整份 PPTX：完整戳优先复用报告中的 SHA，旧记录至少已过短戳核对。
     report["_cache_verified_sha256"] = (report.get("output_sha256")
                                         if len(stored_sha) < 64 else current_sha)
     return report
@@ -210,8 +211,6 @@ def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
         output_sha = _file_sha_full(pptx) or ""
     _patch_meta(work, compile={
         "semantic_view": view,
-        # 保留旧 key 以便已有 render_meta.json 平滑升级；读取优先 semantic_view。
-        "view": view,
         "pptx_sha": output_sha,
         "pptx_name": Path(pptx).name,
         "report": {k: v for k, v in (report or {}).items() if k != "guard"},
@@ -221,7 +220,7 @@ def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
 # --------------------------------------------------------------------------
 # 轮次账本（round ledger）：把「交付用了几个 Agent 回合」变成可读的数
 # --------------------------------------------------------------------------
-# 动机（CHANGELOG v4.26 自己写下的判断）：确定性链是毫秒级，慢的真相在**轮次面**
+# 动机：确定性链是毫秒级，慢的真相在**轮次面**
 # ——六段串行阶段门把一次交付推到 8–20 轮。要压轮次，先得让每一步知道「这是第几轮、
 # 预算还剩多少、现在该不该停」。此前 CLI 完全没有这个通道，发布清单里的
 # revision_count 因此恒为 0。

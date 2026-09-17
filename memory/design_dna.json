@@ -262,36 +262,37 @@
   },
   {
    "id": "lo_spc_alpha_glyph_drop",
-   "pattern": "字距与 run 级透明不得共存于 meta 行（LibreOffice 渲染缺陷规避）",
+   "pattern": "字距与 run 级透明不得共存于 meta 行（部分阅读器的字形丢弃缺陷）",
    "signature": {
     "keywords": [
      "char_spacing",
      "spc",
      "opacity",
      "alpha",
-     "libreoffice",
+     "reader",
+     "阅读器",
      "眉标",
      "页码",
      "meta"
     ]
    },
-   "design_problem": "高端报告的 meta 行（眉标/章标/页码/落款）需要字距拉开+压低存在感的透明；但 LibreOffice 对 spc∧run-alpha 并存的 run 丢弃尾部字形——预览与 PDF 导出静默截断，而 PPTX 文本完整",
+   "design_problem": "高端报告的 meta 行（眉标/章标/页码/落款）需要字距拉开 + 压低存在感的透明；但部分阅读器在 spc ∧ run-alpha 并存时丢弃 run 尾部字形——预览与导出静默截断，而 PPTX 文本本身完整",
    "judgment": {
     "space": "meta 行单行不换行（wrap=False）+ 盒宽冗余 ≥1.5× 估宽",
     "structure": "字距只给 caps 拉丁 run；CJK run 不加 spc",
     "color_behavior": "降存在感用预混实色 hex（按局部底 alpha 合成计算），不用 run 级 alpha；图区 meta 用实墨/实 primary",
     "type_voice": "meta 行是页面的呼吸边距，截断一个字符即破坏整页秩序",
-    "media": "交付前必须 LO 渲染 150dpi 裁切目检 meta 行尾字符",
+    "media": "文案层交付前按最坏阅读器假设自检：meta 行尾字符在窄盒里会不会被吃掉",
     "charts": "n/a",
     "anchor_rule": "spc 与 alpha 互斥；诊断用最小探针矩阵逐项开关"
    },
    "works_because": "预混实色在像素上与 alpha 合成等价，既保住低存在感又绕开渲染器缺陷",
    "avoid": [
     "run 级 alpha + spc 共存",
-    "仅凭 PowerPoint 目检交付",
-    "60dpi 缩略图裁决截断"
+    "仅凭一种阅读器目检交付",
+    "用低分辨率缩略图裁决截断"
    ],
-   "when_not_to": "目标渲染器仅 PowerPoint 且不做 LO 预览时（缺陷不触发）",
+   "when_not_to": "确认交付环境只走单一阅读器且不做多端预览时（缺陷不触发）",
    "source_case": "anonymized_validation_fixture"
   },
   {

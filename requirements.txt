@@ -1,11 +1,7 @@
 # Runtime dependencies for ppt-visual-art-director-os
-# Python 3.10+ recommended
-python-pptx>=1.0.2,<2.0
-Pillow>=10.0,<13.0
-# render_check.py 的像素测量依赖 numpy（缺失时渲染证据降级为结构证据）
-numpy>=1.24
-# intent_compiler.py / route.py 读取 yml brief 时使用；避免干净环境首轮失败后再补装
-PyYAML>=6.0
-# 可选：opencv-python 提供更准的显著图；不可用时使用确定性回退
-# 不需要 LibreOffice、soffice、poppler 或其他系统级组件。
-# vao.py 使用原生可编辑 PPTX + PIL ghost preview；真实 Office 像素渲染不是生产前置条件。
+# Python 3.10+
+python-pptx>=1.0.2,<2.0   # 原生可编辑 PPTX 生成
+Pillow>=10.0,<13.0        # ghost 方向预览（PIL 即渲染器）
+numpy>=1.24               # 资产 QC 的像素统计
+PyYAML>=6.0               # brief（yml）解析
+# 不需要任何系统级组件：不含外部渲染器链路，也不启动 office 套件。

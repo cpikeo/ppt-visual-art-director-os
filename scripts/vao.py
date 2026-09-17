@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 """VAO · single entry point for the Visual Art Director OS.
 
-The repository keeps its internal modules separated for maintainability, but
-production callers only need this file.  It deliberately does not read the
-reference library, start a renderer, or turn warnings into an interactive
-loop.  One invocation performs one deterministic batch:
+Internal modules exist for maintainability; production callers only need this
+file.  It never reads the reference library, never starts an external renderer,
+and never turns a warning into a conversation.  One invocation = one
+deterministic batch:
 
     plan:      brief -> compact plan -> optional skeleton
     assets:    brief + plan -> deduplicated batch asset manifest
     asset-qc:  generated images -> one grouped QC report
-    check:     normalize -> guard -> compile -> grouped repair packet
+    check:     normalize -> guard -> compile -> preview evidence -> repair packet
     run:       plan + check in one Python process
-    preview:   spec -> ghost contact sheet (PIL only)
+    preview:   spec -> ghost contact sheet (PIL only, no office renderer)
 
-The AI/author fills the skeleton once.  If check fails, the packet contains
+The author fills the skeleton once.  If check fails, the packet contains
 root-cause groups rather than a line-by-line stream.  After one grouped repair,
 run the same command again; a clean draft goes directly to release.
 """
@@ -22,10 +22,10 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib.util
 import json
 import sys
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -35,15 +35,27 @@ if str(SCRIPTS) not in sys.path:
 
 
 def _load_module(path: str | Path, name: str = "vao_build"):
-    """Load a user build module exactly once, with stable relative imports."""
+    """加载作者的 build 模块：**总是执行磁盘上的当前源码**。
+
+    不用 importlib 的模块加载器：它会把字节码写进 `__pycache__` 并按
+    「源码 mtime（秒）+ 文件大小」复用——同一秒内的两次修改、且长度不变时，
+    会静默加载**旧字节码**，于是「改了 spec 却交付旧产物」。作者用编辑器保存
+    两次只差一拍的文件是常态，这个坑不能留在交付链上。
+
+    直接读源码 → compile → exec：结果只由当前文件内容决定，且不留任何缓存目录。
+    """
     source = Path(path).expanduser().resolve()
-    if not source.exists():
-        raise FileNotFoundError(source)
-    spec = importlib.util.spec_from_file_location(name, str(source))
-    if spec is None or spec.loader is None:
-        raise ValueError(f"无法加载模块: {source}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"找不到 build 文件: {source}"
+            "（先 `vao.py run brief.yml --skeleton build.py` 生成骨架，填充后再 check）")
+    code = compile(source.read_text(encoding="utf-8"), str(source), "exec")
+    mod = types.ModuleType(name)
+    mod.__file__ = str(source)
+    mod.__dict__["__name__"] = name
+    mod.__dict__["__builtins__"] = __builtins__
+    exec(code, mod.__dict__)
+    sys.modules.setdefault(name, mod)
     return mod, source
 
 
@@ -133,6 +145,11 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
 
     need = _load_need(brief_path)
     bundle = build_plan_bundle(need)       # route/forecast/layout: one in-process pass
+    if not bundle.get("pages"):
+        # 0 页不是「轻量交付」，是死路：没有内容就没有可判断的对象。
+        # 早失败并给出一句可执行的修法，胜过交回一个空计划让上层自己猜。
+        raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
+                         "请至少给出一页的 title + content，再跑 plan")
     if out:
         _json_write(out, bundle)
     if skeleton:
@@ -142,12 +159,14 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
     return bundle
 
 
-def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str) -> tuple[dict, dict]:
+def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
+                deck: dict | None = None) -> tuple[dict, dict]:
     """brief + one route page → compact asset card + geometric page contract."""
     from asset_prompt import enhance_asset_card, normalize_safe_area
 
     raw = raw_slide if isinstance(raw_slide, dict) else {"content": str(raw_slide)}
-    derived = page_plan.get("derived") or {}
+    deck = deck or {}
+    derived = deck.get("direction_execution") or {}
     asset = page_plan.get("asset") or {}
     function = str(raw.get("asset_function") or asset.get("function") or "frame")
     anchor = str(raw.get("negative_space_anchor") or {
@@ -157,13 +176,14 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str) 
     safe_area = normalize_safe_area(raw.get("safe_area"), anchor)
     title = str(raw.get("title") or raw.get("content") or raw.get("text") or "visual context")
     subject = raw.get("asset_subject") or title[:180]
-    direction = str(brief.get("design_direction") or "quiet editorial")
-    visual_world = str(brief.get("visual_world") or brief.get("style_hint") or "")
-    style = [direction]
-    if visual_world:
-        style.append(visual_world[:120])
-    theme_colors = ((page_plan.get("theme_seed") or {}).get("colors")
-                    if isinstance(page_plan.get("theme_seed"), dict) else {}) or {}
+    direction = str(brief.get("design_direction") or brief.get("route_direction") or "")
+    visual_world = str(brief.get("visual_world") or "")
+    style = [s for s in (direction, visual_world[:120] if visual_world else "")
+             if s and s.lower() != "unknown"]
+    # 色值从**整副 deck 的主题**取（品牌优先派生过的那一份），不取方向预设的原始种子：
+    # 素材必须跟着这份交付的色板走，而不是跟着方向标签走。
+    deck_theme = deck.get("theme") if isinstance(deck.get("theme"), dict) else {}
+    theme_colors = dict(deck_theme.get("colors") or {})
     color_cue = list(raw.get("asset_color") or [])
     if not color_cue:
         color_cue = ["neutral tonal range with one restrained accent"]
@@ -210,6 +230,7 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     """
     from asset_prompt import asset_fingerprint, build_asset_prompt
     from pipeline import build_plan_bundle
+    from route import align_pages
 
     if bundle is None:
         bundle = build_plan_bundle(brief)
@@ -227,7 +248,6 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             prompt_cache = {}
     cache_hits = 0
     generation_ids = set((plan.get("assets") or {}).get("generate") or [])
-    reused_ids = set((plan.get("assets") or {}).get("reuse") or [])
     quality = str(plan.get("quality_level") or plan.get("path") or "fast")
     try:
         asset_cap = int((plan.get("budget") or {}).get("max_asset_calls")
@@ -238,6 +258,8 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     by_fingerprint: dict[str, dict] = {}
     generated_count = 0
     skipped_pages: list[dict] = []
+    # brief slide ↔ 路由页同样按 id 认，不按位置：资产卡拿错文案就是张冠李戴。
+    raw_pairs = align_pages(route_pages, raw_slides)["pairs"]
     for i, page_plan in enumerate(route_pages):
         sid = str(page_plan.get("id") or f"s{i + 1:02d}")
         decision = str((page_plan.get("asset") or {}).get("decision") or "none")
@@ -245,9 +267,10 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             skipped_pages.append({"slide_id": sid, "decision": "skip",
                                   "reason": "page family reserves attention for data/text"})
             continue
-        raw = raw_slides[i] if i < len(raw_slides) else {}
+        raw = raw_pairs[i][1] if i < len(raw_pairs) else {}
         provisional = f"asset-{sid}"
-        card, page = _asset_page(brief, page_plan, raw, asset_id=provisional)
+        card, page = _asset_page(brief, page_plan, raw, asset_id=provisional,
+                                 deck=plan)
         fingerprint = asset_fingerprint(card, page)
         existing = by_fingerprint.get(fingerprint)
         if existing:
@@ -349,7 +372,8 @@ def _ghost(spec: dict, output_dir: str | Path, pages: list[int] | None = None,
     return {"type": "ghost_layout_preview", "dir": str(Path(output_dir)),
             "pages": [str(p) for p in paths], "count": len(paths),
             "contact_sheet": str(contact) if contact else None,
-            "renderer": "PIL", "supersampled": True, "not_pixel_proof": True}
+            "renderer": "PIL", "supersampled": True,
+            "evidence_scope": "direction_and_structure_not_pixel_proof"}
 
 
 def asset_qc(manifest_path: str, input_dir: str | None = None,
@@ -363,6 +387,7 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
     root = Path(input_dir).expanduser().resolve() if input_dir else manifest_file.parent
     results = []
     actions: dict[str, list[str]] = {}
+    pending: list[str] = []        # 还没生成（先出图再 QC），与「生成不合格」分开报
     for entry in manifest.get("assets") or []:
         if entry.get("decision") != "generate":
             continue
@@ -385,10 +410,14 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
                                     False if text_color == "light" else None))
         decision = qc_retry_decision(qc, attempt=int(entry.get("attempt", 0) or 0),
                                      phase=phase, max_retries=entry.get("retry_budget", 1))
+        missing = (qc.get("status") == "error")   # 文件不存在 ≠ 图片不合格：修法不同
         item = {"asset_id": entry.get("asset_id"), "slide_ids": entry.get("slide_ids") or [],
-                "file": str(candidate), "qc": qc, "policy": decision}
+                "file": str(candidate), "qc": qc, "policy": decision,
+                "missing": missing}
         results.append(item)
         actions.setdefault(decision["action"], []).append(str(entry.get("asset_id")))
+        if missing:
+            pending.append(str(entry.get("asset_id")))
     report = {
         "schema": "vao-asset-qc-v1",
         "manifest": str(manifest_file),
@@ -396,7 +425,9 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
         "results": results,
         "summary": {k: len(v) for k, v in actions.items()},
         "retry_assets": actions.get("retry", []),
-        "blocking_assets": actions.get("block", []) + actions.get("flag", []),
+        "blocking_assets": [a for a in actions.get("block", []) + actions.get("flag", [])
+                            if a not in pending],
+        "pending_assets": pending,
         "conversation_policy": "only blocking assets become one grouped repair/retry action",
     }
     out_path = Path(output).expanduser() if output else manifest_file.with_name(
@@ -411,18 +442,54 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
             print("  retry-once: " + ", ".join(report["retry_assets"]))
         if report["blocking_assets"]:
             print("  blocking-group: " + ", ".join(report["blocking_assets"]))
-        else:
+        if report["pending_assets"]:
+            print("  not-generated: " + ", ".join(report["pending_assets"])
+                  + "（先生成图再 QC，这不是图片质量问题）")
+        if not report["blocking_assets"] and not report["pending_assets"]:
             print("  ✓ 无资产阻断；advisory 不进入对话")
         print(f"  report: {out_path}")
-    return report, 0 if not report["blocking_assets"] else 2
+    # 0 只代表「每个应生成的资产都被验证过且无阻断」；未生成 = 无法验证 = 不能当作通过。
+    return report, 0 if not report["blocking_assets"] and not report["pending_assets"] else 2
 
 
-def run_check(build_path: str, output: str, *, mode: str = "draft", 
+def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
+                  output_sha: str | None = None) -> dict:
+    """方向预览证据：同一份 PPTX 只渲染一次（确定性产物 + 字节戳命中即复用）。
+
+    预览是确定性几何投影：产物字节戳没变，重画一遍只是把同一张图再做一次。
+    """
+    target = Path(output_dir)
+    marker = target / "ghost.meta.json"
+    if output_sha and marker.exists():
+        try:
+            cached = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cached = {}
+        sheet = cached.get("contact_sheet")
+        if cached.get("output_sha256") == output_sha and sheet and Path(sheet).exists():
+            info = dict(cached)
+            info["reused"] = True
+            return info
+    info = _ghost(spec, output_dir, base_path=base)
+    info["slide_ids"] = [str(s.get("id")) for s in (spec.get("slides") or [])
+                         if isinstance(s, dict) and s.get("id")]
+    info["output_sha256"] = output_sha
+    info["reused"] = False
+    _json_write(marker, info)
+    return info
+
+
+def run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
               include_advisory: bool = False, json_output: bool = False,
               assets_manifest: str | None = None,
               assets_dir: str | None = None) -> tuple[dict, int]:
-    """Run the complete static production path once; never invokes LibreOffice."""
+    """一次执行完成交付验证：normalize → guard → compile → 预览证据 → 修复包。
+
+    零外部渲染器、零 reference 读取、零逐条修复循环：一个进程，一份结论。
+    release 档自动产出 ghost 预览作为方向证据（结构判定的可视化凭证）。
+    """
+    from compile_cache import note_round
     from guard import normalize_spec
     from qa import release_manifest, run_qa
 
@@ -433,68 +500,71 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     normalized, norm = normalize_spec(spec)
     output_path = Path(output).expanduser()
     t0 = time.perf_counter()
-    result = run_qa(
-        normalized, output_path,
-        mode=mode,
-        normalize=False,               # normalize exactly once at this boundary
-        render=False,
-        visual="native",               # PPTX + structural evidence, no external renderer
-        include_advisory=include_advisory,
-        spec_path=str(build),
-    )
+    result = run_qa(normalized, output_path, mode=mode,
+                    normalize=False,           # 边界处只归一化一次
+                    include_advisory=include_advisory,
+                    spec_path=str(build))
     if result.get("normalization") is None:
         result["normalization"] = norm
-    result.setdefault("execution", {})["entrypoint"] = "vao.py"
-    result["execution"]["reference_context"] = "none"
-    result["execution"]["external_renderer"] = "disabled"
-    result["execution"]["visual_evidence"] = "native"
+    result.setdefault("execution", {})["reference_context"] = "none"
     if asset_binding is not None:
         result["asset_binding"] = asset_binding
         result["execution"]["asset_manifest"] = asset_binding["manifest"]
         result["execution"]["asset_binding"] = asset_binding["status"]
-    result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+
+    # 预览证据：release 自动出（方向与结构凭证），draft 只在显式要求时出。
+    ghost = None
+    preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
+                             if mode == "release" else None)
+    if preview_dir:
+        ghost = _ghost_cached(normalized, preview_dir, build.parent,
+                              output_sha=(result.get("compile") or {}).get("output_sha256"))
+        result["ghost_preview"] = ghost
+
+    # 轮次账本：一轮 = 同一产物上 spec 变了的一次执行；复跑同 spec 不记新轮。
+    ledger = note_round(output_path.with_name(output_path.stem + "_vao"),
+                        mode=mode, spec_hash=result.get("source_spec_hash"),
+                        status=result.get("status"), blocking=result.get("blocking_items"),
+                        warnings=len(result.get("warn_summary") or []))
+    result["rounds"] = ledger
 
     manifest_path = None
     if mode == "release":
-        manifest = release_manifest(normalized, result)
+        manifest = release_manifest(normalized, result, ghost_preview=ghost,
+                                    revision_count=ledger.get("revisions", 0),
+                                    revision_log=ledger.get("log"))
         manifest_path = output_path.with_suffix(".manifest.json")
         _json_write(manifest_path, manifest)
         result["manifest_path"] = str(manifest_path)
 
-    ghost = None
-    if preview:
-        ghost = _ghost(normalized, preview, base_path=build.parent)
-        result["ghost_preview"] = ghost
+    result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
     packet_value = _repair_packet(result, mode, build, output_path)
     _json_write(packet_path, packet_value)
-
     if json_output:
-        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        print(json.dumps(packet_value, ensure_ascii=False, indent=2, default=str))
     else:
-        verdict = result.get("verdict") or {}
-        print(f"VAO {mode}: {verdict.get('verdict', result.get('status'))} · "
-              f"{result.get('status')} · {result.get('performance', {}).get('total_ms', '?')}ms")
-        groups = (result.get("fix_plan") or {}).get("groups") or []
+        print(f"VAO {mode}: {result.get('verdict', {}).get('verdict')} · {result.get('status')} · "
+              f"{result.get('performance', {}).get('total_ms', 0)}ms · "
+              f"round {ledger.get('n')}/{ledger.get('budget')}")
+        for group in (result.get("fix_plan") or {}).get("groups") or []:
+            ids = "、".join(group.get("ids") or []) or "deck"
+            print(f"  fix[{group.get('root_cause')}] ×{group.get('count', 0)} ({ids}) "
+                  f"→ {group.get('fix', '')}")
         if asset_binding and (asset_binding.get("missing_asset_ids") or asset_binding.get("missing_files")):
             ids = asset_binding.get("missing_asset_ids") or []
             files = asset_binding.get("missing_files") or []
             print("  fix[asset-binding] ×{} → 补齐 manifest 引用或重新生成资产: {}".format(
                 len(ids) + len(files), "、".join(ids + files)))
-        if groups:
-            for group in groups:
-                ids = "、".join(group.get("ids") or []) or "deck"
-                print(f"  fix[{group.get('root_cause')}] ×{group.get('count', 0)} "
-                      f"({ids}) → {group.get('fix', '')}")
-        else:
-            print("  ✓ 无阻断：不再进入 warning 修复对话，可直接 release")
+        if not (result.get("fix_plan") or {}).get("groups"):
+            print("  ✓ 无阻断：warning 只留痕，不进入对话")
         if ghost:
-            print(f"  preview: {ghost['count']} 页 ghost → {ghost['dir']}")
-            if ghost.get("contact_sheet"):
-                print(f"  contact sheet: {ghost['contact_sheet']}")
+            suffix = "（同产物复用，未重渲）" if ghost.get("reused") else ""
+            print(f"  preview: {ghost['count']} 页 ghost → "
+                  f"{ghost['contact_sheet'] or ghost['dir']}{suffix}")
         if manifest_path:
             print(f"  manifest: {manifest_path}")
-        print(f"  repair packet: {packet_path}  (只含根因组，不含 reference 全文)")
+        print(f"  repair packet: {packet_path}")
     binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
                                              or asset_binding.get("missing_files")))
     return result, (0 if result.get("passed") and not binding_block else 2)
@@ -537,7 +607,7 @@ def doctor() -> int:
             checks[name] = True
         except Exception:
             checks[name] = False
-    checks.update({"libreoffice": False, "external_renderer_policy": "disabled",
+    checks.update({"external_renderer_policy": "disabled",
                    "references_loaded": False})
     ok = all(checks[k] for k in ("pptx", "PIL", "yaml"))
     print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))
@@ -565,16 +635,16 @@ def build_parser() -> argparse.ArgumentParser:
     aq = sub.add_parser("asset-qc", help="generated asset folder → grouped QC report")
     aq.add_argument("manifest")
     aq.add_argument("--input", help="directory containing asset_id.png files")
-    aq.add_argument("--phase", choices=("draft", "review", "release"), default="draft")
+    aq.add_argument("--phase", choices=("draft", "release"), default="draft")
     aq.add_argument("--out")
     aq.add_argument("--json", action="store_true")
 
-    c = sub.add_parser("check", help="build.py → normalize → guard → compile → packet")
+    c = sub.add_parser("check", help="build.py → normalize/guard/compile/preview → packet")
     c.add_argument("build")
     c.add_argument("output", nargs="?", default="deck.pptx")
-    c.add_argument("--mode", choices=("sketch", "spec", "draft", "review", "release"), default="draft")
+    c.add_argument("--mode", choices=("spec", "draft", "release"), default="draft")
     c.add_argument("--packet")
-    c.add_argument("--preview", help="write fast ghost PNGs to this directory")
+    c.add_argument("--preview", help="write ghost preview PNGs here (release writes them by default)")
     c.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     c.add_argument("--assets-dir", help="directory containing generated manifest filenames")
     c.add_argument("--advisory", action="store_true", help="explicit risk forecast; off by default")
@@ -590,21 +660,69 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--asset-cache", help="prompt cache JSON for --assets-out")
     r.add_argument("--assets-manifest", help="bind an existing asset manifest during check")
     r.add_argument("--assets-dir", help="directory containing generated manifest filenames")
-    r.add_argument("--mode", choices=("sketch", "spec", "draft", "review", "release"), default="draft")
+    r.add_argument("--mode", choices=("spec", "draft", "release"), default="draft")
     r.add_argument("--packet")
     r.add_argument("--preview")
     r.add_argument("--advisory", action="store_true")
     r.add_argument("--json", action="store_true")
 
-    v = sub.add_parser("preview", help="spec/build → ghost contact sheet; no PPTX render")
+    v = sub.add_parser("preview", help="spec/build → ghost contact sheet (PIL only)")
     v.add_argument("build")
     v.add_argument("--out", default="vao_preview")
     v.add_argument("--pages", help="1-based pages, e.g. 1,3,8")
     v.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     v.add_argument("--assets-dir", help="directory containing generated manifest filenames")
 
-    sub.add_parser("doctor", help="check Python dependencies; LibreOffice is never required")
+    d = sub.add_parser("dna", help="design memory: --check store / --add one entry")
+    d.add_argument("--add", help="append one DNA entry from a JSON file")
+    d.add_argument("--replace", action="store_true", help="with --add: overwrite same-id entry")
+    d.add_argument("--check", action="store_true", help="validate the store (default action)")
+    d.add_argument("--json", action="store_true")
+
+    sub.add_parser("doctor", help="check Python dependencies and policy state")
     return parser
+
+
+def _dna(args) -> int:
+    """经验记忆的入口：体检 / 追加一条。
+
+    记忆写坏了不会报错，只会永远命不中——所以写入必须经过校验，且入口只有这一个。
+    """
+    from design_intelligence import DNA_STORE, record_dna, validate_dna_store
+    if args.add:
+        src = Path(args.add).expanduser()
+        if not src.is_file():
+            print(f"VAO error: 条目文件不存在：{src}")
+            return 2
+        try:
+            entry = json.loads(src.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"VAO error: 条目文件解析失败（{type(exc).__name__}: {exc}）")
+            return 2
+        result = record_dna(entry, replace=args.replace)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        elif result.get("errors"):
+            print("dna: 拒绝写入 · " + "；".join(result["errors"]))
+            for w in result.get("warnings") or []:
+                print(f"  - {w}")
+        else:
+            print(f"dna: {result.get('note', 'ok')} · store={DNA_STORE}")
+            for w in result.get("warnings") or []:
+                print(f"  - {w}")
+        return 2 if result.get("errors") else 0
+
+    report = validate_dna_store()
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    else:
+        print(f"dna store: {'OK' if report['ok'] else 'BROKEN'} · {report['entries']} 条 · "
+              f"{len(report['errors'])} error / {len(report['warnings'])} warning")
+        for item in report["errors"]:
+            print(f"  ✗ [{item['id']}] {item['reason']}")
+        for item in report["warnings"]:
+            print(f"  · [{item['id']}] {item['reason']}")
+    return 0 if report["ok"] else 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -630,6 +748,8 @@ def main(argv: list[str] | None = None) -> int:
             _, code = asset_qc(args.manifest, args.input, phase=args.phase,
                                output=args.out, json_output=args.json)
             return code
+        if args.command == "dna":
+            return _dna(args)
         if args.command == "plan":
             bundle = _plan(args.brief, args.plan_out, args.skeleton)
             if args.json or not (args.plan_out or args.skeleton):
@@ -661,7 +781,7 @@ def main(argv: list[str] | None = None) -> int:
         return doctor()
     except ModuleNotFoundError as exc:
         print(f"VAO error: missing Python dependency {exc.name!r}; "
-              "install requirements.txt (no LibreOffice needed)", file=sys.stderr)
+              "install requirements.txt", file=sys.stderr)
         return 2
     except Exception as exc:
         print(f"VAO error: {type(exc).__name__}: {exc}", file=sys.stderr)

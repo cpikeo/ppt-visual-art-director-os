@@ -18,11 +18,8 @@ asset_prompt.py · 视觉资产提示词组装器（纯函数层）
 """
 from __future__ import annotations
 
-import argparse
 import hashlib
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -793,102 +790,3 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
 # --------------------------------------------------------------------------
 # CLI：与 compiler.py 一致地读取参数模块
 # --------------------------------------------------------------------------
-def _load_card(module_path: str) -> dict:
-    """从 .py 参数模块读取 CARD（或 build_card()）。"""
-    path = Path(module_path).resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"找不到参数模块: {path}")
-    spec = importlib.util.spec_from_file_location("asset_card_module", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if hasattr(module, "build_card"):
-        return module.build_card()
-    if hasattr(module, "CARD"):
-        return module.CARD
-    raise AttributeError("参数模块需定义 CARD = {...} 或 build_card() -> dict")
-
-
-def _load_page(module_path: str | None) -> dict:
-    if not module_path:
-        return {}
-    path = Path(module_path).resolve()
-    if not path.exists():
-        raise FileNotFoundError(f"找不到页面参数模块: {path}")
-    spec = importlib.util.spec_from_file_location("asset_page_module", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if hasattr(module, "build_page"):
-        return module.build_page()
-    if hasattr(module, "PAGE"):
-        return module.PAGE
-    raise AttributeError("页面参数模块需定义 PAGE = {...} 或 build_page() -> dict")
-
-
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(
-        description="PPT Design OS · 视觉资产提示词组装器")
-    parser.add_argument("card", nargs="?", help="资产卡参数模块（定义 CARD 或 build_card()）")
-    parser.add_argument("--page", help="页面版面参数模块（定义 PAGE 或 build_page()）")
-    parser.add_argument("--json", action="store_true", help="以 JSON 输出")
-    parser.add_argument("--ratio", default="16:9", help="出图比例（默认 16:9）")
-    parser.add_argument("--no-qc", action="store_true", help="不追加 Universal QC 后缀")
-    parser.add_argument("--qc", metavar="IMAGE", help="出图后体检：对图片做 Issue+Suggestion 定性检查（不打分）")
-    parser.add_argument("--safe-area", default="left",
-                        choices=list(_SAFE_ZONES), help="文字安全区锚点（默认 left）")
-    parser.add_argument("--text", choices=["dark", "light"],
-                        help="安全区预期文字颜色（dark=深色文字需亮底 / light=浅色文字需暗底）")
-    parser.add_argument("--phase", choices=sorted(ASSET_QC_PHASES), default="draft",
-                        help="资产 QC 所属阶段；不自动触发 review/release（默认 draft）")
-    parser.add_argument("--attempt", type=int, default=0,
-                        help="当前出图尝试次数，从 0 开始；自动重出最多一次")
-    args = parser.parse_args(argv)
-
-    if args.qc:
-        text_dark = {"dark": True, "light": False}.get(args.text)
-        out = image_qc(args.qc, safe_area=args.safe_area, text_is_dark=text_dark)
-        out["policy"] = qc_retry_decision(out, attempt=args.attempt, phase=args.phase)
-        if args.json:
-            print(json.dumps(out, ensure_ascii=False, indent=2))
-            return 0
-        print(f"image-qc: {out['file']} → {out['status']}"
-              + (f"（{out['issue_count']} 项待改）" if out.get("issue_count") else ""))
-        print(f"  policy: {out['policy']['action']}"
-              + ("（不会自动进入 review/release）" if out['policy']['retry']
-                 else ""))
-        for c in out["checks"]:
-            if c["status"] == "issue":
-                print(f"  [x] {c['check']}: {c['issue']}")
-                print(f"      → {c['suggestion']}")
-            else:
-                print(f"  [ok] {c['check']}")
-        # 建议级 QC 不让 shell/CI 误判失败；阻断项才要求重出或人工处理。
-        return 0 if out["policy"]["action"] in ("accept", "accept_with_advisory") else 1
-
-    if not args.card:
-        parser.error("需要 card 模块路径")
-    try:
-        card = _load_card(args.card)
-        page = _load_page(args.page)
-    except (FileNotFoundError, AttributeError) as exc:
-        print(f"错误: {exc}", file=sys.stderr)
-        return 2
-
-    out = build_asset_prompt(card, page, ratio=args.ratio,
-                             include_qc=not args.no_qc)
-
-    if args.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-        return 0
-
-    print("===== PROMPT =====")
-    print(out["prompt"])
-    print("\n===== NEGATIVE =====")
-    print(out["negative"])
-    issues = out["meta"]["issues"]
-    print("\n===== CHECK =====")
-    print("OK" if not issues else "ISSUES: " + "; ".join(issues))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

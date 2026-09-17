@@ -4,11 +4,11 @@ Layer 0.5 · Guard（静态治理层）
 
 职责：**工程正确性的静态层**——回答「这份 PPT 能不能正确交付」的前半段。
   error（阻断）：数据合同、结构合法性、文本溢出、越界、未声明遮挡、来源区冲突
-  warn / hint（记分为提示，不阻断）：网格贴合、Accent 面积、行长、圆角容器密度、
+  warn / hint（只提醒，不阻断）：网格贴合、Accent 面积、行长、圆角容器密度、
         跨页节奏——这些是「设计契约」，过度自动化会把创造力关进规则里，
         因此只作提醒；判断叙事归 references/design-craft，生成前策略归 design_intelligence。
-本层是只读的：不修改 spec、不生成任何元素，
-只返回「检查结果 + 扣分建议」，供 QA 评分与 Release Gate 使用。
+本层是只读的：不修改 spec、不生成任何元素，也不打分——
+只返回「检查结果」，供 Release Gate 回答一个问题：这份 PPT 能不能交付。
 
 设计原则（与引擎一致）：
   - 纯函数，不持有主题，不写死参数；所有阈值由调用方经 `rules` 传入。
@@ -26,9 +26,12 @@ import copy
 import re
 from typing import Any
 
-from primitives import (DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT, ELEMENT_TYPES, CHART_KINDS,
-                         contrast, bg_coverage, bg_overlay_opacity, is_background_declared,
+from primitives import (AUX_TEXT_ROLES, DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT,
+                        ELEMENT_TYPES, CHART_KINDS,
+                          contrast, bg_coverage, bg_overlay_opacity, is_background_declared,
                          spec_fingerprint)
+from design_intelligence_rules import (FAMILY_MOVES, FAMILY_ALIASES, MEDIA_MODEL, DENSITY_BANDS,
+                                       EMPTY_SPACE_ROLES, ENERGY_LEVELS)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
 GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalizer/文档同源）
@@ -38,7 +41,7 @@ GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalize
 # 文件能不能渲染、内容有没有被切掉」。「高级感」不在它的管辖范围——那属于
 # Design Intelligence（设计价值维度的基元常量住 primitives）。
 # 下面这些规则名保留在这里，只是为了让 Critic 与风险预测更快定位证据（同一份事实
-# 不重算第二次），它们**不参与 guard.score、不构成任何门槛**；阈值是参考刻度，
+# 不重算第二次），它们**不构成任何门槛**；阈值是参考刻度，
 # 不是及格线。新增判断请先问一句：它能被一个固定阈值完全描述吗？
 # 能 → 那是工程约束，放这里；不能 → 那是设计判断，去 design-craft.md + Critic 证据。
 DESIGN_RULES = frozenset({
@@ -72,6 +75,17 @@ CHART_LIMITS = {
 # 先在 Guard 阻断，避免编译器只警告后留下半成品 PPTX。
 SUPPORTED_CHART_KINDS = CHART_KINDS
 
+# 载荷契约：schema 合法 ≠ 画得出来。缺载荷的图表会「PASS 出门、页面空白」，
+# 这是最贵的漏洞——看起来做完了，其实什么都没画。这里只守「有没有东西可画」，
+# 不管画得好不好（那是设计判断）。
+ROWS_CHART_KINDS = (
+    "bar", "horizontal_bar", "column", "comparison_bar", "line", "trend",
+    "single_trend_line", "area", "donut", "donut_composition", "pie", "waterfall",
+    "ranked_bar", "progress_bar", "stacked_bar", "sparkline", "big_number_row",
+    "process_flow", "timeline", "steps", "bubble",
+)
+ELEMENT_METRIC_KINDS = ("kpi", "executive_kpi", "big_number")
+
 
 def _is_grid_aligned(value: float) -> int:
     """到最近 8 倍数网格的偏差（0–4）。"""
@@ -87,8 +101,7 @@ def _is_cjk(ch: str) -> bool:
 # 行长上限住 primitives（单一口径的物理载体）。
 _LINE_MEASURE_FALLBACK = {"LINE_MEASURE_CJK_MAX": 38, "LINE_MEASURE_LATIN_MAX": 75,
                           "LINE_MEASURE_FAIL_FACTOR": 2.0}
-MEASURE_EXEMPT_ROLES = frozenset({"source", "method", "metadata", "caption", "legend",
-                                  "axis", "data_label", "annotation", "page_number"})
+MEASURE_EXEMPT_ROLES = frozenset(AUX_TEXT_ROLES)   # 真源在 primitives（见其注释）
 
 
 def _measure_limits() -> dict:
@@ -131,6 +144,54 @@ def _element_area(e: dict) -> float:
         return max(0.0, float(e.get("width", 0))) * max(0.0, float(e.get("height", 0)))
     except (TypeError, ValueError):
         return 0.0
+
+
+# 零基长度编码：长度差就是读数的图。差异太小时，读者看到的是「一样长」。
+ZERO_BASED_LENGTH_KINDS = frozenset({"bar", "column", "horizontal_bar",
+                                     "comparison_bar", "ranked_bar"})
+CHART_FLAT_RATIO = 1.25   # 最大/最小 < 此值 ⇒ 条长读起来一样
+
+
+def _ink_union(rects: list[tuple[float, float, float, float]]) -> float:
+    """矩形并集面积（扫描线，确定性）——留白率的唯一分子口径。
+
+    用**元素框**而不是渲染像素：留白指「没有被元素框占住的空间」，框内空白由
+    排版密度去管。像素级空白（文字之间那些）是另一个量，两个数不能互相换算，
+    也不能拿来互相验证。
+    """
+    xs = sorted({v for r in rects for v in (r[0], r[2])})
+    total = 0.0
+    for i in range(len(xs) - 1):
+        x0, x1 = xs[i], xs[i + 1]
+        if x1 <= x0:
+            continue
+        bands = sorted((r[1], r[3]) for r in rects if r[0] <= x0 and r[2] >= x1)
+        if not bands:
+            continue
+        h = 0.0
+        cs, ce = bands[0]
+        for lo, hi in bands[1:]:
+            if lo > ce:
+                h += ce - cs
+                cs, ce = lo, hi
+            else:
+                ce = max(ce, hi)
+        h += ce - cs
+        total += (x1 - x0) * h
+    return total
+
+
+def _element_rect(e: dict, cw: float, ch: float) -> tuple[float, float, float, float] | None:
+    """元素框 → 画布内矩形；无几何/零面积返回 None。"""
+    try:
+        x, y = float(e.get("x", 0)), float(e.get("y", 0))
+        w, h = float(e.get("width", 0)), float(e.get("height", 0))
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    r = (max(0.0, x), max(0.0, y), min(cw, x + w), min(ch, y + h))
+    return r if r[2] > r[0] and r[3] > r[1] else None
 
 
 def _density_class(slide: dict) -> tuple[str, float]:
@@ -241,6 +302,31 @@ def _check_page_contract(slide: dict, sid: str, add,
     for key in ("page_family", "empty_space_role", "energy"):
         if not field(key):
             add("page_contract", sid, "hint", f"缺少页面契约字段 {key}（建议声明以便可验证）")
+
+    # 值校验：字段写了但值不存在 = 该页判断静默失效（家族 → 媒体/叙事动作/构图全回落；
+    # 留白职责 → 免检与锚点判断失效；能量/密度 → 节奏判断失效）。点名到合法值，但不阻断——
+    # 工程事实是「这个值引擎不认识」，不是「这页不合格」。
+    known_families = set(FAMILY_MOVES) | set(MEDIA_MODEL) | set(FAMILY_ALIASES)
+    for key, legal, shown in (
+            ("page_family", known_families, " / ".join(sorted(FAMILY_MOVES))),
+            ("empty_space_role", set(EMPTY_SPACE_ROLES), " / ".join(EMPTY_SPACE_ROLES)),
+            ("energy", set(ENERGY_LEVELS), " / ".join(ENERGY_LEVELS)),
+            ("density", set(DENSITY_BANDS), " / ".join(DENSITY_BANDS))):
+        value = field(key)
+        if not value:
+            continue
+        value = str(value).strip()
+        if value not in legal:
+            add("page_contract", sid, "warn",
+                f"{key}={value!r} 不在合法取值内（{shown}）——本页会静默退回默认判断，"
+                f"写入判断的值才会生效")
+        elif key == "page_family" and value not in FAMILY_MOVES \
+                and FAMILY_ALIASES.get(value, value) not in FAMILY_MOVES:
+            # 媒体模型命名空间（DATA / STORY / CLOSING …）只供媒体与质量预算使用，
+            # 没有叙事动作与构图起点——用它等于丢掉半个家族判断，必须点名而不是静默兜底。
+            add("page_contract", sid, "warn",
+                f"page_family={value!r} 只有媒体/预算判断，叙事动作与构图起点会退回兜底；"
+                f"route 家族才有完整判断：{' / '.join(sorted(FAMILY_MOVES))}")
     source_zone = slide.get("source_zone")
     if source_zone is not None:
         if not isinstance(source_zone, dict):
@@ -657,8 +743,7 @@ def _data_claim_mismatch(slide: dict):
                     [100.0 * v / total for v in vals] +
                     [100.0 * v / vmax for v in vals] + list(vals),
                     key=lambda x: abs(x - n))
-                out.append((chart.get("id") or "chart", f"{n:g}%",
-                            f"最接近 {nearest:.1f}"))
+                out.append((chart.get("id") or "chart", f"{n:g}%", f"{nearest:.1f}"))
     return out
 
 
@@ -678,9 +763,34 @@ def _invalid_spec_result(message: str) -> dict:
     """Return a stable guard report for malformed top-level inputs."""
     check = {"rule": "spec_schema", "id": "spec", "level": "error", "msg": message}
     return {"passed": False, "checks": [check], "advisory_rules": sorted(DESIGN_RULES),
-            "warnings": [f"[spec_schema] {message}"], "score": 96,
+            "warnings": [f"[spec_schema] {message}"],
             "grid": {"checked": 0, "aligned": 0, "adherence": None},
             "line_measure": {"checked": 0, "over": 0, "worst": 0.0, "worst_id": None}}
+
+
+def _weak_text_roles(theme: dict, slides: list) -> set[str]:
+    """会被判「弱化文字」的角色：主题声明的弱字 + 元素里真拿来写字的弱色。
+
+    muted 是本包约定的弱字（刻度/注释/来源）；`chart_muted` 指到哪个 token，那个 token
+    就是图表刻度与标签的颜色来源（compiler 照它画），指到面/影上等于刻度白写。secondary
+    只有在元素里真当 text 颜色用时才算字——否则它是面（深底主题的 secondary 就是深面，
+    #3A3A42 on #0B0B0F 只有 1.74:1，拿它当字才该被拦下）。
+    """
+    colors = theme.get("colors") or {}
+    roles = {"muted"}
+    chart_muted = theme.get("chart_muted")
+    if isinstance(chart_muted, str) and chart_muted.strip() in colors:
+        roles.add(chart_muted.strip())
+    for slide in (slides if isinstance(slides, list) else []):
+        if not isinstance(slide, dict):
+            continue
+        for e in (slide.get("elements") or []):
+            if not isinstance(e, dict) or not (e.get("text") or e.get("type") == "text"):
+                continue
+            for role in ("muted", "secondary"):
+                if _uses_role(e.get("color"), role, theme):
+                    roles.add(role)
+    return roles & {"muted", "secondary"}
 
 
 def check_spec(spec: dict, rules: dict | None = None,
@@ -727,7 +837,7 @@ def check_spec(spec: dict, rules: dict | None = None,
     并用 MEASURE_EXEMPT_ROLES 豁免注记级角色；超限记 warn，超上限 2× 记 error。
 
     returns: {
-      "passed": bool, "checks": [...], "warnings": [...], "score": int,
+      "passed": bool, "checks": [...], "warnings": [...],
       "grid": {checked, aligned, adherence}, "line_measure": {checked, over, worst, worst_id}
     }
     """
@@ -759,12 +869,24 @@ def check_spec(spec: dict, rules: dict | None = None,
     narrative_lines_max = _rule_num(rules, "narrative_lines_max", 6, int)
     semantic_colors_max = _rule_num(rules, "semantic_colors_max", 3, int)
     alignments_max = _rule_num(rules, "alignments_max", 2, int)
-    decoration_area_max = _rule_num(rules, "decoration_area_max", 0.10, float)
+    decoration_area_max = _rule_num(rules, "decoration_area_max",
+                                    constraints.get("decoration_area_max", 0.10), float)
     animation_types_max = _rule_num(rules, "animation_types_max", 2, int)
     hue_families_max = _rule_num(rules, "hue_families_max", 4, int)
     accent_hue_min = _rule_num(rules, "accent_hue_min", 12, float)
     chart_label_scale_tol = _rule_num(rules, "chart_label_scale_tol", 1.25, float)
     # §07 排版预算（hint 级软约束：提示层级过碎，不扣硬分）
+    # 方向种子（数字约束）：未声明 = 不检查；声明了就按声明执法。
+    # whitespace/bg_layers/bold_ratio/type_step 都是「方向要可执行」缺的那几个量，
+    # 由 plan 的主题种子写进 spec.theme.constraints（骨架代为落笔）。
+    whitespace_min = _rule_num(rules, "whitespace_min",
+                               constraints.get("whitespace_min",
+                                               constraints.get("min_whitespace")), float)
+    bg_layers_max = _rule_num(rules, "bg_layers_max", constraints.get("bg_layers_max"), int)
+    bold_ratio_max = _rule_num(rules, "bold_ratio_max", constraints.get("bold_ratio_max"), float)
+    type_step_min = _rule_num(rules, "type_step_min", constraints.get("type_step_min"), float)
+    banner_cov = constraints.get("bg_layer_coverage")
+    bg_layer_cov = _rule_num({}, "k", banner_cov, float) if banner_cov is not None else 0.60
     font_levels_max = int(rules.get("font_levels_max",
                                     constraints.get("font_levels_max", 4)))
     font_families_max = int(rules.get("font_families_max",
@@ -807,6 +929,12 @@ def check_spec(spec: dict, rules: dict | None = None,
     for _canvas_issue in canvas_issues:
         add("canvas_schema", "canvas", "error", _canvas_issue)
 
+    # 空 deck：没有页就没有可判断、可交付的对象。0 页 PASS 是最贵的一种「通过」——
+    # 上游按 PASS 继续走，交付的是空气。
+    if not slides:
+        add("slide_schema", "slides", "error",
+            "spec 里没有任何页（slides 为空）；空 deck 不是可交付物")
+
     # 元素类型白名单（F1）：未知 type 在编译期被静默跳过 = 内容丢失；
     # spec 零成本档不加载编译层，此处是唯一前置拦截。集合单真源 primitives.ELEMENT_TYPES。
     for _sl in slides:
@@ -818,6 +946,14 @@ def check_spec(spec: dict, rules: dict | None = None,
         _sid = str(_sl.get("id", "?"))
         if "elements" in _sl and not isinstance(_sl.get("elements"), list):
             add("slide_schema", _sid, "error", "slide.elements 必须是数组/list")
+        # 空白页：既没有元素、也没有背景——画面上什么都没有。
+        # （有 background 的「纯色/整图呼吸页」是合法的编辑式手法，不在此列。）
+        _els = _sl.get("elements")
+        _drawable = [e for e in _els if isinstance(e, dict)] if isinstance(_els, list) else []
+        if not _drawable and not _sl.get("background"):
+            add("page_contract", _sid, "error",
+                "这一页没有任何元素，也没有 background：画面上什么都没有，"
+                "不是可交付内容（要么给元素，要么给背景）")
         if "page_intent" in _sl and _sl.get("page_intent") is not None \
                 and not isinstance(_sl.get("page_intent"), dict):
             add("slide_schema", _sid, "error", "slide.page_intent 必须是对象/dict")
@@ -866,7 +1002,7 @@ def check_spec(spec: dict, rules: dict | None = None,
             if columns != 12:
                 add("grid", "canvas", "hint", "推荐使用 12 列逻辑网格；8 单位仅用于基线与间距")
         except (TypeError, ValueError, OverflowError):
-            add("grid", "canvas", "error", "canvas.grid_columns 必须是正整数")
+            add("canvas_schema", "canvas", "error", "canvas.grid_columns 必须是正整数")
     if "grid_unit" in canvas:
         try:
             if isinstance(canvas["grid_unit"], bool):
@@ -877,7 +1013,7 @@ def check_spec(spec: dict, rules: dict | None = None,
             if unit != GRID:
                 add("grid", "canvas", "hint", f"推荐使用 {GRID} 单位基线网格")
         except (TypeError, ValueError, OverflowError):
-            add("grid", "canvas", "error", "canvas.grid_unit 必须是正的有限数字")
+            add("canvas_schema", "canvas", "error", "canvas.grid_unit 必须是正的有限数字")
 
     # ---- 每页 ----
     lm_limits = _measure_limits()
@@ -945,8 +1081,8 @@ def check_spec(spec: dict, rules: dict | None = None,
                     if isinstance(fref, str) and fref:
                         font_families.add(fref)
                 # 可读性底线：注释/来源/标签类文字不得低于最小字号（渲染后可读性复核）
-                if role in {"caption", "annotation", "source", "label", "axis",
-                            "data_label", "legend", "metadata", "method"}:
+                if role in {"caption", "annotation", "source", "label", "axis", "data_label",
+                            "legend", "metadata", "method", "eyebrow", "page_number"}:
                     try:
                         if e.get("size") is not None and float(e["size"]) < min_font_size:
                             add("min_font", eid, "warn",
@@ -954,7 +1090,8 @@ def check_spec(spec: dict, rules: dict | None = None,
                                 f"{min_font_size:g}px；提高字号或改由更高层级角色承担")
                     except (TypeError, ValueError):
                         pass
-                if role not in {"source", "method", "annotation", "axis", "label", "data_label", "legend", "metadata"}:
+                if role not in {"source", "method", "annotation", "axis", "label", "data_label",
+                                "legend", "metadata", "eyebrow", "page_number"}:
                     declared = e.get("max_lines")
                     if isinstance(declared, int) and declared > 0:
                         narrative_lines += declared
@@ -1095,6 +1232,84 @@ def check_spec(spec: dict, rules: dict | None = None,
                     add("chart_type", eid, "error",
                         f"未知 chart_kind={kind!r}；合法值：{sorted(SUPPORTED_CHART_KINDS)}")
                 data = e.get("data") or []
+                # 载荷完整性：没有可画的东西就不是「设计选择」，而是内容缺失。
+                if kind in ELEMENT_METRIC_KINDS:
+                    if not str(e.get("value") or "").strip():
+                        add("chart_payload", eid, "error",
+                            f"{kind} 缺少元素级 value（大数字没有数字）；"
+                            "label 建议同时声明")
+                    elif not str(e.get("label") or "").strip():
+                        add("chart_payload", eid, "warn",
+                            f"{kind} 没有 label：数字会被误读，建议补一行说明")
+                # 论点可见性（差异类主张）：图是不是把「差多少」画出来了。
+                # 只查一个可判定的组合——零基长度编码 + 数值几乎等长 + 图自己标了重点。
+                # 不解析主张文本，不做审美裁决：几何读不出来就是读不出来。
+                if (kind in ZERO_BASED_LENGTH_KINDS
+                        and (e.get("highlight") or e.get("target") is not None)
+                        and e.get("baseline") is None):
+                    vals: list[float] = []
+                    for point in (data if isinstance(data, list) else []):
+                        if isinstance(point, dict):
+                            try:
+                                vals.append(float(point.get("value")))
+                            except (TypeError, ValueError):
+                                continue
+                    for series in (e.get("series") or []) if isinstance(e.get("series"), list) else []:
+                        if isinstance(series, dict):
+                            for v in (series.get("values") or []):
+                                try:
+                                    vals.append(float(v))
+                                except (TypeError, ValueError):
+                                    continue
+                    vals = [v for v in vals if math.isfinite(v)]
+                    if len(vals) >= 2 and min(vals) > 0:
+                        ratio = max(vals) / min(vals)
+                        if ratio < CHART_FLAT_RATIO:
+                            add("chart_argument", eid, "warn",
+                                f"最大 {max(vals):g} 与最小 {min(vals):g} 只差 "
+                                f"{(ratio - 1) * 100:.0f}%（{ratio:.2f}×），从 0 起算的条长读起来"
+                                f"几乎一样——这页的「差多少」观众看不见。改用 waterfall / "
+                                f"big_number 直接写差值，或把二者放到共同基线（索引化）再比长度")
+                elif kind == "matrix":
+                    points = e.get("points")
+                    if not (isinstance(points, list) and points):
+                        add("chart_payload", eid, "error",
+                            "matrix 缺少 points[{x,y,label}]；无点不绘图")
+                    else:
+                        for pi, point in enumerate(points[:12]):
+                            if not isinstance(point, dict):
+                                add("chart_payload", f"{eid}[{pi}]", "error",
+                                    "matrix point 必须是 {x,y,label} 对象")
+                                continue
+                            try:
+                                px, py = float(point.get("x")), float(point.get("y"))
+                                if not (math.isfinite(px) and math.isfinite(py)):
+                                    raise ValueError
+                            except (TypeError, ValueError, OverflowError):
+                                add("chart_payload", f"{eid}[{pi}]", "error",
+                                    "matrix point 的 x/y 必须是 0–1 的有限数字")
+                                continue
+                            if not (0.0 <= px <= 1.0 and 0.0 <= py <= 1.0):
+                                add("chart_payload", f"{eid}[{pi}]", "warn",
+                                    f"matrix point x={px:g} y={py:g} 超出 0–1 绘图区，会被画到框外")
+                            if not str(point.get("label") or "").strip():
+                                add("chart_payload", f"{eid}[{pi}]", "warn",
+                                    "matrix point 没有 label，读者不知道它是谁")
+                elif kind == "architecture":
+                    layers = e.get("layers")
+                    clean = [str(x).strip() for x in layers[:3]] if isinstance(layers, list) else []
+                    if not clean or not all(clean):
+                        add("chart_payload", eid, "error",
+                            "architecture 必须声明 layers（1–3 条非空层名）；"
+                            "没有层名就不画，也不生成占位文字")
+                elif kind in ROWS_CHART_KINDS:
+                    usable = [r for r in data if isinstance(r, dict)
+                              and str(r.get("label") or "").strip()]
+                    multi_series = (isinstance(e.get("series"), list) and bool(e.get("series"))
+                                    and isinstance(e.get("series")[0], dict))
+                    if not multi_series and not usable:
+                        add("chart_payload", eid, "error",
+                            f"{kind} 需要 data 行（每行含非空 label）；空载荷会画出空白页")
                 n = len(data) if isinstance(data, list) else 0
                 # 多序列：series[{name, values}] + categories。类别数 = len(categories)，
                 # highlight 语义是「序列索引」而非「数据行索引」；此时不再要求 data。
@@ -1191,13 +1406,19 @@ def check_spec(spec: dict, rules: dict | None = None,
                             add("chart_highlight", eid, "warn",
                                 f"highlight={hi} 超出数据范围 0–{max(upper - 1, 0)}")
                     except (TypeError, ValueError):
-                        add("chart_highlight", eid, "warn",
-                            "highlight 必须是整数索引")
+                        names = ([str(sr.get("name", "")) for sr in (e.get("series") or [])
+                                  if isinstance(sr, dict)] if multi else
+                                 [str(r.get("label", "")) for r in data
+                                  if isinstance(r, dict)])
+                        if str(e.get("highlight")).strip() not in names:
+                            add("chart_highlight", eid, "warn",
+                                f"highlight={e.get('highlight')!r} 既不是索引也不匹配任何"
+                                "类别名/序列名，会被忽略（画面上不会出现强调）")
                 # 图表标签是独立的可见对象：空间不足时不允许让渲染器硬塞进绘图区。
                 show_values = e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
                 label_policy = str(e.get("label_collision_policy", "fail"))
                 try:
-                    ew, eh = float(e.get("width", 0)), float(e.get("height", 0))
+                    eh = float(e.get("height", 0))
                     label_gap = float(e.get("label_gap", 8))
                     label_margin = float(e.get("label_safe_margin", 12))
                     if show_values and n >= 6 and eh < 190:
@@ -1367,7 +1588,7 @@ def check_spec(spec: dict, rules: dict | None = None,
                 _gaps.append((a_id, b_id, gap))
         if len(_gaps) >= 2 and max(g for *_, g in _gaps) - min(g for *_, g in _gaps) > 2:
             add("optical_alignment", sid, "warn",
-                f"页内色块-文字间距不一致（"
+                "页内色块-文字间距不一致（"
                 + "、".join(f"「{b}」{g:.0f}px" for _, b, g in _gaps)
                 + "；图例/读数对应组的间距应处处相等）")
 
@@ -1383,9 +1604,9 @@ def check_spec(spec: dict, rules: dict | None = None,
         # 静态就能判定，不该拖到发布评审才发现。
         for cid, claim, got in _data_claim_mismatch(s):
             add("data_claim_unsupported", sid, "warn",
-                f"标题声称 {claim}，但图表「{cid}」里算不出该值"
+                "标题声称 " + str(claim) + "，但图表「" + str(cid) + "」里算不出该值"
                 + (f"（最接近的是 {got}）" if got else "")
-                + f"；主张必须能被页内证据推出")
+                + "；主张必须能被页内证据推出")
 
         if include_advisory:
             # §07 排版预算（hint 级：字号等级过碎会让层级失焦，提示收拢）
@@ -1478,6 +1699,39 @@ def check_spec(spec: dict, rules: dict | None = None,
                         add("asset_contract", eid, "hint",
                             "资产 negative 未包含 no-text / no-logo / no-watermark 约束")
 
+        # ---- 主题字体键（deck 级，逐页重复没意义，但每页都被它影响）----
+        if si == 0:
+            fonts = theme.get("fonts") if isinstance(theme.get("fonts"), dict) else None
+            if not fonts:
+                add("theme_fonts", "deck", "warn",
+                    "theme.fonts 未声明：产物会回落 Arial / Microsoft YaHei（字体判断在产物里消失）")
+            else:
+                unknown = sorted(str(k) for k in fonts if str(k) not in ("cn", "latin", "display", "body"))
+                if unknown:
+                    add("theme_fonts", "deck", "warn",
+                        f"theme.fonts 里的 {unknown} 不是被读取的键（规范键 cn / latin，"
+                        f"display / body 是别名）——写了等于没写")
+                if not str(fonts.get("cn") or fonts.get("body") or "").strip():
+                    add("theme_fonts", "deck", "warn",
+                        "theme.fonts 没有中文字族（cn/body）：中文会回落 Microsoft YaHei")
+                if not str(fonts.get("latin") or fonts.get("display") or "").strip():
+                    add("theme_fonts", "deck", "warn",
+                        "theme.fonts 没有拉丁字族（latin/display）：拉丁与数字会回落 Arial")
+
+        # ---- 主题约束键：写错的名字要点名（同 theme_fonts 的做法）----
+        if si == 0:
+            _KNOWN_CONSTRAINTS = frozenset({
+                "accent_max", "max_charts", "max_colors", "font_levels_max", "font_families_max",
+                "whitespace_min", "min_whitespace", "type_step_min", "decoration_area_max",
+                "bg_layers_max", "bg_layer_coverage", "bold_ratio_max"})
+            _unknown_cons = sorted(str(k) for k in constraints if str(k) not in _KNOWN_CONSTRAINTS)
+            if _unknown_cons:
+                add("theme_constraints", "deck", "warn",
+                    f"theme.constraints 里的 {_unknown_cons} 不生效（可用的键："
+                    f"accent_max / max_charts / max_colors / font_levels_max / font_families_max / "
+                    f"whitespace_min / type_step_min / decoration_area_max / bg_layers_max / "
+                    f"bold_ratio_max）——写了等于没写")
+
         # ---- 主题生产约束（来自 VP 主题「生产约束」章节） ----
         if max_charts is not None and chart_count > int(max_charts):
             add("theme_constraint", sid, "warn",
@@ -1486,7 +1740,177 @@ def check_spec(spec: dict, rules: dict | None = None,
             add("theme_constraint", sid, "hint",
                 f"每页颜色 {len(page_colors)} > 主题上限 {max_colors}（仅统计引用角色/字面色）")
 
+    # ---- 方向种子（deck 级）：方向发下来的数字约束，谁来执法 ----
+    # 五个量都对得上「可执行」的定义：说得出、量得到、超了有点名。未声明不检查。
+    _seed_hits: list[tuple[str, str, str, str]] = []
+
+    def _seed(scope: str, level: str, msg: str) -> None:
+        _seed_hits.append(("direction_seed", scope, level, msg))
+
+    if cw > 0 and ch > 0:
+        _area = cw * ch
+        _ws_pages: list[tuple[str, float]] = []
+        _bg_pages: list[tuple[str, int]] = []
+        _type_gaps: list[tuple[str, float]] = []
+        _bold_elems = _text_elems = 0
+        for _s in slides:
+            if not isinstance(_s, dict):
+                continue
+            _sid = str(_s.get("id", "?"))
+            _rects: list[tuple[float, float, float, float]] = []
+            _sizes: set[float] = set()
+            _layers = 0
+            for _e in (_s.get("elements") or []):
+                if not isinstance(_e, dict):
+                    continue
+                _r = _element_rect(_e, cw, ch)
+                if _r:
+                    _rects.append(_r)
+                    if (str(_e.get("type", "text")) != "text"
+                            and _element_area(_e) / _area >= bg_layer_cov):
+                        _layers += 1
+                if str(_e.get("type", "text")) == "text":
+                    _text_elems += 1
+                    if _e.get("bold") is True or str(_e.get("weight", "")).lower() in (
+                            "bold", "700", "800", "900"):
+                        _bold_elems += 1
+                    try:
+                        _sz = float(_e.get("size") or 0)
+                    except (TypeError, ValueError):
+                        _sz = 0.0
+                    if _sz > 0:
+                        _sizes.add(_sz)
+            if _rects:
+                _ws_pages.append((_sid, 1.0 - _ink_union(_rects) / _area))
+            if _layers:
+                _bg_pages.append((_sid, _layers))
+            _st = sorted(_sizes)
+            if len(_st) >= 2:
+                _type_gaps.append((_sid, min(b / a for a, b in zip(_st, _st[1:]) if a > 0)))
+
+        if whitespace_min is not None and _ws_pages:
+            _mean_ws = sum(w for _, w in _ws_pages) / len(_ws_pages)
+            _worst = min(_ws_pages, key=lambda t: t[1])
+            if _mean_ws < whitespace_min:
+                _seed("deck", "warn",
+                      f"留白率 {_mean_ws:.0%} < 方向下限 {whitespace_min:.0%}"
+                      f"（最挤的一页是 {_worst[0]} {_worst[1]:.0%}）：元素框已经占满版面，"
+                      f"要么砍内容，要么把整页拆成两页")
+            else:
+                _thin = [(sid_, w) for sid_, w in _ws_pages if w < whitespace_min][:3]
+                if _thin:
+                    _seed("deck", "hint",
+                          f"留白率整体达标（均值 {_mean_ws:.0%}），但这几页低于下限 "
+                          f"{whitespace_min:.0%}：" + "、".join(f"{a} {b:.0%}" for a, b in _thin))
+        if bg_layers_max is not None:
+            for _sid, _n in _bg_pages:
+                if _n > bg_layers_max:
+                    _seed(_sid, "warn",
+                          f"背景层 {_n} 层（≥{bg_layer_cov:.0%} 页面积的非文字元素）"
+                          f" > 上限 {bg_layers_max}：层叠越多，前景越难突出")
+        if type_step_min is not None and _type_gaps:
+            _sid, _g = min(_type_gaps, key=lambda t: t[1])
+            if _g < type_step_min - 1e-9:
+                _seed(_sid, "hint",
+                      f"字号相邻级差 {_g:.2f}× < {type_step_min:.2f}×：级差太小读起来是「没对齐」"
+                      f"而不是「有层级」——拉开到 {type_step_min:g}× 以上，或改用字重/墨色区分")
+        if bold_ratio_max is not None and _text_elems >= 4:
+            _ratio = _bold_elems / _text_elems
+            if _ratio > bold_ratio_max:
+                _seed("deck", "warn",
+                      f"粗体占比 {_ratio:.0%} > 上限 {bold_ratio_max:.0%}"
+                      f"（{_bold_elems}/{_text_elems} 个文本元素显式加粗）：全都加粗等于都没加粗，"
+                      f"层级要让给字号与墨色")
+    for _rule, _scope, _level, _msg in _seed_hits:
+        add(_rule, _scope, _level, _msg)
+
     if include_advisory:
+        # ---- 跨页锚（眉标 / 页码 / 证据编号）：锚不动，正文才可游走 ----
+        # 每页 anchor 由 plan 发下来（家族标签 / 页码 / Fig. 编号），生成侧落成元素。
+        # 这里查三件事：声明了没有落、落的位置是不是同一个、证据编号是不是连续。
+        _anc_decl: list[tuple[str, dict]] = []
+        _missing: list[str] = []
+        _eb_pos: list[tuple[float, float]] = []
+        _pn_pos: list[tuple[float, float]] = []
+        _figures: list[tuple[str, str]] = []
+        for s in slides:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("id", "?"))
+            anc = s.get("anchor")
+            if not isinstance(anc, dict) or not anc:
+                continue
+            _anc_decl.append((sid, anc))
+            elems = [e for e in (s.get("elements") or []) if isinstance(e, dict)]
+            role_elems = lambda r: [e for e in elems if str(e.get("role", "")) == r]  # noqa: E731
+            has_visual = any(str(e.get("type", "")) in ("chart", "native_chart", "image")
+                             for e in elems)
+            if anc.get("eyebrow"):
+                cand = role_elems("eyebrow")
+                if not cand:
+                    _missing.append(f"{sid} 眉标")
+                else:
+                    for e in cand:
+                        try:
+                            _eb_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
+                        except (TypeError, ValueError):
+                            pass
+                    want = str(anc["eyebrow"]).strip().upper()
+                    if not any(str(e.get("text", "")).strip().upper() == want for e in cand):
+                        add("deck_anchor", sid, "warn",
+                            f"眉标与声明不一致：声明「{anc['eyebrow']}」，实际 "
+                            f"{[str(e.get('text', ''))[:24] for e in cand]}——眉标是导航，"
+                            f"必须用 plan 给的词汇表原文")
+            if anc.get("page_number") is not None:
+                cand = role_elems("page_number")
+                if not cand:
+                    _missing.append(f"{sid} 页码")
+                else:
+                    for e in cand:
+                        try:
+                            _pn_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
+                        except (TypeError, ValueError):
+                            pass
+                    want = str(anc["page_number"]).strip()
+                    if not any(str(e.get("text", "")).strip() == want for e in cand):
+                        add("deck_anchor", sid, "warn",
+                            f"页码与声明不一致：声明 {want}，实际 "
+                            f"{[str(e.get('text', ''))[:12] for e in cand]}")
+            if anc.get("figure"):
+                _figures.append((sid, str(anc["figure"])))
+                if has_visual:
+                    fig = str(anc["figure"]).strip()
+                    if not any(str(e.get("text", "")).strip().startswith(fig) for e in elems):
+                        _missing.append(f"{sid} 证据编号 {fig}")
+
+        if _missing:
+            add("deck_anchor", "deck", "warn",
+                f"声明了锚但没有落到页面上：{'、'.join(_missing[:6])}"
+                + ("…" if len(_missing) > 6 else "")
+                + "——锚不是装饰，缺一页就断链")
+        if len({(round(x, 3), round(y, 3)) for x, y in _eb_pos}) > 1:
+            add("deck_anchor", "deck", "warn",
+                f"眉标落在 {len({(round(x, 3), round(y, 3)) for x, y in _eb_pos})} 个不同位置"
+                f"（{sorted({(round(x), round(y)) for x, y in _eb_pos})}）：眉标要固定上缘，"
+                f"位置一动，读者就得每页重新找它")
+        if _eb_pos and min(y for _, y in _eb_pos) > 0.12 * ch:
+            add("deck_anchor", "deck", "hint",
+                f"眉标最低一处在 y={min(y for _, y in _eb_pos):.0f}（> 12% 页高）："
+                f"眉标属于页面家具，习惯在上缘")
+        if len({(round(x, 3), round(y, 3)) for x, y in _pn_pos}) > 1:
+            add("deck_anchor", "deck", "warn",
+                f"页码落在 {len({(round(x, 3), round(y, 3)) for x, y in _pn_pos})} 个不同位置"
+                f"（{sorted({(round(x), round(y)) for x, y in _pn_pos})}）：页码要固定象限")
+        if len(_figures) >= 2:
+            nums = []
+            for _sid, label in _figures:
+                m = re.search(r"(\d+)", label)
+                nums.append(int(m.group(1)) if m else None)
+            if None not in nums and nums != list(range(nums[0], nums[0] + len(nums))):
+                add("deck_anchor", "deck", "warn",
+                    f"证据编号不连续：{[l for _, l in _figures]}——编号断链会让「还有没有证据」"
+                    f"变成猜谜；按页序重编 01…N")
+
         if len(animation_types) > animation_types_max:
             add("animation_budget", "deck", "warn",
                 f"全套动画/切换类型 {len(animation_types)} 种 > 上限 {animation_types_max}")
@@ -1549,10 +1973,15 @@ def check_spec(spec: dict, rules: dict | None = None,
     # ---- 可读性底线：弱化文字（muted / secondary）对背景的对比度 ----
     # 刻度、注释、来源通常由 muted 承担；对比不足时整页"隐性不可读"，
     # 这是最常见也最容易被忽略的质量漏洞。只报告，不替调用方改色。
+    # 两条线合成一条口径：hint = 3:1（契约文档承诺的线）、warn = 1.8:1（真读不出来）。
+    # 旧实现 hint 从 2.5:1 起，2.5–3.0 之间静默放过——正是"看着还行、投影上消失"的灰。
+    # 只判**可能在承载文字**的 token：与 ink 同侧的才算字，另一侧是面/影
+    # （深底主题的 secondary 就是深面，拿它当字才不该通过）。
     _colors = theme.get("colors") or {}
     _bg = _colors.get("background")
+    _weak_roles = _weak_text_roles(theme, slides)
     if isinstance(_bg, str) and _bg.startswith("#"):
-        for _role in ("muted", "secondary"):
+        for _role in sorted(_weak_roles):
             _fg = _colors.get(_role)
             if not (isinstance(_fg, str) and _fg.startswith("#")):
                 continue
@@ -1564,9 +1993,10 @@ def check_spec(spec: dict, rules: dict | None = None,
                 add("contrast", f"theme.{_role}", "warn",
                     f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 1.8:1，"
                     f"刻度/注释将不可读（建议加深至 ≥3:1）")
-            elif _k < 2.5:
+            elif _k < 3.0:
                 add("contrast", f"theme.{_role}", "hint",
-                    f"{_role} {_fg} 对背景对比 {_k:.1f}:1 偏低（建议 ≥3:1）")
+                    f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 3:1：做装饰位没问题，"
+                    f"做文字（刻度/注释/小字）会消失，换 ink/primary 或加深该 token")
 
     if include_advisory:
         # ---- Accent 面积汇总 ----
@@ -1600,21 +2030,16 @@ def check_spec(spec: dict, rules: dict | None = None,
                 prev_struct, prev_declared = cur, declared
 
 
-    # 设计契约条目：标为 advisory（权重 0）——它们进报告、进证据，不进分数与门槛。
+    # 设计契约条目：标为 advisory（不进门槛）——它们进报告、进证据，不进任何分数。
+    # 验证层不评分：打分等于用固定阈值重新裁决设计好坏，那是 Art Director 的职责。
     for c in checks:
         if c.get("rule") in DESIGN_RULES:
             c["advisory"] = True
-            c["score_weight"] = 0.0
-    score = max(0, 100 - sum(
-        (0.0 if c.get("advisory")
-         else (4 if c["level"] == "error" else (2 if c["level"] == "warn" else 0)))
-        for c in checks))
     return {
         "passed": not any(c["level"] == "error" for c in checks),
         "checks": checks,
         "advisory_rules": sorted(DESIGN_RULES),
         "warnings": warnings,
-        "score": score,
         # 可报告的对齐/行长事实：比率本身不扣分（新提示族不得计分），供人复核
         "grid": {**grid_stats,
                  "adherence": (round(grid_stats["aligned"] / grid_stats["checked"], 3)
@@ -1623,37 +2048,6 @@ def check_spec(spec: dict, rules: dict | None = None,
     }
 
 
-# --------------------------------------------------------------------------
-# 可选 CLI： python guard.py build_mydeck.py
-# --------------------------------------------------------------------------
-def main(argv):
-    import importlib.util
-    from pathlib import Path
-    if len(argv) < 2:
-        print("usage: python guard.py <build_module.py> [--json] [--raw]")
-        return 1
-    mod_path = Path(argv[1])
-    spec_mod = importlib.util.spec_from_file_location("buildmod", str(mod_path))
-    mod = importlib.util.module_from_spec(spec_mod)
-    spec_mod.loader.exec_module(mod)
-    spec = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
-    if spec is None:
-        print("build module must define build_spec() or SPEC")
-        return 1
-    # V2：Guard 之前先过 Normalizer（生产链第 0 级）。默认检查的是归一化后的
-    # 规范形——Guard 只确认「归一化解决不了的问题」；--raw 看原始 spec 的诊断。
-    if "--raw" not in argv:
-        spec, _norm = normalize_spec(spec)
-    result = check_spec(spec)
-    if "--json" in argv:
-        import json
-        print(json.dumps(result, ensure_ascii=False))
-    else:
-        print(f"score={result['score']} passed={result['passed']}")
-        for c in result["checks"]:
-            if c["level"] != "hint":
-                print(f"  [{c['level']:5s}] {c['rule']:14s} {c['msg']}")
-    return 0 if result["passed"] else 2
 
 
 
@@ -1878,30 +2272,3 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True,
         "unresolved": unresolved[:_REPORT_ITEM_CAP],
     }
     return src, report
-def geometry_only_hash(spec: dict) -> str:
-    """像素相关投影的指纹：剥掉「只影响声明/评分、不影响像素」的字段后取指纹。
-
-    用途：语义变更分类（改声明不重渲染）与报告指纹对照。与 render_check 的
-    页级缓存键同向：这些字段变了，页级缓存本来也不会失效——在这里显式说出
-    来，避免「改了一句 insight 也重渲染」。
-    """
-    PIXEL_NEUTRAL_PAGE_FIELDS = (
-        "insight", "narrative_role", "reading_order", "energy", "density",
-        "empty_space_role", "page_family", "rhythm_stage", "continuity_token",
-    )
-    proj = copy.deepcopy(spec)
-    for slide in (proj.get("slides") or []):
-        if not isinstance(slide, dict):
-            continue
-        slide.pop("notes", None)
-        slide.pop("source_note", None)
-        pi = slide.get("page_intent")
-        if isinstance(pi, dict):
-            for f in PIXEL_NEUTRAL_PAGE_FIELDS:
-                pi.pop(f, None)
-    return spec_fingerprint(proj)
-
-
-if __name__ == "__main__":
-    import sys
-    sys.exit(main(sys.argv))
