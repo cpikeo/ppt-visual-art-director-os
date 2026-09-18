@@ -163,6 +163,7 @@ def build_skeleton_module(bundle: dict) -> str:
     if not seed_cons:
         seed_cons = {"accent_max": accent_max}
 
+    from asset_workflow import digest
     L = ['# -*- coding: utf-8 -*-',
          '"""plan → build 骨架：只给出已决策的事实，零几何/样式预设。',
          '',
@@ -178,7 +179,8 @@ def build_skeleton_module(bundle: dict) -> str:
          '  6) 每页 anchor（眉标/页码）要落成元素：眉标 role=eyebrow（家族词汇原文）、'
          '页码 role=page_number、证据编号写进该页 caption 开头；位置全 deck 一致、编号连续',
          '',
-         '填完直接：python scripts/vao.py check <本文件> out.pptx --mode draft',
+         '有图页先执行 assets → 出图 → asset-qc；图片元素必须写 asset_id。',
+         '再执行：python scripts/vao.py check <本文件> out.pptx --mode draft --assets-manifest asset_manifest.json',
          '"""',
          '',
          'SPEC = {',
@@ -190,6 +192,7 @@ def build_skeleton_module(bundle: dict) -> str:
          '    },',
          '    "strategy": {},                      # TODO：P2 Strategy（受众/决策/张力/证据）',
          '    "direction": {"color_intent": []},  # TODO：[brand, emotion, hierarchy]',
+         f'    "asset_workflow": {{"plan_sha256": {digest(bundle)!r}}},',
          '    "slides": [']
     for i in range(len(raw_slides)):
         pg, intel = pairs[i] if i < len(pairs) else ({}, {})

@@ -21,11 +21,11 @@
 | 网格 | 1280×720，8 单位自动吸附；`grid_exempt:true` 豁免 |
 | 媒体 | 图须有功能（context/emotion/proof/hero）；数据/表格/流程/结构页不出图；背景画心免检需覆盖 ≥60% + 遮罩 ≥0.20 |
 | 构图 | plan 每页给一条 `composition.grammar`（视线如何被组织）；这是**提案**，生成侧可整体推翻——它不给坐标、不给版式 |
-| 资产 QC | `vao.py asset-qc` 只做定性 Issue+Suggestion；阻断项最多定向重出 1 次；最终资格由 `check --mode release` 与 Manifest 判定 |
+| 资产 QC | 先 `assets --plan` 再出图，QC 记录清单与图片 SHA-256；retry/missing/block 均退出 2；有图稿件缺有效 QC 则不编译。详见 `asset-workflow.md` |
 | 可读性 | 声明色：弱化字（muted / `chart_muted` 指向的 token，含元素里真拿 secondary 写字的）<3:1 提示、<1.8:1 警示；正文级 <4.5:1 与元素级预估走 `pre_critic` 风险项（建议，不阻断 release） |
 | 风险策略 | 按需读 `forecast_risk`/`risk_strategy`；默认 QA 不运行建议 |
 | 修订 | 照 `fix_plan` 根因组一轮批量改完（内嵌契约行，零回读）；一次改完再复跑同档 |
-| 发布 | `--mode release`：门 = 0 阻断 + 产品凭证 + 预览证据 + Manifest（`release_eligible`）；非阻断项只进 `warn_summary`；盖 `source_spec_hash` |
+| 发布 | `--mode release`：门 = 0 阻断 + 有图资产链凭证 + 产品凭证 + 预览证据 + Manifest（`release_eligible`）；非阻断项只进 `warn_summary`；盖 `source_spec_hash` |
 
 ## Calls（最小 API）
 
@@ -79,7 +79,8 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 不缩字号。光源以外的字段（如幻灯级 `background`）不存在——写了也会被静默忽略，别写。
 
 来源区内文字 `role` 只允许 `{source, method, metadata}`（页码/编号等挂 `metadata`/`label`）；
-其他角色触发 zone-invasion 错误。图像 `src` 相对路径按输出目录解析，找不到回退 spec 所在目录。
+其他角色触发 zone-invasion 错误。图片必须用 `asset_id` 绑定清单；绑定阶段采用与 QC 相同的路径解析器，再交给编译器。
+生成图片目录优先 `--assets-dir`，其次清单声明目录；既有素材路径由来源声明给出。
 
 可读性与裁切（工程，不是品味）：① 单行 meta 行（眉标/章标/页码/落款）`wrap=False`
 且盒宽 ≥1.5× 估宽——第二行落盒外的裁切是沉默的。② `page_intent.focus` 声明**视线第一落点**，
@@ -92,14 +93,14 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 
 | 代码 | 状态 | 处理 |
 |---|---|---|
-| `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` | BLOCKED | 必修：按 `fix_plan` 根因组一次改完 |
+| `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_WORKFLOW_FAIL` | BLOCKED | 必修：按 `fix_plan` 根因组一次改完 |
 | 其他 warn/hint（`BG_UNPROTECTED`、节奏与对齐提示等） | PASS | 只进 `warn_summary`，不解释、不询问、不逐条修复 |
 
 `guard.check_spec` 的返回只有 `passed / checks / advisory_rules / warnings / grid / line_measure`——
 **没有 score**。验证层不评分、不排序、不评级：打分等于用固定阈值重新裁决设计好坏。
 
 状态优先级：有阻断 → BLOCKED；spec 档 → PREVIEW_ONLY；0 阻断 → PASS（`release_eligible`
-仅在 release 档且编译通过时为真）。**没有分数**——分数会把良性观察变成事实闸门。
+仅在 release 档、编译通过且所有发布凭证有效时为真）。**没有分数**——分数会把良性观察变成事实闸门。
 
 ## Release Manifest
 
@@ -108,3 +109,14 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 `compile_report`（含 `output_sha256`）、`ghost_preview`、`revision_count` 与 `revision_log`、
 `status`。清单校验三件事：报告盖的 spec 戳与当前 spec 一致；PPTX 字节戳与磁盘一致；
 预览证据引用的页面都在当前 spec 里。口径以代码为真源。
+
+
+## v5.1 资产前置契约
+
+`ASSET_WORKFLOW_FAIL` 由 `vao.py check` 在编译前给出；修法是补齐/刷新证据链，
+不是改字号或降低图像阈值。`spec` 模式同样校验有图稿件的资产依赖，但不编译。
+纯文字/原生图形稿件记录 `SKIPPED / no_image_elements`，不是伪造“已检查”。
+
+Release Manifest 增加 `asset_workflow`，记录 `status`、brief/plan/清单/QC 指纹和报告位置；
+QC 本身包含每张图片的 SHA-256。验证失败时顶层与 verification 内的
+`release_eligible` 均为 false。编译 PASS 不可代替完整流程 PASS。

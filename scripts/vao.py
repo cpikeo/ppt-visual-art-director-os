@@ -146,10 +146,9 @@ def bind_asset_manifest(spec: dict, manifest_path: str | Path,
     """
     manifest_file = Path(manifest_path).expanduser().resolve()
     payload = json.loads(manifest_file.read_text(encoding="utf-8"))
-    entries = payload.get("assets") if isinstance(payload, dict) else None
-    entries = entries if isinstance(entries, list) else []
-    by_id = {str(item.get("asset_id")): item for item in entries
-              if isinstance(item, dict) and item.get("asset_id")}
+    from asset_workflow import asset_entries, asset_root, resolve_asset
+    by_id = {str(item["asset_id"]): item for item in asset_entries(payload)}
+    root = asset_root(payload, manifest_file, assets_dir)
     bound: list[dict] = []
     missing: list[str] = []
     missing_files: list[str] = []
@@ -158,15 +157,13 @@ def bind_asset_manifest(spec: dict, manifest_path: str | Path,
     def walk(value: Any) -> None:
         if isinstance(value, dict):
             asset_id = value.get("asset_id")
-            if asset_id:
+            if asset_id and value.get("type") == "image":
                 key = str(asset_id)
                 item = by_id.get(key)
                 if item:
-                    filename = str(item.get("expected_filename") or f"{key}.png")
-                    src = (Path(assets_dir).expanduser().resolve() / filename
-                           if assets_dir else Path(filename))
-                    value["src"] = str(src) if assets_dir else filename
-                    if assets_dir and not src.exists():
+                    src = resolve_asset(item, payload, manifest_file, assets_dir)
+                    value["src"] = str(src)
+                    if not src.is_file():
                         missing_files.append(str(src))
                     bound.append({"asset_id": key, "src": str(src),
                                   "slide_id": value.get("slide_id")})
@@ -180,8 +177,7 @@ def bind_asset_manifest(spec: dict, manifest_path: str | Path,
                 walk(child)
 
     walk(result)
-    report = {"manifest": str(manifest_file), "assets_dir": str(Path(assets_dir).expanduser().resolve())
-              if assets_dir else None, "bound": bound,
+    report = {"manifest": str(manifest_file), "assets_dir": str(root), "bound": bound,
               "bound_count": len(bound), "missing_asset_ids": sorted(set(missing)),
               "missing_files": sorted(set(missing_files)),
               "status": "PASS" if not missing and not missing_files else "BLOCK"}
@@ -199,6 +195,10 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
         # 早失败并给出一句可执行的修法，胜过交回一个空计划让上层自己猜。
         raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
                          "请至少给出一页的 title + content，再跑 plan")
+    from asset_workflow import digest, now
+    bundle["workflow"] = {"schema": "vao-plan-chain-v1", "planned_at": now(),
+                          "brief_path": str(Path(brief_path).resolve()),
+                          "brief_sha256": digest(need)}
     if out:
         _json_write(out, bundle)
     if skeleton:
@@ -245,8 +245,8 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
         "family": str(page_plan.get("page_family") or "").lower(),
         "subject": [subject],
         "color": color_cue,
-        "material": [str(derived.get("material") or raw.get("material") or "quiet matte surface")],
-        "lighting": [str(derived.get("light") or raw.get("lighting") or "single soft directional light")],
+        "material": [str(raw.get("material") or derived.get("material") or "quiet matte surface")],
+        "lighting": [str(raw.get("lighting") or derived.get("light") or "single soft directional light")],
         "composition": [str(derived.get("composition_grammar") or "asymmetric editorial composition")],
         "motion": [str(derived.get("motion"))] if derived.get("motion") else [],
         "style": style,
@@ -266,6 +266,7 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
         "light_direction": raw.get("light_direction") or "left",
         "energy": raw.get("energy") or page_plan.get("energy") or "low",
         "asset_function": function,
+        "ratio": str(raw.get("asset_ratio") or brief.get("asset_ratio") or "16:9"),
     }
     return card, page
 
@@ -312,6 +313,27 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     for i, page_plan in enumerate(route_pages):
         sid = str(page_plan.get("id") or f"s{i + 1:02d}")
         decision = str((page_plan.get("asset") or {}).get("decision") or "none")
+        raw = raw_pairs[i][1] if i < len(raw_pairs) else {}
+        origin = raw.get("asset_source") if isinstance(raw, dict) else None
+        if origin:
+            from asset_workflow import digest
+            if not isinstance(origin, dict) or origin.get("kind") not in {"provided", "licensed", "original", "reuse"} or not origin.get("path") or not origin.get("source"):
+                raise ValueError("asset_source 需要 kind(provided/licensed/original/reuse)、path、source")
+            origin = dict(origin)
+            op = Path(origin["path"]).expanduser()
+            base = Path((bundle.get("workflow") or {}).get("brief_path") or ".").resolve().parent
+            origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
+            aid = "existing-" + digest(origin)[:16]
+            previous = next((e for e in assets if e.get("asset_id") == aid), None)
+            if previous:
+                previous["slide_ids"].append(sid)
+            else:
+                from asset_prompt import normalize_safe_area
+                assets.append({"asset_id": aid, "slide_ids": [sid], "decision": "existing",
+                               "origin": origin, "asset_function": raw.get("asset_function", "context"),
+                               "safe_area": normalize_safe_area(raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
+                               "meta": {"text_color": raw.get("text_color")}, "retry_budget": 0})
+            continue
         if decision == "none":
             skipped_pages.append({"slide_id": sid, "decision": "skip",
                                   "reason": "page family reserves attention for data/text"})
@@ -354,6 +376,7 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             "fingerprint": fingerprint,
             "asset_type": card["asset_type"],
             "asset_function": page["asset_function"],
+            "ratio": page["ratio"],
             "safe_area": page["safe_area"],
             "prompt": result["prompt"],
             "negative": result["negative"],
@@ -458,6 +481,8 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path,
         "fix_plan": result.get("fix_plan") or {"groups": []},
         # Warnings stay machine-readable but out of the conversation packet.
         "warning_summary": result.get("warn_summary", []),
+        "asset_workflow": result.get("asset_workflow"),
+        "release_eligible": result.get("release_eligible", False),
         "next_action": result.get("next_action"),
         "performance": result.get("performance", {}),
     }
@@ -489,34 +514,23 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
 
     manifest_file = Path(manifest_path).expanduser().resolve()
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    # 默认产图目录与 check/run 的 --assets-dir 口径对齐：两条命令读同一批图，
-    # 却按不同规则找路径 → asset-qc 报「图不存在」而 check 绑定成功（或反过来）。
-    # 优先用 manifest 自己记下的 assets_dir（出图时写入的真值），
-    # 没有再退回 manifest 所在目录。
-    if input_dir:
-        root = Path(input_dir).expanduser().resolve()
-    else:
-        declared = manifest.get("assets_dir") or manifest.get("output_dir")
-        root = (Path(str(declared)).expanduser().resolve()
-                if declared and Path(str(declared)).expanduser().is_dir()
-                else manifest_file.parent)
+    from asset_workflow import (ACCEPTED, asset_entries, digest, file_digest,
+                                now, resolve_asset, verify_sources)
+    workflow_issues = verify_sources(manifest)
     results = []
     actions: dict[str, list[str]] = {}
     pending: list[str] = []        # 还没生成（先出图再 QC），与「生成不合格」分开报
-    for entry in manifest.get("assets") or []:
-        if entry.get("decision") != "generate":
-            continue
-        filename = entry.get("expected_filename") or f"{entry.get('asset_id')}.png"
-        candidate = root / filename
-        if not candidate.exists():
-            stem = Path(filename).stem
-            for ext in (".png", ".jpg", ".jpeg", ".webp"):
-                alt = root / f"{stem}{ext}"
-                if alt.exists():
-                    candidate = alt
-                    break
-        if not candidate.exists() and entry.get("path"):
-            candidate = Path(str(entry["path"])).expanduser()
+    for entry in asset_entries(manifest):
+        candidate = resolve_asset(entry, manifest, manifest_file, input_dir)
+        image_sha = file_digest(candidate)
+        if entry["decision"] == "generate" and image_sha and image_sha == entry.get("preexisting_sha256"):
+            workflow_issues.append(f"{entry['asset_id']}: 清单前已有同一图片；须显式标记 existing/reuse")
+        if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
+            workflow_issues.append(f"{entry['asset_id']}: 缺少 prompt / negative")
+        if entry["decision"] == "existing":
+            origin = entry.get("origin") or {}
+            if origin.get("kind") not in {"provided", "licensed", "original", "reuse"} or not origin.get("source"):
+                workflow_issues.append(f"{entry['asset_id']}: 既有素材缺少合法 kind / source 声明")
         safe = entry.get("safe_area") or {}
         text_color = ((entry.get("meta") or {}).get("text_color")
                       or (entry.get("page") or {}).get("text_color"))
@@ -527,15 +541,19 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
                                      phase=phase, max_retries=entry.get("retry_budget", 1))
         missing = (qc.get("status") == "error")   # 文件不存在 ≠ 图片不合格：修法不同
         item = {"asset_id": entry.get("asset_id"), "slide_ids": entry.get("slide_ids") or [],
-                "file": str(candidate), "qc": qc, "policy": decision,
+                "file": str(candidate), "file_sha256": image_sha, "qc": qc, "policy": decision,
                 "missing": missing}
         results.append(item)
         actions.setdefault(decision["action"], []).append(str(entry.get("asset_id")))
         if missing:
             pending.append(str(entry.get("asset_id")))
     report = {
-        "schema": "vao-asset-qc-v1",
+        "schema": "vao-asset-qc-v2",
         "manifest": str(manifest_file),
+        "manifest_sha256": digest(manifest), "checked_at": now(),
+        "workflow_issues": workflow_issues,
+        "status": "PASS" if not workflow_issues and all(
+            (r.get("policy") or {}).get("action") in ACCEPTED for r in results) else "BLOCKED",
         "phase": phase,
         "results": results,
         "summary": {k: len(v) for k, v in actions.items()},
@@ -560,11 +578,13 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
         if report["pending_assets"]:
             print("  not-generated: " + ", ".join(report["pending_assets"])
                   + "（先生成图再 QC，这不是图片质量问题）")
-        if not report["blocking_assets"] and not report["pending_assets"]:
+        if workflow_issues:
+            print("  workflow: " + "; ".join(workflow_issues))
+        if report["status"] == "PASS":
             print("  ✓ 无资产阻断；advisory 不进入对话")
         print(f"  report: {out_path}")
     # 0 只代表「每个应生成的资产都被验证过且无阻断」；未生成 = 无法验证 = 不能当作通过。
-    return report, 0 if not report["blocking_assets"] and not report["pending_assets"] else 2
+    return report, 0 if report["status"] == "PASS" else 2
 
 
 def _ghost_engine_stamp() -> str | None:
@@ -610,6 +630,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
               include_advisory: bool = False, json_output: bool = False,
               assets_manifest: str | None = None,
               assets_dir: str | None = None,
+              asset_qc_report: str | None = None,
               polish: bool = False) -> tuple[dict, int]:
     """一次执行完成交付验证：normalize → guard → compile → 预览证据 → 修复包。
 
@@ -621,16 +642,28 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     from qa import release_manifest, run_qa
 
     spec, build = load_spec(build_path)
+    from asset_workflow import verify_chain, blocked_result
     asset_binding = None
+    binding_error = None
     if assets_manifest:
-        spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
+        try:
+            spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            binding_error = str(exc)
+    workflow = verify_chain(spec, assets_manifest, asset_qc_report, assets_dir)
+    if binding_error:
+        workflow.setdefault("issues", []).append(binding_error)
+        workflow["status"] = "BLOCKED"
     normalized, norm = normalize_spec(spec)
     output_path = Path(output).expanduser()
     t0 = time.perf_counter()
-    result = run_qa(normalized, output_path, mode=mode,
-                    normalize=False,           # 边界处只归一化一次
-                    include_advisory=include_advisory,
-                    spec_path=str(build))
+    if workflow["status"] == "BLOCKED":
+        result = blocked_result(normalized, workflow)
+    else:
+        result = run_qa(normalized, output_path, mode=mode,
+                        normalize=False, include_advisory=include_advisory,
+                        spec_path=str(build))
+    result["asset_workflow"] = workflow
     if result.get("normalization") is None:
         result["normalization"] = norm
     result.setdefault("execution", {})["reference_context"] = "none"
@@ -643,7 +676,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     ghost = None
     preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
                              if mode == "release" else None)
-    if preview_dir:
+    if preview_dir and workflow["status"] != "BLOCKED":
         ghost = _ghost_cached(normalized, preview_dir, build.parent,
                               output_sha=(result.get("compile") or {}).get("output_sha256"))
         result["ghost_preview"] = ghost
@@ -662,6 +695,9 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                                     revision_log=ledger.get("log"))
         manifest_path = output_path.with_suffix(".manifest.json")
         _json_write(manifest_path, manifest)
+        if manifest["status"] == "BLOCKED" and result.get("passed"):
+            result.update(passed=False, status="BLOCKED", release_eligible=False)
+            result["verdict"].update(verdict="BLOCKED", status="BLOCKED")
         result["manifest_path"] = str(manifest_path)
 
     result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
@@ -712,30 +748,40 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
 
 
 def run_once(args: argparse.Namespace) -> int:
-    """plan + optional check in one process, avoiding script-by-script startup."""
-    bundle = _plan(args.brief, args.plan_out, None if args.build else args.skeleton)
+    """Prepare a plan/manifest OR check an existing build; never skip the asset pause."""
     build = args.build
+    if build and getattr(args, "assets_out", None):
+        raise ValueError("run --assets-out 只准备资产；不要同时 --build。先出图与QC，再 check 编排稿")
+    if build:
+        # Do not overwrite a plan already bound to image/QC evidence.
+        bundle = None
+    else:
+        bundle = _plan(args.brief, args.plan_out, args.skeleton)
     if getattr(args, "assets_out", None):
         from intent_compiler import _load_need
         need = _load_need(args.brief)
         manifest = build_asset_manifest(need, bundle=bundle,
                                         cache_path=getattr(args, "asset_cache", None))
+        from asset_workflow import prepare_manifest
+        manifest = prepare_manifest(manifest, need, bundle, args.brief, args.plan_out,
+                                    args.assets_out, getattr(args, "assets_dir", None))
         _json_write(args.assets_out, manifest)
         print(f"assets complete · unique_calls={manifest['asset_budget']['unique_generation_calls']} "
               f"· manifest={args.assets_out}")
     if not build:
         if not args.skeleton:
-            print(json.dumps({"plan": bundle, "next": "填充 --skeleton 后再执行 vao.py check"},
+            print(json.dumps({"plan": bundle, "next": "有图先 assets → 出图 → asset-qc；通过后填充骨架并 check"},
                              ensure_ascii=False, indent=2))
         else:
             print(f"plan complete · skeleton: {args.skeleton} · "
-                  "填充 TODO 后执行 vao.py check build.py deck.pptx")
+                  "有图先 assets → 出图 → asset-qc；通过后填充骨架并 check")
         return 0
     manifest_for_check = getattr(args, "assets_manifest", None) or getattr(args, "assets_out", None)
     _, code = run_check(build, args.output, mode=args.mode, packet=args.packet,
                         preview=args.preview, include_advisory=args.advisory,
                         json_output=args.json, assets_manifest=manifest_for_check,
                         assets_dir=getattr(args, "assets_dir", None),
+                        asset_qc_report=getattr(args, "asset_qc_report", None),
                         polish=getattr(args, "polish", False))
     return code
 
@@ -769,7 +815,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     a = sub.add_parser("assets", help="brief → deduplicated batch asset manifest")
     a.add_argument("brief")
-    a.add_argument("--plan", dest="plan_path", help="reuse an existing plan.json")
+    a.add_argument("--plan", dest="plan_path", required=True,
+                   help="必需：先由 vao.py plan 保存的 plan.json")
     a.add_argument("--out", default="asset_manifest.json")
     a.add_argument("--assets-dir",
                    help="图将被放到哪个目录（写进 manifest，asset-qc 与 check 默认据此找图）")
@@ -794,12 +841,13 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--preview", help="write ghost preview PNGs here (release writes them by default)")
     c.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     c.add_argument("--assets-dir", help="directory containing generated manifest filenames")
+    c.add_argument("--asset-qc-report", help="QC报告；默认资产清单同目录的 <stem>.qc.json")
     c.add_argument("--advisory", action="store_true", help="explicit risk forecast; off by default")
     c.add_argument("--polish", action="store_true",
                    help="PASS 后再走一轮细节打磨：把 warning 变成可执行的改动表（不改判定）")
     c.add_argument("--json", action="store_true")
 
-    r = sub.add_parser("run", help="brief + build + check in one process")
+    r = sub.add_parser("run", help="prepare plan/assets OR check an existing build after QC")
     r.add_argument("brief")
     r.add_argument("--build")
     r.add_argument("--skeleton", default="build_vao.py")
@@ -809,6 +857,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--asset-cache", help="prompt cache JSON for --assets-out")
     r.add_argument("--assets-manifest", help="bind an existing asset manifest during check")
     r.add_argument("--assets-dir", help="directory containing generated manifest filenames")
+    r.add_argument("--asset-qc-report", help="QC报告；默认资产清单同目录的 <stem>.qc.json")
     r.add_argument("--mode", choices=("spec", "draft", "release"), default="draft")
     r.add_argument("--packet")
     r.add_argument("--preview")
@@ -882,15 +931,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "assets":
             from intent_compiler import _load_need
             need = _load_need(args.brief)
-            if args.plan_path:
-                bundle = json.loads(Path(args.plan_path).expanduser().read_text(encoding="utf-8"))
-            else:
-                from pipeline import build_plan_bundle
-                bundle = build_plan_bundle(need)
+            from asset_workflow import prepare_manifest
+            bundle = json.loads(Path(args.plan_path).expanduser().read_text(encoding="utf-8"))
             manifest = build_asset_manifest(need, bundle=bundle, cache_path=args.cache)
-            if getattr(args, "assets_dir", None):
-                # 记下产图目录：asset-qc / check 不必再各自猜一次，也不会猜得不一样。
-                manifest["assets_dir"] = str(Path(args.assets_dir).expanduser().resolve())
+            manifest = prepare_manifest(manifest, need, bundle, args.brief, args.plan_path,
+                                        args.out, getattr(args, "assets_dir", None))
             _json_write(args.out, manifest)
             if args.json:
                 print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
@@ -917,6 +962,7 @@ def main(argv: list[str] | None = None) -> int:
                                 include_advisory=args.advisory, json_output=args.json,
                                 assets_manifest=args.assets_manifest,
                                 assets_dir=args.assets_dir,
+                                asset_qc_report=args.asset_qc_report,
                                 polish=args.polish)
             return code
         if args.command == "run":

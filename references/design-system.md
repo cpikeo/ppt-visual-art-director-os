@@ -152,7 +152,7 @@ theme = {"colors": {"background","surface","primary","secondary","ink","muted","
 | `text` | `text` `size` `color` `align` `bold` `italic` `line_height` `max_lines` `wrap` `padding` `font` `family` `char_spacing` `uppercase` `opacity` `anchor` `space_before` `space_after` `fill` |
 | `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill` `stroke` `stroke_width` `stroke_opacity` `fill_opacity` `fill_role` `text` |
 | ↳ 线 | `line`/`arrow` 是**一维对象**：`width`/`height` 是向量分量不是盒子尺寸。<br>水平发丝线 `{"shape":"line","x":96,"y":300,"width":1088,"height":0,"stroke":"hairline","stroke_width":1}`；<br>垂直分栏线把 `width` 写 0、`height` 写长度。两轴同时为 0 才是错（零长度），Guard 只拦这一种。<br>颜色走 `stroke`（不是 `fill`），粗细走 `stroke_width`。 |
-| `image` | `src` `fit`(cover/contain) `crop` `asset_function`(hero/emotion/proof/context) `overlay` `content_protection` `negative` `readability_exempt` |
+| `image` | `asset_id`（必需；由清单绑定 `src`） `fit`(cover/contain) `crop` `asset_function`(hero/emotion/proof/context) `overlay` `content_protection` `negative` `readability_exempt` |
 
 `chart_kind` 全表（括号为每页上限）：原生 bar/horizontal_bar/comparison_bar(8) · column(8) ·
 line/trend/single_trend_line(8) · area(8) · donut/donut_composition/pie(8)；形状 process_flow(7) ·
@@ -213,3 +213,11 @@ primary/secondary/neutral/accent/negative，逃生口 `primary_color`/`secondary
 不做「标注 → 反推 → 改常量」的校准工程：那只会长出更多规则、更多评分维度与模板化输出。
 guard/QA 的阈值只守**物理底线**（对比度、溢出、色距、accent 面积）：底线只升不调，
 底线之上不存在「审美分数线」。
+
+
+### 出图前的页面契约
+
+在 brief 的 slide 中明确 `asset_subject`、`medium`、`asset_ratio`、`asset_function`、
+`negative_space_anchor`、`safe_area`，然后 plan → assets。比例、留白或文字明暗改变时，
+不能复用旧提示词缓存；更改后重新准备资产。图片通过 QC 后才填入正文 elements。
+这一步只决定图片如何服务页面，不强迫各页使用同一构图。

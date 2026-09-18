@@ -6,27 +6,48 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
+## 标准生产顺序（v5.1）
+
+**brief → plan → assets → 按清单出图 → asset-qc → PPT 编排 → release**
+
+图片提示词通过 `vao.py assets` 调用 `asset_prompt.py` 产生，不是先自由出图后补清单。
+外部图片服务并未内置于技能包；执行者仍需调用实际的生成工具。
+
 ```bash
-# 0) 环境（Python 3.10+）
+# 0) Python 3.10+ 环境
 python3 -m venv .venv && . .venv/bin/activate
 python3 -m pip install -r requirements.txt
-#    或 pip install -e .（把 scripts/*.py 装成模块，便于 import；生产入口仍是 scripts/vao.py）
 
-# R1 规划：brief → plan.json + build 骨架
-python scripts/vao.py plan templates/brief.yml --out plan.json --skeleton build_deck.py
+# 1) 完成 brief：页面意图、主体、图片比例与文字留白
+python scripts/vao.py plan brief.yml --out plan.json --skeleton build_deck.py
 
-# R2 填骨架（策略/方向/全量 elements）——一次性写完
+# 2) 必须引用已保存、与当前 brief 匹配的 plan
+python scripts/vao.py assets brief.yml --plan plan.json --out asset_manifest.json --assets-dir generated_assets
 
-# R3 验证①：归一化 → Guard → 编译 → 修复包（单进程，零外部渲染器）
-python scripts/vao.py check build_deck.py out.pptx --mode draft
+# 3) 用外部图片工具按清单 prompt / negative / ratio / safe_area 生成图片
+#    保存到 generated_assets；名称按 expected_filename（也支持同名 JPEG）
 
-# R4 若被阻断：按 fix_plan 根因组一次改完，复跑同一条命令
-# R5 收口：结构判定 + 方向预览证据 + Release Manifest
-python scripts/vao.py check build_deck.py out.pptx --mode release
+# 4) 检查图片；缺文件、待重试或阻断时退出码为 2，不能继续编排
+python scripts/vao.py asset-qc asset_manifest.json --phase draft
 
-# R6 可选打磨：PASS 之后把 warning 变成一份可执行的改动表（不改判定、不制造新门槛）
-python scripts/vao.py check build_deck.py out.pptx --mode release --polish
+# 5) QC 成功后填充骨架；图片元素使用 asset_id
+python scripts/vao.py check build_deck.py out.pptx --mode draft --assets-manifest asset_manifest.json
+
+# 6) 发布：核对当前图片、QC、清单与计划，再编译/预览/发布
+python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```
+
+- **无图片**：不必走资产步骤；`check` 显式记录跳过原因。
+- **用户提供/授权/自制/复用的图片**：在 brief 的 slide 中填写
+  `asset_source: {kind: provided, path: /path/to/image.jpg, source: "用户提供，授权待核实"}`。
+  不强制生成，但仍经资产清单与 QC。`kind` 也可为 `licensed / original / reuse`。
+- **有图旧项目迁移**：重新 plan → assets，既有图登记为 reuse；保留新骨架的
+  `asset_workflow.plan_sha256` 并为图片填入 `asset_id`，QC 通过后再检查。
+- **自定义 QC 路径**：`asset-qc --out` 后，给 `check --asset-qc-report` 同一路径。
+- **流程边界**：发布通过证明本地文件证据一致，不证明外部模型按提示词执行，
+  也不证明图片授权或艺术质量；不得以此替代人工设计判断。
+
+详细契约见 `references/asset-workflow.md`；本次变更见 `CHANGELOG.md`。
 
 ## 唯一入口
 
@@ -34,9 +55,9 @@ python scripts/vao.py check build_deck.py out.pptx --mode release --polish
 |---|---|
 | `vao.py plan` | brief → plan.json（家族/页意图/叙事动作/构图语法提案/媒体闸门）+ build 骨架 |
 | `vao.py assets` | brief + plan → 去重后的批量资产清单（相同视觉需求只出一次图） |
-| `vao.py asset-qc` | 资产体检：文字安全区 / 负空间 / 主体位置 / 亮度平衡 / 对比度 |
+| `vao.py asset-qc` | 图片体检 + 清单/文件指纹凭证；retry/missing/block 均退出 2 / 对比度 |
 | `vao.py check` | normalize → guard → compile → ghost 预览 → 分组修复包（`spec`/`draft`/`release`） |
-| `vao.py run` | plan + check 在一个进程里完成 |
+| `vao.py run` | 规划/清单准备，或检查已有编排稿；不能一次跳过出图与 QC |
 | `vao.py preview` | 只出 ghost 方向预览（PIL，秒级） |
 | `vao.py dna` | 经验记忆：`--check` 体检 / `--add` 写入一条（校验后才入库） |
 | `vao.py doctor` | 环境自检 |
@@ -50,6 +71,7 @@ ppt-visual-art-director-os/
 │   ├── design-intelligence.md  # 内容 → 意义 → 策略 → 页面意图
 │   ├── design-craft.md         # 品味手册：审查坐标系 + 原则 + 案例
 │   ├── design-system.md        # 执行默认值与首轮值 + Spec 字段速查
+│   ├── asset-workflow.md      # 资产链、迁移与跳过契约
 │   └── production-contract.md  # 运行时契约（字段 / 模式 / 门槛 / 报告）
 ├── templates/brief.yml       # 唯一需求契约（人写的一页纸）
 ├── memory/design_dna.json    # 经验记忆（判断线索，不是参数表；写入走 `vao.py dna`）
@@ -61,7 +83,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（87 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（110 项，含判断层与反退化检查）
 ```
 
 ## 设计上刻意不做的事
@@ -84,7 +106,7 @@ ppt-visual-art-director-os/
 ## 自检
 
 ```bash
-python scripts/selftest.py        # 87 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
+python scripts/selftest.py        # 110 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
 ```
 
 验证网只保四件事：交付链能跑通、契约还拦得住错、判断层没有静默退化

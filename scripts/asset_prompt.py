@@ -578,13 +578,15 @@ def asset_fingerprint(card: dict, page: dict | None = None) -> str:
     page = page if isinstance(page, dict) else {}
     keys = ("asset_type", "medium", "family", "subject", "color", "material",
             "lighting", "composition", "motion", "texture", "negative",
-            "asset_function", "fusion_enabled")
+            "asset_function", "fusion_enabled", "style")
     payload = {k: card.get(k) for k in keys if card.get(k) is not None}
     payload["negative_space_anchor"] = page.get("negative_space_anchor") or "left"
     payload["safe_area"] = normalize_safe_area(
         page.get("safe_area"), payload["negative_space_anchor"])
     payload["light_direction"] = page.get("light_direction") or "left"
     payload["energy"] = page.get("energy") or "low"
+    payload["ratio"] = page.get("ratio") or "16:9"
+    payload["text_color"] = page.get("text_color")
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     return "asset-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 

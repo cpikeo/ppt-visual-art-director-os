@@ -929,7 +929,7 @@ def check_anti_regression() -> None:
     known = {p.name for p in ROOT.rglob("*") if p.is_file()}
     allow = {"build_deck.py", "build_mydeck.py", "build.py", "brief.yml", "plan.json",
              "out.pptx", "out.repair.json", "deck.pptx", "asset_manifest.json",
-             "asset_prompt_cache.json", "generated_assets", "rounds.json",
+             "asset_prompt_cache.json", "asset_manifest.qc.json", "generated_assets", "rounds.json",
              "compile_cache.json", "manifest.json", "out.manifest.json", "entry.json"}
     missing = set()
     for doc in list(ROOT.glob("*.md")) + list((ROOT / "references").glob("*.md")):
@@ -965,7 +965,7 @@ def check_anti_regression() -> None:
         named = {c for c in _codes if c in txt}
         if named and named != _codes:
             partial[d.name] = sorted(_codes - named)
-    check("docs: 阻断码清单要么不列、要么 9/9 列全（缺项 = 作者以为它可忽略）",
+    check(f"docs: 阻断码清单要么不列、要么 {len(_codes)}/{len(_codes)} 列全（缺项 = 作者以为它可忽略）",
           not partial, str(partial))
 
 
@@ -1147,6 +1147,152 @@ def png_stamp(directory: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+def check_asset_workflow(work: pathlib.Path) -> None:
+    """Asset-chain integration and stale-evidence regressions; no generation service needed."""
+    import copy
+    import contextlib
+    import io
+    from unittest.mock import patch
+    from PIL import Image
+    import vao
+    from asset_workflow import digest, verify_chain, read_json
+    from asset_prompt import asset_fingerprint
+
+    d = work / "asset-chain"
+    d.mkdir()
+    images = d / "pictures"
+    images.mkdir()
+    brief = d / "brief.yml"
+    plan = d / "plan.json"
+    skeleton = d / "build_deck.py"
+    manifest_path = d / "asset_manifest.json"
+    qcpath = d / "asset_manifest.qc.json"
+    need = {"audience": "investor", "decision": "approve", "quality_level": "advanced",
+            "slides": [{"id": "s01", "family": "cover", "title": "Tea",
+                        "asset_subject": "ceramic bowl", "medium": "photography",
+                        "text_color": "dark"}]}
+    brief.write_text(json.dumps(need), encoding="utf-8")
+    check("assets: CLI requires saved --plan",
+          run_vao("assets", str(brief), "--out", str(manifest_path)).returncode != 0)
+    run_vao("plan", str(brief), "--out", str(plan), "--skeleton", str(skeleton))
+    proc = run_vao("assets", str(brief), "--plan", str(plan), "--out", str(manifest_path),
+                   "--assets-dir", str(images))
+    manifest = read_json(manifest_path)
+    entry = next(e for e in manifest["assets"] if e.get("decision") == "generate")
+    check("assets: manifest records prompt builder and plan hash",
+          proc.returncode == 0 and manifest["workflow"]["plan_sha256"] == digest(read_json(plan))
+          and bool(entry["prompt"]) and bool(entry["negative"]))
+    spec, _ = vao.load_spec(spec_module(d / "base.py"))
+    spec["asset_workflow"] = {"plan_sha256": digest(read_json(plan))}
+    spec["slides"][0]["elements"][0].update(x=64, y=184, width=608)
+    spec["slides"][0]["elements"].append({"type":"image", "id":"photo", "asset_id":entry["asset_id"],
+             "x":760, "y":280, "width":384, "height":256, "asset_function":"emotion"})
+    mod = d / "filled.json"
+    mod.write_text(json.dumps(spec), encoding="utf-8")
+    blocked = run_vao("check", str(mod), str(d / "blocked.pptx"), "--mode", "release")
+    bm = read_json(d / "blocked.manifest.json")
+    check("assets: direct-src/no-manifest cannot release",
+          blocked.returncode == 2 and not bm["release_eligible"] and bm["status"] == "BLOCKED")
+    missing = run_vao("asset-qc", str(manifest_path))
+    check("assets: missing file is pending and exits nonzero",
+          missing.returncode == 2 and bool(read_json(qcpath)["pending_assets"]))
+    # Fixture is deliberately a neutral blank image; this tests the chain, not aesthetics.
+    picture = images / pathlib.Path(entry["expected_filename"]).with_suffix(".jpg")
+    Image.new("RGB", (640, 400), (242, 240, 230)).save(picture)
+    bound, binding = vao.bind_asset_manifest(spec, manifest_path)
+    check("assets: manifest directory + JPEG resolution agree with binding",
+          binding["status"] == "PASS" and bound["slides"][0]["elements"][-1]["src"] == str(picture.resolve()))
+    pending = run_vao("check", str(mod), str(d / "pending.pptx"), "--assets-manifest", str(manifest_path))
+    check("assets: QC must pass before draft compilation", pending.returncode == 2 and not (d / "pending.pptx").exists())
+    with patch("asset_prompt.image_qc", return_value={"status":"ok", "checks":[
+            {"check":"text_safe_area", "status":"issue"}]}), contextlib.redirect_stdout(io.StringIO()):
+        retry, code = vao.asset_qc(str(manifest_path), phase="draft")
+    check("assets: retry is not PASS and returns 2", code == 2 and retry["status"] == "BLOCKED" and bool(retry["retry_assets"]))
+    success = run_vao("asset-qc", str(manifest_path), "--phase", "release")
+    qc = read_json(qcpath)
+    check("assets: real image QC binds inspected bytes to manifest",
+          success.returncode == 0 and qc["manifest_sha256"] == digest(manifest)
+          and bool(qc["results"][0]["file_sha256"]), success.stdout[-300:])
+    released = run_vao("check", str(mod), str(d / "deck.pptx"), "--mode", "release",
+                       "--assets-manifest", str(manifest_path))
+    rm = read_json(d / "deck.manifest.json")
+    check("assets: complete chain -> release with provenance",
+          released.returncode == 0 and rm["release_eligible"]
+          and rm["asset_workflow"]["status"] == "PASS", released.stdout[-400:])
+    custom = d / "custom-qc.json"
+    qcpath.replace(custom)
+    custom_proc = run_vao("check", str(mod), str(d / "custom.pptx"), "--mode", "release",
+                          "--assets-manifest", str(manifest_path), "--asset-qc-report", str(custom))
+    check("assets: custom QC path supported", custom_proc.returncode == 0)
+    custom.replace(qcpath)
+    Image.new("RGB", (640,400), (230,235,230)).save(picture)
+    check("assets: replacing image invalidates QC",
+          verify_chain(bound, manifest_path)["status"] == "BLOCKED")
+    Image.new("RGB", (640,400), (242,240,230)).save(picture)
+    original = copy.deepcopy(manifest)
+    manifest["assets"][0]["prompt"] += " changed"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    check("assets: editing prompt invalidates QC",
+          verify_chain(bound, manifest_path)["status"] == "BLOCKED")
+    manifest_path.write_text(json.dumps(original), encoding="utf-8")
+    changed_spec = copy.deepcopy(bound)
+    changed_spec["slides"][0]["elements"][-1].pop("asset_id")
+    check("assets: untracked additional image cannot bypass chain",
+          verify_chain(changed_spec, manifest_path)["status"] == "BLOCKED")
+    changed_spec = copy.deepcopy(bound)
+    changed_spec["asset_workflow"]["plan_sha256"] = "wrong"
+    check("assets: wrong skeleton/plan binding is rejected",
+          verify_chain(changed_spec, manifest_path)["status"] == "BLOCKED")
+    original_plan = read_json(plan)
+    edited_plan = copy.deepcopy(original_plan)
+    edited_plan["changed"] = True
+    plan.write_text(json.dumps(edited_plan), encoding="utf-8")
+    check("assets: changed plan invalidates release",
+          verify_chain(bound, manifest_path)["status"] == "BLOCKED")
+    plan.write_text(json.dumps(original_plan), encoding="utf-8")
+    changed_need = copy.deepcopy(need)
+    changed_need["audience"] = "different audience"
+    brief.write_text(json.dumps(changed_need), encoding="utf-8")
+    check("assets: stale brief/plan cannot prepare assets",
+          run_vao("assets", str(brief), "--plan", str(plan), "--out", str(d/"stale.json")).returncode != 0)
+    check("assets: changed brief invalidates release",
+          verify_chain(bound, manifest_path)["status"] == "BLOCKED")
+    brief.write_text(json.dumps(need), encoding="utf-8")
+    run_vao("assets", str(brief), "--plan", str(plan), "--out", str(manifest_path), "--assets-dir", str(images))
+    existing_bytes = run_vao("asset-qc", str(manifest_path), "--phase", "release")
+    check("assets: pre-existing generated bytes require explicit reuse",
+          existing_bytes.returncode == 2 and bool(read_json(qcpath)["workflow_issues"]))
+    # Explicit author-provided asset: same workflow except no image generation.
+    need["slides"][0]["asset_source"] = {"kind":"provided", "path":str(picture), "source":"user fixture"}
+    brief.write_text(json.dumps(need), encoding="utf-8")
+    run_vao("plan", str(brief), "--out", str(plan), "--skeleton", str(skeleton))
+    run_vao("assets", str(brief), "--plan", str(plan), "--out", str(manifest_path))
+    manifest = read_json(manifest_path)
+    existing = manifest["assets"][0]
+    spec["asset_workflow"]["plan_sha256"] = digest(read_json(plan))
+    spec["slides"][0]["elements"][-1]["asset_id"] = existing["asset_id"]
+    bound, _ = vao.bind_asset_manifest(spec, manifest_path)
+    run_vao("asset-qc", str(manifest_path), "--phase", "release")
+    check("assets: provided/reused materials need source+QC, not regeneration",
+          existing["decision"] == "existing" and verify_chain(bound, manifest_path)["status"] == "PASS")
+    text_spec = {"slides":[{"id":"s01", "elements":[{"type":"text", "text":"Only text"}]}]}
+    check("assets: native-only deck has explicit skip reason",
+          verify_chain(text_spec)["reason"] == "no_image_elements")
+    card = {"subject":["bowl"]}
+    check("assets: distinct aspect ratios do not share prompt-cache key",
+          asset_fingerprint(card, {"ratio":"16:9"}) != asset_fingerprint(card, {"ratio":"1:1"}))
+    # Duplicate reuse marker must not shadow the canonical primary entry.
+    duplicated = copy.deepcopy(manifest)
+    duplicated["assets"].append({"asset_id":existing["asset_id"], "decision":"reuse_generated", "slide_id":"s02"})
+    manifest_path.write_text(json.dumps(duplicated), encoding="utf-8")
+    _, reuse = vao.bind_asset_manifest(spec, manifest_path)
+    check("assets: reuse marker does not shadow canonical file binding", reuse["status"] == "PASS")
+    broken_qc = d / "broken.json"
+    broken_qc.write_text("not json", encoding="utf-8")
+    check("assets: corrupt QC produces a grouped failure, not a pass",
+          verify_chain(bound, manifest_path, broken_qc)["status"] == "BLOCKED")
+
+
 def check_doc_counts() -> None:
     """文档里的自检项数必须等于实际项数。
 
@@ -1172,6 +1318,7 @@ def main() -> int:
         check_chart_argument(work)
         check_deck_anchor(work)
         check_silent_failure_seams()
+        check_asset_workflow(work)
         check_anti_regression()
         check_doc_counts()
     finally:

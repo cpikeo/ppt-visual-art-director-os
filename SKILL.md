@@ -110,22 +110,66 @@ Content 这页到底表达什么 → Intent 希望观众理解什么 → Priorit
 | `references/production-contract.md` | 查运行时契约、模式、门槛与报告字段 |
 | `memory/design_dna.json` | 经验记忆（判断线索，不是参数表；写入走 `vao.py dna --add`） |
 
-## 执行：唯一入口，一次到位
+## 执行：先资产契约，再出图与编排
 
-生产**只调用 `scripts/vao.py`**。内部 `scripts/` 是实现模块，不是调用清单；
-不要在外层把脚本串成流水线（script A → B → C → D），也不要把 warning 变成对话。
+生产**只调用 `scripts/vao.py`**；`asset_prompt.py` 是该入口调用的提示词翻译模块，
+不是需要在外层单独串行运行的脚本。不得跳过资产清单后，直接自由编写提示词出图，
+再把“PPT 编译通过”称为“完整执行技能包”。
+
+**固定的是依赖顺序，不是固定视觉答案：**
+
+> **brief → plan → `vao.py assets` → 根据资产清单生成图片 → 资产检查 → PPT 编排 → 发布检查**
 
 ```
-R1 规划     python scripts/vao.py plan  brief.yml --out plan.json --skeleton build_deck.py
-R2 生成     一次性填入 Strategy/Direction/全量 elements（资产请求同轮批量发出）
-R3 验证①    python scripts/vao.py check build_deck.py out.pptx --mode draft
-R4 修正轮   按 repair packet 的根因组**一次改完**（零文档回读）→ 复跑同一条命令
-R5 收口     python scripts/vao.py check build_deck.py out.pptx --mode release
-R6 打磨     python scripts/vao.py check build_deck.py out.pptx --mode release --polish
-            # 可选：作者说「PASS 了再打磨一轮」时才用。它把 warning 展开成
-            # 「改哪个元素、改成什么」，永远不改变 verdict，也不会把 warning 升成阻断。
-R7 沉淀     python scripts/vao.py dna --add entry.json   # 可选：只沉淀真正可迁移的判断
+R1 需求与规划
+   python scripts/vao.py plan brief.yml --out plan.json --skeleton build_deck.py
+R2 资产契约（必须复用已保存的计划；此时只规划构图，不填全量 elements）
+   python scripts/vao.py assets brief.yml --plan plan.json --out asset_manifest.json --assets-dir generated_assets
+R3 出图（外部图片工具，由执行者调用）
+   按清单的 prompt + negative + ratio + safe_area 批量生成，保存到清单约定目录。
+   不把图片先生成、再补写清单视为履行流程；调整主体/比例/留白先更新 brief 与 plan。
+R4 资产检查
+   python scripts/vao.py asset-qc asset_manifest.json --phase draft
+   retry / missing / block 不是通过；定向重出最多一次，并重跑 QC。
+R5 编排与验证
+   QC 通过后填入 Strategy/Direction/全量 elements；图片以 asset_id 绑定。
+   python scripts/vao.py check build_deck.py out.pptx --mode draft --assets-manifest asset_manifest.json
+R6 收口
+   python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
+   阻断项按根因组一次修正后复跑；无需为 warning 反复设计。
 ```
+
+### 三种资产路径（不增加无关工作）
+
+- **需要生成图片**：上述顺序必须走完。`assets --plan` 为必需参数；内部调用
+  `asset_prompt.build_asset_prompt`，产出实际提示词、负向提示词、比例与安全区。
+- **用户提供 / 授权图库 / 自制 / 既有图片复用**：仍先 `plan → assets`，在 brief 的对应 slide 中
+  声明 `asset_source: {kind: provided|licensed|original|reuse, path: ..., source: ...}`。
+  可以跳过生成，不可跳过来源登记与 QC；不得把素材声明当作已核实的授权证明。
+- **纯文字、原生形状与图表**：没有 `type=image` 时自动记录
+  `asset_workflow.status=SKIPPED, reason=no_image_elements`；可以直接编排与检查。
+  无需制造无意义的空清单或调用图片工具。
+
+### 执行凭证（不仅是“建议照做”）
+
+- 计划保留 brief 内容指纹；骨架保留 `SPEC.asset_workflow.plan_sha256`。
+- 图片元素必须带清单内的 `asset_id`；不能用直接 `src` 绕过。
+- `asset-qc` 记录清单指纹与实际检查的图片 SHA-256。`check` 默认读取清单旁的
+  `asset_manifest.qc.json`；自定义报告用 `--asset-qc-report` 指定。
+- 有图稿件在 spec/draft/release 都先校验资产链，缺清单、缺 QC、待重试、旧计划、
+  图像被替换或未经登记的图片均以 `ASSET_WORKFLOW_FAIL` 阻断，**不进行本轮编译**。
+- Release Manifest 单独记录 `asset_workflow`。`PASS` 不能掩盖流程缺失；
+  被阻断时 `status=BLOCKED` 与 `release_eligible=false` 必须一致。
+- 这些是**本地内容一致性与顺序依赖凭证**，不是数字签名，也不能证明外部生成工具
+  实际采用了某段 prompt；工具调用日志、提示词语义符合性与权属仍由执行者负责。
+- 修改 brief/plan 后重新准备清单；修改提示词或图片后重新 QC。旧版清单需迁移，
+  已有图片应显式 `reuse`，不得补造生成历史。
+
+阻断码完整集合：`OVERLAP`、`SOURCE_COLLISION`、`CHART_LABEL_COLLISION`、
+`TEXT_OVERFLOW`、`READABILITY_FAIL`、`DATA_INTEGRITY_FAIL`、`CHART_TYPE_FAIL`、
+`COMPILE_FAIL`、`GUARD_FAIL`、`ASSET_WORKFLOW_FAIL`。处理规则见生产契约。
+
+原有 `--polish` 与 `dna --add` 仍可按需使用；它们不替代上述资产前置条件。
 
 - 计划（plan）已经给出家族、页面意图骨架、叙事动作、**构图语法提案**、媒体闸门与预算；
   **几何归你判断**——plan 不提供元素坐标，构图提案也只是起点（可以整体推翻，
@@ -141,11 +185,11 @@ R7 沉淀     python scripts/vao.py dna --add entry.json   # 可选：只沉淀�
   `type_step_min` 字号级差 / `decoration_area_max` 装饰面积 / `bg_layers_max` 背景层 /
   `bold_ratio_max` 粗体占比 / `accent_max` 强调色面积）。原样照抄进 `spec.theme.constraints`——
   这是方向唯一可被验证的部分；改了它，等于没执行这个方向（guard 会点名）。
-- **Warning 不是对话**：阻断项（9 类，全表见 `production-contract.md` §Failure codes）必须处理；
+- **Warning 不是对话**：阻断项（10 类，全表见 `production-contract.md` §Failure codes）必须处理；
   非阻断项只进 `warn_summary` 留痕，不解释、不询问、不逐条修复。
 - **禁止逐条修复**：Batch Diagnosis → Batch Correction → Single Re-run。
   先修根因，不修症状。
-- 轮次预算 ≤6（`rounds.json` 会记账）；简单案例跳过 R4；不做冗余 critic 循环——
+- PPT 检查修订轮次预算 ≤6（`rounds.json` 会记账）；无图片项目跳过 R2–R4；不做冗余 critic 循环——
   **一次设计判断 + 一次必要验证**已经足够，复杂任务只增加判断深度，不增加循环次数。
 
 **Adaptive Execution**：深度由任务赢得——
@@ -157,7 +201,7 @@ R7 沉淀     python scripts/vao.py dna --add entry.json   # 可选：只沉淀�
 > **这份 PPT 能不能交付？**
 
 只检查：文件完整性、页数、对象存在性、文本溢出与裁切、缺失素材、内容缺失、
-来源与口径齐全、明显几何失败。
+来源与口径齐全、明显几何失败，以及有图稿件的资产链完整性。
 
 验证**不**重新决定风格、配色、创意、构图、品牌方向与审美偏好——那是 Design Judgment。
 不打分、不渲染、不调用任何外部渲染器（本技能包不含 LibreOffice / soffice / poppler 链路）：

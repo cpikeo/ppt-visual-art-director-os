@@ -116,7 +116,7 @@ _RULE_CODES = {
 # 状态由「有无阻断」决定；这些码是阻断性失败码集合。
 BLOCKING_CODES = {"OVERLAP", "SOURCE_COLLISION", "CHART_LABEL_COLLISION",
                   "TEXT_OVERFLOW", "READABILITY_FAIL", "DATA_INTEGRITY_FAIL",
-                  "CHART_TYPE_FAIL", "COMPILE_FAIL", "GUARD_FAIL"}
+                  "CHART_TYPE_FAIL", "COMPILE_FAIL", "GUARD_FAIL", "ASSET_WORKFLOW_FAIL"}
 
 
 def _rule_to_code(rule) -> str:
@@ -571,7 +571,12 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
            "release_eligible": bool(qa_report.get("release_eligible"))}
     if isinstance(verification, dict):
         ver.update(verification)
+    from asset_workflow import image_elements
+    workflow = qa_report.get("asset_workflow") or {}
+    if any(image_elements(spec)) and workflow.get("status") != "PASS":
+        issues.append("含图稿件缺少通过的 asset_workflow；不能把编译PASS当成资产流程PASS")
     status = "BLOCKED" if issues else str(qa_report.get("status", "BLOCKED"))
+    ver["release_eligible"] = bool(status == "PASS" and qa_report.get("release_eligible"))
     try:
         revision_num = int(revision_count)
     except (TypeError, ValueError, OverflowError):
@@ -585,6 +590,7 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
         # 交付资格在顶层也出现一次：读 manifest 的人不会因为少看一层而误判可交付。
         # 两处必须是同一个值（ver 是唯一计算处）。
         "release_eligible": ver["release_eligible"],
+        "asset_workflow": workflow,
         "verification": ver,
         "compile_report": compile_report or qa_report.get("compile"),
         "qa_report": qa_report,

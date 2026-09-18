@@ -18,6 +18,15 @@ slides:                 # 逐页内容；family 决定页面家族，density/ene
     title: ""
     content: ""
     # density: sparse   # sparse|balanced|dense —— 显式声明不会被节奏规则改写
+    # 图片需求（需要图片时在 plan 之前填写；不要先出图再补计划）：
+    # asset_subject: "一只青瓷茶盏，主体在右侧；左侧保留文字留白"
+    # medium: photography
+    # asset_ratio: "3:2"
+    # asset_function: emotion
+    # negative_space_anchor: left
+    # text_color: dark
+    # 既有素材不强制重生成，但必须登记来源并经 QC：
+    # asset_source: {kind: provided, path: "images/tea.jpg", source: "用户提供；授权待核实"}
     # energy: high      # low|medium|high
   - id: s02
     family: statement
