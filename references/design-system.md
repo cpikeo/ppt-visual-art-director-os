@@ -151,6 +151,7 @@ theme = {"colors": {"background","surface","primary","secondary","ink","muted","
 |---|---|
 | `text` | `text` `size` `color` `align` `bold` `italic` `line_height` `max_lines` `wrap` `padding` `font` `family` `char_spacing` `uppercase` `opacity` `anchor` `space_before` `space_after` `fill` |
 | `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill` `stroke` `stroke_width` `stroke_opacity` `fill_opacity` `fill_role` `text` |
+| ↳ 线 | `line`/`arrow` 是**一维对象**：`width`/`height` 是向量分量不是盒子尺寸。<br>水平发丝线 `{"shape":"line","x":96,"y":300,"width":1088,"height":0,"stroke":"hairline","stroke_width":1}`；<br>垂直分栏线把 `width` 写 0、`height` 写长度。两轴同时为 0 才是错（零长度），Guard 只拦这一种。<br>颜色走 `stroke`（不是 `fill`），粗细走 `stroke_width`。 |
 | `image` | `src` `fit`(cover/contain) `crop` `asset_function`(hero/emotion/proof/context) `overlay` `content_protection` `negative` `readability_exempt` |
 
 `chart_kind` 全表（括号为每页上限）：原生 bar/horizontal_bar/comparison_bar(8) · column(8) ·
@@ -183,12 +184,13 @@ primary/secondary/neutral/accent/negative，逃生口 `primary_color`/`secondary
 **跨页锚**：plan 给每页发一个 `anchor`（≥4 页的成套 deck 才有），生成侧把它落成元素：
 
 ```python
-"anchor": {"eyebrow": "DATA STORY", "page_number": 4, "figure": "Fig. 02"}
+"anchor": {"eyebrow": "DATA STORY", "page_number": 4}
 ```
 
 - 眉标：`role="eyebrow"`，用 plan 的家族词汇原文，**固定上缘**（全 deck 同一个 y）；
 - 页码：`role="page_number"`，**固定象限**（同一个 x/y），封面不编号；
-- 证据编号：写进该页 `caption` 开头（`Fig. 01/02…`），**按页序连续**；只有证据类页（数据/对比/案例/时间线）有。
+- 证据编号（`Fig. 01/02…`）**不用**：论文靠它做交叉引用，演示文稿没有回指，编号只会挤掉来源行里真正该写的口径。
+  图表身份由标题与 Insight 行承担。`anchor.figure` 字段仍被接受（老 deck 兼容），但一旦用了就必须全文成套。
 
 `guard.deck_anchor` 只查三件事：声明了有没有落、位置是不是同一个、编号连不连续。
 **来源区内只放 `source`/`method`/`metadata`**；其他角色的对象只要与 `source_zone` 相交即

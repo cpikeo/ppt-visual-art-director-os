@@ -247,8 +247,11 @@ DIRECTION_PRESETS: dict[str, dict] = {
         )),
 }
 
-# 证据类家族：这些页的主张靠证据支撑，按页序给 Fig. 编号（KPI 大数字是数字，不是图）。
-FIGURE_FAMILIES = ("DATA_STORY", "COMPARISON", "CASE_STUDY", "TIMELINE")
+# 证据编号（Fig. 01/02…）已从锚点体系移除：它是论文/白皮书的引用装置，
+# 前提是正文里有「见 Fig. 02」这样的交叉引用。演示文稿没有这种引用——
+# 每页自己就是一个论点，读者不会翻回去找编号，
+# 于是编号只是在来源行前面加一串谁也不看的字符，还占掉了本该留给口径的宽度。
+# 页内导航由眉标（我在哪一章）+ 页码（我在第几页）承担，两个锚点已经够了。
 
 ADVANCED_TRIGGERS = ("发布会", "品牌", "年报", "旗舰", "形象", "高端", "launch", "brand",
                      "keynote", "manifesto", "premium", "campaign")
@@ -389,17 +392,43 @@ def _direction_execution(direction: str) -> dict:
     }
 
 
-def _seed_from_brand(preset: dict, brand: dict | None) -> dict:
-    """品牌色优先：brief.brand_colors（{token: #HEX}）覆盖方向预设色板。
+def normalize_brand_colors(brand) -> dict:
+    """brand_colors 的唯一归一入口：既收 {token: #HEX}，也收 [#HEX, ...]。
+
+    templates/brief.yml 把 `brand_colors` 教成 YAML 列表（`["#1A3A5C", "#C8501E"]`），
+    但派生侧只认 dict——照文档写会**静默**走回方向预设的灰阶，品牌色一个都不生效。
+    「写了却没生效」是这份技能包最贵的一类漏洞（没有报错、没有痕迹，只有产物不对），
+    因此在入口处收敛：
+
+      * dict  → 原样按槽位名取（未知键与非色值忽略，行为不变）；
+      * list  → 按**品牌色惯例序**落位：第 1 个是主色，第 2 个是强调色，
+                第 3 个是辅色。这是有语义的顺序约定，不是 dict.values() 那种
+                「插入顺序当语义」的猜测——列表本身就没有别的信息可用，
+                而约定被写进了 brief 模板与 SKILL，作者可随时改用 dict 精确指定。
+
+    只接受 #RGB / #RRGGBB；其余一律忽略。返回 {} 表示「品牌没给出可用色」。
+    """
+    if isinstance(brand, dict):
+        return {str(k).strip(): str(v).strip() for k, v in brand.items()
+                if isinstance(v, str) and str(v).strip().startswith("#")
+                and len(str(v).strip()) in (4, 7)}
+    if isinstance(brand, (list, tuple)):
+        hexes = [str(v).strip() for v in brand
+                 if isinstance(v, str) and str(v).strip().startswith("#")
+                 and len(str(v).strip()) in (4, 7)]
+        return {slot: value for slot, value
+                in zip(("primary", "accent", "secondary"), hexes)}
+    return {}
+
+
+def _seed_from_brand(preset: dict, brand) -> dict:
+    """品牌色优先：brief.brand_colors 覆盖方向预设色板。
 
     方向预设只保留结构与未覆盖的灰阶骨架；主色/accent/secondary 一旦品牌给出
-    立即让位。只接受 #HEX 值（防把 token 名当色值写）；空 brand 原样返回。
+    立即让位。接受 {token: #HEX} 与 [#HEX, ...] 两种写法（见
+    `normalize_brand_colors`）；空 brand 原样返回。
     """
-    if not isinstance(brand, dict) or not brand:
-        return preset
-    valid = {str(k).strip(): str(v).strip() for k, v in brand.items()
-             if isinstance(v, str) and str(v).strip().startswith("#")
-             and len(v.strip()) in (4, 7)}
+    valid = normalize_brand_colors(brand)
     if not valid:
         return preset
     seed = dict(preset)
@@ -596,18 +625,14 @@ def _plan_deck(brief: dict) -> dict:
                 "rule": "design_intelligence", "scope": pg.get("id"),
                 "error": f"{type(exc).__name__}: {exc}"})
     # 跨页锚（deck 级事实）：成套 deck 才需要连续性装置，短 deck 不发锚——为两页做家具是浪费。
-    # 眉标用家族词汇原文（全场统一），页码从第 2 页起（封面不编号），证据编号只给证据类页。
-    # 这三样落成元素后由 guard 的 deck_anchor 查：在不在、是不是同一个位置、编号连不连续。
+    # 眉标用家族词汇原文（全场统一），页码从第 2 页起（封面不编号）。
+    # 两样落成元素后由 guard 的 deck_anchor 查：在不在、是不是同一个位置。
     if len(pages) >= 4:
-        fig_no = 0
         for idx, pg in enumerate(pages):
             fam = str(pg.get("page_family") or "")
             anchor = {"eyebrow": fam.replace("_", " ") or "PAGE"}
             if idx > 0:
                 anchor["page_number"] = idx + 1
-            if fam in FIGURE_FAMILIES:
-                fig_no += 1
-                anchor["figure"] = f"Fig. {fig_no:02d}"
             pg["anchor"] = anchor
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"]).get("theme_seed", {})
     # Color Intelligence 入口：品牌色一到，方向预设立即让位。「科技=蓝」这类

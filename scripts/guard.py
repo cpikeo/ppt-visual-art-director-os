@@ -139,11 +139,87 @@ def line_measure(e: dict, limits: dict) -> dict | None:
             "over": per_line > limit, "fatal": per_line > limit * limits["LINE_MEASURE_FAIL_FACTOR"]}
 
 
+def _text_box_capacity(e: dict) -> dict | None:
+    """文本能不能装进声明的盒子——**与 compiler.add_text 逐字同源的静态复算**。
+
+    口径必须和编译器一致，否则就会出现「guard 说行、编译说不行」的二义：
+      * 换行按 \\n 拆段，每段用 estimate_lines(插入中西细空格后的文本)；
+      * 需要高度 = 总行数 × size × line_height，默认行高 1.35（同 compiler）；
+      * 可用高度 = height − 2 × padding，容差 +1px（同 compiler）。
+    wrap=False 时每段恒为 1 行（同 estimate_lines）。返回 None 表示不适用。
+    """
+    try:
+        size = float(e.get("size", 18))
+        h = float(e.get("height", 0) or 0)
+        w = float(e.get("width", 0) or 0)
+        pad = float(e.get("padding", 0) or 0)
+        lh = float(e.get("line_height", 1.35) or 1.35)
+    except (TypeError, ValueError):
+        return None
+    if size <= 0 or h <= 0 or w <= 0 or not all(map(math.isfinite, (size, h, w, pad, lh))):
+        return None
+    from primitives import estimate_lines, insert_script_gaps
+    wrap = e.get("wrap", True) is not False
+    usable_w = w - 2 * pad
+    if usable_w <= 0:
+        return None
+    lines = 0
+    for raw_line in str(e.get("text", "")).split("\n"):
+        if not raw_line:
+            lines += 1
+            continue
+        lines += estimate_lines(insert_script_gaps(raw_line), usable_w, size, wrap)
+    need = lines * size * lh
+    usable_h = h - 2 * pad
+    declared_max = e.get("max_lines")
+    over_max = (isinstance(declared_max, int) and not isinstance(declared_max, bool)
+                and declared_max >= 1 and lines > declared_max)
+    return {"lines": lines, "need": need, "usable": usable_h, "size": size,
+            "line_height": lh, "max_lines": declared_max,
+            "over_height": need > usable_h + 1, "over_max_lines": bool(over_max)}
+
+
 def _element_area(e: dict) -> float:
     try:
         return max(0.0, float(e.get("width", 0))) * max(0.0, float(e.get("height", 0)))
     except (TypeError, ValueError):
         return 0.0
+
+
+# 线性分割：一维对象，compiler 走 add_connector 而不是 add_shape。
+# 它们的 width/height 是**向量分量**不是盒子尺寸，所以水平线 height=0 是正确写法。
+RULE_SHAPES = frozenset({"line", "arrow"})
+
+
+def _is_rule_shape(e: dict) -> bool:
+    return (isinstance(e, dict) and e.get("type") == "shape"
+            and str(e.get("shape", "")).lower() in RULE_SHAPES)
+
+
+def _filled_panel(e: dict, cw: float = 0, ch: float = 0) -> bool:
+    """「卡片」的真正定义：一块**有底色的、够大的**矩形容器。
+
+    原先只数 rounded_rect，等于把判据挂在圆角半径上——直角卡片墙一样是卡片墙，
+    却拿不到任何信号。卡片的成本来自**底色**（它在纸面上切出一块territory，
+    读者要为每一块重新建立一次视觉关系），与圆角无关。
+    发丝线、1px 描边、细长色块不是卡片：它们不圈地，只做分隔。
+    """
+    if not isinstance(e, dict) or e.get("type") != "shape":
+        return False
+    if str(e.get("shape", "rect")).lower() in RULE_SHAPES:
+        return False
+    fill = e.get("fill")
+    if fill is None or str(fill).lower() in ("none", "transparent"):
+        return False          # 只有描边、没有底色 —— 那是框线不是卡片
+    try:
+        w, h = float(e.get("width", 0)), float(e.get("height", 0))
+    except (TypeError, ValueError):
+        return False
+    if min(w, h) <= 8:
+        return False          # 细长条（分隔条、色带、进度轨）不圈地
+    if cw > 0 and ch > 0 and (w * h) / (cw * ch) >= 0.55:
+        return False          # 半幅以上的是背景色块/版面分区，不是卡片
+    return True
 
 
 # 零基长度编码：长度差就是读数的图。差异太小时，读者看到的是「一样长」。
@@ -1015,6 +1091,34 @@ def check_spec(spec: dict, rules: dict | None = None,
         except (TypeError, ValueError, OverflowError):
             add("canvas_schema", "canvas", "error", "canvas.grid_unit 必须是正的有限数字")
 
+    # ---- 色彩 token 拼写（deck 级预备：一次算出可用名字集）----
+    # 渲染层对认不出的 token 一律**静默回落**（text_color → ink，是必要的渲染安全网，
+    # 不能改）。但静默回落意味着 `color: "secondry"` 这类拼写错永远不会被发现：
+    # 产物照出、颜色照错、没有任何痕迹。fill 走 apply_fill 会硬报错，color 却不会——
+    # 同一类错误两种待遇。治理层把这个缝补上：认不出的名字点名到元素。
+    _known_tokens = set()
+    if isinstance(theme.get("colors"), dict):
+        _known_tokens |= {str(k).strip() for k in theme["colors"]}
+        try:
+            from primitives import derive_tokens
+            _known_tokens |= set(derive_tokens(dict(theme["colors"])))
+        except Exception:
+            pass
+
+    def _unknown_color(value) -> str | None:
+        """返回「认不出的 token 名」；None 表示可解析（hex / 已知 token / 非字符串）。"""
+        if not isinstance(value, str):
+            return None
+        raw = value.strip()
+        if not raw or raw.lower() in ("none", "transparent"):
+            return None
+        if raw.startswith("#"):
+            # #RGB / #RRGGBB / #RRGGBBAA 之外的十六进制都是写坏的色值
+            body = raw[1:]
+            ok = len(body) in (3, 6, 8) and all(c in "0123456789abcdefABCDEF" for c in body)
+            return None if ok else raw
+        return None if raw in _known_tokens else raw
+
     # ---- 每页 ----
     lm_limits = _measure_limits()
     grid_stats = {"checked": 0, "aligned": 0}
@@ -1129,6 +1233,16 @@ def check_spec(spec: dict, rules: dict | None = None,
                 if not _finite:
                     add("element_schema", eid, "error",
                         "geometry 非数值/非有限（x/y/width/height 必须是数字）")
+                elif _is_rule_shape(e):
+                    # 分割线/箭头是**一维对象**：一条水平发丝线的自然写法就是 height=0
+                    # （compiler 走 add_connector，从 (x,y) 画到 (x+w, y+h)，渲染完美）。
+                    # 按二维盒子的「w/h 必须 > 0」要求它，等于禁掉了线性分割的标准写法——
+                    # 逼作者改用 1px 矩形，或干脆退回画卡片。
+                    # 真正的退化是**两轴都为 0**（零长度的线看不见），只拦这一种。
+                    if _fw <= 0 and _fh <= 0:
+                        add("element_schema", eid, "error",
+                            "geometry 退化（线的 width 与 height 同时为 0 → 零长度，不可见）；"
+                            "水平线写 height=0，垂直线写 width=0")
                 elif _fw <= 0 or _fh <= 0:
                     add("element_schema", eid, "error",
                         f"geometry 退化（width={_fw:g}, height={_fh:g} ≤ 0 "
@@ -1161,6 +1275,42 @@ def check_spec(spec: dict, rules: dict | None = None,
                             f"{axis}={v:.0f} 偏离 8 网格 {bias}px（微调对齐更稳）")
             except (TypeError, ValueError):
                 add("geometry", eid, "warn", "坐标/尺寸非数值，无法校验")
+
+            # 色彩 token 拼写：认不出的名字在渲染层会被静默吞掉（回落 ink / 跳过描边），
+            # 于是「配色写了没生效」不留任何痕迹。这里只判**名字认不认得**，
+            # 不判颜色好不好看——后者是设计判断，不归治理层。
+            if _known_tokens:
+                for _field in ("color", "fill", "stroke", "border_color",
+                               "track_color", "label_color", "background"):
+                    if _field not in e:
+                        continue
+                    _val = e.get(_field)
+                    if isinstance(_val, dict):     # Fill Contract：只看 solid 的色值
+                        _val = _val.get("color") if _val.get("type") in (None, "solid") else None
+                    _bad = _unknown_color(_val)
+                    if _bad:
+                        add("color_token", eid, "error",
+                            f"{_field}={_bad!r} 既不是主题色角色、也不是合法 #HEX："
+                            f"渲染层会静默回落（配色写了不生效，且不留痕迹）。"
+                            f"可用角色：{sorted(_known_tokens)[:8]}…")
+
+            # 文本框容量（静态版，与 compiler.add_text 同一套算法）：
+            # 「估算高度超出文本框」此前**只有编译器**知道——于是 spec 档（不编译）
+            # 完全看不见溢出，draft 档虽然被 COMPILE_FAIL 拦下，但修复包里
+            # 拿不到元素 id（affected_slides 为空、ids 为空），Agent 只能回读
+            # 编译 warning 的散文去猜是哪个框。溢出是内容完整性事实、不是审美判断，
+            # 理应和 text_capacity 的行长失控同级，在治理层就点名到元素。
+            if typ == "text" and str(e.get("text") or "").strip():
+                cap = _text_box_capacity(e)
+                if cap and cap["over_height"]:
+                    add("text_capacity", eid, "error",
+                        f"估算高度 {cap['need']:.0f}px 超出文本框可用高度 "
+                        f"{cap['usable']:.0f}px（{cap['lines']} 行 × 字号 {cap['size']:g} "
+                        f"× 行高 {cap['line_height']:g}）：加框高 / 减行数 / 删字，不要缩字号")
+                elif cap and cap["over_max_lines"]:
+                    add("text_capacity", eid, "error",
+                        f"估算 {cap['lines']} 行 > 声明 max_lines {cap['max_lines']}"
+                        "：文本会被截断或挤出框；删句、改写或放宽 max_lines")
 
             # §03.2 行长：超长行是「排版不专业」最常见的硬伤，此前只被 grid 顺带扫到
             lm = line_measure(e, lm_limits)
@@ -1843,8 +1993,6 @@ def check_spec(spec: dict, rules: dict | None = None,
             _anc_decl.append((sid, anc))
             elems = [e for e in (s.get("elements") or []) if isinstance(e, dict)]
             role_elems = lambda r: [e for e in elems if str(e.get("role", "")) == r]  # noqa: E731
-            has_visual = any(str(e.get("type", "")) in ("chart", "native_chart", "image")
-                             for e in elems)
             if anc.get("eyebrow"):
                 cand = role_elems("eyebrow")
                 if not cand:
@@ -1876,12 +2024,13 @@ def check_spec(spec: dict, rules: dict | None = None,
                         add("deck_anchor", sid, "warn",
                             f"页码与声明不一致：声明 {want}，实际 "
                             f"{[str(e.get('text', ''))[:12] for e in cand]}")
+            # 证据编号（Fig. 01…）不再由 plan 发放，也不再要求落成元素：
+            # 它是论文的交叉引用装置，演示文稿里没有「见 Fig. 02」这种回指，
+            # 编号就只是来源行前面一串没人读的字符。
+            # 但作者显式声明了 figure 的老 deck 仍要保证编号成套——
+            # 半套编号（有的页有、有的页没有）比没有编号更让人怀疑「是不是漏了证据」。
             if anc.get("figure"):
                 _figures.append((sid, str(anc["figure"])))
-                if has_visual:
-                    fig = str(anc["figure"]).strip()
-                    if not any(str(e.get("text", "")).strip().startswith(fig) for e in elems):
-                        _missing.append(f"{sid} 证据编号 {fig}")
 
         if _missing:
             add("deck_anchor", "deck", "warn",
@@ -1922,9 +2071,18 @@ def check_spec(spec: dict, rules: dict | None = None,
                 f"{hue_families_max}；颜色已不成系统——收拢为一组主辅色 + 一个强调色")
         pal = theme.get("colors") or {}
         acc = _hls(pal.get("accent"))
-        if acc:
+        # 中性色没有色相可言：#1E1E1C 与 #6E6E6A 的 HLS 色相都会算成 60°，
+        # 于是「灰阶 accent + 灰阶 primary」被判成同族——而这恰恰是本技能包
+        # 自己的 zen_minimal / 安静极简种子生成的骨架配色。规则对自家出厂配色
+        # 每次都误报，作者学到的是「这条 warning 可以忽略」，真正的同族撞色
+        # 反而被一起忽略。彩度低于 NEUTRAL_SAT 的色不参与色相族判定
+        # （与 _hue_family 的中性判定同一口径）。
+        if acc and acc[2] >= NEUTRAL_SAT:
             for role in ("primary", "secondary"):
-                gap = _hue_gap(acc, _hls(pal.get(role)))
+                role_hls = _hls(pal.get(role))
+                if not role_hls or role_hls[2] < NEUTRAL_SAT:
+                    continue          # 中性主色不与强调色争色相：这是纪律，不是冲突
+                gap = _hue_gap(acc, role_hls)
                 if gap is not None and gap < accent_hue_min:
                     add("palette_discipline", f"theme.{role}", "warn",
                         f"accent {pal.get('accent')} 与 {role} {pal.get(role)} 色相差 "

@@ -49,11 +49,28 @@ def _load_module(path: str | Path, name: str = "vao_build"):
         raise FileNotFoundError(
             f"找不到 build 文件: {source}"
             "（先 `vao.py run brief.yml --skeleton build.py` 生成骨架，填充后再 check）")
-    code = compile(source.read_text(encoding="utf-8"), str(source), "exec")
+    try:
+        text = source.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"build 文件不是 UTF-8 文本：{source}（{exc.reason}）"
+            "——请另存为 UTF-8，或改用 .json / .yml 传 spec") from None
+    try:
+        code = compile(text, str(source), "exec")
+    except SyntaxError as exc:
+        # 语法错误直接给「文件:行:列 + 那一行」，比抛裸 SyntaxError 少一次往返。
+        raise ValueError(
+            f"build 文件语法错误：{source}:{exc.lineno}:{exc.offset or 0} — {exc.msg}"
+            + (f"\n  {exc.text.rstrip()}" if exc.text else "")) from None
     mod = types.ModuleType(name)
     mod.__file__ = str(source)
     mod.__dict__["__name__"] = name
-    mod.__dict__["__builtins__"] = __builtins__
+    # builtins 必须取模块对象，不能直接抄 `__builtins__`：后者在 __main__ 里是
+    # 模块、被 import 时却是 dict，两种形态都能跑但语义不同（dict 形态下
+    # build 文件里的 `__builtins__` 会看到一份快照）。显式取同一个模块，
+    # 让「python vao.py」与「import vao」两条路径行为完全一致。
+    import builtins
+    mod.__dict__["__builtins__"] = builtins
     exec(code, mod.__dict__)
     sys.modules.setdefault(name, mod)
     return mod, source
@@ -62,19 +79,51 @@ def _load_module(path: str | Path, name: str = "vao_build"):
 def load_spec(path: str | Path) -> tuple[dict, Path]:
     """Read a build.py, JSON, or YAML spec without loading references."""
     source = Path(path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"找不到 spec 文件: {source}"
+            "（先 `vao.py plan brief.yml --skeleton build.py` 生成骨架，填充后再 check）")
     if source.suffix.lower() in {".json", ".yml", ".yaml"}:
+        text = source.read_text(encoding="utf-8")
+        # 解析失败要带上「哪个文件、第几行」：顶层只打印异常类型时，
+        # 作者拿到的是一句 ScannerError，还得自己回去数行。
         if source.suffix.lower() == ".json":
-            value = json.loads(source.read_text(encoding="utf-8"))
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"spec JSON 解析失败：{source}:{exc.lineno}:{exc.colno}"
+                                 f" — {exc.msg}") from None
         else:
             import yaml
-            value = yaml.safe_load(source.read_text(encoding="utf-8"))
+            try:
+                value = yaml.safe_load(text)
+            except yaml.YAMLError as exc:
+                mark = getattr(exc, "problem_mark", None)
+                where = f":{mark.line + 1}:{mark.column + 1}" if mark else ""
+                problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+                raise ValueError(f"spec YAML 解析失败：{source}{where} — {problem}") from None
         if not isinstance(value, dict):
-            raise ValueError("spec 顶层必须是对象/dict")
+            raise ValueError(f"spec 顶层必须是对象/dict，实际是 {type(value).__name__}：{source}")
         return value, source
     mod, source = _load_module(source)
-    value = mod.build_spec() if hasattr(mod, "build_spec") else getattr(mod, "SPEC", None)
+    if hasattr(mod, "build_spec"):
+        try:
+            value = mod.build_spec()
+        except Exception as exc:
+            # build_spec() 自己炸了要说清是**它**炸了，而不是报成「模块没定义 spec」。
+            raise ValueError(f"build_spec() 执行失败：{source} — "
+                             f"{type(exc).__name__}: {exc}") from None
+    else:
+        value = getattr(mod, "SPEC", None)
+    if value is None:
+        raise ValueError(f"build 模块既没有 build_spec()、也没有顶层 SPEC：{source}"
+                         "（骨架默认给的是 SPEC = {...}，别改名）")
     if not isinstance(value, dict):
-        raise ValueError("build 模块必须定义 build_spec() 或顶层 SPEC，且返回对象")
+        raise ValueError(f"spec 顶层必须是对象/dict，实际是 {type(value).__name__}：{source}")
+    if not isinstance(value.get("slides"), list):
+        # slides 缺失/写错类型会一路走到「0 页 deck」，那是空文件不是轻量交付。
+        raise ValueError(f"spec.slides 必须是数组/list，实际是 "
+                         f"{type(value.get('slides')).__name__}：{source}")
     return value, source
 
 
@@ -341,9 +390,62 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     }
 
 
-def _repair_packet(result: dict, mode: str, build: Path, output: Path) -> dict:
-    """The only AI-facing context emitted by default: blockers grouped by cause."""
+# 打磨手册：warning 规则 → 一句可执行的改法。
+# 与 FIX_CONTRACT_HINTS 的分工：那份管「不改不能交付」，这份管「改了更好看」。
+# 两者都不进对话——除非作者显式要求打磨（--polish）。
+POLISH_HINTS = {
+    "direction_seed": "按方向种子的数字约束回调：留白不足就删元素/加边距（不是缩字号），"
+                      "字号级差不足就拉开层级或改用字重与墨色。",
+    "typography": "行长超限：加宽盒或拆句；正文单行 CJK ≤38 字 / 拉丁 ≤75 字。",
+    "grid": "坐标或尺寸没落在 8 网格上：吸附到 8 的倍数，边缘对齐比居中更稳。",
+    "palette_discipline": "颜色已不成系统：收拢为一组主辅色 + 一个强调色，"
+                          "强调色与主色拉开色相族。",
+    "text_capacity": "叙事行数偏多：先提炼再拆页，不要靠缩字号塞进去。",
+    "min_font": "注记类文字低于可读下限：提高字号，或改由更高层级的角色承担。",
+    "theme_fonts": "字体键写错或缺字族：规范键是 cn / latin（display / body 是别名）。",
+    "theme_constraints": "约束键名写错：写错的键不会被执法，等于没写。",
+    "chart_capacity": "图表类别过多：合并长尾、拆图，或改用排行榜只留前几名。",
+    "chart_style_drift": "同一类图表跨页规格不一致：统一标签字号与图例位置。",
+    "geom_occlude": "元素互相遮挡：挪开或删掉其一，不要靠层级盖住。",
+    "safe_zone": "内容对象越出声明的安全区：把它挪回安全区内。",
+    "anchor": "锚点漂移：眉标固定上缘、页码固定象限、证据编号按页序连续。",
+    "deck_anchor": "跨页锚点不一致：眉标/页码/Fig. 编号三者位置与编号都要成套。",
+}
+
+
+def _polish_plan(result: dict) -> dict:
+    """PASS 之后的细节打磨清单：把 warning/hint 变成一份可执行的改动表。
+
+    纪律不变——**打磨不是交付门槛**：它只在作者显式要求时出现（--polish），
+    永远不改变 verdict，也永远不会把 warning 升级成阻断。
+    它存在的理由只有一个：作者说「PASS 了，再打磨一轮」时，
+    需要的是「改哪个元素、改成什么」，而不是「有 2 条提示」。
+    """
+    groups = []
+    for bucket in result.get("warn_summary") or []:
+        rule = str(bucket.get("rule") or "")
+        groups.append({
+            "rule": rule,
+            "level": bucket.get("level"),
+            "count": bucket.get("count", 0),
+            "ids": bucket.get("ids") or [],
+            "evidence": bucket.get("samples") or [],
+            "polish": POLISH_HINTS.get(rule, "按 evidence 原文判断；拿不准就不动——"
+                                             "打磨的第一纪律是不要为了改而改。"),
+        })
+    # 高频项排前面：同一条规则命中越多，越可能是系统性的手法问题而不是个案。
+    groups.sort(key=lambda g: (-g["count"], g["rule"]))
     return {
+        "round_policy": "打磨是可选的一轮，不是门槛：改完复跑同档确认没引入阻断即可；"
+                        "没有把握的条目请原样保留（warning 本就允许存在）。",
+        "groups": groups,
+    }
+
+
+def _repair_packet(result: dict, mode: str, build: Path, output: Path,
+                   polish: bool = False) -> dict:
+    """The only AI-facing context emitted by default: blockers grouped by cause."""
+    packet = {
         "schema": "vao-repair-v1",
         "mode": mode,
         "build": str(build),
@@ -359,6 +461,9 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path) -> dict:
         "next_action": result.get("next_action"),
         "performance": result.get("performance", {}),
     }
+    if polish:
+        packet["polish_plan"] = _polish_plan(result)
+    return packet
 
 
 def _ghost(spec: dict, output_dir: str | Path, pages: list[int] | None = None,
@@ -384,7 +489,17 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
 
     manifest_file = Path(manifest_path).expanduser().resolve()
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    root = Path(input_dir).expanduser().resolve() if input_dir else manifest_file.parent
+    # 默认产图目录与 check/run 的 --assets-dir 口径对齐：两条命令读同一批图，
+    # 却按不同规则找路径 → asset-qc 报「图不存在」而 check 绑定成功（或反过来）。
+    # 优先用 manifest 自己记下的 assets_dir（出图时写入的真值），
+    # 没有再退回 manifest 所在目录。
+    if input_dir:
+        root = Path(input_dir).expanduser().resolve()
+    else:
+        declared = manifest.get("assets_dir") or manifest.get("output_dir")
+        root = (Path(str(declared)).expanduser().resolve()
+                if declared and Path(str(declared)).expanduser().is_dir()
+                else manifest_file.parent)
     results = []
     actions: dict[str, list[str]] = {}
     pending: list[str] = []        # 还没生成（先出图再 QC），与「生成不合格」分开报
@@ -494,7 +609,8 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
               include_advisory: bool = False, json_output: bool = False,
               assets_manifest: str | None = None,
-              assets_dir: str | None = None) -> tuple[dict, int]:
+              assets_dir: str | None = None,
+              polish: bool = False) -> tuple[dict, int]:
     """一次执行完成交付验证：normalize → guard → compile → 预览证据 → 修复包。
 
     零外部渲染器、零 reference 读取、零逐条修复循环：一个进程，一份结论。
@@ -550,7 +666,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
 
     result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
-    packet_value = _repair_packet(result, mode, build, output_path)
+    packet_value = _repair_packet(result, mode, build, output_path, polish=polish)
     _json_write(packet_path, packet_value)
     if json_output:
         print(json.dumps(packet_value, ensure_ascii=False, indent=2, default=str))
@@ -569,6 +685,20 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                 len(ids) + len(files), "、".join(ids + files)))
         if not (result.get("fix_plan") or {}).get("groups"):
             print("  ✓ 无阻断：warning 只留痕，不进入对话")
+        if polish:
+            plan = packet_value.get("polish_plan") or {}
+            groups = plan.get("groups") or []
+            if result.get("blocking_items"):
+                # 有阻断时不谈打磨：先让它能交付，再谈好不好看。
+                # 否则「还有 2 处可打磨」会和「这份产物不能用」抢注意力。
+                print("  · 打磨：先修上面的阻断项，PASS 之后再跑 --polish")
+            elif not groups:
+                print("  ✓ 打磨：没有可打磨项（warning 为空）——这一版已经干净")
+            for g in (groups if not result.get("blocking_items") else []):
+                ids = "、".join(g.get("ids") or []) or "deck"
+                print(f"  polish[{g['rule']}] ×{g['count']} ({ids}) → {g['polish']}")
+                for ev in g.get("evidence") or []:
+                    print(f"      · {ev}")
         if ghost:
             suffix = "（同产物复用，未重渲）" if ghost.get("reused") else ""
             print(f"  preview: {ghost['count']} 页 ghost → "
@@ -605,7 +735,8 @@ def run_once(args: argparse.Namespace) -> int:
     _, code = run_check(build, args.output, mode=args.mode, packet=args.packet,
                         preview=args.preview, include_advisory=args.advisory,
                         json_output=args.json, assets_manifest=manifest_for_check,
-                        assets_dir=getattr(args, "assets_dir", None))
+                        assets_dir=getattr(args, "assets_dir", None),
+                        polish=getattr(args, "polish", False))
     return code
 
 
@@ -640,12 +771,17 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("brief")
     a.add_argument("--plan", dest="plan_path", help="reuse an existing plan.json")
     a.add_argument("--out", default="asset_manifest.json")
+    a.add_argument("--assets-dir",
+                   help="图将被放到哪个目录（写进 manifest，asset-qc 与 check 默认据此找图）")
     a.add_argument("--cache", help="prompt cache JSON; reuse identical visual-demand fingerprints")
     a.add_argument("--json", action="store_true")
 
     aq = sub.add_parser("asset-qc", help="generated asset folder → grouped QC report")
     aq.add_argument("manifest")
-    aq.add_argument("--input", help="directory containing asset_id.png files")
+    aq.add_argument("--input",
+                    help="directory containing asset_id.png files "
+                         "(default: manifest 的 assets_dir，其次 manifest 所在目录；"
+                         "与 check/run 的 --assets-dir 同一口径)")
     aq.add_argument("--phase", choices=("draft", "release"), default="draft")
     aq.add_argument("--out")
     aq.add_argument("--json", action="store_true")
@@ -659,6 +795,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     c.add_argument("--assets-dir", help="directory containing generated manifest filenames")
     c.add_argument("--advisory", action="store_true", help="explicit risk forecast; off by default")
+    c.add_argument("--polish", action="store_true",
+                   help="PASS 后再走一轮细节打磨：把 warning 变成可执行的改动表（不改判定）")
     c.add_argument("--json", action="store_true")
 
     r = sub.add_parser("run", help="brief + build + check in one process")
@@ -675,6 +813,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--packet")
     r.add_argument("--preview")
     r.add_argument("--advisory", action="store_true")
+    r.add_argument("--polish", action="store_true",
+                   help="PASS 后再走一轮细节打磨：把 warning 变成可执行的改动表（不改判定）")
     r.add_argument("--json", action="store_true")
 
     v = sub.add_parser("preview", help="spec/build → ghost contact sheet (PIL only)")
@@ -748,6 +888,9 @@ def main(argv: list[str] | None = None) -> int:
                 from pipeline import build_plan_bundle
                 bundle = build_plan_bundle(need)
             manifest = build_asset_manifest(need, bundle=bundle, cache_path=args.cache)
+            if getattr(args, "assets_dir", None):
+                # 记下产图目录：asset-qc / check 不必再各自猜一次，也不会猜得不一样。
+                manifest["assets_dir"] = str(Path(args.assets_dir).expanduser().resolve())
             _json_write(args.out, manifest)
             if args.json:
                 print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
@@ -773,7 +916,8 @@ def main(argv: list[str] | None = None) -> int:
                                 packet=args.packet, preview=args.preview,
                                 include_advisory=args.advisory, json_output=args.json,
                                 assets_manifest=args.assets_manifest,
-                                assets_dir=args.assets_dir)
+                                assets_dir=args.assets_dir,
+                                polish=args.polish)
             return code
         if args.command == "run":
             return run_once(args)

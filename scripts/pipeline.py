@@ -89,6 +89,15 @@ def alignment_warnings(plan_pages: list[dict], intel_pages: list[dict],
     return out
 
 
+def blend_toward(color: str, target: str, t: float = 0.55) -> str:
+    """把一个色朝可读端拉，用于骨架的可读性兜底（失败时原样返回）。"""
+    try:
+        from primitives import blend
+        return blend(color, target, t)
+    except Exception:
+        return target
+
+
 def build_skeleton_module(bundle: dict) -> str:
     """plan bundle → build 模块骨架。
 
@@ -121,6 +130,24 @@ def build_skeleton_module(bundle: dict) -> str:
               "primary": _slot("information", "#222222"),
               "secondary": _slot("supporting", "#333333"),
               "accent": _slot("accent", "#AA0000")}
+    # 可读性兜底：骨架是作者的起点，**起点不能是不可读的**。品牌色可以落错槽
+    # （品牌方给的就是一个深色主色，却被当成纸面），这类错不会报语法错误，
+    # 只会让整副 deck 从第一笔起就 1.4:1。这里不替作者做设计判断，只保证
+    # 「墨色与纸面分得开」：正文级 4.5:1 达不到时，把 ink/primary 翻到
+    # 同色相的可读端（白或近黑），并把原色降级为 accent 之外的次级信号。
+    try:
+        from primitives import contrast, luminance
+        if contrast(colors["background"], colors["ink"]) < 4.5:
+            readable = "#FFFFFF" if luminance(colors["background"]) < 0.5 else "#141414"
+            colors["ink"] = readable
+            if contrast(colors["background"], colors["primary"]) < 4.5:
+                colors["primary"] = readable
+            if contrast(colors["background"], colors["secondary"]) < 3.0:
+                colors["secondary"] = blend_toward(colors["secondary"], readable)
+            if contrast(colors["background"], colors["muted"]) < 3.0:
+                colors["muted"] = blend_toward(colors["muted"], readable)
+    except Exception:
+        pass                      # 骨架生成永远不因配色兜底而失败
     try:
         accent_max = float(constraints.get("accent_area_max", 0.05))
     except (TypeError, ValueError):
@@ -148,7 +175,7 @@ def build_skeleton_module(bundle: dict) -> str:
          '     theme.constraints 是方向发下来的数字下限/上限，照抄别改——guard 会照着它执法',
          '  4) 图表页齐 source/unit/period/basis；source_zone 内只放 role∈{source,method,metadata}',
          '  5) 文本/图表/图片/来源区墨迹不相交；内容过多时先删句、再改写，不要缩字号',
-         '  6) 每页 anchor（眉标/页码/Fig. 编号）要落成元素：眉标 role=eyebrow（家族词汇原文）、'
+         '  6) 每页 anchor（眉标/页码）要落成元素：眉标 role=eyebrow（家族词汇原文）、'
          '页码 role=page_number、证据编号写进该页 caption 开头；位置全 deck 一致、编号连续',
          '',
          '填完直接：python scripts/vao.py check <本文件> out.pptx --mode draft',
@@ -196,7 +223,7 @@ def build_skeleton_module(bundle: dict) -> str:
         anc = pg.get("anchor") if isinstance(pg.get("anchor"), dict) else None
         if anc:
             L.append(f'            "anchor": {json.dumps(anc, ensure_ascii=False)},'
-                     '  # 眉标固定上缘 / 页码固定象限 / Fig. 编号连续（落成对应 role 的元素）')
+                     '  # 眉标固定上缘 / 页码固定象限（落成对应 role 的元素）')
         L.append('            "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},')
         L.append('            "elements": [  # TODO：按本页构图语法落元素（几何与样式规则见文件头）')
         L.append('            ],')

@@ -624,11 +624,292 @@ def check_deck_anchor(work: pathlib.Path) -> None:
     pages = plan.get("pages") or []
     anchors = [p.get("anchor") or {} for p in pages]
     body = skel.read_text(encoding="utf-8")
-    check("anchor: ≥4 页 deck 逐页发锚（眉标/页码/证据编号）且骨架原样交给生成侧",
+    check("anchor: ≥4 页 deck 逐页发锚（眉标 + 页码两样）且骨架原样交给生成侧",
           len(anchors) == 4 and anchors[0].get("eyebrow") and "page_number" not in anchors[0]
-          and anchors[2].get("figure") == "Fig. 01" and anchors[3].get("page_number") == 4
+          and anchors[3].get("page_number") == 4
           and '"anchor"' in body and "role=eyebrow" in body,
           f"锚={anchors}")
+    check("anchor: plan 不再发 Fig. 证据编号（论文的交叉引用装置，演示场景没有回指）",
+          not any(a.get("figure") for a in anchors)
+          and "Fig." not in body, f"锚={anchors}")
+
+
+def _ghost_draws_a_chart(element: dict) -> bool:
+    """ghost 是否真把这个图表画了出来（True）还是只画了「画不出来」的占位叉。
+
+    判据取自渲染结果本身：占位叉只有两条对角线，真图会落下成片的色块。
+    比数文本更稳——它不依赖 ghost 内部用哪个分支实现。
+    """
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
+                        "primary": "#1A3A5C", "secondary": "#40617F", "accent": "#C8501E"}}
+    canvas = {"width": 1280, "height": 720}
+    img = Image.new("RGBA", (1280, 720), (255, 255, 255, 255))
+    _ghost._draw_chart(img, element, RenderContext(theme, canvas), 1.0)
+    # 占位叉是细线：着色像素只有几百个；真柱图是实心块，上万个。
+    inked = sum(1 for px in img.convert("RGB").getdata() if px != (255, 255, 255))
+    return inked > 5000
+
+
+def _ghost_ink(element: dict) -> int:
+    """ghost 为这个元素落了多少着色像素。0 = 预览里根本看不见它。
+
+    同样锁行为不锁实现：不关心 ghost 走哪个分支，只关心「画出来没有」。
+    """
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
+                        "primary": "#1A3A5C", "secondary": "#40617F", "accent": "#C8501E"}}
+    img = Image.new("RGBA", (1280, 720), (255, 255, 255, 255))
+    _ghost._draw_shape(img, element, RenderContext(theme, {"width": 1280, "height": 720}), 1.0)
+    return sum(1 for px in img.convert("RGB").getdata() if px != (255, 255, 255))
+
+
+def check_silent_failure_seams() -> None:
+    """静默失效缝：写了却不生效、预览比产物宽容、门槛从未执行。
+
+    这一组锁的都是**不会报错**的错——它们不让链路失败，只让产物悄悄变错，
+    是这份技能包最贵的一类漏洞，因此每一条都必须有专属反退化用例。
+    """
+    from design_intelligence import color_plan
+    import guard as _guard_mod
+    from guard import _text_box_capacity, check_spec
+    from primitives import contrast
+    from pipeline import build_plan_bundle, build_skeleton_module
+    from route import normalize_brand_colors, plan_deck
+
+    # ① brand_colors 列表写法必须生效（templates/brief.yml 教的就是列表）
+    need = {"audience": "董事会", "decision": "批预算",
+            "brand_colors": ["#1A3A5C", "#C8501E"],
+            "slides": [{"id": "s01", "family": "cover", "title": "A", "content": "B"}]}
+    plan = plan_deck(need)
+    cp = color_plan(plan["design_direction"], need)
+    check("brand: 列表写法的 brand_colors 真的生效（照文档写不会被静默忽略）",
+          plan["theme"]["colors"].get("accent") == "#C8501E"
+          and plan["theme"].get("brand_derived") is True
+          and cp["seed_source"] == "brand_colors",
+          f"{plan['theme']['colors'].get('accent')} / {cp['seed_source']}")
+    check("brand: dict 与 list 两种写法归一到同一结果（两处解析不得分叉）",
+          normalize_brand_colors(["#1A3A5C", "#C8501E"])
+          == {"primary": "#1A3A5C", "accent": "#C8501E"})
+
+    # ② 品牌主色是墨色不是纸面：槽位语义错位会产出 1.4:1 的不可读骨架
+    check("brand: 品牌主色落进 information（墨色），不被当成 70% 的纸面",
+          cp["seed_skeleton"]["information"] == "#1A3A5C"
+          and cp["seed_skeleton"]["foundation"] != "#1A3A5C",
+          str(cp["seed_skeleton"]))
+    for brand in (["#1A3A5C", "#C8501E"], ["#0B1F33"], {"background": "#101010", "ink": "#151515"}):
+        sk = build_skeleton_module(build_plan_bundle(dict(need, brand_colors=brand)))
+        colors = eval(re.search(r'"colors": (\{.*?\})', sk).group(1))   # noqa: S307 骨架是本仓库自产文本
+        if not check(f"skeleton: 骨架配色可读（{str(brand)[:22]} → 正文 ≥4.5:1）",
+                     contrast(colors["background"], colors["ink"]) >= 4.5,
+                     f"{colors['background']}/{colors['ink']}="
+                     f"{contrast(colors['background'], colors['ink']):.2f}"):
+            break
+
+    # ③ 预览的宽容度必须 ≤ 交付链：ghost 不得认 guard 不认的键名/图表类型。
+    #    用行为断言而不是文本搜索——注释里出现的词不算实现（否则解释缝隙的
+    #    注释本身会让用例变红，那是在锁措辞，不是在锁行为）。
+    import ghost as _ghost
+    payload = [{"label": "A", "value": 3}, {"label": "B", "value": 9}]
+    check("ghost: 预览不认 rows 别名（写 rows 的图 guard 判空，预览也必须判空）",
+          _ghost._rows({"rows": payload}) == [] and _ghost._rows({"data": payload}) != [])
+    for element in ({"chart_type": "bar", "data": payload, "x": 0, "y": 0,
+                     "width": 400, "height": 300},
+                    {"kind": "radar", "data": payload, "x": 0, "y": 0,
+                     "width": 400, "height": 300}):
+        rendered = _ghost_draws_a_chart(element)
+        if not check(f"ghost: {element.get('chart_type') or element.get('kind')} "
+                     "不被兜底画成柱图（guard 会拦下它，证据不得替错误背书）",
+                     rendered is False):
+            break
+
+    # ④ 文本溢出是治理层事实：spec 档（不编译）也必须点名到元素
+    overflow = {"id": "t", "type": "text", "x": 48, "y": 48, "width": 304, "height": 40,
+                "size": 20, "line_height": 1.5, "color": "ink",
+                "text": "这是一段非常长的中文描述需要很多行才能放得下" * 6}
+    cap = _text_box_capacity(overflow)
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+                                 "primary": "#1A3A5C", "secondary": "#40617F", "accent": "#C8501E"}},
+            "slides": [{"id": "s01", "elements": [overflow]}]}
+    named = [c for c in check_spec(spec)["checks"]
+             if c.get("rule") == "text_capacity" and c.get("level") == "error"
+             and c.get("id") == "t"]
+    check("text: 溢出在 guard 就点名到元素（spec 档不编译也拦得住，修复包不再只有 deck）",
+          bool(cap and cap["over_height"]) and bool(named))
+    fits = dict(overflow, text="亚太扩张 2026", width=800, height=96, size=64, line_height=1.2)
+    check("text: 装得下的文本不误报（新增阻断项不得制造假阳性）",
+          not _text_box_capacity(fits)["over_height"])
+
+    # ⑤ 中性灰阶不参与色相族判定：规则不得对自家出厂配色每次都误报
+    def _palette_warns(colors: dict) -> list:
+        probe = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": colors},
+                 "slides": [{"id": "s01", "elements": []}]}
+        return [c for c in check_spec(probe)["checks"] if c.get("rule") == "palette_discipline"]
+
+    check("palette: 出厂灰阶种子不被误判成「强调色与主色同族」（狼来了会淹掉真信号）",
+          not _palette_warns({"background": "#F5F4F1", "ink": "#1E1E1C", "muted": "#9A9A96",
+                              "primary": "#1E1E1C", "secondary": "#9A9A96", "accent": "#6E6E6A"}))
+    check("palette: 真正的同族撞色仍被点名（放宽不等于放弃）",
+          bool(_palette_warns({"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
+                               "primary": "#B3271E", "secondary": "#8A2018", "accent": "#D0402E"})))
+
+    # ⑥ CI 的门必须真的能跑：引用不存在的文件/形参 = 永远通过的假门。
+    #    只扫**可执行行**（注释与说明文字不算实现，否则解释历史的注释会让用例变红）。
+    ci_lines = [ln for ln in (ROOT / ".github" / "workflows" / "ci.yml")
+                .read_text(encoding="utf-8").splitlines()
+                if not ln.lstrip().startswith("#")]
+    ci = "\n".join(ci_lines)
+    missing = sorted({p for p in re.findall(r"templates/[\w.-]+", ci)
+                      if not (ROOT / p).exists()})
+    import inspect as _inspect
+    import qa as _qa
+    qa_params = set(_inspect.signature(_qa.run_qa).parameters)
+    bad_kwargs = sorted({k for k in re.findall(r"run_qa\([^)]*?(\w+)=", ci)
+                         if k not in qa_params})
+    check("ci: 工作流只引用存在的模板与真实存在的 run_qa 形参（假门比没门更贵）",
+          not missing and not bad_kwargs, f"missing={missing} bad_kwargs={bad_kwargs}")
+    check("ci: 规划步骤走单入口 vao.py（pipeline.py 没有 CLI，旧写法恒退 0）",
+          "scripts/pipeline.py" not in ci)
+
+    # ⑦ 色彩 token 拼错必须被点名。渲染层的 ink 回落是安全网、不能删，
+    #    但正因为它永不失败，错误只能由治理层捕获——否则 fill 硬报错、
+    #    color 静默变黑，同一类笔误两种待遇。
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+                        "primary": "#1A3A5C", "secondary": "#40617F", "accent": "#C8501E"}}
+    typo = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+            "slides": [{"id": "s01", "elements": [
+                {"id": "t1", "type": "text", "x": 48, "y": 48, "width": 600, "height": 60,
+                 "size": 24, "text": "拼错的 token", "color": "primry"},
+                {"id": "r1", "type": "rect", "x": 48, "y": 200, "width": 300, "height": 120,
+                 "fill": "chartreuse"},
+                {"id": "ok1", "type": "text", "x": 48, "y": 360, "width": 600, "height": 60,
+                 "size": 24, "text": "派生 token", "color": "panel_strong"},
+                {"id": "ok2", "type": "rect", "x": 700, "y": 200, "width": 300, "height": 120,
+                 "fill": "#1A3A5C"},
+            ]}]}
+    flagged = {c.get("id") for c in check_spec(typo)["checks"]
+               if c.get("rule") == "color_token" and c.get("level") == "error"}
+    check("color: 拼错的颜色 token 被点名到元素（不再静默回落成黑字）",
+          flagged == {"t1", "r1"}, f"flagged={sorted(flagged)}")
+    from primitives import RenderContext
+    ctx = RenderContext(theme, {})
+    check("color: 渲染层对未知 token 仍安全回落（治理层报错，渲染层不得崩）",
+          ctx.text_color("primry") is not None and ctx.text_color("panel_strong") is not None)
+
+    # ⑧ warning 必须保留可执行信息：聚合是为了不刷屏，不是为了丢掉「改哪、改成什么」。
+    import qa as _qa
+    packed = _qa.build_warn_summary([
+        {"domain": "guard", "level": "hint", "rule": "direction_seed", "count": 2,
+         "ids": ["deck", "s03"], "samples": ["留白率 45% 低于下限 62%", "字号级差 1.09×"]},
+    ])
+    check("warn: 聚合后仍保留元素 id 与样本原文（PASS 后的打磨要有据可依）",
+          bool(packed) and packed[0]["ids"] == ["deck", "s03"]
+          and "45%" in packed[0]["samples"][0], str(packed))
+    import vao as _vao
+    plan = _vao._polish_plan({"warn_summary": packed})
+    check("warn: 打磨清单给出可执行改法，且不引用修复包里不存在的字段",
+          bool(plan["groups"]) and plan["groups"][0]["evidence"]
+          and "guard.checks" not in json.dumps(plan, ensure_ascii=False))
+
+    # ⑨ 线性分割必须可用：它是「场 > 线 > 型 > 盒」里第二轻的分组语言，
+    #    一旦写法被拦或预览看不见，作者就只能退回画卡片——工具的默认值
+    #    会变成产物的默认样子。
+    def _line(**kw):
+        base = {"id": "ln", "type": "shape", "shape": "line", "x": 96, "y": 300,
+                "width": 1088, "height": 0, "stroke": "hairline", "stroke_width": 1}
+        base.update(kw)
+        return base
+
+    def _errs(el):
+        probe = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                 "slides": [{"id": "s01", "elements": [el]}]}
+        return [c for c in check_spec(probe)["checks"] if c.get("level") == "error"]
+
+    check("rule: 水平发丝线（height=0）与垂直分栏线（width=0）不被误判为几何退化",
+          not _errs(_line()) and not _errs(_line(y=120, width=0, height=480)))
+    check("rule: 零长度线仍被拦（放宽一维对象不等于放弃几何校验）",
+          bool(_errs(_line(width=0, height=0))))
+    check("rule: 二维元素的 height=0 仍被拦（豁免只给 line/arrow）",
+          bool(_errs({"id": "r", "type": "shape", "shape": "rect", "x": 96, "y": 300,
+                      "width": 600, "height": 0, "fill": "panel"})))
+    check("rule: 预览画得出分割线（产物有线而预览空白 = 作者看不见自己画的线）",
+          _ghost_ink(_line()) > 0 and _ghost_ink(_line(y=120, width=0, height=480)) > 0)
+
+    # ⑩ 卡片墙判据落在**底色**上，不落在圆角半径上
+    from primitives import filled_panels
+
+    def _panels(shape, n=5, **kw):
+        els = []
+        for i in range(n):
+            e = {"id": f"c{i}", "type": "shape", "shape": shape, "x": 64 + i * 232,
+                 "y": 220, "width": 208, "height": 260, "fill": "panel"}
+            e.update(kw)
+            els.append(e)
+        return els
+
+    check("card: 直角填充卡片墙与圆角卡片墙同等计数（判据是底色，不是圆角）",
+          len(filled_panels(_panels("rect"), 1280, 720)) == 5
+          and len(filled_panels(_panels("rounded_rect"), 1280, 720)) == 5)
+    check("card: 发丝线/细分隔条/整幅背景块都不计为卡片（它们不圈地）",
+          not filled_panels([_line()], 1280, 720)
+          and not filled_panels([{"id": "b", "type": "shape", "shape": "rect", "x": 96,
+                                  "y": 300, "width": 1088, "height": 2, "fill": "hairline"}],
+                                1280, 720)
+          and not filled_panels([{"id": "bg", "type": "shape", "shape": "rect", "x": 0,
+                                  "y": 0, "width": 1280, "height": 720, "fill": "panel_soft"}],
+                                1280, 720))
+    check("card: 只描边不填色的框线不计为卡片（卡片的成本来自底色）",
+          not filled_panels([{"id": "o", "type": "shape", "shape": "rect", "x": 96, "y": 220,
+                              "width": 300, "height": 200, "stroke": "hairline"}], 1280, 720))
+    from design_intelligence import pre_critic as _pre_critic
+    _wall = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+             "slides": [{"id": "s01", "page_intent": {"insight": "x", "density": "dense"},
+                         "elements": _panels("rect")}]}
+    check("card: 直角卡片墙触发 CARD_WALL_RISK（此前只有圆角墙触发，直角墙零信号）",
+          "CARD_WALL_RISK" in [r.get("code") for r in (_pre_critic(_wall).get("risks") or [])])
+
+    # ⑪ 编译期警告必须带元素 id：没有 id 的 fix_plan 只能说「有问题」，说不出「改哪个」
+    from primitives import RenderContext as _RC
+    _ctx = _RC({"colors": theme["colors"]}, {"width": 1280, "height": 720})
+    _ctx.warn("无身份的整体警告")
+    _ctx.warn("某元素的警告", "el_7")
+    check("warn: RenderContext 记录元素 id，且与 warnings 等长（旧读法不受影响）",
+          _ctx.warnings == ["无身份的整体警告", "某元素的警告"]
+          and _ctx.warning_ids == [None, "el_7"])
+    _qa_items = []
+    _cr = {"warnings": ["shape 'shp_bad': 未知 shape", "[guard] 同源不重复"],
+           "warning_ids": ["shp_bad", None]}
+    _ids = list(_cr["warning_ids"])
+    for _i, _w in enumerate(_cr["warnings"]):
+        if _w.startswith("[guard]"):
+            continue
+        _qa_items.append({"domain": "compile", "level": "warn", "rule": "compiler",
+                          "id": _ids[_i] if _i < len(_ids) else None, "msg": _w})
+    check("warn: 编译警告的元素 id 进得了 warning_summary（修现有链路，不新建体系）",
+          bool(_qa.build_warn_summary(_qa_items))
+          and _qa.build_warn_summary(_qa_items)[0]["ids"] == ["shp_bad"])
+
+    # ⑫ 不消费的数据不计算 / 死常量不保留（但真在用的别误删）
+    import compile_cache as _cc
+    with tempfile.TemporaryDirectory() as _td:
+        _ledger = _cc.note_round(pathlib.Path(_td), mode="draft", spec_hash="h1")
+    check("budget: 轮次账本不再算无人消费的 over_budget（budget 仍用于显示 round n/6）",
+          "over_budget" not in _ledger and _ledger.get("budget") == _cc.ROUND_BUDGET)
+    _adv_probe = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                  "slides": [{"id": "s01", "elements": _panels("rect")}]}
+    _adv_off = {c["rule"] for c in
+                check_spec(_adv_probe, include_advisory=False)["checks"]}
+    _adv_on = {c["rule"] for c in
+               check_spec(_adv_probe, include_advisory=True)["checks"]}
+    check("advisory: DESIGN_RULES 是真开关——它决定哪些设计规则不进默认判定，不是死常量",
+          bool(_adv_on - _adv_off)
+          and (_adv_on - _adv_off) <= set(_guard_mod.DESIGN_RULES),
+          f"被它挡下的={sorted(_adv_on - _adv_off)}")
 
 
 def check_anti_regression() -> None:
@@ -890,6 +1171,7 @@ def main() -> int:
         check_direction_seed(work)
         check_chart_argument(work)
         check_deck_anchor(work)
+        check_silent_failure_seams()
         check_anti_regression()
         check_doc_counts()
     finally:

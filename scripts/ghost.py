@@ -15,7 +15,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from primitives import (RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT,
+from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT,
                         highlight_index)
 
 
@@ -231,9 +231,25 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
 
 def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> None:
     x, y, w, h = _scale_box(e, scale)
+    shape = str(e.get("shape", "rect")).lower()
+
+    if shape in ("line", "arrow"):
+        # 线是一维对象：compiler 走 add_connector，从 (x,y) 画到 (x+w, y+h)，
+        # 所以水平线 height=0 是**正确写法**。此前这里被 `w<=0 or h<=0` 提前 return——
+        # 产物里有线、预览里没有，作者看不到自己刚画的分割线，只好退回画卡片。
+        # 预览宽容度必须 = 交付链：compiler 画得出来的，预览就得画。
+        stroke = e.get("stroke") or e.get("fill") or "hairline"
+        color = _rgba(ctx, stroke, e.get("stroke_opacity") or e.get("opacity"),
+                      fallback=(170, 170, 170))
+        width = max(1, int(round(float(e.get("stroke_width", 1) or 1) * scale)))
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(overlay, "RGBA").line([(x, y), (x + w, y + h)],
+                                             fill=color, width=width)
+        img.alpha_composite(overlay)
+        return
+
     if w <= 0 or h <= 0:
         return
-    shape = str(e.get("shape", "rect")).lower()
     fill = e.get("fill") or e.get("color")
     radius = int(round(min(w, h) * 0.12)) if shape == "rounded_rect" else 0
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -330,7 +346,14 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
 
 
 def _rows(e: dict) -> list[dict]:
-    rows = e.get("rows") or e.get("data") or []
+    """图表载荷的唯一键是 `data`（与 guard / compiler 同源）。
+
+    这里刻意**不**再接受 `rows` 别名：ghost 曾按 `rows or data` 取值，于是
+    写 `rows` 的 spec 在预览里画得好好的，到 guard 却报「数值图表缺少 data」、
+    编译出来是一张空图。预览比产物宽容，是最坏的一种不一致——它让作者
+    照着一张不存在的证据做判断。宽容度必须由 guard 统一定义，预览只跟随。
+    """
+    rows = e.get("data")
     return [r if isinstance(r, dict) else {"label": str(i + 1), "value": r}
             for i, r in enumerate(rows)] if isinstance(rows, list) else []
 
@@ -351,7 +374,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     if w <= 0 or h <= 0:
         return
     rows = _rows(e)
-    kind = str(e.get("kind") or e.get("chart_kind") or e.get("chart_type") or "bar").lower()
+    # kind 的取法与 guard/compiler 同源：只认 chart_kind / kind 两个键，
+    # 且**不默认成 bar**。ghost 曾把 chart_type 也当别名、未知时兜底画柱图：
+    # 这会让「写错键名」与「写了未支持的图表」在预览里都显示成一张漂亮的柱图，
+    # 而 guard 报 CHART_TYPE_FAIL、编译器直接跳过不画。预览的宽容度必须
+    # ≤ 交付链的宽容度，否则证据会替错误背书。
+    kind = str(e.get("chart_kind") or e.get("kind") or "").lower()
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay, "RGBA")
     ink = _rgba(ctx, e.get("color") or "primary", 0.78)
@@ -378,7 +406,10 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         img.alpha_composite(overlay)
         return
 
-    if not rows:
+    # 未知/缺失 kind 与空载荷同样处理成「画不出来」的占位叉：交付链里它们
+    # 都会被 guard 拦下（CHART_TYPE_FAIL / 空载荷），预览就不该替它们画出
+    # 一张像样的图。合法 kind 的真源在 primitives.CHART_KINDS，与 guard 共用。
+    if not rows or kind not in CHART_KINDS:
         d.line((left, bottom, right, top), fill=muted, width=max(1, int(scale)))
         d.line((left, top, right, bottom), fill=muted, width=max(1, int(scale)))
         img.alpha_composite(overlay)

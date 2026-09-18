@@ -153,9 +153,26 @@ def _load_need(path: str) -> dict:
                          "（brief 需为 .yml/.yaml/.json 或定义 BRIEF/NEED 的 .py）")
     if p.suffix in (".yml", ".yaml"):
         import yaml
-        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        try:
+            value = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            # 带上文件与行列：brief 是人手写的文件，解析错误必须能直接定位。
+            mark = getattr(exc, "problem_mark", None)
+            where = f":{mark.line + 1}:{mark.column + 1}" if mark else ""
+            problem = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+            raise ValueError(f"brief YAML 解析失败：{p}{where} — {problem}") from None
+        if not isinstance(value, dict):
+            raise ValueError(f"brief 顶层必须是对象/dict，实际是 {type(value).__name__}：{p}")
+        return value
     if p.suffix == ".json":
-        return json.loads(p.read_text(encoding="utf-8"))
+        try:
+            value = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"brief JSON 解析失败：{p}:{exc.lineno}:{exc.colno}"
+                             f" — {exc.msg}") from None
+        if not isinstance(value, dict):
+            raise ValueError(f"brief 顶层必须是对象/dict，实际是 {type(value).__name__}：{p}")
+        return value
     # 与 vao._load_module 同法：读→compile→exec，不写 __pycache__、不复用旧
     # 字节码——需求文件是人会反复编辑的文件，陈旧代价不该由交付链承担。
     import types

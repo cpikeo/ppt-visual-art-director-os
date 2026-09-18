@@ -80,6 +80,16 @@ Content 这页到底表达什么 → Intent 希望观众理解什么 → Priorit
   高级感 ≠ 低饱和，也 ≠ 固定黑白/米色/灰/莫兰迪：克制是关系准确、层级清晰、视觉舒适，
   不是把饱和数值调低；饱和人格（quiet / warm / luminous / single_signal）由内容情绪与行业语境
   推导，quiet 只是候选之一。
+- **分组用最轻的语言：场 > 线 > 型 > 盒。** 要表达「这几块是一组/不是一组」时，
+  按这个顺序往下试，能用前一种就不要用后一种：
+  **场**（48px+ 间距本身就是边界）→ **线**（0.75–1px 发丝线，一条线就把两块内容分开）→
+  **型**（字号/字重/墨色拉开层级）→ **盒**（卡片：同时花掉间距、描边、底色三重预算）。
+  **卡片三准入，全不满足就退回场/线/型**：需要物理容器语义（数据模块/KPI 面板）、
+  需要与复杂背景隔离、需要被指认为一个独立可搬动的对象。
+  底色不是「分组的默认做法」，它是最贵的一种——每块底色都在纸面上切出一片 territory，
+  读者要为每一块重新建立一次视觉关系。**一页 5 张同面积卡片，几乎总是「不敢决定哪个最重要」的症状**
+  （直角卡片墙和圆角卡片墙是同一堵墙；`CARD_WALL_RISK` 按底色计数，与圆角无关）。
+  修法不是把卡片做好看，是把主角提到 64px 独占上半幅、其余降为无容器纯文本 + 发丝线分隔。
 - **Chart = Visual Argument**，不是组件。先问"数据真正需要观众看到什么"，
   再决定用图、用数字、用对比、用注释还是用空间关系——不要 Data → Automatic Chart。
 
@@ -111,7 +121,10 @@ R2 生成     一次性填入 Strategy/Direction/全量 elements（资产请求�
 R3 验证①    python scripts/vao.py check build_deck.py out.pptx --mode draft
 R4 修正轮   按 repair packet 的根因组**一次改完**（零文档回读）→ 复跑同一条命令
 R5 收口     python scripts/vao.py check build_deck.py out.pptx --mode release
-R6 沉淀     python scripts/vao.py dna --add entry.json   # 可选：只沉淀真正可迁移的判断
+R6 打磨     python scripts/vao.py check build_deck.py out.pptx --mode release --polish
+            # 可选：作者说「PASS 了再打磨一轮」时才用。它把 warning 展开成
+            # 「改哪个元素、改成什么」，永远不改变 verdict，也不会把 warning 升成阻断。
+R7 沉淀     python scripts/vao.py dna --add entry.json   # 可选：只沉淀真正可迁移的判断
 ```
 
 - 计划（plan）已经给出家族、页面意图骨架、叙事动作、**构图语法提案**、媒体闸门与预算；
@@ -119,8 +132,11 @@ R6 沉淀     python scripts/vao.py dna --add entry.json   # 可选：只沉淀�
   写着「可推翻」的地方就是让你做判断的地方）。
 - 每页都有唯一主语：读 plan 的 `move`（这页该干什么）与 `composition.grammar`
   （视线该怎样走），再决定元素长什么样。
-- 每页 `anchor`（眉标 / 页码 / Fig. 编号）落成对应 role 的元素：眉标用家族词汇原文、位置全 deck 一致、
-  证据编号按页序连续——`deck_anchor` 会查。
+- 每页 `anchor`（眉标 / 页码）落成对应 role 的元素：眉标用家族词汇原文、位置全 deck 一致——
+  `deck_anchor` 会查。**不要写「Fig. 01」这类证据编号**：那是论文的交叉引用装置，
+  前提是正文里有「见 Fig. 02」的回指；演示文稿每页自己就是一个论点，
+  读者不会翻回去找编号，编号只会在来源行前面占掉本该留给口径的宽度。
+  图表的身份由标题和它说明的那句话承担，不由序号承担。
 - `plan.theme` 是**方向的种子**：颜色、字体，加一组数字约束（`whitespace_min` 留白下限 /
   `type_step_min` 字号级差 / `decoration_area_max` 装饰面积 / `bg_layers_max` 背景层 /
   `bold_ratio_max` 粗体占比 / `accent_max` 强调色面积）。原样照抄进 `spec.theme.constraints`——

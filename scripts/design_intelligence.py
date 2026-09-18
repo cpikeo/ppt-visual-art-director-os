@@ -43,9 +43,9 @@ from typing import Any
 from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast, estimate_lines
 from primitives import (memory_anchor as _memory_anchor,
                         content_occupancy as _content_occupancy,
-                        rounded_containers as _rounded_containers,
+                        filled_panels as _filled_panels,
                         FOCUS_LEAD, FOCUS_AREA_LEAD,
-                        TEXT_BUDGET_MAX, ROUNDED_MAX, MEDIA_BUDGET_MAX,
+                        TEXT_BUDGET_MAX, PANEL_MAX, MEDIA_BUDGET_MAX,
                         RHYTHM_INK_DELTA, RHYTHM_INK_FLAT)
 # 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
 from design_intelligence_rules import (
@@ -791,11 +791,13 @@ def pre_critic(spec: dict) -> dict:
                  confidence=0.7)
 
         # 6b. 卡片墙 + 文本预算（原 guard preflight 信号并入 risk_prediction）
-        rounded = _rounded_containers(elems)
-        if len(rounded) > ROUNDED_MAX:
+        panels = _filled_panels(elems, cw, ch)
+        if len(panels) > PANEL_MAX:
             _add(code="CARD_WALL_RISK", level="med", slides=[sid],
-                 why=f"{len(rounded)} 个圆角容器 > {ROUNDED_MAX}（卡片墙：不敢做层级的症状）",
-                 prevention="删容器，改用发丝线 + 留白 + 字阶分组；只保留数据/KPI 面板",
+                 why=f"{len(panels)} 块填充容器 > {PANEL_MAX}（卡片墙：不敢做层级的症状；"
+                     f"判据是底色不是圆角——直角卡片墙一样是卡片墙）",
+                 prevention="先删容器：同级并列用发丝线分隔 + 留白 + 字阶分组，"
+                            "底色只留给真正需要被圈出来的那一块（KPI/数据面板）",
                  predicted="CRITIC_LOW(visual_hierarchy)", cause="container_discipline",
                  confidence=0.7)
         reading = [t for t in elems if t.get("type") == "text"
@@ -1314,19 +1316,34 @@ def color_plan(direction, brief: dict | None = None) -> dict:
     brand = brief.get("brand_colors") or {}
     seed = dict(entry["seed"])
     seed_source = "family_seed"
-    if isinstance(brand, dict) and brand:
+    # 列表写法（templates/brief.yml 教的就是列表）与 dict 写法收敛到同一口径：
+    # route._seed_from_brand 是唯一归一入口，两处各写一份解析必然分叉——
+    # 那正是「品牌色在 plan.theme 生效、在 color_plan 却没生效」这类半生效 bug 的来源。
+    from route import normalize_brand_colors
+    brand = normalize_brand_colors(brand)
+    if brand:
         # 键名驱动（v4.9 V1）：品牌声明的是「槽位名 → 色值」；槽位白名单 +
         # #HEX 校验，未知键与非色值一律忽略。禁止按值序强填——dict.values()
         # 的插入顺序不是语义，accent 被塞进 foundation 即此类 bug。
         # 通用 token 别名（v4.14 F3）：品牌方常以 ink/primary/secondary/muted
         # 表达主辅色——路由侧 colors 词典收全 token、本侧四槽是语义骨架，
-        # 不做别名则「只给 primary 的品牌」在本路静默失效。只映射语义等价的
-        # 三个通行 token；paper/background 与 information 槽语义不同，不扭。
-        _ALIAS = {"ink": "foundation", "primary": "foundation",
+        # 不做别名则「只给 primary 的品牌」在本路静默失效。
+        #
+        # 槽位语义必须按**面积律**对齐（COLOR_RATIO_TARGETS）：
+        #   foundation  70% = 纸面/背景     information 8% = 文字墨色
+        #   supporting  20% = 辅助层        accent      2% = 唯一强调
+        # 因此 ink/primary（品牌的墨色与主色，用来写字）归 information，
+        # background/paper 才归 foundation。此前 ink/primary → foundation 是
+        # 语义倒置：品牌给一个深蓝主色，会被当成 70% 的背景铺满整页，
+        # 再配上近黑的 information，得到对比度 1.4 的不可读版面——
+        # 而且不报错（色值确实"生效"了，只是落错了槽）。
+        _ALIAS = {"ink": "information", "primary": "information",
+                  "information": "information",
                   "secondary": "supporting", "muted": "supporting",
+                  "supporting": "supporting",
                   "accent": "accent",
-                  "foundation": "foundation", "supporting": "supporting",
-                  "information": "information"}
+                  "background": "foundation", "paper": "foundation",
+                  "foundation": "foundation"}
         valid = {}
         for k, v in brand.items():
             slot = _ALIAS.get(str(k).strip())

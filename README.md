@@ -23,6 +23,9 @@ python scripts/vao.py check build_deck.py out.pptx --mode draft
 # R4 若被阻断：按 fix_plan 根因组一次改完，复跑同一条命令
 # R5 收口：结构判定 + 方向预览证据 + Release Manifest
 python scripts/vao.py check build_deck.py out.pptx --mode release
+
+# R6 可选打磨：PASS 之后把 warning 变成一份可执行的改动表（不改判定、不制造新门槛）
+python scripts/vao.py check build_deck.py out.pptx --mode release --polish
 ```
 
 ## 唯一入口
@@ -58,7 +61,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（55 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（87 项，含判断层与反退化检查）
 ```
 
 ## 设计上刻意不做的事
@@ -81,7 +84,7 @@ ppt-visual-art-director-os/
 ## 自检
 
 ```bash
-python scripts/selftest.py        # 55 项：交付链 / 契约拦截 / 判断层 / 反退化
+python scripts/selftest.py        # 87 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
 ```
 
 验证网只保四件事：交付链能跑通、契约还拦得住错、判断层没有静默退化

@@ -44,6 +44,12 @@ avoid: []               # 明确不做的几件事（如 [dashboard feeling, dec
 # 可选：事实与品牌约束
 # ---------------------------------------------------------------------------
 evidence_posture: fact_led     # fact_led | hypothesis_led | exploratory
-brand_colors: []               # 品牌色一到，方向种子立刻让位（派生色阶自动展开）
+# 品牌色一到，方向种子立刻让位（派生色阶自动展开）。两种写法都生效：
+#   列表：按惯例序落位 —— 第 1 个=主色(文字/主信号)、第 2 个=强调色、第 3 个=辅色
+#     brand_colors: ["#1A3A5C", "#C8501E"]
+#   字典：想精确指定槽位就写键名（background/paper 才是纸面，ink/primary 是墨色）
+#     brand_colors: {primary: "#1A3A5C", accent: "#C8501E", background: "#FFFFFF"}
+# 只接受 #RGB / #RRGGBB；写不出对比度的组合会被骨架的可读性兜底纠正。
+brand_colors: []
 design_direction: ""           # 只在你有既定视觉方向时才写（如 quiet_minimal）
 quality_level: ""              # fast（默认）| advanced（更重的资产与证据预算）

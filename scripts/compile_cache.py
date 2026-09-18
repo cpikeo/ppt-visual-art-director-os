@@ -230,7 +230,10 @@ def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
 # 口径：**一轮 = 同一产物上 spec 变了的一次 QA 调用**。同一 spec 复跑（缓存命中）
 # 不记新轮——否则「复跑确认」会被记成浪费，作者反而不敢复核。
 ROUNDS_NAME = "rounds.json"
-ROUND_BUDGET = 6                 # SKILL.md Round Budget 上限
+# 预算只用于显示进度（CLI 的 "round n/6"）：让作者知道自己修到第几轮了。
+# 它**不是门槛**——超轮不阻断、不改判定。曾经还算过一个 over_budget 布尔值，
+# 但没有任何地方消费它：不消费的数据就不要计算，算了不用只会让人以为「有人在管」。
+ROUND_BUDGET = 6                 # SKILL.md Round Budget 上限（仅显示）
 ROUND_LOG_CAP = 24
 
 
@@ -268,7 +271,6 @@ def note_round(work, *, mode: str, spec_hash: str, status: str | None = None,
         "n": n if new_round else max(n, 1),
         "new_round": new_round,
         "budget": ROUND_BUDGET,
-        "over_budget": n > ROUND_BUDGET,
         "revisions": max(0, n - 1),   # 首次出稿不算修订
         "log": [{"round": r.get("n"), "mode": r.get("mode"),
                  "status": r.get("status"), "blocking": r.get("blocking")}

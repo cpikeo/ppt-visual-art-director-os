@@ -293,7 +293,7 @@ def spec_fingerprint(spec: dict) -> str:
 # 同一事实在两处判出两种结论的口径漂移，只能在这里修，不在上层打补丁。
 # --------------------------------------------------------------------------
 BACKGROUND_LAYERS = frozenset({"background", "backdrop"})
-ROUNDED_SHAPES = frozenset({"rounded_rect", "round_rect"})
+ROUNDED_SHAPES = frozenset({"rounded_rect", "round_rect"})   # 形状语言一致性用
 
 
 def is_background_declared(element: dict) -> bool:
@@ -348,15 +348,36 @@ def bg_coverage(element: dict, cw: float, ch: float) -> float:
     return max(0.0, area / denom) if denom > 0 else 0.0
 
 
-def rounded_containers(elements) -> list[dict]:
-    """真正的圆角容器：type == "shape" 且 shape 为 rounded_rect / round_rect。
+def filled_panels(elements, canvas_w: float = 0, canvas_h: float = 0) -> list[dict]:
+    """卡片 = **有底色的、够大的**矩形容器。圆角与否无关。
 
-    guard 预检曾把任何带 shape 属性的元素都计入，与 critic 口径不一致；
-    非 shape 元素渲染出来并不是容器，计入只是误报。现统一按「渲染出来是容器」计数。
+    原口径只数 rounded_rect，把判据挂在了圆角半径上：五张直角填充卡片
+    与五张圆角卡片在读者眼里是同一堵墙（都要为每一块重新建立视觉关系），
+    但只有后者拿得到 CARD_WALL_RISK。判据应该落在**成本来源**上——
+    底色在纸面上切出一块 territory，这才是卡片贵的地方。
+
+    不算卡片：只描边不填色（那是框线）、短边 ≤8px（分隔条/色带/进度轨）、
+    占画面 ≥55%（背景分区）、line/arrow（一维分割线）。
     """
-    return [e for e in (elements or [])
-            if isinstance(e, dict) and e.get("type") == "shape"
-            and e.get("shape") in ROUNDED_SHAPES]
+    out = []
+    for e in (elements or []):
+        if not isinstance(e, dict) or e.get("type") != "shape":
+            continue
+        if str(e.get("shape", "rect")).lower() in ("line", "arrow"):
+            continue
+        fill = e.get("fill")
+        if fill is None or str(fill).lower() in ("none", "transparent"):
+            continue
+        try:
+            w, h = float(e.get("width", 0)), float(e.get("height", 0))
+        except (TypeError, ValueError):
+            continue
+        if min(w, h) <= PANEL_MIN_SIDE:
+            continue
+        if canvas_w > 0 and canvas_h > 0 and (w * h) / (canvas_w * canvas_h) >= PANEL_MAX_SHARE:
+            continue
+        out.append(e)
+    return out
 
 
 def with_alpha(hex_color: str, alpha: float) -> str:
@@ -728,6 +749,9 @@ class RenderContext:
             "height": float(canvas.get("height", DEFAULT_HEIGHT)),
         }
         self.warnings: list[str] = []
+        # 与 warnings 等长的元素 id（没有身份的条目为 None）。
+        # 两个列表必须同步增长——所以除 warn() 外不要直接 append warnings。
+        self.warning_ids: list[str | None] = []
 
     # -- 颜色 -------------------------------------------------------------
     def paint(self, value):
@@ -789,7 +813,7 @@ class RenderContext:
             msg = ("theme 未声明 negative 角色（chart_palette.negative 或 colors.negative），"
                    "负值用通用风险红兜底——请为主题显式派生一个风险色")
             if msg not in self.warnings:
-                self.warnings.append(msg)
+                self.warn(msg)        # 走 warn()，保持 warnings / warning_ids 等长
             return self.color(self._NEGATIVE_FALLBACK)
         return None
 
@@ -854,8 +878,15 @@ class RenderContext:
         h = float(element["height"])
         return x, y, w, h
 
-    def warn(self, message: str) -> None:
+    def warn(self, message: str, element_id=None) -> None:
+        """记一条编译期警告。element_id 可选，但**给了就能进 fix_plan 分组**。
+
+        修的是现有链路，不是新建一套：warnings 仍是字符串列表（compile_report
+        与所有下游读法不变），只是额外把元素 id 记进 warning_ids，
+        让 qa 能把「哪一个元素」填进修复包，而不是让 id 埋在文案里被正则猜。
+        """
         self.warnings.append(message)
+        self.warning_ids.append(str(element_id) if element_id else None)
 
 # ── 设计判断基元（单一口径，v4.15 自 art_critic 下沉；该模块已移除）────────────
 # 这些常量与几何函数此前由 guard/qa 懒读取保持同源——真源理应住在基元层；
@@ -868,7 +899,10 @@ MEDIA_CHART_MAX = 2          # 每页媒体/图表对象上限（竞争性视觉
 MEDIA_BUDGET_MAX = 1         # 每页争夺注意力的媒体上限
 TEXT_MAX = 8                 # 每页文本对象上限（碎片化阅读）
 TEXT_BUDGET_MAX = 4          # 每页阅读文本上限（低权重来源/图例不计）
-ROUNDED_MAX = 4              # 圆角容器上限（卡片墙风险）
+PANEL_MAX = 4                # 填充容器上限（卡片墙风险）——判据是**底色**不是圆角
+ROUNDED_MAX = PANEL_MAX      # 旧名别名：语义已从「圆角」改为「填充」，保留以免外部引用断裂
+PANEL_MIN_SIDE = 8           # 短边 ≤ 此值的填充块是分隔条/色带/轨道，不圈地
+PANEL_MAX_SHARE = 0.55       # 占画面 ≥ 此比例的是背景分区，不是卡片
 LR_SPLIT_MAX = 0.45          # 左右墨迹失衡阈值（未声明非对称构图时）
 AXIS_TOLERANCE = 0.045
 AXIS_LINES = (0.25, 1 / 3, 0.5, 2 / 3, 0.75)

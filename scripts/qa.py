@@ -171,7 +171,12 @@ def build_fix_plan(failure_codes, guard_checks, compile_report) -> dict:
 
 
 def build_warn_summary(items) -> list:
-    """非阻断项按 (domain, rule, level) 聚合：记录在案，不构成门槛、不逐条刷屏。"""
+    """非阻断项按 (domain, rule, level) 聚合：记录在案，不构成门槛、不逐条刷屏。
+
+    聚合保留**可执行信息**：样本原文（不截短到看不懂）与涉及的元素 id。
+    warning 不进对话，但当作者说「PASS 了，再打磨一轮」时，这份清单就是
+    打磨的输入——没有 id 和原文的清单，只能告诉人「有问题」，不能告诉人「改哪」。
+    """
     agg: dict[tuple, dict] = {}
     order: list[tuple] = []
     for it in items or []:
@@ -180,11 +185,18 @@ def build_warn_summary(items) -> list:
         key = (it.get("domain"), it.get("rule"), it.get("level"))
         if key not in agg:
             agg[key] = {"domain": key[0], "rule": key[1], "level": key[2],
-                        "count": 0, "samples": []}
+                        "count": 0, "ids": [], "samples": []}
             order.append(key)
-        agg[key]["count"] += int(it.get("count") or 1)
-        if len(agg[key]["samples"]) < 2 and it.get("msg"):
-            agg[key]["samples"].append(str(it["msg"])[:120])
+        bucket = agg[key]
+        bucket["count"] += int(it.get("count") or 1)
+        for cid in ([it["id"]] if it.get("id") else []) + list(it.get("ids") or []):
+            cid = str(cid)
+            if cid and cid not in bucket["ids"] and len(bucket["ids"]) < 8:
+                bucket["ids"].append(cid)
+        for sample in ([it["msg"]] if it.get("msg") else []) + list(it.get("samples") or []):
+            sample = str(sample)[:200]
+            if sample not in bucket["samples"] and len(bucket["samples"]) < 3:
+                bucket["samples"].append(sample)
     return [agg[k] for k in order]
 
 
@@ -359,19 +371,36 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     hint_buckets: dict[str, dict] = {}
     for c in guard.get("checks", []):
         if c.get("advisory") or c.get("level") == "hint":
+            # 聚合是为了不刷屏，不是为了**丢掉可执行的话**。此前这里把每条 hint
+            # 的正文替换成 “{rule} 微调提示（详见 guard.checks）”——而 guard.checks
+            # 根本不在修复包里（packet 只有 fix_plan / warning_summary），
+            # 于是打磨阶段拿到的是一句「去看一个你看不到的东西」。
+            # 现在：仍然按 rule 聚合计数，但保留真实样本与元素 id，
+            # 让「PASS 之后再打磨一轮」有据可依。
             b = hint_buckets.setdefault(c["rule"], {
                 "domain": "guard", "level": "hint", "rule": c["rule"], "id": None,
-                "count": 0, "msg": f"{c['rule']} 微调提示（详见 guard.checks）"})
+                "count": 0, "ids": [], "samples": []})
             b["count"] += 1
+            cid = str(c.get("id") or "")
+            if cid and cid not in b["ids"] and len(b["ids"]) < 8:
+                b["ids"].append(cid)
+            if c.get("msg") and len(b["samples"]) < 3:
+                b["samples"].append(str(c["msg"])[:200])
             continue
         items.append({"domain": "guard", "level": c["level"], "rule": c["rule"],
                       "id": c.get("id"), "msg": c.get("msg")})
+    for b in hint_buckets.values():
+        b["msg"] = b["samples"][0] if b["samples"] else f"{b['rule']} 微调提示"
     items.extend(hint_buckets.values())
-    for w in compile_warnings:
+    # 编译期警告带上元素 id（compiler 记在等长的 warning_ids 里）——
+    # 没有 id 的 fix_plan 分组只能说「有问题」，说不出「改哪个」。
+    compile_warning_ids = list(compile_report.get("warning_ids") or [])
+    for idx, w in enumerate(compile_warnings):
         if w.startswith("[guard]"):
             continue          # 与 guard 域同源，不重复计数
+        wid = compile_warning_ids[idx] if idx < len(compile_warning_ids) else None
         items.append({"domain": "compile", "level": "warn", "rule": "compiler",
-                      "id": None, "msg": w})
+                      "id": wid, "msg": w})
 
     failure_codes: list[str] = []
     for check in guard.get("checks", []):
