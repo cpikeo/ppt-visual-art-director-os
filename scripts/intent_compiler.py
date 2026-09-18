@@ -173,6 +173,8 @@ def _load_need(path: str) -> dict:
         if not isinstance(value, dict):
             raise ValueError(f"brief 顶层必须是对象/dict，实际是 {type(value).__name__}：{p}")
         return value
+    if p.suffix.lower() != ".py":
+        raise ValueError("brief 只接受 JSON/YAML，或作者明确指定的可信 .py 文件")
     # 与 vao._load_module 同法：读→compile→exec，不写 __pycache__、不复用旧
     # 字节码——需求文件是人会反复编辑的文件，陈旧代价不该由交付链承担。
     import types

@@ -311,10 +311,12 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
     if w <= 0 or h <= 0:
         return
     source = e.get("src") or ((e.get("asset") or {}).get("src") if isinstance(e.get("asset"), dict) else None)
-    path = _resolve_image(source, roots)
+    import io
+    blob = getattr(ctx, "image_bytes", {}).get(str(Path(str(source))))
+    path = Path(str(source)) if blob is not None else _resolve_image(source, roots)
     if path:
         try:
-            with Image.open(path) as opened:
+            with Image.open(io.BytesIO(blob) if blob is not None else path) as opened:
                 image = ImageOps.exif_transpose(opened).convert("RGBA")
                 fit = str(e.get("fit", "cover")).lower()
                 if fit == "contain":
@@ -503,6 +505,7 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     render_scale = scale * factor
     img = Image.new("RGBA", (max(1, int(cw * render_scale)), max(1, int(ch * render_scale))), (255, 255, 255, 255))
     ctx = RenderContext(spec.get("theme"), canvas)
+    ctx.image_bytes = spec.get("_image_bytes") or {}
     _draw_background(img, slide.get("background"), ctx)
     roots = [Path.cwd(), Path(str(spec.get("_base_path") or ".")).expanduser()]
     elements = list(slide.get("elements") or [])

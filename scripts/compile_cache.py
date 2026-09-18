@@ -56,7 +56,7 @@ def _file_sha_full(path: Path) -> str | None:
 
 
 def _media_stamp(slide: dict | None, base_path: str | Path | None,
-                 spec_path: str | Path | None = None) -> list:
+                 spec_path: str | Path | None = None, image_bytes: dict | None = None) -> list:
     """图片指纹与 compiler 的相对路径解析保持同口径。
 
     build 模块常把素材放在自身目录，而输出 PPTX 写到另一个目录；只以
@@ -83,6 +83,10 @@ def _media_stamp(slide: dict | None, base_path: str | Path | None,
             candidates = [(root / path).resolve() for root in roots]
             path = next((candidate for candidate in candidates if candidate.exists()),
                         candidates[0])
+        blob = (image_bytes or {}).get(str(path))
+        if blob is not None:
+            stamps.append([str(path), len(blob), hashlib.sha256(blob).hexdigest()])
+            continue
         try:
             stat = path.stat()
             # Path + stat alone still collides when a media file is replaced with
@@ -152,7 +156,7 @@ def _engine_stamp() -> list:
 
 
 def spec_view(spec: dict | None, base_path: str | Path | None = None,
-              spec_path: str | Path | None = None) -> str:
+              spec_path: str | Path | None = None, image_bytes: dict | None = None) -> str:
     """spec → 确定性编译投影（决定"要不要重编"的唯一身份）。"""
     spec = spec if isinstance(spec, dict) else {}
     raw_canvas = spec.get("canvas")
@@ -169,7 +173,7 @@ def spec_view(spec: dict | None, base_path: str | Path | None = None,
             "background": _projection(slide, NON_GEOMETRIC_SLIDE_KEYS).get("background"),
             "elements": elements,
             "id": slide.get("id"),
-            "media": _media_stamp(slide, base_path, spec_path),
+            "media": _media_stamp(slide, base_path, spec_path, image_bytes),
         })
     payload = json.dumps(
         {"canvas": canvas, "theme": theme, "slides": views,
@@ -261,11 +265,13 @@ def note_round(work, *, mode: str, spec_hash: str, status: str | None = None,
                        "spec": str(spec_hash), "status": status,
                        "blocking": blocking, "warnings": warnings})
         del rounds[:-ROUND_LOG_CAP]
-        try:
-            work.mkdir(parents=True, exist_ok=True)
-            _atomic_json_write(work / ROUNDS_NAME, data)
-        except Exception:
-            pass                      # 写不进账本不该影响交付
+    else:
+        last.update(mode=str(mode), status=status, blocking=blocking, warnings=warnings)
+    try:
+        work.mkdir(parents=True, exist_ok=True)
+        _atomic_json_write(work / ROUNDS_NAME, data)
+    except Exception:
+        pass                          # 写不进账本不该影响交付
     n = len(rounds)
     return {
         "n": n if new_round else max(n, 1),

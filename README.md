@@ -6,7 +6,18 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
-## 标准生产顺序（v5.1）
+## 当前本地修复版：5.1.1
+
+已处理深度审计的 3 个 P1、11 个 P2。变更集中在现有模块：不增加命令、服务或依赖。
+**删除危险的共享图片适配缓存，保留整份 PPT 编译缓存；核验后的图片 bytes 快照同时供编译与预览使用。**
+详细修复编号与迁移要求见 `CHANGELOG.md`。
+
+旧项目需重新建立计划/清单并运行 QC，旧图可登记 reuse；旧 QC 不自动升级。
+对生成图片有意裁切时，可在对应 brief slide 中写 `asset_allow_crop: true`。
+最低分辨率与透明度检查不会替代人工设计判断。明确的可信 Python 入口仍执行代码，
+但 QC 和发布不再通过清单隐式执行 Python brief；本包不是不可信代码沙箱。
+
+## 标准生产顺序（v5.1.1）
 
 **brief → plan → assets → 按清单出图 → asset-qc → PPT 编排 → release**
 
@@ -42,7 +53,7 @@ python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manif
   `asset_source: {kind: provided, path: /path/to/image.jpg, source: "用户提供，授权待核实"}`。
   不强制生成，但仍经资产清单与 QC。`kind` 也可为 `licensed / original / reuse`。
 - **有图旧项目迁移**：重新 plan → assets，既有图登记为 reuse；保留新骨架的
-  `asset_workflow.plan_sha256` 并为图片填入 `asset_id`，QC 通过后再检查。
+  `asset_workflow.plan_sha256` 与 `plan_path` 并为图片填入 `asset_id`，QC 通过后再检查。
 - **自定义 QC 路径**：`asset-qc --out` 后，给 `check --asset-qc-report` 同一路径。
 - **流程边界**：发布通过证明本地文件证据一致，不证明外部模型按提示词执行，
   也不证明图片授权或艺术质量；不得以此替代人工设计判断。
@@ -83,7 +94,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（110 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（139 项，含判断层与反退化检查）
 ```
 
 ## 设计上刻意不做的事
@@ -106,7 +117,7 @@ ppt-visual-art-director-os/
 ## 自检
 
 ```bash
-python scripts/selftest.py        # 110 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
+python scripts/selftest.py        # 139 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
 ```
 
 验证网只保四件事：交付链能跑通、契约还拦得住错、判断层没有静默退化

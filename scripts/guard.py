@@ -158,7 +158,7 @@ def _text_box_capacity(e: dict) -> dict | None:
         return None
     if size <= 0 or h <= 0 or w <= 0 or not all(map(math.isfinite, (size, h, w, pad, lh))):
         return None
-    from primitives import estimate_lines, insert_script_gaps
+    from primitives import estimate_lines, insert_script_gaps, text_width
     wrap = e.get("wrap", True) is not False
     usable_w = w - 2 * pad
     if usable_w <= 0:
@@ -169,6 +169,9 @@ def _text_box_capacity(e: dict) -> dict | None:
             lines += 1
             continue
         lines += estimate_lines(insert_script_gaps(raw_line), usable_w, size, wrap)
+    raw_lines = str(e.get("text", "")).split("\n")
+    width_need = max((text_width(insert_script_gaps(t), size, float(e.get("char_spacing", 0) or 0))
+                      for t in raw_lines), default=0)
     need = lines * size * lh
     usable_h = h - 2 * pad
     declared_max = e.get("max_lines")
@@ -176,7 +179,8 @@ def _text_box_capacity(e: dict) -> dict | None:
                 and declared_max >= 1 and lines > declared_max)
     return {"lines": lines, "need": need, "usable": usable_h, "size": size,
             "line_height": lh, "max_lines": declared_max,
-            "over_height": need > usable_h + 1, "over_max_lines": bool(over_max)}
+            "over_height": need > usable_h + 1, "over_max_lines": bool(over_max),
+            "over_width": not wrap and width_need > usable_w + 2, "width_need": width_need}
 
 
 def _element_area(e: dict) -> float:
@@ -1300,13 +1304,18 @@ def check_spec(spec: dict, rules: dict | None = None,
             # 拿不到元素 id（affected_slides 为空、ids 为空），Agent 只能回读
             # 编译 warning 的散文去猜是哪个框。溢出是内容完整性事实、不是审美判断，
             # 理应和 text_capacity 的行长失控同级，在治理层就点名到元素。
-            if typ == "text" and str(e.get("text") or "").strip():
-                cap = _text_box_capacity(e)
+            if typ in {"text", "shape"} and str(e.get("text") or "").strip():
+                te = e if typ == "text" else dict(e, size=e.get("text_size", 16),
+                    wrap=e.get("text_wrap", True), line_height=e.get("text_line_height", 1.25))
+                cap = _text_box_capacity(te)
                 if cap and cap["over_height"]:
                     add("text_capacity", eid, "error",
                         f"估算高度 {cap['need']:.0f}px 超出文本框可用高度 "
                         f"{cap['usable']:.0f}px（{cap['lines']} 行 × 字号 {cap['size']:g} "
                         f"× 行高 {cap['line_height']:g}）：加框高 / 减行数 / 删字，不要缩字号")
+                elif cap and cap["over_width"]:
+                    add("text_capacity", eid, "error",
+                        f"禁止换行的文字估算宽度 {cap['width_need']:.0f}px 超出文本框宽度；加宽或删字")
                 elif cap and cap["over_max_lines"]:
                     add("text_capacity", eid, "error",
                         f"估算 {cap['lines']} 行 > 声明 max_lines {cap['max_lines']}"
@@ -1629,11 +1638,11 @@ def check_spec(spec: dict, rules: dict | None = None,
                         v = e.get(meta_key)
                         if v in (None, ""):
                             v = nested_provenance.get(meta_key)
-                        provenance[meta_key] = str(v).strip() if v not in (None, "") else None
+                        provenance[meta_key] = v.strip() if isinstance(v, str) else None
                     missing = [label for meta_key, label in
                                (("source", "来源"), ("unit", "单位"),
                                 ("period", "期间"), ("basis", "比较口径"))
-                               if provenance[meta_key] is None]
+                               if not provenance[meta_key]]
                     if missing:
                         add("data_provenance", eid,
                             "error" if require_provenance else "warn",

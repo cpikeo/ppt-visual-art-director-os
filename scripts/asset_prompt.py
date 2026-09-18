@@ -610,7 +610,7 @@ QC_TEXT_RANGE = 0.30               # 安全区亮度需落在此范围外才同�
 ASSET_QC_MAX_RETRIES = 1
 ASSET_QC_BLOCKING_CHECKS = frozenset({
     "text_safe_area", "negative_space_ratio", "subject_position",
-    "contrast_suitability",
+    "contrast_suitability", "image_dimensions", "aspect_ratio", "visibility",
 })
 ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance"})
 ASSET_QC_PHASES = frozenset({"draft", "review", "release"})
@@ -677,19 +677,30 @@ _SAFE_ZONES = {
 
 
 def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None,
-             safe_rect: dict | None = None) -> dict:
+             safe_rect: dict | None = None, *, image_bytes: bytes | None = None,
+             expected_ratio: str | None = None, allow_crop: bool = False,
+             background: str = "#FFFFFF") -> dict:
     """对一张出图结果做定性体检（Issue + Suggestion，不打分）。"""
     from PIL import Image  # 懒加载：纯组装路径不引入像素依赖
     import numpy as np
 
+    import io
+    from PIL import ImageColor
     p = Path(path)
-    if not p.exists():
-        return {"file": str(p), "status": "error",
-                "issue": f"找不到图片: {p}",
-                "suggestion": "确认路径后再跑", "checks": []}
-
-    arr = np.asarray(Image.open(p).convert("L"), dtype=np.float32) / 255.0
-    h, w = arr.shape
+    try:
+        blob = image_bytes if image_bytes is not None else p.read_bytes()
+        with Image.open(io.BytesIO(blob)) as opened:
+            rgba = opened.convert("RGBA")
+            w, h = rgba.size
+            visible = rgba.getchannel("A").getextrema()[1] > 0
+            bg = Image.new("RGBA", rgba.size, (*ImageColor.getrgb(background), 255))
+            arr = np.asarray(Image.alpha_composite(bg, rgba).convert("L"), dtype=np.float32) / 255.0
+    except (OSError, ValueError) as exc:
+        return {"file": str(p), "status": "error", "issue": str(exc), "checks": []}
+    if min(w, h) < 32:
+        return {"file": str(p), "status": "issue", "dimensions": [w, h], "checks": [
+            {"check": "image_dimensions", "status": "issue", "issue": "图片短边小于32px",
+             "suggestion": "使用足够分辨率的图片；色块请用原生形状"}]}
 
     # 自适应块：目标 ~QC_BLOCK px/块，但以实际尺寸为准（<64px 的图不再越界）
     bh = max(1, h // QC_BLOCK)          # 行块数
@@ -707,6 +718,19 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
                        "issue": None if ok else issue,
                        "suggestion": None if ok else suggestion})
 
+    _add("image_dimensions", True, None, None)
+    _add("visibility", visible, "图片完全透明，无可见内容", "更换可见素材；透明Logo允许保留有效alpha")
+    if expected_ratio:
+        try:
+            rw, rh = (float(v) for v in str(expected_ratio).split(":"))
+            import math
+            valid_ratio = math.isfinite(rw) and math.isfinite(rh) and rw > 0 and rh > 0
+            ratio_ok = valid_ratio and abs((w / h) / (rw / rh) - 1) <= 0.05
+        except (ValueError, ZeroDivisionError):
+            valid_ratio = ratio_ok = False
+        _add("aspect_ratio", bool(valid_ratio and (ratio_ok or allow_crop)),
+             f"实际尺寸 {w}×{h} 与计划比例 {expected_ratio} 不符",
+             "按计划重新出图；有意裁切时在brief声明 asset_allow_crop: true 并重建清单")
     normalized = normalize_safe_area(safe_rect, safe_area)
     x0 = normalized["x"]
     y0 = normalized["y"]
@@ -780,12 +804,12 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
              f"安全区亮度 {safe_lum:.2f} 支撑不了{'深' if text_is_dark else '浅'}色文字",
              "调整安全区明度：深色文字需亮底，浅色文字需暗底")
     else:
-        _add("contrast_suitability", safe_lum > QC_TEXT_RANGE or safe_lum < 1 - QC_TEXT_RANGE,
+        _add("contrast_suitability", safe_lum > 1 - QC_TEXT_RANGE or safe_lum < QC_TEXT_RANGE,
              f"安全区亮度 {safe_lum:.2f} 处于中间带，深浅文字对比都不足",
              "把安全区推到亮端（>0.7）或暗端（<0.3），给文字明确落点")
 
     issue_count = sum(1 for c in checks if c["status"] == "issue")
-    return {"file": str(p), "status": "issue" if issue_count else "ok",
+    return {"file": str(p), "status": "issue" if issue_count else "ok", "dimensions": [w, h],
             "issue_count": issue_count, "checks": checks}
 
 

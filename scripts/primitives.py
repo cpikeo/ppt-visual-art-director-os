@@ -667,6 +667,15 @@ def text_units(value: str) -> float:
     return total
 
 
+def text_width(text: str, size: float, spacing: float = 0) -> float:
+    """Conservative single-line estimate; not an Office font renderer."""
+    units = 0.0
+    for c in text:
+        units += (0.2 if c == HAIR_SPACE else 1.0 if ord(c) > 127 else
+                  0.95 if c in "MW@#%&" else 0.3 if c in "ilI.,:;!'| " else 0.6)
+    return units * size + max(0, len(text) - 1) * max(0, spacing) / 0.75
+
+
 def estimate_lines(text: str, width: float, size: float, wrap: bool = True) -> int:
     if not text or not wrap:
         return 1

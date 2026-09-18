@@ -1169,7 +1169,7 @@ def check_asset_workflow(work: pathlib.Path) -> None:
     qcpath = d / "asset_manifest.qc.json"
     need = {"audience": "investor", "decision": "approve", "quality_level": "advanced",
             "slides": [{"id": "s01", "family": "cover", "title": "Tea",
-                        "asset_subject": "ceramic bowl", "medium": "photography",
+                        "asset_subject": "ceramic bowl", "medium": "photography", "asset_ratio": "16:10",
                         "text_color": "dark"}]}
     brief.write_text(json.dumps(need), encoding="utf-8")
     check("assets: CLI requires saved --plan",
@@ -1293,6 +1293,262 @@ def check_asset_workflow(work: pathlib.Path) -> None:
           verify_chain(bound, manifest_path, broken_qc)["status"] == "BLOCKED")
 
 
+def check_audit_fixes(work: pathlib.Path) -> None:
+    """Fourteen audit findings plus legitimate-use controls. No external services."""
+    import contextlib
+    import copy
+    import io
+    import zipfile
+    from unittest.mock import patch
+    from PIL import Image, ImageDraw
+    import vao, qa, compiler, asset_workflow as aw
+    from asset_prompt import image_qc, qc_retry_decision
+    from primitives import spec_fingerprint
+
+    d = work / "audit-fixes"
+    d.mkdir()
+    def save(path, value):
+        path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    def read(path):
+        return json.loads(path.read_text(encoding="utf-8"))
+    def invoke(spec_path, output, manifest=None):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return vao.run_check(str(spec_path), str(output), mode="release",
+                                 assets_manifest=str(manifest) if manifest else None)
+    def native(name):
+        folder = d / name
+        folder.mkdir()
+        spec, _ = vao.load_spec(spec_module(folder / "base.py"))
+        spec["slides"][0]["elements"][0].update(x=64, y=112, width=608, height=96, size=44)
+        sp = folder / "spec.json"
+        save(sp, spec)
+        return folder, sp, spec
+    def asset_case(name, second=False):
+        folder, sp, spec = native(name)
+        brief = {"audience":"reviewer", "decision":"approve", "quality_level":"advanced",
+                 "slides":[{"id":"s01", "family":"cover", "title":"Audit",
+                 "asset_subject":"ceramic bowl", "medium":"photography", "asset_ratio":"16:10",
+                 "text_color":"dark"}]}
+        if second:
+            brief["slides"].append({"id":"s02", "family":"data", "title":"Required page"})
+        bp, pp, mp = (folder/x for x in ("brief.json", "plan.json", "asset_manifest.json"))
+        save(bp, brief)
+        assert run_vao("plan", str(bp), "--out", str(pp)).returncode == 0
+        assert run_vao("assets", str(bp), "--plan", str(pp), "--out", str(mp),
+                       "--assets-dir", str(folder/"images")).returncode == 0
+        (folder/"images").mkdir()
+        entries = aw.asset_entries(read(mp))
+        for e in entries:
+            a,b = map(float, e.get("ratio","16:10").split(":"))
+            Image.new("RGB", (640, round(640*b/a)), (242,240,230)).save(folder/"images"/e["expected_filename"])
+        q = run_vao("asset-qc", str(mp), "--phase", "release")
+        assert q.returncode == 0, q.stdout + q.stderr
+        first = entries[0]
+        pic = folder/"images"/first["expected_filename"]
+        spec["asset_workflow"] = {"plan_sha256":aw.digest(read(pp)), "plan_path":str(pp)}
+        spec["slides"][0]["elements"].append({"id":"photo", "type":"image", "asset_id":first["asset_id"],
+            "x":760,"y":280,"width":384,"height":256,"fit":"cover","asset_function":"emotion"})
+        save(sp, spec)
+        return folder, sp, spec, mp, pic
+    def pixels(path):
+        with zipfile.ZipFile(path) as z:
+            return [Image.open(io.BytesIO(z.read(n))).convert("RGB").getpixel((0,0))
+                    for n in z.namelist() if n.startswith("ppt/media/")]
+
+    # H-01: seed exactly the old cache key with a valid wrong PNG; it must never be consumed.
+    folder, sp, spec, mp, pic = asset_case("cache")
+    old_cache = folder/"legacy-cache"
+    old_cache.mkdir()
+    st = pic.stat()
+    stamp = f"{st.st_mtime_ns}:{st.st_size}:{aw.file_digest(pic)[:16]}"
+    bg = tuple(int(spec["theme"]["colors"]["background"].lstrip("#")[i:i+2],16) for i in (0,2,4))
+    payload = "|".join([str(pic.resolve()),stamp,"384","256","cover","None",str(bg)])
+    legacy_key = hashlib.sha1(payload.encode(), usedforsecurity=False).hexdigest()[:32]
+    Image.new("RGB", (384,256), (255,0,0)).save(old_cache/(legacy_key+".png"))
+    with patch.object(compiler,"_FIT_CACHE_DIR",old_cache,create=True):
+        result, code = invoke(sp,folder/"deck.pptx",mp)
+    check("H-01: poisoned legacy image cache is ignored", code == 0 and pixels(folder/"deck.pptx") == [(242,240,230)])
+    repeat, code = invoke(sp,folder/"deck.pptx",mp)
+    check("control: legitimate full-deck compilation cache still reuses output",
+          code == 0 and repeat["performance"]["compile_reused"])
+
+    # H-02: a data manifest never executes its nested brief, even before hash failure.
+    marker = d/"EXECUTED.txt"
+    payload = d/"brief-data.txt"
+    payload.write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('audit')\nBRIEF={{}}\n",encoding="utf-8")
+    evil = read(mp)
+    evil["workflow"]["brief_path"] = str(payload)
+    evil["workflow"]["brief_file_sha256"] = "invalid"
+    evil_path = d/"evil.json";save(evil_path,evil)
+    q = run_vao("asset-qc",str(evil_path))
+    check("H-02: JSON manifest cannot execute nested Python/text brief", q.returncode == 2 and not marker.exists())
+
+    # H-03: simultaneous source overwrite cannot change the verified bytes consumed by PPT or preview.
+    folder, sp, spec, mp, pic = asset_case("snapshot")
+    original = qa.run_qa
+    def mutate(*a, **kw):
+        Image.new("RGB",(640,400),(0,0,255)).save(pic)
+        return original(*a,**kw)
+    with patch.object(qa,"run_qa",side_effect=mutate):
+        result, code = invoke(sp,folder/"deck.pptx",mp)
+    check("H-03: compile consumes immutable verified snapshot under source overwrite",
+          code == 0 and pixels(folder/"deck.pptx") == [(242,240,230)]
+          and result["asset_workflow"]["compilation_input"] == "verified_in_memory_snapshot")
+    with Image.open(folder/"deck_preview/ghost-01.png") as preview:
+        preview_pixel = preview.convert("RGB").getpixel((500,200))
+    check("control: preview consumes the same image snapshot as the PPT", preview_pixel == (242,240,230))
+
+    # M-01: deleted/corrupted single-page previews must be recreated, not declared present.
+    folder, sp, spec = native("preview")
+    result, code = invoke(sp,folder/"deck.pptx")
+    page = folder/"deck_preview/ghost-01.png"
+    expected = aw.file_digest(page);page.unlink()
+    result, code = invoke(sp,folder/"deck.pptx")
+    check("M-01: missing preview page is regenerated before PASS", code == 0 and aw.file_digest(page) == expected)
+    page.write_bytes(b"invalid PNG")
+    result, code = invoke(sp,folder/"deck.pptx")
+    check("control: corrupt preview bytes invalidate preview reuse", code == 0 and aw.file_digest(page) == expected)
+
+    # M-02: exact plan coverage, also for native-only planned decks.
+    folder, sp, spec, mp, pic = asset_case("coverage", second=True)
+    result, code = invoke(sp,folder/"deck.pptx",mp)
+    check("M-02: two planned pages cannot silently release as one", code == 2 and "ASSET_WORKFLOW_FAIL" in result["failure_codes"])
+    spec["slides"][0]["elements"].pop();save(sp,spec)
+    result, code = invoke(sp,folder/"native.pptx")
+    check("control: removing all images does not bypass planned page coverage", code == 2)
+    extra=copy.deepcopy(spec["slides"][0]);extra["id"]="s02"
+    spec["slides"].append(extra);save(sp,spec)
+    result, code = invoke(sp,folder/"complete.pptx")
+    check("control: complete native-only planned deck remains legal", code == 0)
+
+    # M-03: required provenance is typed and nonblank after stripping.
+    folder, sp, spec = native("provenance")
+    chart={"id":"chart","type":"chart","chart_kind":"column","x":64,"y":288,"width":672,"height":304,
+           "data":[{"label":"A","value":1},{"label":"B","value":3}],
+           "source":"   ","unit":"\t","period":"\n","basis":"  "}
+    spec["slides"][0]["elements"].append(chart);save(sp,spec)
+    result, code = invoke(sp,folder/"blank.pptx")
+    check("M-03: whitespace provenance cannot satisfy release requirements", code == 2 and "DATA_INTEGRITY_FAIL" in result["failure_codes"])
+    chart.update(source="Fixture model",unit="units",period="2027E",basis="Illustrative")
+    save(sp,spec);result, code=invoke(sp,folder/"valid.pptx")
+    check("control: valid numerical chart with explicit provenance releases", code == 0)
+
+    # M-04 / M-05 / M-10: validate contrast, dimensions, ratio and visible alpha.
+    gray=d/"gray.png";Image.new("RGB",(256,256),(128,128,128)).save(gray)
+    q=image_qc(str(gray))
+    check("M-04: unspecified text color no longer passes every luminance",
+          next(x for x in q["checks"] if x["check"]=="contrast_suitability")["status"]=="issue")
+    tiny=d/"tiny.png";Image.new("RGB",(1,1),(242,240,230)).save(tiny)
+    check("M-05: 1x1 asset is blocked", qc_retry_decision(image_qc(str(tiny)),phase="release")["action"]=="block")
+    square=d/"square.png";Image.new("RGB",(256,256),(242,240,230)).save(square)
+    q=image_qc(str(square),expected_ratio="16:9")
+    check("M-05: undeclared aspect-ratio mismatch is blocked",qc_retry_decision(q,phase="release")["action"]=="block")
+    q=image_qc(str(square),expected_ratio="16:9",allow_crop=True)
+    check("control: explicit intentional crop is permitted",qc_retry_decision(q,phase="release")["action"].startswith("accept"))
+    invisible=d/"transparent.png";Image.new("RGBA",(256,256),(255,255,255,0)).save(invisible)
+    check("M-10: fully transparent content is rejected",qc_retry_decision(image_qc(str(invisible)),phase="release")["action"]=="block")
+    logo=Image.new("RGBA",(256,256),(255,255,255,0))
+    ImageDraw.Draw(logo).rectangle((128,128,191,191), fill=(170,170,170,255))
+    visible=d/"visible-alpha.png";logo.save(visible)
+    check("control: visible transparent logo is not blanket-rejected",
+          qc_retry_decision(image_qc(str(visible)),phase="release")["action"].startswith("accept"))
+
+    folder, sp, spec, mp, pic = asset_case("resolution")
+    Image.new("RGB",(320,200),(242,240,230)).save(pic)
+    assert run_vao("asset-qc",str(mp),"--phase","release").returncode == 0
+    result,code=invoke(sp,folder/"deck.pptx",mp)
+    check("M-05: QC-passed image still needs sufficient pixels for its actual placement",
+          code==2 and any("分辨率" in t for t in result["asset_workflow"]["issues"]))
+
+    # Explicit author-provided Python remains supported for planning, never reexecuted by verification.
+    brief_py=d/"trusted_brief.py";counter=d/"plan_counter.txt";pp=d/"trusted_plan.json"
+    brief_py.write_text(f"from pathlib import Path\np=Path({str(counter)!r})\n"
+        "p.write_text((p.read_text() if p.exists() else '')+'planned\\n')\n"
+        "BRIEF={'audience':'reviewer','decision':'approve','slides':[{'id':'s01','family':'cover','title':'Trusted'}]}\n",encoding="utf-8")
+    bundle=vao._plan(str(brief_py),str(pp))
+    need=bundle["need"];mp=d/"trusted_assets.json"
+    manifest=aw.prepare_manifest(vao.build_asset_manifest(need,bundle),need,bundle,brief_py,pp,mp)
+    before=counter.read_bytes()
+    check("control: trusted Python planning works without verification reexecuting it",
+          not aw.verify_sources(manifest) and counter.read_bytes()==before)
+
+    # M-06 / M-11: both text-bearing channels and both overflow directions are guarded.
+    folder, sp, spec = native("text")
+    spec["slides"][0]["elements"].append({"id":"small","type":"shape","shape":"rect",
+       "x":64,"y":320,"width":96,"height":32,"fill":"secondary","text":"审计溢出测试"*80,"text_size":44})
+    save(sp,spec);result,code=invoke(sp,folder/"shape.pptx")
+    check("M-06: shape-hosted text capacity is enforced",code==2 and "TEXT_OVERFLOW" in result["failure_codes"])
+    spec["slides"][0]["elements"][-1].update(width=240,height=80,text="正常文字",text_size=22)
+    save(sp,spec);result,code=invoke(sp,folder/"shape-valid.pptx")
+    check("control: adequately sized shape text releases",code==0)
+    spec["slides"][0]["elements"].pop()
+    spec["slides"][0]["elements"][0].update(text="W"*120,width=80,wrap=False)
+    save(sp,spec);result,code=invoke(sp,folder/"nowrap.pptx")
+    check("M-11: nowrap horizontal overflow is blocked",code==2 and "TEXT_OVERFLOW" in result["failure_codes"])
+
+    # M-07: one effective spec goes to compile, preview and manifest.
+    folder, sp, spec=native("fit")
+    spec["slides"][0]["elements"][0].update(text="Title",size=44,height=40,line_height=1.35,padding=8,auto_fit=True)
+    save(sp,spec);result,code=invoke(sp,folder/"deck.pptx")
+    manifest=read(folder/"deck.manifest.json")
+    check("M-07: successful auto_fit has consistent release provenance",code==0 and result["auto_fit"]["applied"]==1
+          and manifest["release_eligible"] and not manifest["validation"]["issues"])
+    with patch.object(qa,"preview_issues",return_value=["Injected preview evidence failure"]):
+        result,code=invoke(sp,folder/"bad-preview.pptx")
+    check("M-07: evidence failure produces actionable BLOCKED, never ready",
+          code==2 and result["blocking_items"]>0 and bool(result["failure_codes"])
+          and bool(result["fix_plan"]["groups"]) and result["next_action"].startswith("fix:")
+          and result["rounds"]["log"][-1]["status"]=="BLOCKED")
+
+    # M-08: every run invalidates old success before parsing input.
+    old_id=manifest["run_id"]
+    save(sp,{"slides":[None]});result,code=invoke(sp,folder/"deck.pptx")
+    failed=read(folder/"deck.manifest.json")
+    check("M-08: malformed spec replaces stale PASS with this run's failure",
+          code==2 and not failed["release_eligible"] and failed["run_id"]!=old_id
+          and failed["run_id"]==read(folder/"deck.repair.json")["run_id"])
+    sp.write_text("{",encoding="utf-8");result,code=invoke(sp,folder/"deck.pptx")
+    check("control: JSON syntax failure also receives a fresh failure report",
+          code==2 and read(folder/"deck.manifest.json")["run_id"]==result["run_id"])
+
+    # M-09: generated root is confined; explicitly declared existing external files remain valid.
+    root=d/"image-root";root.mkdir()
+    outside=d/"outside.png";Image.new("RGB",(640,400),(242,240,230)).save(outside)
+    denied=False
+    try:
+        (root/"asset.png").symlink_to(outside)
+        try:
+            aw.resolve_asset({"asset_id":"x","decision":"generate","expected_filename":"asset.png"},
+                             {"assets_dir":str(root)},d/"manifest.json")
+        except ValueError:
+            denied=True
+    except OSError:
+        # Some Windows runners cannot create symlinks. Exercise the post-resolution boundary directly.
+        original_resolve=pathlib.Path.resolve
+        with patch.object(pathlib.Path,"resolve",lambda self: outside if self==root/"asset.png" else original_resolve(self)):
+            try:
+                aw.resolve_asset({"asset_id":"x","decision":"generate","expected_filename":"asset.png"},
+                                 {"assets_dir":str(root)},d/"manifest.json")
+            except ValueError:
+                denied=True
+    check("M-09: resolved generated asset cannot escape its root",denied)
+    authorized=aw.resolve_asset({"asset_id":"x","decision":"existing","origin":{"path":str(outside)}},
+                                {"assets_dir":str(root)},d/"manifest.json")==outside.resolve()
+    folder, sp, spec=native("existing")
+    bp,pp,mp=(folder/n for n in ("brief.json","plan.json","asset_manifest.json"))
+    need={"audience":"reviewer","decision":"approve","slides":[{"id":"s01","family":"cover","title":"Existing",
+          "asset_source":{"kind":"provided","path":str(outside),"source":"Author-provided test image"}}]}
+    save(bp,need);bundle=vao._plan(str(bp),str(pp))
+    manifest=aw.prepare_manifest(vao.build_asset_manifest(need,bundle),need,bundle,bp,pp,mp)
+    save(mp,manifest)
+    assert run_vao("asset-qc",str(mp),"--phase","release").returncode==0
+    spec["asset_workflow"]={"plan_path":str(pp),"plan_sha256":aw.digest(bundle)}
+    spec["slides"][0]["elements"].append({"id":"photo","type":"image","asset_id":aw.asset_entries(manifest)[0]["asset_id"],
+        "x":760,"y":280,"width":384,"height":256,"fit":"cover","asset_function":"context"})
+    save(sp,spec);result,code=invoke(sp,folder/"deck.pptx",mp)
+    check("control: explicit existing external asset can QC, compile and release",authorized and code==0)
+
+
 def check_doc_counts() -> None:
     """文档里的自检项数必须等于实际项数。
 
@@ -1319,6 +1575,7 @@ def main() -> int:
         check_deck_anchor(work)
         check_silent_failure_seams()
         check_asset_workflow(work)
+        check_audit_fixes(work)
         check_anti_regression()
         check_doc_counts()
     finally:

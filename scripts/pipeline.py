@@ -192,7 +192,7 @@ def build_skeleton_module(bundle: dict) -> str:
          '    },',
          '    "strategy": {},                      # TODO：P2 Strategy（受众/决策/张力/证据）',
          '    "direction": {"color_intent": []},  # TODO：[brand, emotion, hierarchy]',
-         f'    "asset_workflow": {{"plan_sha256": {digest(bundle)!r}}},',
+         f'    "asset_workflow": {{"plan_sha256": {digest(bundle)!r}, "plan_path": {(bundle.get("workflow") or {}).get("plan_path")!r}}},',
          '    "slides": [']
     for i in range(len(raw_slides)):
         pg, intel = pairs[i] if i < len(pairs) else ({}, {})

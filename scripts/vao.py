@@ -82,7 +82,7 @@ def load_spec(path: str | Path) -> tuple[dict, Path]:
     if not source.is_file():
         raise FileNotFoundError(
             f"找不到 spec 文件: {source}"
-            "（先 `vao.py plan brief.yml --skeleton build.py` 生成骨架，填充后再 check）")
+            "（先 `vao.py plan brief.yml --out plan.json --skeleton build.py` 生成骨架，填充后再 check）")
     if source.suffix.lower() in {".json", ".yml", ".yaml"}:
         text = source.read_text(encoding="utf-8")
         # 解析失败要带上「哪个文件、第几行」：顶层只打印异常类型时，
@@ -105,6 +105,8 @@ def load_spec(path: str | Path) -> tuple[dict, Path]:
         if not isinstance(value, dict):
             raise ValueError(f"spec 顶层必须是对象/dict，实际是 {type(value).__name__}：{source}")
         return value, source
+    if source.suffix.lower() != ".py":
+        raise ValueError("编排文件只接受 JSON/YAML，或作者明确指定的可信 .py 文件")
     mod, source = _load_module(source)
     if hasattr(mod, "build_spec"):
         try:
@@ -128,10 +130,17 @@ def load_spec(path: str | Path) -> tuple[dict, Path]:
 
 
 def _json_write(path: str | Path, value: Any) -> Path:
+    import os
+    import tempfile
     target = Path(path).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n",
-                      encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(prefix="." + target.name, dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n")
+        os.replace(tmp, target)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
     return target
 
 
@@ -195,10 +204,12 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
         # 早失败并给出一句可执行的修法，胜过交回一个空计划让上层自己猜。
         raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
                          "请至少给出一页的 title + content，再跑 plan")
-    from asset_workflow import digest, now
+    from asset_workflow import digest, now, file_digest
     bundle["workflow"] = {"schema": "vao-plan-chain-v1", "planned_at": now(),
                           "brief_path": str(Path(brief_path).resolve()),
-                          "brief_sha256": digest(need)}
+                          "brief_sha256": digest(need),
+                          "brief_file_sha256": file_digest(Path(brief_path).expanduser()),
+                          "plan_path": str(Path(out).expanduser().resolve()) if out else None}
     if out:
         _json_write(out, bundle)
     if skeleton:
@@ -332,7 +343,8 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
                 assets.append({"asset_id": aid, "slide_ids": [sid], "decision": "existing",
                                "origin": origin, "asset_function": raw.get("asset_function", "context"),
                                "safe_area": normalize_safe_area(raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
-                               "meta": {"text_color": raw.get("text_color")}, "retry_budget": 0})
+                               "meta": {"text_color": raw.get("text_color")}, "retry_budget": 0,
+                               "background_color": ((plan.get("theme") or {}).get("colors") or {}).get("background", "#FFFFFF")})
             continue
         if decision == "none":
             skipped_pages.append({"slide_id": sid, "decision": "skip",
@@ -377,6 +389,8 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             "asset_type": card["asset_type"],
             "asset_function": page["asset_function"],
             "ratio": page["ratio"],
+            "allow_crop": raw.get("asset_allow_crop") is True,
+            "background_color": ((plan.get("theme") or {}).get("colors") or {}).get("background", "#FFFFFF"),
             "safe_area": page["safe_area"],
             "prompt": result["prompt"],
             "negative": result["negative"],
@@ -470,6 +484,7 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path,
     """The only AI-facing context emitted by default: blockers grouped by cause."""
     packet = {
         "schema": "vao-repair-v1",
+        "run_id": result.get("run_id"),
         "mode": mode,
         "build": str(build),
         "output": str(output),
@@ -492,9 +507,10 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path,
 
 
 def _ghost(spec: dict, output_dir: str | Path, pages: list[int] | None = None,
-           base_path: str | Path | None = None) -> dict:
+           base_path: str | Path | None = None, image_bytes: dict | None = None) -> dict:
     from ghost import ghost_deck, make_contact_sheet
     preview_spec = dict(spec)
+    preview_spec["_image_bytes"] = image_bytes or {}
     if base_path:
         preview_spec["_base_path"] = str(Path(base_path).resolve())
     paths = ghost_deck(preview_spec, output_dir, pages=pages, scale=0.5)
@@ -522,7 +538,9 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
     pending: list[str] = []        # 还没生成（先出图再 QC），与「生成不合格」分开报
     for entry in asset_entries(manifest):
         candidate = resolve_asset(entry, manifest, manifest_file, input_dir)
-        image_sha = file_digest(candidate)
+        import hashlib
+        blob = candidate.read_bytes() if candidate.is_file() else None
+        image_sha = hashlib.sha256(blob).hexdigest() if blob is not None else None
         if entry["decision"] == "generate" and image_sha and image_sha == entry.get("preexisting_sha256"):
             workflow_issues.append(f"{entry['asset_id']}: 清单前已有同一图片；须显式标记 existing/reuse")
         if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
@@ -536,7 +554,10 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
                       or (entry.get("page") or {}).get("text_color"))
         qc = image_qc(str(candidate), safe_rect=safe,
                       text_is_dark=(True if text_color == "dark" else
-                                    False if text_color == "light" else None))
+                                    False if text_color == "light" else None),
+                      image_bytes=blob, expected_ratio=entry.get("ratio"),
+                      allow_crop=entry.get("allow_crop") is True,
+                      background=entry.get("background_color") or "#FFFFFF")
         decision = qc_retry_decision(qc, attempt=int(entry.get("attempt", 0) or 0),
                                      phase=phase, max_retries=entry.get("retry_budget", 1))
         missing = (qc.get("status") == "error")   # 文件不存在 ≠ 图片不合格：修法不同
@@ -548,7 +569,7 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
         if missing:
             pending.append(str(entry.get("asset_id")))
     report = {
-        "schema": "vao-asset-qc-v2",
+        "schema": "vao-asset-qc-v3",
         "manifest": str(manifest_file),
         "manifest_sha256": digest(manifest), "checked_at": now(),
         "workflow_issues": workflow_issues,
@@ -594,12 +615,15 @@ def _ghost_engine_stamp() -> str | None:
 
 
 def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
-                  output_sha: str | None = None) -> dict:
+                  output_sha: str | None = None, image_bytes: dict | None = None) -> dict:
     """方向预览证据：同一份 PPTX 只渲染一次（确定性产物 + 字节戳命中即复用）。
 
     复用前提是渲染器没变：ghost.py 的指纹也写进 marker，渲染器一改，
     旧预览立即失效——证据必须和当前引擎说同一件事。
     """
+    from qa import preview_issues
+    from asset_workflow import file_digest
+    page_ids = [str(s.get("id")) for s in spec.get("slides", [])]
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
     engine = _ghost_engine_stamp()
@@ -611,16 +635,18 @@ def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
         sheet = cached.get("contact_sheet")
         if (cached.get("output_sha256") == output_sha
                 and cached.get("engine") == engine
-                and sheet and Path(sheet).exists()):
+                and sheet and not preview_issues(cached, page_ids)):
             info = dict(cached)
             info["reused"] = True
             return info
-    info = _ghost(spec, output_dir, base_path=base)
+    info = _ghost(spec, output_dir, base_path=base, image_bytes=image_bytes)
     info["slide_ids"] = [str(s.get("id")) for s in (spec.get("slides") or [])
                          if isinstance(s, dict) and s.get("id")]
     info["output_sha256"] = output_sha
     info["engine"] = engine
     info["reused"] = False
+    info["file_sha256"] = {str(p): file_digest(p)
+                            for p in info["pages"] + [info["contact_sheet"]] if p}
     _json_write(marker, info)
     return info
 
@@ -628,10 +654,54 @@ def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
 def run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
               include_advisory: bool = False, json_output: bool = False,
+              assets_manifest: str | None = None, assets_dir: str | None = None,
+              asset_qc_report: str | None = None, polish: bool = False) -> tuple[dict, int]:
+    """Fresh run identity and fail-closed reports, including errors before schema checks."""
+    from uuid import uuid4
+    from qa import fail_result
+    from asset_workflow import file_digest
+    run_id = uuid4().hex
+    output_path = Path(output).expanduser()
+    packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    def publish_failure(result):
+        result["run_id"] = run_id
+        result["input_sha256"] = file_digest(Path(build_path).expanduser())
+        _json_write(packet_path, _repair_packet(result, mode, Path(build_path), output_path))
+        if mode != "spec":
+            _json_write(manifest_path, {"run_id": run_id, "status": "BLOCKED",
+                "release_eligible": False, "verification": {"release_eligible": False},
+                "input_sha256": result["input_sha256"], "qa_report": result,
+                "validation": {"issues": [result["next_action"]]}})
+    initial = fail_result({}, ["本轮检查尚未完成；不得复用上一轮 PASS"])
+    publish_failure(initial)
+    try:
+        result, code = _run_check(build_path, output, mode=mode, packet=packet, preview=preview,
+            include_advisory=include_advisory, json_output=json_output,
+            assets_manifest=assets_manifest, assets_dir=assets_dir,
+            asset_qc_report=asset_qc_report, polish=polish, run_id=run_id)
+        if mode == "draft":
+            _json_write(manifest_path, {"run_id": run_id, "mode": "draft", "status": result["status"],
+                "release_eligible": False, "verification": {"release_eligible": False},
+                "qa_report": result, "next_action": "成功草稿仍须 --mode release 完成发布检查" if code==0 else result["next_action"]})
+        return result, code
+    except Exception as exc:
+        result = fail_result({}, [f"输入或执行失败: {type(exc).__name__}: {exc}"])
+        publish_failure(result)
+        if json_output:
+            print(json.dumps(_repair_packet(result, mode, Path(build_path), output_path), ensure_ascii=False))
+        else:
+            print(f"VAO {mode}: BLOCKED · {result['next_action']}")
+        return result, 2
+
+
+def _run_check(build_path: str, output: str, *, mode: str = "draft",
+              packet: str | None = None, preview: str | None = None,
+              include_advisory: bool = False, json_output: bool = False,
               assets_manifest: str | None = None,
               assets_dir: str | None = None,
               asset_qc_report: str | None = None,
-              polish: bool = False) -> tuple[dict, int]:
+              polish: bool = False, run_id: str | None = None) -> tuple[dict, int]:
     """一次执行完成交付验证：normalize → guard → compile → 预览证据 → 修复包。
 
     零外部渲染器、零 reference 读取、零逐条修复循环：一个进程，一份结论。
@@ -639,7 +709,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     """
     from compile_cache import note_round
     from guard import normalize_spec
-    from qa import release_manifest, run_qa
+    from qa import release_manifest, run_qa, fail_result
 
     spec, build = load_spec(build_path)
     from asset_workflow import verify_chain, blocked_result
@@ -650,7 +720,8 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             binding_error = str(exc)
-    workflow = verify_chain(spec, assets_manifest, asset_qc_report, assets_dir)
+    snapshots = {}
+    workflow = verify_chain(spec, assets_manifest, asset_qc_report, assets_dir, image_bytes=snapshots)
     if binding_error:
         workflow.setdefault("issues", []).append(binding_error)
         workflow["status"] = "BLOCKED"
@@ -662,7 +733,9 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     else:
         result = run_qa(normalized, output_path, mode=mode,
                         normalize=False, include_advisory=include_advisory,
-                        spec_path=str(build))
+                        spec_path=str(build), image_bytes=snapshots)
+        normalized = result.pop("_effective_spec", normalized)
+    result["run_id"] = run_id
     result["asset_workflow"] = workflow
     if result.get("normalization") is None:
         result["normalization"] = norm
@@ -676,28 +749,31 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     ghost = None
     preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
                              if mode == "release" else None)
-    if preview_dir and workflow["status"] != "BLOCKED":
+    if preview_dir and result.get("passed") and workflow["status"] != "BLOCKED":
         ghost = _ghost_cached(normalized, preview_dir, build.parent,
-                              output_sha=(result.get("compile") or {}).get("output_sha256"))
+                              output_sha=(result.get("compile") or {}).get("output_sha256"), image_bytes=snapshots)
         result["ghost_preview"] = ghost
 
-    # 轮次账本：一轮 = 同一产物上 spec 变了的一次执行；复跑同 spec 不记新轮。
+    manifest = None
+    if mode == "release":
+        manifest = release_manifest(normalized, result, ghost_preview=ghost)
+        if manifest["status"] == "BLOCKED" and result.get("passed"):
+            errors = manifest["validation"]["issues"] or ["发布凭证无效"]
+            fail_result(result, errors)
+            manifest = release_manifest(normalized, result, ghost_preview=ghost)
+            manifest["validation"]["issues"] = errors
+
+    # Record the final verdict, not the pre-manifest intermediate PASS.
     ledger = note_round(output_path.with_name(output_path.stem + "_vao"),
                         mode=mode, spec_hash=result.get("source_spec_hash"),
                         status=result.get("status"), blocking=result.get("blocking_items"),
                         warnings=len(result.get("warn_summary") or []))
     result["rounds"] = ledger
-
     manifest_path = None
-    if mode == "release":
-        manifest = release_manifest(normalized, result, ghost_preview=ghost,
-                                    revision_count=ledger.get("revisions", 0),
-                                    revision_log=ledger.get("log"))
+    if manifest is not None:
+        manifest.update(revision_count=ledger.get("revisions", 0), revision_log=ledger.get("log"))
         manifest_path = output_path.with_suffix(".manifest.json")
         _json_write(manifest_path, manifest)
-        if manifest["status"] == "BLOCKED" and result.get("passed"):
-            result.update(passed=False, status="BLOCKED", release_eligible=False)
-            result["verdict"].update(verdict="BLOCKED", status="BLOCKED")
         result["manifest_path"] = str(manifest_path)
 
     result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)

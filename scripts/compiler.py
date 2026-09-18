@@ -216,6 +216,8 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
 def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     """形状内文字：默认垂直居中。"""
     tf = shape.text_frame
+    pad = emu(float(element.get("padding", 0)))
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = Emu(pad)
     tf.word_wrap = bool(element.get("text_wrap", True))
     tf.vertical_anchor = anchor_of(element.get("text_anchor", "middle"), MSO_ANCHOR.MIDDLE)
     cn, latin = ctx.families(element)
@@ -303,100 +305,16 @@ def _resolve_src(element: dict, base_path: str | None,
     return (roots[0] / src).resolve()
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# 图片适配缓存（性能）
-#
-# 实测：一副含 5 张 1672×941 PNG 的 deck，compile 全程 2.36s，其中 1.88s
-# （80%）花在 _fit_image 的 LANCZOS 重采样 + PNG 重编码上——**图没变也每次重算**。
-# 适配结果只取决于 (源文件指纹, 目标尺寸, fit, crop, 填充色)，因此可跨编译复用。
-# 命中缓存时返回缓存文件，调用方不得删除（from_cache=True 即表示"别删"）。
-# 环境变量 PPT_VAO_NO_IMGCACHE=1 可关闭（排障用）。
-# ─────────────────────────────────────────────────────────────────────────
-_FIT_CACHE_DIR = Path(tempfile.gettempdir()) / "ppt-vao-imagecache"
-_FIT_CACHE_MAX = 256
-
-
-def _fit_cache_disabled() -> bool:
-    import os
-    return os.environ.get("PPT_VAO_NO_IMGCACHE", "").strip() not in ("", "0", "false")
-
-
-def _fit_cache_key(src: Path, w: float, h: float, fit: str, crop, bg) -> str:
-    import hashlib
-    try:
-        st = src.stat()
-        hsrc = hashlib.sha256()
-        with src.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 16), b""):
-                hsrc.update(chunk)
-        stamp = f"{st.st_mtime_ns}:{st.st_size}:{hsrc.hexdigest()[:16]}"
-    except (OSError, ValueError):
-        stamp = "unreadable"
-    payload = "|".join([str(src.resolve()), stamp, str(int(round(float(w)))),
-                        str(int(round(float(h)))), str(fit), str(crop), str(bg)])
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:32]
-
-
-def _fit_cache_prune() -> None:
-    """条目超上限时淘汰最旧的一半，避免缓存无限增长。"""
-    try:
-        items = sorted(_FIT_CACHE_DIR.glob("*.png"), key=lambda p: p.stat().st_mtime)
-        if len(items) > _FIT_CACHE_MAX:
-            for p in items[:len(items) - _FIT_CACHE_MAX // 2]:
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
-    except OSError:
-        pass
-
-
-def _fit_image_cached(src: Path, w: float, h: float, fit: str, crop=None,
-                      bg: tuple | None = None) -> tuple:
-    """_fit_image 的缓存版。返回 (path, from_cache)；from_cache=True 时勿删。"""
-    import os as _os
-    import shutil as _sh
-    if _fit_cache_disabled():
-        return _fit_image(src, w, h, fit, crop, bg=bg), False
-    key = _fit_cache_key(src, w, h, fit, crop, bg)
-    hit = _FIT_CACHE_DIR / (key + ".png")
-    try:
-        if hit.exists() and hit.stat().st_size > 0:
-            # size>0 不足以证明上次进程没有在 copy 中断；验证 PNG，坏条目按 miss 重建。
-            from PIL import Image
-            with Image.open(hit) as _probe:
-                _probe.verify()
-            return hit, True
-    except (OSError, ValueError):
-        try:
-            hit.unlink(missing_ok=True)
-        except OSError:
-            pass
-    tmp = _fit_image(src, w, h, fit, crop, bg=bg)
-    try:
-        _FIT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        staging = _FIT_CACHE_DIR / f".{key}.{_os.getpid()}.tmp"
-        _sh.copyfile(str(tmp), str(staging))
-        _os.replace(staging, hit)
-        _fit_cache_prune()
-    except Exception:
-        try:
-            staging.unlink(missing_ok=True)
-        except (OSError, UnboundLocalError):
-            pass
-        return tmp, False          # 缓存不可写：退回临时文件，正确性优先
-    try:
-        tmp.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return hit, True
-
-
+# Image transformations are per-compile only: a shared writable PNG cache cannot
+# attest its output. Full-deck compilation reuse remains in compile_cache.py.
 def _fit_image(src: Path, w: float, h: float, fit: str, crop=None,
                bg: tuple | None = None) -> Path:
     from PIL import Image
 
-    img = Image.open(src).convert("RGB")
+    with Image.open(src) as opened:
+        rgba = opened.convert("RGBA")
+        background = Image.new("RGBA", rgba.size, (*(bg or (255, 255, 255)), 255))
+        img = Image.alpha_composite(background, rgba).convert("RGB")
     iw, ih = img.size
     if crop:
         l, t, r, b = crop
@@ -418,9 +336,10 @@ def _fit_image(src: Path, w: float, h: float, fit: str, crop=None,
         img = img.resize((nw, nh), Image.LANCZOS)
         img = img.crop(((nw - sw) // 2, (nh - sh) // 2,
                         (nw - sw) // 2 + sw, (nh - sh) // 2 + sh))
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    img.save(tmp.name, "PNG")
-    return Path(tmp.name)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        name = tmp.name
+    img.save(name, "PNG")
+    return Path(name)
 
 
 def _content_protection_overlay(element: dict) -> dict | None:
@@ -437,28 +356,31 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
               spec_path: str | None = None) -> None:
     x, y, w, h = ctx.bounds(element)
     src = _resolve_src(element, base_path, spec_path)
-    if not src.exists():
+    import io
+    snapshot = getattr(ctx, "image_bytes", {}).get(str(src))
+    if snapshot is None and getattr(ctx, "require_snapshot", False):
+        ctx.warn(f"image '{element.get('id')}': 缺少核验字节快照", element.get("id"))
+        return
+    if snapshot is None and not src.exists():
         ctx.warn(f"image '{element.get('id')}': 找不到文件 {src}", element.get("id"))
         return
 
     fit = element.get("fit", "cover")
     crop = element.get("crop")
     temp_path = None
-    temp_from_cache = False
-    path_to_use = src
+    path_to_use = io.BytesIO(snapshot) if snapshot is not None else src
     if fit in ("cover", "contain") or crop:
         try:
             # contain 留白填充主题背景色，保证暗色主题下无白边。
             bg_rgb = ctx.color("background")
             bg_tuple = tuple(bg_rgb) if bg_rgb is not None else None
-            temp_path, temp_from_cache = _fit_image_cached(
-                src, w, h, fit, crop, bg=bg_tuple)
+            temp_path = _fit_image(path_to_use, w, h, fit, crop, bg=bg_tuple)
             path_to_use = temp_path
         except Exception as exc:
             ctx.warn(f"image '{element.get('id')}': 裁切失败，按原图嵌入（{exc}）", element.get("id"))
 
     try:
-        pic = slide.shapes.add_picture(str(path_to_use), Emu(emu(x)), Emu(emu(y)),
+        pic = slide.shapes.add_picture(path_to_use if hasattr(path_to_use, "read") else str(path_to_use), Emu(emu(x)), Emu(emu(y)),
                                        Emu(emu(w)), Emu(emu(h)))
         pic.name = str(element.get("id", "image"))
         # Content Protection 层：紧随图片、覆盖同一盒，使文字可直接叠加而不牺牲可读性
@@ -474,8 +396,8 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
             apply_fill(shp, overlay, ctx)
             shp.line.fill.background()
     finally:
-        # 缓存文件是共享资产，只能删临时文件
-        if temp_path is not None and not temp_from_cache:
+        # Only this compile's private temporary file is removed.
+        if temp_path is not None:
             try:
                 temp_path.unlink(missing_ok=True)
             except Exception:
@@ -1624,7 +1546,8 @@ def _postprocess_package(output_path) -> None:
 
 
 def compile_deck(spec: dict, output_path, checks: bool = True,
-                 guard_rules: dict | None = None, spec_path: str | None = None) -> dict:
+                 guard_rules: dict | None = None, spec_path: str | None = None,
+                 image_bytes: dict | None = None) -> dict:
     """
     把设计 spec 编译为原生可编辑 PPTX。
 
@@ -1660,6 +1583,8 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
     theme = spec.get("theme") if isinstance(spec.get("theme"), dict) else {}
 
     ctx = RenderContext(theme, canvas)
+    ctx.image_bytes = image_bytes or {}
+    ctx.require_snapshot = image_bytes is not None
     if _spec_warning:
         ctx.warn(_spec_warning)
     for _warning in canvas_warnings:

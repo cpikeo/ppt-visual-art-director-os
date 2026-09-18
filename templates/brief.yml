@@ -22,6 +22,7 @@ slides:                 # 逐页内容；family 决定页面家族，density/ene
     # asset_subject: "一只青瓷茶盏，主体在右侧；左侧保留文字留白"
     # medium: photography
     # asset_ratio: "3:2"
+    # asset_allow_crop: true  # 仅在有意接受与生成比例不符的图片并裁切时声明
     # asset_function: emotion
     # negative_space_anchor: left
     # text_color: dark

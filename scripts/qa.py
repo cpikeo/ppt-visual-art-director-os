@@ -206,7 +206,8 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
            include_advisory: bool = False,
            spec_path: str | Path | None = None,
            cache: bool = True,
-           cache_dir: str | Path | None = None) -> dict:
+           cache_dir: str | Path | None = None,
+           image_bytes: dict | None = None) -> dict:
     """一次调用完成 normalize → guard → compile，输出可交付判定与分组修复包。
 
     - `mode`：spec（只诊断）/ draft（默认）/ release（交付门）。
@@ -273,7 +274,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
             try:
                 cache_root.mkdir(parents=True, exist_ok=True)
                 semantic_view = spec_view(spec, base_path=output_path.parent,
-                                          spec_path=spec_path)
+                                          spec_path=spec_path, image_bytes=image_bytes)
                 compile_report = compile_reuse(cache_root, output_path, semantic_view)
                 cache_reason = ("view_and_output_attestation_match"
                                 if compile_report is not None else "cache_miss")
@@ -285,7 +286,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
                 from compiler import compile_deck
                 compile_report = compile_deck(spec, output_path, checks=False,
                                               guard_rules=effective_rules,
-                                              spec_path=str(spec_path) if spec_path else None)
+                                              spec_path=str(spec_path) if spec_path else None, image_bytes=image_bytes)
             except ModuleNotFoundError as exc:
                 if exc.name in {"pptx", "lxml", "PIL", "numpy"}:
                     compile_report = {
@@ -331,7 +332,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         try:
             from compile_cache import spec_view as _spec_view
             semantic_view = _spec_view(spec, base_path=output_path.parent,
-                                       spec_path=spec_path)
+                                       spec_path=spec_path, image_bytes=image_bytes)
         except Exception:
             semantic_view = None
     if semantic_view:
@@ -483,7 +484,40 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     }
     if include_advisory:
         result["risk"] = risk_report
+    result["_effective_spec"] = spec  # consumed by vao before report serialization
     return result
+
+
+def fail_result(result: dict, problems: list[str], code: str = "GUARD_FAIL") -> dict:
+    result.update(status="BLOCKED", passed=False, release_eligible=False)
+    codes = result.setdefault("failure_codes", [])
+    if code not in codes:
+        codes.append(code)
+    result["blocking_items"] = result.get("blocking_items", 0) + len(problems)
+    result.setdefault("verdict", {}).update(verdict="BLOCKED", status="BLOCKED",
+        blocking=result["blocking_items"], codes=codes)
+    result.setdefault("fix_plan", {}).setdefault("groups", []).append({
+        "root_cause": code, "ids": [], "count": len(problems), "samples": problems,
+        "fix": "；".join(problems)})
+    result["next_action"] = "fix: " + "；".join(problems)
+    return result
+
+
+def preview_issues(ghost: dict | None, page_ids: list[str]) -> list[str]:
+    """Verify actual preview bytes, not only self-reported counts."""
+    if not isinstance(ghost, dict):
+        return ["缺少方向预览证据"]
+    pages = ghost.get("pages") or []
+    if (ghost.get("slide_ids") != page_ids or ghost.get("count") != len(page_ids)
+            or len(pages) != len(page_ids) or len(set(pages)) != len(pages)):
+        return ["预览页 ID/数量没有完整覆盖当前稿件"]
+    hashes = ghost.get("file_sha256") or {}
+    files = pages + [ghost.get("contact_sheet")]
+    issues = []
+    for path in files:
+        if not path or not hashes.get(str(path)) or _sha256_file(path) != hashes.get(str(path)):
+            issues.append(f"预览文件缺失/被修改或缺少字节凭证: {path}")
+    return issues
 
 
 def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None = None,
@@ -575,6 +609,8 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
     workflow = qa_report.get("asset_workflow") or {}
     if any(image_elements(spec)) and workflow.get("status") != "PASS":
         issues.append("含图稿件缺少通过的 asset_workflow；不能把编译PASS当成资产流程PASS")
+    if qa_report.get("passed"):
+        issues.extend(preview_issues(ghost, [str(s.get("id")) for s in slides]))
     status = "BLOCKED" if issues else str(qa_report.get("status", "BLOCKED"))
     ver["release_eligible"] = bool(status == "PASS" and qa_report.get("release_eligible"))
     try:
@@ -582,6 +618,7 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
     except (TypeError, ValueError, OverflowError):
         revision_num = 0
     return {
+        "run_id": qa_report.get("run_id"),
         "source_spec_hash": spec_hash,
         "validation": {"issues": issues, "notes": notes, "page_count": len(page_ids)},
         "theme_id": theme_id or ((spec.get("theme") or {}).get("id")

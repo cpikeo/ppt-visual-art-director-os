@@ -120,3 +120,13 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 Release Manifest 增加 `asset_workflow`，记录 `status`、brief/plan/清单/QC 指纹和报告位置；
 QC 本身包含每张图片的 SHA-256。验证失败时顶层与 verification 内的
 `release_eligible` 均为 false。编译 PASS 不可代替完整流程 PASS。
+
+
+## v5.1.1 发布一致性修复
+
+- 以 auto_fit 后的有效 spec 同时编译、预览与盖指纹；不得各用一版输入。
+- 图片采用核验 bytes 快照；预览必须有完整页 ID 及每个文件的 SHA-256。
+- 有计划的稿件必须覆盖计划的全部页 ID/顺序，包括无图稿件。
+- 每轮 check 分配 run_id；旧资格先失效，异常也写本轮失败报告。草稿不拥有发布资格。
+- 文本容量检查覆盖 text 与 shape.text；禁止换行时同时检查宽度。静态估算不是 Office 字体像素证明。
+- 数值图表 source/unit/period/basis 必须为非空白字符串，不能用空格或任意对象充当来源。

@@ -221,3 +221,8 @@ guard/QA 的阈值只守**物理底线**（对比度、溢出、色距、accent 
 `negative_space_anchor`、`safe_area`，然后 plan → assets。比例、留白或文字明暗改变时，
 不能复用旧提示词缓存；更改后重新准备资产。图片通过 QC 后才填入正文 elements。
 这一步只决定图片如何服务页面，不强迫各页使用同一构图。
+
+
+v5.1.1 图片有效性：短边至少32px，落位至少1×有效像素；图片不得完全透明。
+计划比例默认校验，有意裁切在 brief 中声明 `asset_allow_crop: true`，再走资产清单/QC。
+文字检查覆盖 shape 内的 text_size/text_wrap/text_line_height，并核对不换行文本的横向容量。

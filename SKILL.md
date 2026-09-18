@@ -152,14 +152,18 @@ R6 收口
 
 ### 执行凭证（不仅是“建议照做”）
 
-- 计划保留 brief 内容指纹；骨架保留 `SPEC.asset_workflow.plan_sha256`。
+- 计划保留 brief 内容与文件字节指纹；骨架保留 `SPEC.asset_workflow.plan_sha256` 与 `plan_path`。
+  有计划的稿件须完整覆盖页 ID/顺序；QC/发布只读取需求，不隐式执行 Python。
 - 图片元素必须带清单内的 `asset_id`；不能用直接 `src` 绕过。
-- `asset-qc` 记录清单指纹与实际检查的图片 SHA-256。`check` 默认读取清单旁的
+- `asset-qc` v3 记录清单指纹、实际图片 SHA-256、尺寸与可见性。`check` 默认读取清单旁的
   `asset_manifest.qc.json`；自定义报告用 `--asset-qc-report` 指定。
 - 有图稿件在 spec/draft/release 都先校验资产链，缺清单、缺 QC、待重试、旧计划、
   图像被替换或未经登记的图片均以 `ASSET_WORKFLOW_FAIL` 阻断，**不进行本轮编译**。
-- Release Manifest 单独记录 `asset_workflow`。`PASS` 不能掩盖流程缺失；
+- 编译与预览共用通过核验的不可变图片 bytes 快照；源文件后续变化不能改写本轮交付。
+  仅保留整份 PPT 编译缓存，不再读取共享图片适配磁盘缓存。
+- Release Manifest 单独记录 `asset_workflow` 与本轮 `run_id`。`PASS` 不能掩盖流程缺失；
   被阻断时 `status=BLOCKED` 与 `release_eligible=false` 必须一致。
+  检查开始即使旧 PASS 失效；错误也须给出本轮失败报告，不能返回 ready。
 - 这些是**本地内容一致性与顺序依赖凭证**，不是数字签名，也不能证明外部生成工具
   实际采用了某段 prompt；工具调用日志、提示词语义符合性与权属仍由执行者负责。
 - 修改 brief/plan 后重新准备清单；修改提示词或图片后重新 QC。旧版清单需迁移，
