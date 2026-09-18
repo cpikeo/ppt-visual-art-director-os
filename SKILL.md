@@ -71,7 +71,7 @@ Content 这页到底表达什么 → Intent 希望观众理解什么 → Priorit
 - 最好的设计只有文字 + 空间时，不要增加图形。
 - 最好的设计只有一个数字时，不要制造图表。
 - 页面应该安静时，不要强行制造视觉。
-- 文字是页面结构，不是填充物。内容过多时：**Delete → Rewrite → Group → Reorganize → Recompose**，
+- 文字是页面结构，不是填充物。内容过多时先走减法链的左边三档（**删 → 重组 → 排版**），
   而不是缩小字号（缩字号是最贵的退路）。
 - 没有默认 Layout。布局由信息结构、视觉优先级、阅读方向、密度、图像、数据、品牌与场合共同决定；
   对称、偏轴、居左、超大字号、图像主导、数据主导、极端留白、受控叠压都只是候选工具。
@@ -92,6 +92,18 @@ Content 这页到底表达什么 → Intent 希望观众理解什么 → Priorit
   修法不是把卡片做好看，是把主角提到 64px 独占上半幅、其余降为无容器纯文本 + 发丝线分隔。
 - **Chart = Visual Argument**，不是组件。先问"数据真正需要观众看到什么"，
   再决定用图、用数字、用对比、用注释还是用空间关系——不要 Data → Automatic Chart。
+- **减法链只有一条，跨内容与视觉**：**删除 > 重组 > 排版 > 强化 > 装饰**。页面不够高级时
+  禁止先加元素——先把这条链从最左边走一遍。能用空间关系或字体层级解决的，不要用新元素解决。
+- **Anti-Design（主动避免）**：模板感 / UI Dashboard 感 / 卡片墙 / 组件堆叠 / 过度圆角 /
+  过多阴影 / 过多渐变 / 无意义图标 / 无意义线条 / 过度 3D / 过度装饰 / 过度留白 /
+  为了高级而高级 / 为了变化而变化 / AI 常见的机械布局 / 每页重复相同视觉结构。
+  最该避免的是**「所有东西都设计得很明显」**。
+- **高级感来自判断，不来自加法**：准确的比例、克制的元素、成熟的排印、舒适的色彩、
+  自然的留白；**必要的都存在，不必要的都消失**。世界级设计允许视觉保持安静——
+  说不出职责的色块、线条、对齐与图标都是噪音，不是丰富。
+- **审美标尺，不是素材库**：Apple Keynote / Pentagram / Swiss Typography / FT / Bloomberg /
+  Kinfolk / Monocle / Wallpaper* / IDEO 只用来校准判断力——**学它为什么这样决定，
+  不学它长什么样**；参考案例不能变成下一份 PPT 的版式、色板或组件。
 
 上下文与执行也是资源：
 
@@ -150,37 +162,27 @@ R6 收口
   `asset_workflow.status=SKIPPED, reason=no_image_elements`；可以直接编排与检查。
   无需制造无意义的空清单或调用图片工具。
 
-### 速度优化与世界级反过度设计纪律
+### 速度纪律
 
-1. **测试边界清晰：生产严禁调用离线自检**
-   - `scripts/selftest.py`（139 项）属于离线框架与契约单元回归测试，只在开发技能包底层引擎时运行。
-   - 生产环境中**严禁调用 `selftest.py`**；生产只需运行 `scripts/vao.py check`（基于 `guard.py` 的毫秒级几何安全网，全 deck 校验仅耗时约 700ms）。
-2. **Native-First（排版优先）与 Hero 资产节制（1~2 张胜过 10 张）**
-   - 顶级品牌设计（如 Pentagram、Aesop、Apple、Kinfolk）的共同特征是克制。15 页演示文稿中，至多保留 1~2 张战略高潮点 Hero 资产（如封面 Cover 概念意象、核心产品 Product 单品），其余页面全部依靠文字骨架、数据看板、发丝线分栏与留白传达力量。
-   - 杜绝每页滥用 AI 生成图：堆砌 AI 图不仅增加数分钟生图与修图延迟，更会导致画面廉价、分散观众对投资逻辑的注意力。
-3. **资产提示词无缝直出（`asset_prompt.py` 终端就绪）**
-   - 运行 `python scripts/vao.py assets ...` 时，已内置调用 `asset_prompt.py` 并直接在控制台输出经过双语质检的高保真提示词与负向提示词，无需手动编写或额外提取，直接用于生图。
-4. **单轮一次通过（Zero-Repair 产能预算）**
-   - 编写 `build_deck.py` 时预先按容量公式估算行长，标题字号与框高留足折行空间，确保在 Round 1/6 以 700ms 极速一次通过，杜绝多轮试错。
+1. **生产严禁调用离线自检**：`scripts/selftest.py`（139 项）只用于开发技能包引擎；
+   生产只跑 `scripts/vao.py check`（`guard.py` 几何安全网，全 deck 约 700ms）。
+2. **Native-First，Hero 资产节制**：15 页里至多 1~2 张 Hero 图（封面意象 / 核心产品），
+   其余靠文字骨架、数据、发丝线与留白——堆 AI 图既慢又廉价，还分散注意力。
+3. **提示词直出**：`vao.py assets` 已内置 `asset_prompt.py`，控制台直接给出正向/负向提示词，
+   不需要另写或另抽。
+4. **单轮一次通过**：写 `build_deck.py` 时先按容量估行长、给标题留足折行余量，
+   争取第 1 轮就 0 阻断，不靠多轮试错。
 
-### 执行凭证（不仅是“建议照做”）
+### 执行凭证（不仅是"建议照做"）
 
-- 计划保留 brief 内容与文件字节指纹；骨架保留 `SPEC.asset_workflow.plan_sha256` 与 `plan_path`。
-  有计划的稿件须完整覆盖页 ID/顺序；QC/发布只读取需求，不隐式执行 Python。
-- 图片元素必须带清单内的 `asset_id`；不能用直接 `src` 绕过。
-- `asset-qc` v3 记录清单指纹、实际图片 SHA-256、尺寸与可见性。`check` 默认读取清单旁的
-  `asset_manifest.qc.json`；自定义报告用 `--asset-qc-report` 指定。
-- 有图稿件在 spec/draft/release 都先校验资产链，缺清单、缺 QC、待重试、旧计划、
-  图像被替换或未经登记的图片均以 `ASSET_WORKFLOW_FAIL` 阻断，**不进行本轮编译**。
-- 编译与预览共用通过核验的不可变图片 bytes 快照；源文件后续变化不能改写本轮交付。
-  仅保留整份 PPT 编译缓存，不再读取共享图片适配磁盘缓存。
-- Release Manifest 单独记录 `asset_workflow` 与本轮 `run_id`。`PASS` 不能掩盖流程缺失；
-  被阻断时 `status=BLOCKED` 与 `release_eligible=false` 必须一致。
-  检查开始即使旧 PASS 失效；错误也须给出本轮失败报告，不能返回 ready。
-- 这些是**本地内容一致性与顺序依赖凭证**，不是数字签名，也不能证明外部生成工具
-  实际采用了某段 prompt；工具调用日志、提示词语义符合性与权属仍由执行者负责。
-- 修改 brief/plan 后重新准备清单；修改提示词或图片后重新 QC。旧版清单需迁移，
-  已有图片应显式 `reuse`，不得补造生成历史。
+- 计划与骨架保留 brief 字节指纹、`plan_sha256` 与 `plan_path`；稿件须完整覆盖页 ID 与顺序。
+- 图片元素必须带清单内的 `asset_id`（不能用直接 `src` 绕过）；`asset-qc` v3 记录清单指纹、
+  实际图片 SHA-256、尺寸与可见性，`check` 默认读清单旁的 `asset_manifest.qc.json`。
+- 缺清单、缺 QC、待重试、旧计划、图像被替换或未登记 → `ASSET_WORKFLOW_FAIL` 阻断，
+  本轮不编译；检查开始即令旧 PASS 失效，`BLOCKED` 与 `release_eligible=false` 必须一致。
+- 凭证是**本地内容一致性与顺序依赖**证明，不是数字签名，也不证明外部工具真的用了某段 prompt。
+  改 brief/plan 后重建清单，改提示词或图片后重跑 QC；已有图片显式 `reuse`，不补造生成历史。
+  细节见 `references/production-contract.md` 与 `references/asset-workflow.md`。
 
 阻断码完整集合：`OVERLAP`、`SOURCE_COLLISION`、`CHART_LABEL_COLLISION`、
 `TEXT_OVERFLOW`、`READABILITY_FAIL`、`DATA_INTEGRITY_FAIL`、`CHART_TYPE_FAIL`、
@@ -239,6 +241,9 @@ R6 收口
 ## 最高原则
 
 ```
+Content determines form.      Meaning determines hierarchy.
+Context determines color.     Information determines layout.
+Aesthetic determines selection. Narrative determines rhythm.
 Think like a Design Director.      Execute like an Engineer.
 Selective references.              One execution entry point.
 Warnings are not conversations.    Repair roots, not symptoms.

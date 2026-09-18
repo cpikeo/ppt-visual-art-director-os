@@ -75,7 +75,8 @@ Accent 的合法职责只有**指认**：指认答案（对比/推荐项）、�
 ### Anti-patterns（症状，不是禁令）
 
 卡片墙 / 平均九宫格 / 过度阴影 / 图标堆砌 / 随机图库 / 竞争性高亮 / 伪 3D / 背景压字 / 为填空加细节。
-看到症状先问「哪个判断缺席了」，再按「删 → 简化 → 恢复空间 → 重构重心 → 换媒体 → 微调装饰」修。
+看到症状先问「哪个判断缺席了」，再按唯一的减法链修：**删除 > 重组 > 排版 > 强化 > 装饰**
+（完整症状表与判断见 `design-craft.md` §二 第 10–12 条）。
 
 ---
 
@@ -85,13 +86,19 @@ Accent 的合法职责只有**指认**：指认答案（对比/推荐项）、�
   内容不需要隐喻时，`solid_world` + 编辑版心就是正确答案——诚实比意象重要。
 - 派生顺序：品牌色 > 材质与光性判断 > 方向种子（兜底）；图表色走语义角色，不写死色值。
 - 代码里的种子只是起点，不是待抄的版式，但**名字要对得上**（brief 里写 `design_direction` 时）
-  ——`route.DIRECTION_PRESETS` 有 4 个方向：`quiet_minimal / editorial_brand / product_stage /
-  evidence_first`（各带 material/light/chart/motion/background 与 seed 色板字体）；
-  `design_intelligence_rules.COLOR_DIRECTIONS` 有 13 个色彩方向族：`quiet_luxury / luxury_editorial /
+  ——`route.DIRECTION_PRESETS` 有 4 个**结构预设**：`quiet_minimal / editorial_brand / product_stage /
+  evidence_first`（各带 background/light/chart/motion/asym 与种子色板字体）；
+  `design_intelligence_rules.COLOR_DIRECTIONS` 有 13 个**色彩方向族**：`quiet_luxury / luxury_editorial /
   song_elegance / zen_minimal / nordic_quiet / monochrome_noir / cinematic_narrative / nature_luxury /
-  organic_systems / precision_tech / precision_minimal / data_intelligence / editorial_intelligence`
-  （给 regime/sat/motion 约束）。名字不在表里会回落到 `quiet_minimal` 并在 plan 里留痕。
+  organic_systems / precision_tech / precision_minimal / data_intelligence / editorial_intelligence`。
+  **两类名字都能直接写进 `design_direction`**：族名带来它自己的材质、动势、纹理语言与种子色板
+  （结构骨架仍取预设；`texture` 以键名传下去，由 `asset_prompt` 展开成可读语言）。
+  两类都不在表里才回落到 `quiet_minimal` 并在 plan 里留痕。
   种子可整体推翻，品牌色永远优先。
+- 介质（水墨画 / 摄影 / 插画）由**每张资产自己的 `medium`** 决定，不是方向：方向里的
+  `material` 与 `visual_world` 说的是「整副 deck 用什么质感说话」（一份宋韵里每张照片也
+  可能拍在纸台上），它们不会替某一张图宣告它是画。这一条划错了，摄影页会被灌进整套
+  水墨工艺纪律，与它自己的 `photography medium` 自相矛盾。
 - 换方向只换参数与家族表达，不改编译 API、数据口径与发布门。
 - 一次只混一个维度（借排版人格，或借留白纪律）；说不清混的是什么就退回单方向。
 

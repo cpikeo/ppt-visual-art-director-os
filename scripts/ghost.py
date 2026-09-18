@@ -348,16 +348,34 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
 
 
 def _rows(e: dict) -> list[dict]:
-    """图表载荷的唯一键是 `data`（与 guard / compiler 同源）。
+    """图表载荷：单序列读 `data`，多序列读 `categories` + `series[{name,values}]`。
 
-    这里刻意**不**再接受 `rows` 别名：ghost 曾按 `rows or data` 取值，于是
-    写 `rows` 的 spec 在预览里画得好好的，到 guard 却报「数值图表缺少 data」、
-    编译出来是一张空图。预览比产物宽容，是最坏的一种不一致——它让作者
-    照着一张不存在的证据做判断。宽容度必须由 guard 统一定义，预览只跟随。
+    这里刻意**不**接受 `rows` 别名：ghost 曾按 `rows or data` 取值，于是写 `rows`
+    的 spec 在预览里画得好好的，到 guard 却报「缺少 data」、编译出来是一张空图。
+    预览比产物宽容，是最坏的一种不一致——它让作者照着一张不存在的证据做判断。
+
+    反过来同样坏：compiler 的多序列路径（`series` + `categories`，走
+    `NATIVE_CHART_TYPES`）画得出来，预览若只认 `data` 就会把一张正确的图显示成
+    空框——**冤枉对的**。实测 `comparison_bar` + 双序列的产物里 `<c:ser>=2`、
+    数据点齐全，而预览只画了一个叉。多序列在这里按「类别 × 序列」展开成一维条，
+    与产物的分组柱语义一致；预览是方向证据，不承担像素级复刻。
     """
     rows = e.get("data")
-    return [r if isinstance(r, dict) else {"label": str(i + 1), "value": r}
-            for i, r in enumerate(rows)] if isinstance(rows, list) else []
+    if isinstance(rows, list) and rows:
+        return [r if isinstance(r, dict) else {"label": str(i + 1), "value": r}
+                for i, r in enumerate(rows)]
+    cats, series = e.get("categories"), e.get("series")
+    if (isinstance(cats, list) and cats and isinstance(series, list) and series
+            and isinstance(series[0], dict)):
+        out: list[dict] = []
+        for s in series:
+            if not isinstance(s, dict) or not isinstance(s.get("values"), list):
+                continue
+            name = str(s.get("name") or "").strip()
+            for cat, val in zip(cats, s["values"]):
+                out.append({"label": f"{cat} · {name}" if name else str(cat), "value": val})
+        return out
+    return []
 
 
 def _value(row: dict, default=0.0) -> float:
@@ -447,21 +465,29 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     elif kind in ("bar", "horizontal_bar", "comparison_bar"):
         # OOXML 里 barChart 的 barDir="bar" 是横向条：预览必须与产物同向，
         # 否则「方向证据」给的是错的（曾经把横向条画成竖柱）。
+        # 类目轴在左侧：不给它留位置，预览就只剩一串没有主人的数字，
+        # 而产物里 OOXML 是会把标签画出来的——预览必须说同一件事。
         gap = max(3, int(8 * scale))
+        cfont = _font(10 * scale)
+        cat_w = int(min(180 * scale, (right - left) * 0.34))
+        bar_left = left + cat_w
         bh = max(2, int((bottom - top - gap * max(0, len(values) - 1)) / max(1, len(values))))
         hl = highlight_index(e, rows, -1)
         show_values = bool(e.get("show_values", True))
         vfont = _font(11 * scale)
         for i, val in enumerate(values):
             by = top + i * (bh + gap)
-            bw2 = int((val - lo) / span * (right - left))
-            d.rounded_rectangle((left, by, left + bw2, by + bh), radius=max(1, int(4 * scale)),
+            bw2 = int((val - lo) / span * (right - bar_left))
+            d.text((left, by + bh / 2), str(rows[i].get("label", ""))[:24],
+                   font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="lm")
+            d.rounded_rectangle((bar_left, by, bar_left + bw2, by + bh),
+                                radius=max(1, int(4 * scale)),
                                 fill=accent if i == hl else ink)
             if show_values:
                 vtext = str(int(val)) if float(val).is_integer() else str(val)
-                d.text((left + bw2 + 4 * scale, by + bh / 2), vtext,
+                d.text((bar_left + bw2 + 4 * scale, by + bh / 2), vtext,
                        font=vfont, fill=ink, anchor="lm")
-        d.line((left, top, left, bottom), fill=muted, width=max(1, int(scale)))
+        d.line((bar_left, top, bar_left, bottom), fill=muted, width=max(1, int(scale)))
     else:
         gap = max(3, int(8 * scale))
         bw = max(2, int((right - left - gap * max(0, len(values) - 1)) / max(1, len(values))))

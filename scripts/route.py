@@ -272,15 +272,40 @@ DIRECTION_ALIASES = {
 }
 
 
+def _color_family(value) -> dict | None:
+    """取「色彩方向族」的定义（若 name 是 design_intelligence_rules.COLOR_DIRECTIONS 的一员）。
+
+    两张表管的是不同维度，本函数是它们唯一的合流点：
+      * `DIRECTION_PRESETS`（4 个）给**结构**——background / light / chart 手法 / 对称性 / 字体；
+      * `COLOR_DIRECTIONS`（13 个）给**材质与人格**——material / motion / texture / 色板骨架。
+    族名过去一律静默回落成 quiet_minimal，于是 song_elegance 这类姓氏根本送不到
+    资产层——方向写了等于没写。介质（水墨/摄影）由每张资产自己的 medium 决定，
+    方向族名只负责把材质、动势与纹理语言送达。
+    """
+    name = str(value or "").strip().lower()
+    if not name:
+        return None
+    try:
+        from design_intelligence_rules import COLOR_DIRECTIONS
+    except ImportError:      # 判断层缺失时保持原行为，不把包带崩
+        return None
+    entry = COLOR_DIRECTIONS.get(name)
+    return dict(entry) if isinstance(entry, dict) else None
+
+
 def _canonical_direction(value) -> tuple[str, dict | None]:
     raw = str(value or "").strip()
     if not raw:
         return "quiet_minimal", None
     if raw in DIRECTION_PRESETS:
         return raw, None
+    if _color_family(raw):
+        return raw.lower(), None
     key = re.sub(r"\s+", " ", raw.lower().replace("×", " x ")).strip()
     if key in DIRECTION_ALIASES:
         return DIRECTION_ALIASES[key], None
+    if _color_family(key):
+        return key, None
     # 组合型方向允许命中最长语义片段，但不会任意猜测单个形容词。
     for alias, canonical in sorted(DIRECTION_ALIASES.items(), key=lambda kv: -len(kv[0])):
         if len(alias) >= 8 and alias in key:
@@ -374,6 +399,35 @@ def _asset_reason(ctype: str, decision: str) -> str:
 _DECK_CACHE: dict[str, dict] = {}
 MAX_DECK_CACHE = 32   # 只缓存整副 deck 的规划结果；有界，不演化成配置系统
 
+# 方向的构图语法词表（与 design-intelligence.md §Direction 的键一致）。
+# 注意：它和页面级的 `design_intelligence.COMPOSITION_POOL`
+# （scale_contrast / split_field / grid_evidence …）**不是同一套词**——
+# 前者说「这副 deck 的轴线性格」（软偏轴还是硬网格），后者说「这一页怎么摆」。
+# 两者同名不同义，brief 的 composition_grammar 指的是前者。
+DIRECTION_COMPOSITION_GRAMMARS = (
+    "soft_asymmetry", "strict_grid", "cinematic_stage", "evidence_field", "path_sequence",
+)
+
+
+def _execution_with_brief_overrides(direction: str, brief: dict | None) -> dict:
+    """方向执行参数 + brief 里显式写下的构图语法 / 背景场景。
+
+    这两个键与 `direction_execution` 的字段一一对应，所以 brief 写了就该生效：
+    它们是「这副 deck 长什么样」的直接判断，预设只是起点。别的视觉字段
+    （tone_hint / type_voice / color_behavior / media_policy / energy_curve）
+    没有对应的消费点，已从 brief 契约里删除——留着只会让人写了以为生效。
+    """
+    execution = _direction_execution(direction)
+    if not isinstance(brief, dict):
+        return execution
+    grammar = str(brief.get("composition_grammar") or "").strip()
+    if grammar and grammar.lower() != "unknown" and grammar in DIRECTION_COMPOSITION_GRAMMARS:
+        execution["composition_grammar"] = grammar
+    scene = str(brief.get("background_scene") or "").strip()
+    if scene and scene.lower() != "unknown":
+        execution["background"] = scene
+    return execution
+
 
 def _direction_execution(direction: str) -> dict:
     """方向 → 执行参数（deck 级事实，逐页复制没有意义）。
@@ -382,12 +436,19 @@ def _direction_execution(direction: str) -> dict:
     不规定元素放在哪里。几何与构图永远归生成侧的设计判断。
     """
     d = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"])
+    fam = _color_family(direction) or {}
+    motion_keys = tuple(fam.get("motion") or ())
+    texture_keys = tuple(fam.get("texture") or ())
     return {
         "background": d["background"],
-        "material": d["material"],
+        # 族的材质语言优先于预设的骨架材质：宋韵要的是 rice paper，不是 matte paper。
+        "material": str(fam.get("material") or d["material"]),
         "light": d["light"],
         "chart_style": d["chart"],
-        "motion": d["motion"],
+        # motion / texture 传**键名**，由 asset_prompt.enhance_asset_card 统一查表展开
+        # —— 同一张表只允许有一个读者，避免两处各读一遍再各自漂移。
+        "motion": (motion_keys or (d["motion"],))[0],
+        "texture_keys": list(texture_keys),
         "composition_grammar": "soft_asymmetry" if d["asym"] else "evidence_field",
     }
 
@@ -635,6 +696,20 @@ def _plan_deck(brief: dict) -> dict:
                 anchor["page_number"] = idx + 1
             pg["anchor"] = anchor
     seed = DIRECTION_PRESETS.get(direction, DIRECTION_PRESETS["quiet_minimal"]).get("theme_seed", {})
+    # 色彩方向族的种子骨架：只映射四个确有语义的槽位（纸面 / 墨色 / 强调），
+    # secondary 与 muted 仍取预设——那两槽要过可读性底线，族表里的 supporting
+    # 是「面料色」不是「字色」，直接搬来会写出 3:1 以下的弱字。
+    _fam = _color_family(direction) or {}
+    if (_fam.get("seed") or {}):
+        _sk = dict(_fam["seed"])
+        _colors = dict(seed.get("colors") or {})
+        for slot, key in (("background", "foundation"), ("surface", "foundation"),
+                          ("ink", "information"), ("primary", "information"),
+                          ("accent", "accent")):
+            if _sk.get(key):
+                _colors[slot] = _sk[key]
+        seed = dict(seed)
+        seed["colors"] = _colors
     # Color Intelligence 入口：品牌色一到，方向预设立即让位。「科技=蓝」这类
     # 方向→色值的模板映射在入口处被切断；派生色阶由 OKLab derive_tokens 从种子展开。
     seed = _seed_from_brand(seed, brief.get("brand_colors")
@@ -659,7 +734,7 @@ def _plan_deck(brief: dict) -> dict:
         "warnings": plan_warnings,
         "intent_interpretation": intent_interpretation,
         "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可被作者覆盖）
-        "direction_execution": _direction_execution(direction),  # 介质/光照/图表手法（deck 级）
+        "direction_execution": _execution_with_brief_overrides(direction, brief),  # 介质/光照/图表手法（deck 级）
         "pages": pages,
         "assets": assets,
         "budget": {"max_asset_calls": cap,

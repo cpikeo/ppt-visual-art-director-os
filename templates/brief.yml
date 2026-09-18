@@ -18,17 +18,33 @@ slides:                 # 逐页内容；family 决定页面家族，density/ene
     title: ""
     content: ""
     # density: sparse   # sparse|balanced|dense —— 显式声明不会被节奏规则改写
-    # 图片需求（需要图片时在 plan 之前填写；不要先出图再补计划）：
+    # energy: high      # low|medium|high
+    #
+    # ── 出图旋钮（逐页；显式写下的一律压过方向默认值）──────────────────────
+    # 下面是「这张图长什么样」的直接声明。方向预设只给起点，逐页写的永远赢。
     # asset_subject: "一只青瓷茶盏，主体在右侧；左侧保留文字留白"
+    #   ↑ 画面是什么（不是观点）。不写会用 title 兜底，并在 QC 里提示你补。
     # medium: photography
-    # asset_ratio: "3:2"
-    # asset_allow_crop: true  # 仅在有意接受与生成比例不符的图片并裁切时声明
+    #   ↑ 介质：photography / chinese ink-wash painting / illustration …
+    #     介质决定闸门：写着水墨就注入水墨工艺纪律，写着摄影就注入写实纪律。
+    asset_ratio: ""     # 16:9 / 4:3 / 3:2 —— 与生成比例不符要裁切时声明 asset_allow_crop: true
     # asset_function: emotion
-    # negative_space_anchor: left
-    # text_color: dark
+    #   ↑ hero|proof|emotion|context|frame|separate
+    #     hero/proof 会严格判「具象主体是否被画框裁断」；
+    #     emotion/context 的画面边界本就由材质与光填满（纸、石、雾、墨晕），该项不判。
+    # negative_space_anchor: left   # 文字安全区落在哪一侧（left|right|top|bottom|center）
+    # safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}   # 要精确指定时才写
+    # text_color: dark              # 安全区上的文字明暗（dark|light）——QC 会照它验亮度
+    # material: "rice paper ground, ink wash gradient"
+    # lighting: "single soft north window light from the upper left, gentle falloff"
+    # texture: ["handmade rice paper fiber"]
+    #   ↑ 也接受族键名：eastern / luxury / architecture / technology / organic
+    # asset_color: ["ink tonal range of three to four values", "warm rice-paper ground"]
+    # negative: ["saturated red sun", "gold leaf"]    # 本页专属反向词（会自动加 no）
+    #
     # 既有素材不强制重生成，但必须登记来源并经 QC：
     # asset_source: {kind: provided, path: "images/tea.jpg", source: "用户提供；授权待核实"}
-    # energy: high      # low|medium|high
+    #   kind 可取 provided / licensed / original / reuse
   - id: s02
     family: statement
     title: ""
@@ -37,23 +53,27 @@ slides:                 # 逐页内容；family 决定页面家族，density/ene
     title: ""
 
 # ---------------------------------------------------------------------------
-# 可选：视觉方向。没有就在这里写 unknown 之外的答案，或者就留空——
-# 留空时技能包不做风格猜测，方向由内容判断产生。
+# 可选：视觉方向
+#   design_direction 接受两类名字（名字对不上会回落 quiet_minimal，并在 plan 留 warning）：
+#     · 结构预设（4 个）：quiet_minimal / editorial_brand / product_stage / evidence_first
+#     · 色彩族（13 个）：song_elegance / zen_minimal / luxury_editorial / nordic_quiet /
+#       quiet_luxury / monochrome_noir / cinematic_narrative / nature_luxury /
+#       organic_systems / precision_tech / precision_minimal / data_intelligence /
+#       editorial_intelligence
+#   色彩族会带来它自己的材质、动势、纹理语言与种子色板（品牌色仍然优先）。
 # ---------------------------------------------------------------------------
-visual_world: ""        # 一句话：材质 + 光影 + 空间（如"哑光纸面 + 冷灰轨道 + 单侧柔光"）
-tone_hint: ""           # calm_authority | constructive_urgency | human_trust | technical_clarity
+visual_world: ""        # 一句话：材质 + 光影 + 空间（如"哑光纸面 + 冷灰轨道 + 单侧柔光"）。
+                        # 它进每张图的氛围语言。**别在这里写介质词**（水墨 / 宣纸 / 摄影）——
+                        # 介质由每张图自己的 medium 决定，写在 deck 级会把该介质强加给全 deck。
 composition_grammar: "" # soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence
-type_voice: ""          # editorial_serif | neutral_sans | product_display | humanist_sans
-color_behavior: ""      # quiet_neutral | single_signal | warm_material | dark_luminous
-background_scene: ""    # solid_world | atmospheric | cinematic
-media_policy: ""        # none | context | emotion | proof | hero
-energy_curve: ""        # 如 sparse-opening → dense-evidence → sparse-closing
-avoid: []               # 明确不做的几件事（如 [dashboard feeling, decorative stock]）
+                        # 写了就压过方向预设的默认构图语法
+background_scene: ""    # solid_world | atmospheric | cinematic —— 同上，写了优先
+avoid: []               # 明确不做的几件事（如 [dashboard feeling, 装饰性图库]）
+                        # 会作为反向词加进每张资产的 negative
 
 # ---------------------------------------------------------------------------
-# 可选：事实与品牌约束
+# 可选：品牌与产能
 # ---------------------------------------------------------------------------
-evidence_posture: fact_led     # fact_led | hypothesis_led | exploratory
 # 品牌色一到，方向种子立刻让位（派生色阶自动展开）。两种写法都生效：
 #   列表：按惯例序落位 —— 第 1 个=主色(文字/主信号)、第 2 个=强调色、第 3 个=辅色
 #     brand_colors: ["#1A3A5C", "#C8501E"]
@@ -61,5 +81,7 @@ evidence_posture: fact_led     # fact_led | hypothesis_led | exploratory
 #     brand_colors: {primary: "#1A3A5C", accent: "#C8501E", background: "#FFFFFF"}
 # 只接受 #RGB / #RRGGBB；写不出对比度的组合会被骨架的可读性兜底纠正。
 brand_colors: []
-design_direction: ""           # 只在你有既定视觉方向时才写（如 quiet_minimal）
-quality_level: ""              # fast（默认）| advanced（更重的资产与证据预算）
+design_direction: ""
+quality_level: ""       # fast（默认）| advanced（更重的资产与证据预算）
+                        # 注意 advanced 会把所有「出图可选」的页升为必须出图，
+                        # 再受 asset budget 上限截断——想精确控制就逐页写 asset_subject。

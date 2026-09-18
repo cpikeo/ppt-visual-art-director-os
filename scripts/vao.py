@@ -235,11 +235,17 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
     }.get(function, "left")).lower()
     safe_area = normalize_safe_area(raw.get("safe_area"), anchor)
     title = str(raw.get("title") or raw.get("content") or raw.get("text") or "visual context")
-    subject = raw.get("asset_subject") or title[:180]
-    direction = str(brief.get("design_direction") or brief.get("route_direction") or "")
+    subject = raw.get("asset_subject")
+    subject_fallback = not subject
+    if not subject:
+        subject = title[:180]
+    # 方向族名（song_elegance / zen_minimal / luxury_editorial …）是
+    # FAMILY_TEXTURE / FAMILY_MOTION 的键；页面家族名（cover / data_story）
+    # 在那两张表里从来命不中，静默落进 ("luxury",) 兜底。取 deck 的 canonical 值。
+    direction_family = str(deck.get("design_direction") or "").strip().lower()
     visual_world = str(brief.get("visual_world") or "")
-    style = [s for s in (direction, visual_world[:120] if visual_world else "")
-             if s and s.lower() != "unknown"]
+    if visual_world.lower() == "unknown":
+        visual_world = ""
     # 色值从**整副 deck 的主题**取（品牌优先派生过的那一份），不取方向预设的原始种子：
     # 素材必须跟着这份交付的色板走，而不是跟着方向标签走。
     deck_theme = deck.get("theme") if isinstance(deck.get("theme"), dict) else {}
@@ -253,22 +259,38 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
         "apc": f"APC-{str(asset_id).upper().replace('-', '_')}",
         "asset_type": raw.get("asset_type") or "background",
         "medium": raw.get("medium") or brief.get("asset_medium"),
-        "family": str(page_plan.get("page_family") or "").lower(),
+        "family": direction_family or str(page_plan.get("page_family") or "").lower(),
         "subject": [subject],
+        "subject_source": "title_fallback" if subject_fallback else "declared",
         "color": color_cue,
         "material": [str(raw.get("material") or derived.get("material") or "quiet matte surface")],
+        # 材质/光照的来源决定它们能不能替这张资产宣告介质：逐页显式写的算数，
+        # 方向默认值是**整副 deck 的质感语言**（"rice paper, ink stone…"），
+        # 一份宋韵里每张照片都拍在纸台上，不代表每张照片都是水墨画。
+        "material_source": ("declared" if raw.get("material")
+                            else "direction" if derived.get("material") else "fallback"),
         "lighting": [str(raw.get("lighting") or derived.get("light") or "single soft directional light")],
+        "lighting_source": ("declared" if raw.get("lighting")
+                            else "direction" if derived.get("light") else "fallback"),
         "composition": [str(derived.get("composition_grammar") or "asymmetric editorial composition")],
         "motion": [str(derived.get("motion"))] if derived.get("motion") else [],
-        "style": style,
+        # deck 级视觉世界进提示词当氛围语言，但**不参与介质闸门扫描**：
+        # 它描述整副 deck 的材质与光，不该替单张资产决定「这张是画还是照片」。
+        # 放进独立的 world 段（曾是 style 的一员，于是写一次「宣纸」就把水墨纪律
+        # 灌进了每一张摄影页）。
+        "world": [visual_world[:160]] if visual_world else [],
         "asset_function": function,
         "fusion_enabled": raw.get("fusion_enabled"),
-        "negative": list(raw.get("negative") or []),
+        # 逐页 negative 在前，deck 级 avoid 在后：brief 的「明确不做的几件事」
+        # 对每张图都成立，否则它只是模板里一句没人消费的装饰。
+        "negative": list(raw.get("negative") or []) + list(brief.get("avoid") or []),
     }
     # Directional defaults are weak descriptors; explicit brief/card language wins.
+    # 逐页显式写下的 material/lighting/texture/asset_color 永远压过方向默认值；
+    # 方向族带来的 texture_keys 是键名，由 enhance_asset_card 统一展开。
     card = enhance_asset_card(card, family=card["family"],
                               motion=card["motion"] or None,
-                              texture=raw.get("texture"),
+                              texture=raw.get("texture") or derived.get("texture_keys"),
                               fusion=card["fusion_enabled"] is not False)
     page = {
         "negative_space_anchor": anchor,
@@ -559,7 +581,8 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
                       allow_crop=entry.get("allow_crop") is True,
                       background=entry.get("background_color") or "#FFFFFF")
         decision = qc_retry_decision(qc, attempt=int(entry.get("attempt", 0) or 0),
-                                     phase=phase, max_retries=entry.get("retry_budget", 1))
+                                     phase=phase, max_retries=entry.get("retry_budget", 1),
+                                     asset_function=entry.get("asset_function"))
         missing = (qc.get("status") == "error")   # 文件不存在 ≠ 图片不合格：修法不同
         item = {"asset_id": entry.get("asset_id"), "slide_ids": entry.get("slide_ids") or [],
                 "file": str(candidate), "file_sha256": image_sha, "qc": qc, "policy": decision,

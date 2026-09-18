@@ -85,6 +85,11 @@ UNIVERSAL_CHEAP_REJECTS: tuple[str, ...] = (
     "tech blue gradient", "rainbow gradient",     # Excessive Gradients / 科技蓝渐变
     "plastic skin", "oversaturated colors",       # Cheap AI Aesthetic
     "heavy HDR", "AI artifacts",
+    # 边框类：模型把「四周留白」误读成「加一圈画框 / 白边 / 黑边」是高频失效模式。
+    # 实测：prompt 里写 generous margins on all four sides，就输出了一张竖构图
+    # 带白边的 letterbox —— 画幅整段作废，这张图只能重出。这不是审美问题，
+    # 是画幅失效，所以放进通用反向，不留给逐页去记。
+    "white border", "black bars", "letterbox", "picture frame", "poster mockup",
 )
 
 # --------------------------------------------------------------------------
@@ -117,25 +122,30 @@ INK_CHEAP_REJECTS: tuple[str, ...] = (
 )
 
 
-INK_FAMILIES: tuple[str, ...] = ("song_elegance",)
-
-
 def ink_gate_active(card: dict) -> bool:
     """资产卡是否已选择水墨语言（纯检测，供调用方/自检复用）。
 
-    检测只扫调用方亲手写的图像语言段（subject/color/material/lighting/
-    composition/style），**不扫** enhance_asset_card 自动注入的
-    motion/texture 弱描述——微浮雕里一句 rice paper 是材质底味，
-    不等于选择了水墨画；家族维度只订阅叙事即水墨的家族名（song_elegance）。
-    zen_minimal 是「东方禅意极简」，不是水墨画家族，不自动点火。
+    判据是**这张资产自己**的介质声明，不是整副 deck 的方向：
+
+      * `medium`——最明确的信号（`chinese ink-wash painting` / `水墨`）；
+      * subject / color / composition / style 里出现水墨词汇；
+      * 逐页亲手写下的 material / lighting。
+
+    不扫 enhance_asset_card 自动注入的 motion/texture 弱描述（微浮雕里一句
+    rice paper 是材质底味，不等于选择了水墨画），也不扫方向默认值
+    （`material_source == "direction"` 说的是整副 deck 用什么质感说话——
+    一份宋韵里每张照片都拍在纸台上，不代表每张照片都是水墨画）。
+
+    这里曾经还认一个方向族名白名单（song_elegance）：方向名送不进来时它永不命中，
+    送进来之后又把全 deck 的摄影页一起拖成水墨——两头都是错的，已删除。
     """
     if not isinstance(card, dict):
         return False
-    fam = str(card.get("family") or card.get("direction_family") or "").lower()
-    if fam in INK_FAMILIES:
-        return True
-    fields = [card.get(k) for k in ("subject", "color", "material",
-                                    "lighting", "composition", "style")]
+    fields = [card.get("medium"), card.get("subject"), card.get("color"),
+              card.get("composition"), card.get("style")]
+    for key in ("material", "lighting"):
+        if str(card.get(f"{key}_source") or "declared").lower() != "direction":
+            fields.append(card.get(key))
     blob = " ".join(str(x) for seg in fields for x in _as_list(seg)).lower()
     return any(t.lower() in blob for t in INK_TERMS)
 
@@ -288,8 +298,11 @@ ASSET_CONTRAST_GUARD = {
 }
 
 # 卡片中参与组装的段（按 §6.2 顺序）
+# `world` 是 deck 级视觉世界（材质 + 光影 + 空间的一句话），它进提示词当氛围语言，
+# 但**不参与介质闸门扫描**——闸门问的是「这张资产选了什么语言」，那是资产级的事。
+# `style` 仍是卡片级显式风格，照旧参与扫描。
 CARD_SEGMENTS = ("subject", "color", "material", "lighting", "composition",
-                 "motion", "style")
+                 "motion", "style", "world")
 REQUIRED_SEGMENTS = ("subject", "color", "material", "lighting", "composition")
 
 
@@ -359,6 +372,27 @@ FAMILY_TEXTURE: dict[str, tuple[str, ...]] = {
 }
 
 
+def _expand_layer(spec, table: dict) -> list[str]:
+    """把「层键名 or 自由文本」统一展开成可读语言。
+
+    键名（`eastern` / `natural` / `luxury` …）查表取第一句；自由文本原样保留
+    —— 调用方显式写下的句子永远赢，这是全包的既有纪律，不在这一层改变。
+    方向族传下来的是键名（见 route._direction_execution），brief 里逐页写的是文本，
+    两种写法都要能用，且展开只发生在这一处。
+    """
+    out: list[str] = []
+    for item in _as_list(spec):
+        text = str(item).strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in table:
+            out.extend(table[key][:1])
+        else:
+            out.append(text)
+    return out
+
+
 def enhance_asset_card(card: dict, family: str | None = None,
                        motion: list | tuple | None = None,
                        texture: list | tuple | None = None,
@@ -367,21 +401,23 @@ def enhance_asset_card(card: dict, family: str | None = None,
 
     默认 motion 1 句、texture 1 句、fusion 1–2 句——
     提示词密度也是克制的一部分；调用方显式传入时永远赢。
+
+    `family` 收的是**方向族名**（song_elegance / zen_minimal …），不是页面家族名：
+    FAMILY_MOTION / FAMILY_TEXTURE 的键全是族名，传页面家族名会静默落进
+    ("spatial",) / ("luxury",) 兜底——一份年报里每张图都吃「fine leather grain」。
     """
     out = dict(card)
     fam = family or str(card.get("family") or card.get("direction_family") or "")
     m_keys = FAMILY_MOTION.get(fam, ("spatial",))
     t_keys = FAMILY_TEXTURE.get(fam, ("luxury",))
     if motion is None:
-        pool: list[str] = []
-        for k in m_keys:
-            pool.extend(MOTION_LAYERS.get(k, ()))
-        motion = pool[:1]
+        motion = _expand_layer(m_keys, MOTION_LAYERS)[:1]
+    else:
+        motion = _expand_layer(motion, MOTION_LAYERS)
     if texture is None:
-        pool = []
-        for k in t_keys:
-            pool.extend(TEXTURE_LAYERS.get(k, ()))
-        texture = pool[:1]
+        texture = _expand_layer(t_keys, TEXTURE_LAYERS)[:1]
+    else:
+        texture = _expand_layer(texture, TEXTURE_LAYERS)
     out["motion"] = list(motion)
     out["texture"] = list(texture) + list(TEXTURE_DISCIPLINE)
     if fusion:
@@ -434,6 +470,10 @@ def validate_asset_card(card: dict) -> list[str]:
                       f"（可选 {sorted(ASSET_TYPE_SUFFIX)}）")
     if not card.get("apc"):
         issues.append("缺少 apc：资产卡编号未溯源")
+    if card.get("subject_source") == "title_fallback":
+        issues.append("未声明 asset_subject：主体描述取自页面标题。"
+                      "标题是观点（「这一年真正的收获，不是增速」），不是画面；"
+                      "照着它出图会跑偏——补一句画面描述再出图。")
     return issues
 
 
@@ -579,7 +619,7 @@ def asset_fingerprint(card: dict, page: dict | None = None) -> str:
     page = page if isinstance(page, dict) else {}
     keys = ("asset_type", "medium", "family", "subject", "color", "material",
             "lighting", "composition", "motion", "texture", "negative",
-            "asset_function", "fusion_enabled", "style")
+            "asset_function", "fusion_enabled", "style", "world")
     payload = {k: card.get(k) for k in keys if card.get(k) is not None}
     payload["negative_space_anchor"] = page.get("negative_space_anchor") or "left"
     payload["safe_area"] = normalize_safe_area(
@@ -614,11 +654,18 @@ ASSET_QC_BLOCKING_CHECKS = frozenset({
     "contrast_suitability", "image_dimensions", "aspect_ratio", "visibility",
 })
 ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance"})
+# 「主体贴边被裁」这条判据是为**具象主体**设的：产品、人物、建筑被画框切掉，
+# 一眼就是错的。而氛围/语境类资产的画面边界本来就该由材质与光填满——宣纸的
+# 撕边、石面的颗粒、雾气的过渡延伸到画外是自然的，不是「被裁断的主体」。
+# 实测过：三层手工纸特写与被摄主体的显著性占比都在 0.00–0.07 同一量级，
+# 像素层面区分不了「材质延伸」与「具象主体」，所以判据只能取自声明的职能。
+ASSET_QC_CONTEXT_FUNCTIONS = frozenset({"emotion", "context", "frame", "separate"})
 ASSET_QC_PHASES = frozenset({"draft", "review", "release"})
 
 
 def qc_retry_decision(qc: dict, *, attempt: int = 0,
-                      phase: str = "draft", max_retries: int = ASSET_QC_MAX_RETRIES) -> dict:
+                      phase: str = "draft", max_retries: int = ASSET_QC_MAX_RETRIES,
+                      asset_function: str | None = None) -> dict:
     """把 image_qc 结果翻译成有界动作，不改变 run_qa 的 review/release 档位。
 
     ``attempt`` 从 0 开始。draft 只对影响文字安全区/构图可用性的检查自动
@@ -640,9 +687,15 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
     retry_cap = min(requested, ASSET_QC_MAX_RETRIES)
     checks = qc.get("checks") or [] if isinstance(qc, dict) else []
     issues = [c for c in checks if isinstance(c, dict) and c.get("status") == "issue"]
-    blocking = [c for c in issues if c.get("check") in ASSET_QC_BLOCKING_CHECKS]
-    advisory = [c for c in issues if c.get("check") in ASSET_QC_ADVISORY_CHECKS
-                 or c.get("check") not in ASSET_QC_BLOCKING_CHECKS]
+    # 氛围/语境类资产不适用「主体贴边」：它们的画面边界本就由材质与光填满，
+    # 边界延伸是自然的，不是被裁断的主体（判据见 ASSET_QC_CONTEXT_FUNCTIONS）。
+    # 这一条省掉的是整整一轮「重出一张 → 还是过不了 → 换意象」的往返，
+    # 而那个往返曾把设计判断也带偏：为了过检查去改意象，而不是因为意象该改。
+    context_asset = str(asset_function or "").strip().lower() in ASSET_QC_CONTEXT_FUNCTIONS
+    blocking = [c for c in issues
+                if c.get("check") in ASSET_QC_BLOCKING_CHECKS
+                and not (context_asset and c.get("check") == "subject_position")]
+    advisory = [c for c in issues if c not in blocking]
     missing_file = isinstance(qc, dict) and qc.get("status") == "error"
     if missing_file:
         action = "block"

@@ -196,8 +196,15 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
         issues.extend(verify_sources(manifest))
         issues.extend(plan_issues(spec, read_json(manifest["workflow"]["plan_path"])))
         expected_plan = (spec.get("asset_workflow") or {}).get("plan_sha256")
-        if not expected_plan or expected_plan != (manifest.get("workflow") or {}).get("plan_sha256"):
-            issues.append("SPEC.asset_workflow.plan_sha256 缺失或与资产清单不匹配；保留当前 plan 生成的骨架凭证")
+        actual_plan = (manifest.get("workflow") or {}).get("plan_sha256")
+        if not expected_plan or expected_plan != actual_plan:
+            # 骨架里那份指纹在重跑 plan 之后必然过期，而它长得和真的一样——
+            # 报「不匹配」而不说该看哪儿，只会逼人去读源码。把权威位置直接报出来。
+            issues.append(
+                "SPEC.asset_workflow.plan_sha256 缺失或与资产清单不匹配。权威值在 "
+                f"{path.name} → workflow.plan_sha256"
+                + (f"（当前 {actual_plan}）" if actual_plan else "")
+                + "；把它整段抄进 SPEC.asset_workflow，或重新执行 plan 生成新骨架")
         entries = {e["asset_id"]: e for e in asset_entries(manifest)}
         qpath = Path(qc_path).expanduser().resolve() if qc_path else path.with_name(path.stem + ".qc.json")
         qc = read_json(qpath)

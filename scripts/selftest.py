@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -36,9 +37,18 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
 
 
 def run_vao(*args: str, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
-    env = {"PYTHONPATH": str(SCRIPTS), "PATH": "/usr/bin:/bin:/usr/local/bin"}
+    # 子进程 env 有意隔离，但两端必须约定同一编码。默认 text=True 靠 locale 猜：
+    # 在 GBK 码页的 Windows 上，父进程按 UTF-8 解码 vao.py 的中文输出会炸掉 reader
+    # 线程 → proc.stdout 变 None → 报错落在无关行号（TypeError: NoneType 不可下标），
+    # 整条回归链根本建立不起基线。所以显式钉死 UTF-8，并补回 Windows 进程启动硬依赖。
+    env = {"PYTHONPATH": str(SCRIPTS), "PATH": "/usr/bin:/bin:/usr/local/bin",
+           "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    for key in ("SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"):
+        if os.environ.get(key):
+            env.setdefault(key, os.environ[key])
     return subprocess.run([sys.executable, str(SCRIPTS / "vao.py"), *args],
-                          capture_output=True, text=True, env=env, cwd=str(cwd or ROOT))
+                          capture_output=True, encoding="utf-8", errors="replace",
+                          env=env, cwd=str(cwd or ROOT))
 
 
 def spec_module(path: pathlib.Path, *, bad_overlap: bool = False) -> pathlib.Path:
@@ -1517,6 +1527,11 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     denied=False
     try:
         (root/"asset.png").symlink_to(outside)
+        # 沙箱化的 Windows 宿主会把 symlink 调用**静默降级**成普通文件：不抛 OSError，
+        # is_symlink() 却是 False。此时上面的分支测不到逃逸，用例会假绿/假红。
+        # 显式把它当成「造不出链接」处理，强制走下面的 post-resolution 边界。
+        if not (root/"asset.png").is_symlink():
+            raise OSError("host downgraded the symlink to a plain file")
         try:
             aw.resolve_asset({"asset_id":"x","decision":"generate","expected_filename":"asset.png"},
                              {"assets_dir":str(root)},d/"manifest.json")
