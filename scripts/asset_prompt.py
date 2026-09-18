@@ -249,6 +249,7 @@ ASSET_FUNCTION_PHRASES = {
     "separate": "the image separates sections while staying quiet",
     "direct": "the light leads the eye toward the main subject",
     "contextualize": "the image establishes context while keeping the foreground readable",
+    "immersive": "immersive cinematic full-bleed background environment, soft atmospheric depth, spacious foreground for typography",
 }
 
 # 资产类型后缀

@@ -60,7 +60,7 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Plan a deck from a brief (R1)
-        run: python scripts/pipeline.py templates/design_brief.yml --out /tmp/plan.json --json > /dev/null
+        run: python scripts/vao.py plan templates/brief.yml --out /tmp/plan.json
 
       - name: Confirm spec mode stays free of python-pptx (v3.2 红线)
         run: |

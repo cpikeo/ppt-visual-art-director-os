@@ -150,6 +150,19 @@ R6 收口
   `asset_workflow.status=SKIPPED, reason=no_image_elements`；可以直接编排与检查。
   无需制造无意义的空清单或调用图片工具。
 
+### 速度优化与世界级反过度设计纪律
+
+1. **测试边界清晰：生产严禁调用离线自检**
+   - `scripts/selftest.py`（139 项）属于离线框架与契约单元回归测试，只在开发技能包底层引擎时运行。
+   - 生产环境中**严禁调用 `selftest.py`**；生产只需运行 `scripts/vao.py check`（基于 `guard.py` 的毫秒级几何安全网，全 deck 校验仅耗时约 700ms）。
+2. **Native-First（排版优先）与 Hero 资产节制（1~2 张胜过 10 张）**
+   - 顶级品牌设计（如 Pentagram、Aesop、Apple、Kinfolk）的共同特征是克制。15 页演示文稿中，至多保留 1~2 张战略高潮点 Hero 资产（如封面 Cover 概念意象、核心产品 Product 单品），其余页面全部依靠文字骨架、数据看板、发丝线分栏与留白传达力量。
+   - 杜绝每页滥用 AI 生成图：堆砌 AI 图不仅增加数分钟生图与修图延迟，更会导致画面廉价、分散观众对投资逻辑的注意力。
+3. **资产提示词无缝直出（`asset_prompt.py` 终端就绪）**
+   - 运行 `python scripts/vao.py assets ...` 时，已内置调用 `asset_prompt.py` 并直接在控制台输出经过双语质检的高保真提示词与负向提示词，无需手动编写或额外提取，直接用于生图。
+4. **单轮一次通过（Zero-Repair 产能预算）**
+   - 编写 `build_deck.py` 时预先按容量公式估算行长，标题字号与框高留足折行空间，确保在 Round 1/6 以 700ms 极速一次通过，杜绝多轮试错。
+
 ### 执行凭证（不仅是“建议照做”）
 
 - 计划保留 brief 内容与文件字节指纹；骨架保留 `SPEC.asset_workflow.plan_sha256` 与 `plan_path`。

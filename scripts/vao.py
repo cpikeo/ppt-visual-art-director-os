@@ -1016,8 +1016,26 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
             else:
-                print(f"assets complete · unique_calls={manifest['asset_budget']['unique_generation_calls']} "
-                      f"· manifest={args.out}")
+                calls = (manifest.get("asset_budget") or {}).get("unique_generation_calls", 0)
+                print(f"assets complete · unique_calls={calls} · manifest={args.out}")
+                gen_items = [a for a in manifest.get("assets", []) if a.get("decision") == "generate"]
+                if gen_items:
+                    print("-" * 60)
+                    print("  视觉资产提示词清单 (via asset_prompt.py)")
+                    print("-" * 60)
+                    for idx, a in enumerate(gen_items, 1):
+                        sid = ",".join(a.get("slide_ids", []))
+                        aid = a.get("asset_id")
+                        fn = a.get("expected_filename")
+                        ratio = a.get("ratio", "16:9")
+                        prompt = a.get("prompt", "")
+                        neg = a.get("negative", "")
+                        print(f"[{idx}/{len(gen_items)}] Slide {sid} -> {fn} (ID: {aid})")
+                        print(f"  Ratio: {ratio} | Safe Area: {a.get('safe_area')}")
+                        print(f"  Prompt: {prompt}")
+                        if neg:
+                            print(f"  Negative: {neg}")
+                        print("-" * 60)
             return 0
         if args.command == "asset-qc":
             _, code = asset_qc(args.manifest, args.input, phase=args.phase,
