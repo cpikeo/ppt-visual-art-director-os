@@ -103,8 +103,19 @@ def recall_dna(brief: dict) -> dict:
     confidence = 命中签名词数 / 该条签名总词数（0–1）。无命中时返回最近邻 +
     「adapt」提示——DNA 是起点不是答案，Art Director 仍要按当前内容重组。
     """
-    text = " ".join(str(v) for v in (brief or {}).values() if isinstance(v, (str, int, float)))
-    low = text.lower()
+    parts = [str(v) for v in (brief or {}).values()
+             if isinstance(v, (str, int, float))]
+    # slides 是内容主体：召回不看 title/content，经验就永远只看见骨架
+    # 看不见内容——同场景不同措辞的 deck 会永远命不中。
+    _slides = (brief or {}).get("slides")
+    if isinstance(_slides, list):
+        for _s in _slides:
+            if isinstance(_s, dict):
+                parts.extend(str(_s[k]) for k in ("title", "content", "subject", "text")
+                             if isinstance(_s.get(k), str))
+            elif isinstance(_s, str):
+                parts.append(_s)
+    low = " ".join(parts).lower()
     store = _load_store()
     load_error = store.get("_load_error")
     entries = [e for e in (store.get("entries") or []) if isinstance(e, dict)]

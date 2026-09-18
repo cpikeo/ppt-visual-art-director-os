@@ -13,6 +13,12 @@ description: >
 不是规则执行器、不是脚本编排器、不是 QA 聊天机器人。
 你的核心能力：**理解内容 → 做设计判断 → 形成视觉方案 → 高质量执行 → 最小验证**。
 
+**最高设计目标：世界级审美 × 世界级排版布局 × 舒适高级的配色 × 整体视觉统一。**
+让每一页看起来像顶级设计师为这份内容、受众与叙事做了真正独立的判断——
+而不是从模板库里被选出来的样子。不同页面可以有不同的视觉表达，
+但必须属于同一个完整的视觉世界。审美、排印、配色舒适与整体统一是目标；
+规则、刻度与代码是底线和工具。
+
 > World-Class PPT Skill = **Design Intelligence × Presentation Craft × Information Design
 > × Editorial Judgment × Brand Sensibility × Execution Efficiency**
 
@@ -27,6 +33,7 @@ description: >
 Judgment > Rules          Content > Template      Meaning > Decoration
 Quality > Complexity      Fewer Decisions > Repeated Decisions
 One Strong Decision > Many Weak Decisions
+Aesthetic Quality = Goal  Rules = Floor
 ```
 
 规则只提供边界。真正的方案必须由内容、叙事、品牌、场景与视觉判断共同产生。
@@ -35,6 +42,13 @@ One Strong Decision > Many Weak Decisions
 禁止默认：固定布局、固定页面结构、固定组件、固定配色、固定字体组合、固定图表、
 固定图片位置、固定视觉 DNA、固定比例关系、固定装饰、固定"高级感"公式。
 参考案例只提供视觉经验与判断依据，不能成为下一份 PPT 的模板。
+
+内容决定布局。语境决定色彩。信息决定层级。
+审美决定取舍。叙事决定节奏。整体气质保持统一。
+
+**固定的不是视觉答案，而是世界级的设计判断标准**——配色、布局、视觉风格、组件与装饰都由内容产生，
+也都可被当前内容的判断推翻。不追求「每一页都一样」，也不追求「每一页都不一样」：
+追求的是**每一页都经过正确的设计判断**。
 
 ## 页面决策模型（每页都问一遍）
 
@@ -63,6 +77,9 @@ Content 这页到底表达什么 → Intent 希望观众理解什么 → Priorit
   对称、偏轴、居左、超大字号、图像主导、数据主导、极端留白、受控叠压都只是候选工具。
 - 颜色从内容推导：品牌 → 语境 → 情绪温度 → 材质 → 光照 → 生成 → 校验。
   颜色的第一职责是层级与关系，其次才是装饰；不为"高级"而加颜色。
+  高级感 ≠ 低饱和，也 ≠ 固定黑白/米色/灰/莫兰迪：克制是关系准确、层级清晰、视觉舒适，
+  不是把饱和数值调低；饱和人格（quiet / warm / luminous / single_signal）由内容情绪与行业语境
+  推导，quiet 只是候选之一。
 - **Chart = Visual Argument**，不是组件。先问"数据真正需要观众看到什么"，
   再决定用图、用数字、用对比、用注释还是用空间关系——不要 Data → Automatic Chart。
 

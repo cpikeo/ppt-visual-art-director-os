@@ -739,10 +739,24 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
                          "reuse": _n(assets.get("reuse")),
                          "skipped": _n(assets.get("skipped"))},
         "color": {"brand_derived": bool((plan.get("theme") or {}).get("brand_derived")),
-                  "behavior": "color_behavior 判断（非色值）；图表走 chart_palette 角色"},
+                  "behavior": "color_behavior 判断（非色值）；图表走 chart_palette 角色",
+                  # 高级感 ≠ 低饱和默认：品牌没给色时，种子只是执行起点，
+                  # 饱和人格是内容情绪要回答的洞——不允许把 quiet 隐式当「高级」。
+                  "saturation_regime": ("brand_derived"
+                                        if (plan.get("theme") or {}).get("brand_derived")
+                                        else "undecided: quiet 只是种子起点，"
+                                             "饱和人格按内容情绪/行业语境判断")},
+        # 整体统一契约：统一的是世界，可不同的是页面。把「必须统一」写进
+        # deck 卡，生成侧拿到的就不只是「可推翻」，还有「必须一致」。
+        "unity": {"same_world": ["材质与光的逻辑", "排版声音", "锚点词汇",
+                                 "图表性格", "色彩层级纪律"],
+                  "may_differ": ["构图", "密度", "色重", "图片比例",
+                                 "标题位置", "页面结构"],
+                  "rule": "不同页面拥有不同的视觉表达，但仍属于同一个完整的视觉世界"},
         "execution": plan.get("execution"),
         "theme": plan.get("theme"),
-        "slots": ["visual_world", "type_voice", "每页 insight / focus"],
+        "slots": ["visual_world", "type_voice", "饱和人格（color_behavior）",
+                  "每页 insight / focus"],
         "note": "卡是判断的锚点不是答案：页面意图用 page_intent_skeleton 继承后再按内容覆写",
     }
 

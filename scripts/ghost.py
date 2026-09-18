@@ -189,6 +189,9 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     x, y, w, h = _scale_box(e, scale)
     if w <= 0 or h <= 0:
         return
+    # 文本框底色（标签条 / 染色列）：预览不画，就等于和产物说两件事。
+    if e.get("fill"):
+        _fill(img, (x, y, w, h), ctx, e["fill"], radius=0)
     text = str(e.get("text", ""))
     if bool(e.get("uppercase")):
         text = text.upper()
@@ -414,22 +417,39 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         gap = max(3, int(8 * scale))
         bh = max(2, int((bottom - top - gap * max(0, len(values) - 1)) / max(1, len(values))))
         hl = highlight_index(e, rows, -1)
+        show_values = bool(e.get("show_values", True))
+        vfont = _font(11 * scale)
         for i, val in enumerate(values):
             by = top + i * (bh + gap)
             bw2 = int((val - lo) / span * (right - left))
             d.rounded_rectangle((left, by, left + bw2, by + bh), radius=max(1, int(4 * scale)),
                                 fill=accent if i == hl else ink)
+            if show_values:
+                vtext = str(int(val)) if float(val).is_integer() else str(val)
+                d.text((left + bw2 + 4 * scale, by + bh / 2), vtext,
+                       font=vfont, fill=ink, anchor="lm")
         d.line((left, top, left, bottom), fill=muted, width=max(1, int(scale)))
     else:
         gap = max(3, int(8 * scale))
         bw = max(2, int((right - left - gap * max(0, len(values) - 1)) / max(1, len(values))))
         hl = highlight_index(e, rows, -1)
+        show_values = bool(e.get("show_values", True))
+        vfont = _font(11 * scale)
+        cfont = _font(10 * scale)
         for i, val in enumerate(values):
             bx = left + i * (bw + gap)
             by = bottom - int((val - lo) / span * (bottom - top))
             # 强调谁由 spec 决定；没声明就不强调（预览不替作者挑「最大的那条」）
             d.rounded_rectangle((bx, by, bx + bw, bottom), radius=max(1, int(4 * scale)),
                                 fill=accent if i == hl else ink)
+            # 直接标注与类目轴：产物里有，预览里就必须有。
+            cx = (bx + bx + bw) / 2
+            if show_values:
+                vtext = str(int(val)) if float(val).is_integer() else str(val)
+                d.text((cx, max(y + 2, by - 3 * scale)), vtext,
+                       font=vfont, fill=ink, anchor="mb")
+            d.text((cx, bottom + 3 * scale), str(rows[i].get("label", "")),
+                   font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="mt")
         d.line((left, bottom, right, bottom), fill=muted, width=max(1, int(scale)))
     img.alpha_composite(overlay)
 

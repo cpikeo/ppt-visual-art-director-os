@@ -17,8 +17,10 @@ from pathlib import Path
 CACHE_NAME = "compile_cache.json"
 # 编译器/底层 primitives 改变时，即使 spec 投影不变，旧 PPTX 也不能继续冒充当前
 # 引擎产物。把实现指纹放进 view，而不是依赖手工清缓存。
-CACHE_ENGINE_FILES = ("compiler.py", "primitives.py")
-CACHE_VIEW_VERSION = 5
+# ghost.py 也在内：预览是「交付证据」的一部分，渲染器改了还复用旧预览，
+# 等于让作者看着上一版的证据做这一版的判断。
+CACHE_ENGINE_FILES = ("compiler.py", "primitives.py", "ghost.py")
+CACHE_VIEW_VERSION = 6
 NON_GEOMETRIC_SLIDE_KEYS = (
     "page_intent", "source_zone", "notes", "speaker_notes", "comment",
     "comments", "annotations", "id", "label",

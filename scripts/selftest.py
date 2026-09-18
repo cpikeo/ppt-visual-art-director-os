@@ -738,6 +738,15 @@ def check_judgment_layer(work: pathlib.Path) -> None:
     check("plan: 每页带 composition（构图语法提案，零坐标）",
           all((pg.get("composition") or {}).get("grammar") for pg in plan.get("pages") or []))
 
+    # D9 deck 卡必须携带整体统一契约：统一的与可不同的都成立、且不相交——
+    #    这是「整体高级统一」的机器可守形态；被静默删掉即视为判断层退化。
+    card = route.deck_decision({"slides": [{"id": "s01", "family": "cover", "title": "t"}]})
+    uni = card.get("unity") or {}
+    same_w, diff_w = set(uni.get("same_world") or []), set(uni.get("may_differ") or [])
+    check("unity: deck 卡携带统一契约（统一/可不同两列成立且不相交)",
+          bool(same_w) and bool(diff_w) and not (same_w & diff_w) and bool(uni.get("rule")),
+          f"same={sorted(same_w)} differ={sorted(diff_w)}")
+
     # D4 验证不评分：guard / qa 的结果里不得再出现分数或评级
     spec = {"canvas": {"width": 1280, "height": 720},
             "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
@@ -814,6 +823,23 @@ def check_judgment_layer(work: pathlib.Path) -> None:
           f"first={first.get('added')} again={again.get('added')} rejected={rejected.get('added')} ")
     check("memory: 库文件损坏时拒绝写入（不把空库写回、经验不灭）",
           _dna_write_guard(work), "写坏库 → record_dna 应抛错并保持文件原样")
+
+    # D10 召回必须看见 slides 正文：只看骨架字段时，内容级签名永远命不中——
+    #     这是「经验只看见骨架」的静默退化，守住它。
+    tmp_store2 = work / "dna_slide_recall.json"
+    entry2 = {"id": "slide_recall_probe", "pattern": "测试：从 slides 内容召回",
+              "signature": {"keywords": ["东南亚", "合资"]},
+              "design_problem": "x", "judgment": {"media": "m"},
+              "works_because": "w", "avoid": [], "when_not_to": "",
+              "proven": {"project": "selftest"}}
+    di.record_dna(entry2, path=tmp_store2)
+    saved2 = di.DNA_STORE
+    di.DNA_STORE = tmp_store2
+    hit2 = di.recall_dna({"audience": "董事会",
+                          "slides": [{"id": "s01", "title": "东南亚合资路径"}]})
+    di.DNA_STORE = saved2
+    check("memory: 召回纳入 slides 标题/正文（内容级签名可命中）",
+          hit2.get("matched") == "slide_recall_probe", str(hit2.get("matched")))
 
 
 def _dna_write_guard(work: pathlib.Path) -> bool:

@@ -452,21 +452,31 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
     return report, 0 if not report["blocking_assets"] and not report["pending_assets"] else 2
 
 
+def _ghost_engine_stamp() -> str | None:
+    """渲染器指纹：预览复用必须同时命中产物字节戳与渲染器版本。"""
+    from compile_cache import _file_sha
+    return _file_sha(Path(__file__).resolve().parent / "ghost.py")
+
+
 def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
                   output_sha: str | None = None) -> dict:
     """方向预览证据：同一份 PPTX 只渲染一次（确定性产物 + 字节戳命中即复用）。
 
-    预览是确定性几何投影：产物字节戳没变，重画一遍只是把同一张图再做一次。
+    复用前提是渲染器没变：ghost.py 的指纹也写进 marker，渲染器一改，
+    旧预览立即失效——证据必须和当前引擎说同一件事。
     """
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
+    engine = _ghost_engine_stamp()
     if output_sha and marker.exists():
         try:
             cached = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             cached = {}
         sheet = cached.get("contact_sheet")
-        if cached.get("output_sha256") == output_sha and sheet and Path(sheet).exists():
+        if (cached.get("output_sha256") == output_sha
+                and cached.get("engine") == engine
+                and sheet and Path(sheet).exists()):
             info = dict(cached)
             info["reused"] = True
             return info
@@ -474,6 +484,7 @@ def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
     info["slide_ids"] = [str(s.get("id")) for s in (spec.get("slides") or [])
                          if isinstance(s, dict) and s.get("id")]
     info["output_sha256"] = output_sha
+    info["engine"] = engine
     info["reused"] = False
     _json_write(marker, info)
     return info
@@ -601,7 +612,7 @@ def run_once(args: argparse.Namespace) -> int:
 def doctor() -> int:
     """Fast environment check; the only required external capability is Python packages."""
     checks = {}
-    for name in ("pptx", "PIL", "yaml"):
+    for name in ("pptx", "PIL", "yaml", "numpy"):
         try:
             __import__(name)
             checks[name] = True
@@ -609,7 +620,7 @@ def doctor() -> int:
             checks[name] = False
     checks.update({"external_renderer_policy": "disabled",
                    "references_loaded": False})
-    ok = all(checks[k] for k in ("pptx", "PIL", "yaml"))
+    ok = all(checks[k] for k in ("pptx", "PIL", "yaml", "numpy"))
     print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))
     return 0 if ok else 2
 
