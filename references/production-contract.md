@@ -5,7 +5,7 @@
 | 层 | 核心问题 | 是否阻断 |
 |---|---|---|
 | **Contract / Guard** | 文件正确、数据正确、结构正确、可编译、无溢出、无碰撞、资产链完整 | **是**（10 个阻断码） |
-| **Advisory / Risk** | 可读性风险、节奏风险、焦点风险、视觉异常（`DESIGN_RULES` 留痕 + forecast 预测） | 否（只进 `warn_summary`） |
+| **Advisory / Risk** | 可读性风险、节奏风险、焦点风险、视觉异常（`DESIGN_RULES` 留痕 + forecast 预测） | 否（只进 `trace_summary`） |
 | **Intelligence / Craft** | 高级感、审美、构图、节奏、视觉价值、应不应该这么设计 | 不属于 Contract |
 
 **验证层不评分**：`guard.check_spec` 没有 score，不排序、不评级。焦点尺度、密度节奏、
@@ -35,7 +35,7 @@ accent 面积、色相族、记忆锚点这类**设计代理指标全部是 advi
 |---|---|---|
 | 焦点优先级 | focus 落在**文字**上才度量：它应拿到页内最大字号；焦点也可以是图像、留白、小数字——字号只是手段之一 | `focus_scale`（hint） |
 | 密度节奏 | `sparse/balanced/dense` 是输入语义（枚举合法性才是工程事实）；占用带（`DENSITY_BANDS`）实测只是参考，不是「必须和上页不同」的义务 | `rhythm`（hint，仅声明与结构同时重复才发） |
-| 色彩 | Accent ≤5%、色相族 ≤4（`max_colors`）= `constraints` 声明数字的执法，未声明不检查；值为什么存在在 Intelligence | `accent_budget` / `color_budget` / `palette_discipline`（warn/hint） |
+| 色彩 | 色相族 ≤4（`max_colors`）= `constraints` 声明数字的执法，未声明不检查；值为什么存在在 Intelligence | `palette_discipline`（warn/hint） |
 | 图表论点 | 差异主张 + 零基长度编码 + 声明 `highlight`/`target` + max/min <1.25× = 差异不可见 | `chart_argument`（warn） |
 | 可读性 | 声明色弱化字 <3:1 提示、<1.8:1 警示；正文级 <4.5:1 是 `READABILITY_FAIL` 硬门 | `contrast`（hint/warn）；error 级才是 `READABILITY_FAIL` |
 | 背景保护 | 全幅背景图免检资格：`layer:background` + `overlay` ≥0.20 + 覆盖 ≥60%（`BG_MIN_*`） | `BG_UNPROTECTED`（warn/hint） |
@@ -65,7 +65,7 @@ accent 面积、色相族、记忆锚点这类**设计代理指标全部是 advi
   全程单进程，不串行跑单脚本，不启动任何外部渲染器。
 
 报告自足：`fix_plan.groups[]` 按根因码分组阻断项（`count/ids/samples/fix`，fix 内嵌本表契约行）；
-修正轮照单一次改完，零回读。`warn_summary` 按 (domain,rule,level) 聚合非阻断项，只记录。
+修正轮照单一次改完，零回读。`trace_summary` 按 (domain,rule,level) 聚合非阻断项，只记录。
 
 ## 执行模式（三个已足够）
 
@@ -113,7 +113,7 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 | 代码 | 状态 | 处理 |
 |---|---|---|
 | `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_WORKFLOW_FAIL` | BLOCKED | 必修：按 `fix_plan` 根因组一次改完 |
-| 其他 warn/hint（`BG_UNPROTECTED`、`DESIGN_RULES` 16 条、节奏与对齐提示等） | PASS | 只进 `warn_summary`，不解释、不询问、不逐条修复 |
+| 其他 warn/hint（`BG_UNPROTECTED`、`DESIGN_RULES` 16 条、节奏与对齐提示等） | PASS | 只进 `trace_summary`，不解释、不询问、不逐条修复 |
 
 `guard.check_spec` 的返回只有 `passed / checks / advisory_rules / warnings / grid / line_measure`——
 **没有 score，也不恢复 score**：一旦出现总分，系统会退化成规则 → 指标 → 分数 → 排名 →

@@ -14,7 +14,7 @@
     BLOCKED    存在阻断项；`fix_plan` 按根因分组，一次改完
     PREVIEW_ONLY  spec 模式（只诊断，不产出 PPTX）
 
-warning 只聚合留痕（`warn_summary`），不构成门槛、不进入对话。
+非阻断证据只聚合留痕（`trace_summary`），不构成门槛、不进入对话——Evidence ≠ Error。
 
 技能包不依赖任何外部渲染链路：产物是原生可编辑
 PPTX，视觉方向证据由 `ghost.py` 的确定性结构预览给出。一次 check =
@@ -159,7 +159,7 @@ def build_fix_plan(failure_codes, guard_checks, compile_report) -> dict:
             "groups": groups}
 
 
-def build_warn_summary(items) -> list:
+def build_trace_summary(items) -> list:
     """非阻断项按 (domain, rule, level) 聚合：记录在案，不构成门槛、不逐条刷屏。
 
     聚合保留**可执行信息**：样本原文（不截短到看不懂）与涉及的元素 id。
@@ -340,7 +340,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         if c.get("advisory") or c.get("level") == "hint":
             # 聚合是为了不刷屏，不是为了**丢掉可执行的话**。此前这里把每条 hint
             # 的正文替换成 “{rule} 微调提示（详见 guard.checks）”——而 guard.checks
-            # 根本不在修复包里（packet 只有 fix_plan / warning_summary），
+            # 根本不在修复包里（packet 只有 fix_plan / trace_summary），
             # 于是打磨阶段拿到的是一句「去看一个你看不到的东西」。
             # 现在：仍然按 rule 聚合计数，但保留真实样本与元素 id，
             # 让「PASS 之后再打磨一轮」有据可依。
@@ -405,10 +405,12 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
                       "compiled": do_compile, "provenance_required": provenance_required,
                       "external_renderer": "disabled",
                       "visual_evidence": "ghost_preview"},
+        # §21 三态词汇：BLOCK（阻断发布）/ PASS（无阻断）/ TRACE（只记录证据，
+        # 不触发修复、不进入对话）。这里不再出现模糊的 "warnings" 计数。
         "verdict": {"verdict": "BLOCKED" if blocking_codes else "PASS",
                     "status": status,
                     "blocking": len(blocking_items),
-                    "warnings": len([i for i in items if i.get("level") == "warn"]),
+                    "trace": len([i for i in items if i.get("level") in ("warn", "hint")]),
                     "codes": failure_codes,
                     "question": "这份 PPT 能不能交付？"},
         "status": status,
@@ -423,7 +425,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         "compile": {"passed": compile_report.get("passed"),
                     "skipped": compile_report.get("skipped"),
                     "reason": compile_report.get("reason"),
-                    "warnings": len(compile_warnings),
+                    "trace": len(compile_warnings),
                     "slides": compile_report.get("slides"),
                     "file_bytes": compile_report.get("file_bytes"),
                     "semantic_compile_view": compile_report.get("semantic_compile_view"),
@@ -431,7 +433,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
                     "artifact_sha256": compile_report.get("output_sha256"),
                     "output_path": compile_report.get("output_path")},
         "fix_plan": build_fix_plan(failure_codes, guard.get("checks") or [], compile_report),
-        "warn_summary": build_warn_summary(items),
+        "trace_summary": build_trace_summary(items),
         "next_action": next_action,
         "performance": {
             "total_ms": int((time.time() - t0) * 1000),

@@ -308,7 +308,7 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     This is the only place where route decisions become image-generation work.
     asset_prompt remains a pure translator; no reference files are read here.
     """
-    from asset_prompt import asset_fingerprint, build_asset_prompt
+    from asset_prompt import asset_fingerprint, build_asset_prompt, qc_policy
     from pipeline import build_plan_bundle
     from route import align_pages
 
@@ -416,10 +416,7 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             "meta": result["meta"],
             "expected_filename": f"{asset_id}.png",
             "retry_budget": 1,
-            "qc_policy": {"text_safe_area": "blocking",
-                          "negative_space_ratio": "blocking",
-                          "subject_position": "blocking",
-                          "brightness_balance": "advisory"},
+            "qc_policy": qc_policy(),
         }
         by_fingerprint[fingerprint] = entry
         assets.append(entry)
@@ -478,7 +475,7 @@ def _polish_plan(result: dict) -> dict:
     需要的是「改哪个元素、改成什么」，而不是「有 2 条提示」。
     """
     groups = []
-    for bucket in result.get("warn_summary") or []:
+    for bucket in result.get("trace_summary") or []:
         rule = str(bucket.get("rule") or "")
         groups.append({
             "rule": rule,
@@ -513,8 +510,8 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path,
         "failure_codes": result.get("failure_codes", []),
         "affected_slides": result.get("affected_slides", []),
         "fix_plan": result.get("fix_plan") or {"groups": []},
-        # Warnings stay machine-readable but out of the conversation packet.
-        "warning_summary": result.get("warn_summary", []),
+        # Trace stays machine-readable but out of the conversation packet (Evidence ≠ Error).
+        "trace_summary": result.get("trace_summary", []),
         "asset_workflow": result.get("asset_workflow"),
         "release_eligible": result.get("release_eligible", False),
         "next_action": result.get("next_action"),
@@ -550,7 +547,7 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
     manifest_file = Path(manifest_path).expanduser().resolve()
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     import hashlib
-    from asset_workflow import (ACCEPTED, asset_entries, digest, file_digest,
+    from asset_workflow import (ACCEPTED, asset_entries, digest,
                                 now, resolve_asset, verify_sources)
     workflow_issues = verify_sources(manifest)
     results = []
@@ -787,7 +784,7 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
     ledger = note_round(output_path.with_name(output_path.stem + "_vao"),
                         mode=mode, spec_hash=result.get("source_spec_hash"),
                         status=result.get("status"), blocking=result.get("blocking_items"),
-                        warnings=len(result.get("warn_summary") or []))
+                        warnings=len(result.get("trace_summary") or []))
     result["rounds"] = ledger
     manifest_path = None
     if manifest is not None:
@@ -816,7 +813,7 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
             print("  fix[asset-binding] ×{} → 补齐 manifest 引用或重新生成资产: {}".format(
                 len(ids) + len(files), "、".join(ids + files)))
         if not (result.get("fix_plan") or {}).get("groups"):
-            print("  ✓ 无阻断：warning 只留痕，不进入对话")
+            print("  ✓ 无阻断：trace 只留痕（Evidence ≠ Error），不进入对话")
         if polish:
             plan = packet_value.get("polish_plan") or {}
             groups = plan.get("groups") or []

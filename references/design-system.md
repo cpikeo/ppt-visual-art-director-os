@@ -126,13 +126,14 @@ Intelligence §04，「这个方向高级吗」在 Craft——System 不代答�
 
 | 量 | 一次设对 | 谁抓你 |
 |---|---|---|
-| 强调色可辨 | Accent 与主/辅色**色相差 ≥12°**；暖纸 + 暖炭 + 金挤在同一色相族＝强调失效（出路：主色改冷石墨，或 accent 换异相色） | `accent_hue_min`（advisory） |
+| 强调色可辨 | Accent 与主/辅色**色相差 ≥12°**；暖纸 + 暖炭 + 金挤在同一色相族＝强调失效（出路：主色改冷石墨，或 accent 换异相色）。这是你自己的判断：写进 `theme.constraints.accent_hue_min` 才被执法 | `palette_discipline`（仅声明后点名） |
 | 强调色不载文字 | 低饱和金在象牙底上约 2.7:1；金只做发丝线/方点/高亮端点/目标线 | `contrast`（元素里真拿 accent 写字才会被点名） |
 | muted 可读 | 按 WCAG AA 取：浅底象牙 `#F6F5F1` → `#6E6A5F`（4.8:1）；深底深林绿 `#2E3B33` → `#A9B4AA`（5.5:1）。3.2:1 的「高级浅灰」投影上不可读；`chart_muted` 指到哪个 token，刻度就用哪个——别指到深面/浅面上 | `contrast`（<3:1 提示 / <1.8:1 警示） |
+| 背景图 vs 插图 | 有文字压图的全幅/半幅图 → **`layer: background` + `overlay`**（享背景层免检）；立在栏内、旁边配文字的图 → **插图**（必须让开元素与来源区）。两者不是审美选择而是职责：背景图要「能与文字共存」，插图只需「自己好看」。实测：3:2 照片的左半是平墙时，放进校栏会读成「一块白板 + 一点照片」，还和页面纸面重复——此时改竖构图、让题材填满画幅，或干脆出血做背景 | `SOURCE_COLLISION` / `BG_*` |
 | 整幅背景图可读 | 二选一：① `layer:background` + `overlay`（opacity ≥0.20）+ 覆盖 ≥60%（享免检）；② 用**形状**做全幅渐变罩则必须烘焙进画心——形状无豁免，与 `source_zone` 相交即 `SOURCE_COLLISION`。分幅画心（图只占一栏）不需要罩 | `BG_*` / `SOURCE_COLLISION` |
 | 发丝线对不上中心 | 位置吸附、尺寸不吸附（任一维 ≤2px 豁免）：水平细线光心恒在 `8k+0.75`，8px 方块在 `8k+4`，**二者不可能对中**。组合标记按单元素设计，靠长度变奏承担页型 | `grid_snap` + `alignment` |
 | 焦点不突出 | Focus 应获得明确的视觉优先级——字号只是手段之一（图像、留白、孤立的小数字、结构关系都可以是焦点）。**仅当焦点落在文字元素上**，代码查它是否拿到页内最大字号。页眉大字、超大页码、巨型图表标签都会把焦点偷走 | `focus_scale`（hint，只查文字焦点） |
-| 字号落到驻点 | 只落 `64 / 44 / 32 / 22 / 17 / 12.5`；写 14、11.5 这类「差一点」的值，会让一页字阶从 4 涨到 6，层级失焦 | `type_budget`（hint）+ 阶梯归并 |
+| 字号落到驻点 | 只落 `64 / 44 / 32 / 22 / 17 / 12.5`；写 14、11.5 这类「差一点」的值，会让一页字阶从 4 涨到 6，层级失焦 | 设计判断（字阶由你排，不设 hint 规则） |
 
 ---
 
@@ -143,9 +144,7 @@ Intelligence §04，「这个方向高级吗」在 Craft——System 不代答�
 ```python
 theme = {"colors": {"background","surface","primary","secondary","ink","muted","accent","negative"},
         "fonts": {"cn","latin"},          # 规范键；display/body 是等价别名（骨架旧写法）
-        "constraints": {"accent_max": 0.05, "whitespace_min": 0.62,   # 方向种子：见下
-                        "type_step_min": 1.25, "decoration_area_max": 0.06,
-                        "bg_layers_max": 1, "bold_ratio_max": 0.50},
+        "constraints": {"whitespace_min": 0.55},   # 可选：只写你真的要承诺的数字
         "chart_palette": {"primary","secondary","neutral","accent","negative"}}
 ```
 
@@ -156,19 +155,24 @@ theme = {"colors": {"background","surface","primary","secondary","ink","muted","
 Theme 是运行时数据结构，不是设计知识库：永远不加 layout / cards / hero / section / premium /
 visual_style 一类的知识键（版式知识只住 Intelligence / Craft）。
 
-**`constraints` 是方向的数字部分**（plan 的 `theme.constraints` 原样落到 spec，骨架会照抄）：
+**`constraints` 是作者写下的数字承诺**（v5.6 起：包不再替作者发明审美数字。
+路线预设曾经带一整套留白下限/字号级差/装饰面积/粗体占比，再让 guard 去执法——自己的默认值
+自己判卷，实测在整幅画心页上必然误报。现在：`plan.theme.constraints` 只带作者写下的键，
+你写进 spec 才被执法）：
 
 | 键 | 量的东西 | 越界后果 |
 |---|---|---|
-| `accent_max` | 每页强调色面积 | 强调色铺开＝没有重点 |
 | `whitespace_min` | deck 留白率下限（**元素框并集之外**的占比） | 页面被填满，读不出层次 |
 | `type_step_min` | 相邻字号级差下限 | 级差太小读成「没对齐」 |
-| `decoration_area_max` | 装饰面积上限 | 装饰抢走主焦点 |
 | `bg_layers_max` | 背景层数（≥60% 页面积的非文字元素） | 层叠过多，前景浮不起来 |
 | `bold_ratio_max` | 显式加粗的文本元素占比 | 全都加粗＝都没加粗 |
+| `max_charts` / `max_colors` | 每页图表数 / 颜色角色数上限 | 一页塞太多信号 |
+| `hue_families_max` | 全套色相族上限（30° 一档） | 颜色多不多是判断，只有你声明了才量 |
+| `accent_hue_min` | Accent 与主/辅色的最小色相角 | 同上：声明了才量 |
+| `chart_label_scale_tol` | 同类图表跨页标签字号最大倍数 | 同上：声明了才量 |
 
-写错键名不会报错但**会被 `theme_constraints` 点名**（写了等于没写）。未声明的键不检查——
-手写 spec 不会被方向默认值吵到。
+写错键名不会报错但**会被 `theme_constraints` 点名**（写了等于没写）。**未声明一律不检查**：
+留白够不够、层级碎不碎、装饰多不多，默认交给设计判断；只有你把它写成数字，它才成为承诺。
 
 **字体键只有 `cn` / `latin` 会被读**（`display` / `body` 认作别名）；两个都不写或写成别的名字，
 产物会回落 Arial / Microsoft YaHei——字体判断在产物里彻底消失，`theme_fonts` 会点名它。

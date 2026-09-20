@@ -75,6 +75,9 @@ UNIVERSAL_CHEAP_REJECTS: tuple[str, ...] = (
     # 带白边的 letterbox —— 画幅整段作废，这张图只能重出。这不是审美问题，
     # 是画幅失效，所以放进通用反向，不留给逐页去记。
     "white border", "black bars", "letterbox", "picture frame", "poster mockup",
+    # 假留白面板：实测失效模式——「留白区」被画成一块硬边平色块，边界肉眼可见。
+    # 与 letterbox 同类（画幅失效），因此进通用反向，不留给逐页去记。
+    "flat painted panel", "hard-edged rectangle of flat tone", "visible seam or step edge",
 )
 HUMAN_SCENE_REJECTS: tuple[str, ...] = (
     "cliché corporate imagery", "corporate handshake",
@@ -289,6 +292,9 @@ def hex_to_color_name(value) -> str | None:
 # prompt receives both a human direction and the geometric fraction so a model
 # can preserve a usable text field instead of merely hearing "leave space".
 SAFE_AREA_PRESETS = {
+    # "none"：版面不压文字（如整幅画心、半幅出血带）。此时不再注入任何
+    # 「安静面」句式，QC 也不再拿默认矩形去检查——没有文字压图，就没有安全区。
+    "none": {},
     "left": {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78},
     "right": {"x": 0.60, "y": 0.08, "width": 0.34, "height": 0.78},
     "top": {"x": 0.08, "y": 0.06, "width": 0.84, "height": 0.27},
@@ -299,6 +305,10 @@ SAFE_AREA_PRESETS = {
 
 def normalize_safe_area(value=None, anchor: str = "left") -> dict:
     """Return a bounded x/y/width/height fraction for prompt and QC."""
+    if anchor == "none" and not value:
+        return {}
+    if isinstance(value, dict) and not value:
+        return {}                       # 显式空矩形 = 版面不压文字（无安全区）
     raw = value if isinstance(value, dict) else SAFE_AREA_PRESETS.get(anchor, SAFE_AREA_PRESETS["left"])
     try:
         x = max(0.0, min(1.0, float(raw.get("x", 0.0))))
@@ -312,16 +322,23 @@ def normalize_safe_area(value=None, anchor: str = "left") -> dict:
 
 
 def safe_area_phrase(area: dict, text_color: str | None = None) -> str:
-    """Compact geometric instruction; kept short to avoid prompt inflation."""
-    pct = lambda n: f"{round(float(n) * 100):g}%"
-    phrase = (f"keep the text-safe zone at x {pct(area['x'])}, y {pct(area['y'])}, "
-              f"width {pct(area['width'])}, height {pct(area['height'])}, "
-              "free of high-frequency detail")
-    if text_color:
-        phrase += (" with an even light tonal field for dark typography"
-                   if str(text_color).lower() == "dark" else
-                   " with an even dark tonal field for light typography")
-    return phrase
+    """留白指令，只用视觉语言，不写坐标。
+
+    为什么删掉坐标（v5.6）：提示词里写「x 6%, y 8%, width 34%, height 78%」时，
+    图像模型会给一个**字面答案**——把那块矩形画成硬边的平色面板。实测证据：两张交付
+    资产在 33.1% / 17.9% 宽度处出现 28.6 / 9.7 灰阶的列均值阶跃，被圈住的一侧整带
+    标准差只有 0.4 / 0.6 灰阶（真实材质留白是 1.7–5.3）。留白该描述材质与光的衰减，
+    矩形坐标属于 QC 的内部量（safe_area 仍作为检查矩形）。空 area = 版面不压文字，
+    此时一个字都不给，S 版面自己承担安静面。
+    """
+    if not area:
+        return ""
+    dark = str(text_color or "").lower() != "light"
+    if dark:
+        return ("the open side of the frame stays quiet and unbroken, its even tone coming from "
+                "light falling off across the material, never from a painted block")
+    return ("the open side of the frame stays dark and unbroken, its shadow coming from light "
+            "falling away across the material, never from a painted block")
 
 
 LIGHT_PHRASES = {
@@ -690,7 +707,13 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     # 仅对透明资产（illustration / icon）追加对比度防护
     segments.extend(ASSET_CONTRAST_GUARD.get(asset_type, ()))
 
-    prompt = separator.join(_dedup(segments))
+    # 无安全区（画心独占版面）时，凡是「把眼睛引向留白锚点 / 留白对齐到文字安全区」
+    # 一类句子都是空指令——版面根本不压文字。提示词只留版面真正要用的话。
+    if not area:
+        segments = [x for x in segments
+                    if not any(k in x for k in ("negative space", "negative-space",
+                                                "text-safe area"))]
+    prompt = separator.join(s_ for s_ in _dedup(segments) if s_)
 
     # --- 5. 反向提示词（分层组装：核心恒注入，场景层按画面可能有什么注入）---
     negatives = list(NEGATIVE_BASE) + list(UNIVERSAL_CHEAP_REJECTS) \
@@ -772,10 +795,23 @@ QC_TEXT_RANGE = 0.30               # 安全区亮度需落在此范围外才同�
 # review/release 只记录问题并交给人工/qa 处理，不由资产脚本自动升级流程。
 ASSET_QC_MAX_RETRIES = 1
 ASSET_QC_BLOCKING_CHECKS = frozenset({
-    "text_safe_area", "negative_space_ratio", "subject_position",
+    "text_safe_area", "subject_position", "hard_seam",
     "contrast_suitability", "image_dimensions", "aspect_ratio", "visibility",
 })
-ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance"})
+# negative_space_ratio 从阻断降为 advisory：它量的是「平坦块占比」，而假留白面板
+# 恰好增加平坦块——指标越漂亮，图越假。判断留给设计智能，QC 只守物理事实（硬缝）。
+ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance", "negative_space_ratio"})
+
+
+def qc_policy() -> dict:
+    """asset manifest 的 qc_policy 唯一真源。
+
+    清单里曾另写一份同义字典，于是「报告承诺什么」与「代码执行什么」可以不一致：
+    实测 negative_space_ratio 已降级为 advisory，清单仍写 blocking。策略只有一个
+    出口：谁改这里，清单和执法一起改。
+    """
+    return {**{c: "blocking" for c in sorted(ASSET_QC_BLOCKING_CHECKS)},
+            **{c: "advisory" for c in sorted(ASSET_QC_ADVISORY_CHECKS)}}
 # 「主体贴边被裁」这条判据是为**具象主体**设的：产品、人物、建筑被画框切掉，
 # 一眼就是错的。而氛围/语境类资产的画面边界本来就该由材质与光填满——宣纸的
 # 撕边、石面的颗粒、雾气的过渡延伸到画外是自然的，不是「被裁断的主体」。
@@ -844,12 +880,48 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
 
 
 # 安全区定义：文字通常落在声明锚点的对面/一侧（留白区），按锚点取一块矩形。
-_SAFE_ZONES = {
-    "left":   (0.00, 0.00, 0.45, 0.55),
-    "right":  (0.55, 0.00, 1.00, 0.55),
-    "top":    (0.00, 0.00, 1.00, 0.40),
-    "bottom": (0.00, 0.60, 1.00, 1.00),
-}
+def _hard_seam_check(arr, alpha):
+    """硬缝 / 假留白面板：满高度列均值阶跃 + 阶跃一侧整带几乎无方差。
+
+    判据必须是物理量（阶跃 + 方差），不是品味：真实光影边界一侧仍有材质纹理
+    （实测 1.7–5.3 灰阶标准差），假面板是 0.4–0.6。透明画布（Logo / 插画）上的
+    平色是设计本身，不判。返回 (ok, issue, suggestion)。
+    """
+    import numpy as np          # 懒加载：纯组装路径不引入像素依赖（与 image_qc 同律）
+    _STEP_MIN, _FLAT_MAX, _SHARE_MIN = 6.0 / 255.0, 1.2 / 255.0, 0.10
+    opaque = bool((alpha >= 250).all()) if alpha is not None else True
+    if not opaque or arr.shape[1] <= 2:
+        return True, None, None
+    step = np.abs(np.diff(arr.mean(axis=0)))
+    seam = None
+    for i in np.where(step > _STEP_MIN)[0]:
+        for band in (arr[:, : i + 1], arr[:, i + 1:]):
+            share = band.shape[1] / max(arr.shape[1], 1)
+            if share > _SHARE_MIN and float(band.std()) < _FLAT_MAX:
+                if seam is None or step[i] > seam[1]:
+                    seam = (int(i), float(step[i]), float(band.std()), share)
+    if not seam:
+        return True, None, None
+    return (False,
+            f"留白被画成一块平板：x={seam[0]}（{seam[3]:.0%} 画宽）处有 "
+            f"{seam[1] * 255:.0f} 灰阶硬边，一侧整带标准差仅 {seam[2] * 255:.1f}",
+            "留白应来自光在材质上的衰减，不是一块硬边平色：去掉这块矩形区域，"
+            "或改由光向 / 构图承担明暗过渡后重出")
+
+
+def _balance_check(arr):
+    """整体明暗 + 左右/上下失衡（只记录，不阻断）。"""
+    mean = float(arr.mean())
+    h, w = arr.shape
+    if mean < QC_BRIGHT_DARK:
+        return False, f"整体过暗（亮度 {mean:.2f}）", "提高整体曝光或提亮主体受光面，保留层次"
+    if mean > QC_BRIGHT_LIGHT:
+        return False, f"整体过亮（亮度 {mean:.2f}）", "压暗背景或收光圈，让主体与文字有落点"
+    lr_gap = abs(float(arr[:, : w // 2].mean()) - float(arr[:, w // 2:].mean()))
+    tb_gap = abs(float(arr[: h // 2, :].mean()) - float(arr[h // 2:, :].mean()))
+    if lr_gap > QC_BALANCE_GAP or tb_gap > QC_BALANCE_GAP:
+        return False, f"画面失衡（左右差 {lr_gap:.2f} / 上下差 {tb_gap:.2f}）", "平衡光源或主体分布，避免一侧明显压黑/过曝"
+    return True, None, None
 
 
 def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None,
@@ -869,6 +941,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
             rgba = opened.convert("RGBA")
             w, h = rgba.size
             visible = rgba.getchannel("A").getextrema()[1] > 0
+            alpha = np.asarray(rgba.getchannel("A"))
             bg = Image.new("RGBA", rgba.size, (*ImageColor.getrgb(background), 255))
             arr = np.asarray(Image.alpha_composite(bg, rgba).convert("L"), dtype=np.float32) / 255.0
     except (OSError, ValueError) as exc:
@@ -908,6 +981,16 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
              f"实际尺寸 {w}×{h} 与计划比例 {expected_ratio} 不符",
              "按计划重新出图；有意裁切时在brief声明 asset_allow_crop: true 并重建清单")
     normalized = normalize_safe_area(safe_rect, safe_area)
+    if not normalized:
+        # 没有文字压图：安全区相关检查不适用（不拿默认矩形硬判），物理检查照跑。
+        _add("text_safe_area", True, None, None)
+        _add("negative_space_ratio", True, None, None)
+        _add("subject_position", True, None, None)
+        _add("contrast_suitability", True, None, None)
+        _add("hard_seam", *_hard_seam_check(arr, alpha))
+        _add("brightness_balance", *_balance_check(arr))
+        return {"file": str(p), "status": "ok", "dimensions": [w, h], "checks": checks,
+                "safe_area": None, "note": "无文字压图：安全区检查不适用"}
     x0 = normalized["x"]
     y0 = normalized["y"]
     x1 = x0 + normalized["width"]
@@ -951,25 +1034,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         _add("subject_position", True, None, None)
 
     # 4. 亮度平衡：整体明暗 + 左右/上下失衡
-    mean = float(arr.mean())
-    too_dark = mean < QC_BRIGHT_DARK
-    too_light = mean > QC_BRIGHT_LIGHT
-    half_w = w // 2
-    half_h = h // 2
-    lr_gap = abs(float(arr[:, :half_w].mean()) - float(arr[:, half_w:].mean()))
-    tb_gap = abs(float(arr[:half_h, :].mean()) - float(arr[half_h:, :].mean()))
-    if too_dark:
-        _add("brightness_balance", False, f"整体过暗（亮度 {mean:.2f}）",
-             "提高整体曝光或提亮主体受光面，保留层次")
-    elif too_light:
-        _add("brightness_balance", False, f"整体过亮（亮度 {mean:.2f}）",
-             "压暗背景或收光圈，让主体与文字有落点")
-    elif lr_gap > QC_BALANCE_GAP or tb_gap > QC_BALANCE_GAP:
-        _add("brightness_balance", False,
-             f"画面失衡（左右差 {lr_gap:.2f} / 上下差 {tb_gap:.2f}）",
-             "平衡光源或主体分布，避免一侧明显压黑/过曝")
-    else:
-        _add("brightness_balance", True, None, None)
+    _add("brightness_balance", *_balance_check(arr))
 
     # 5. 对比度适配：安全区能否同时给深浅文字留出对比
     safe_lum = crop[sy0 * bhs:sy1 * bhs, sx0 * bws:sx1 * bws].mean() \
@@ -983,6 +1048,8 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         _add("contrast_suitability", safe_lum > 1 - QC_TEXT_RANGE or safe_lum < QC_TEXT_RANGE,
              f"安全区亮度 {safe_lum:.2f} 处于中间带，深浅文字对比都不足",
              "把安全区推到亮端（>0.7）或暗端（<0.3），给文字明确落点")
+
+    _add("hard_seam", *_hard_seam_check(arr, alpha))
 
     issue_count = sum(1 for c in checks if c["status"] == "issue")
     return {"file": str(p), "status": "issue" if issue_count else "ok", "dimensions": [w, h],

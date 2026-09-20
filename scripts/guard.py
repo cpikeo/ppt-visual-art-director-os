@@ -45,10 +45,8 @@ GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalize
 # 不是及格线。新增判断请先问一句：它能被一个固定阈值完全描述吗？
 # 能 → 那是工程约束，放这里；不能 → 那是设计判断，去 design-craft.md + Critic 证据。
 DESIGN_RULES = frozenset({
-    "accent_budget", "alignment_budget", "animation_budget", "chart_highlight",
-    "color_budget", "decoration_budget", "focus", "focus_scale", "icon_consistency",
-    "organic_layer", "palette_discipline", "rhythm", "type_budget",
-    "typography", "asset_contract", "chart_style_drift",
+    "chart_highlight", "focus", "focus_scale", "organic_layer",
+    "palette_discipline", "typography", "asset_contract", "chart_style_drift",
 })
 
 # 图表容量上限（OS §19 / USAGE §5.4）
@@ -247,23 +245,6 @@ def _element_rect(e: dict, cw: float, ch: float) -> tuple[float, float, float, f
     r = (max(0.0, x), max(0.0, y), min(cw, x + w), min(ch, y + h))
     return r if r[2] > r[0] and r[3] > r[1] else None
 
-
-def _density_class(slide: dict) -> tuple[str, float]:
-    """借鉴 v6.2 classify_density 的确定性密度分类（仅用于节奏检查）。"""
-    elems = [e for e in slide.get("elements", []) if isinstance(e, dict)]
-    chars = sum(len(str(e.get("text", ""))) for e in elems if e.get("type") == "text")
-    types = [str(e.get("type")) for e in elems]
-    charts = sum(t in {"chart", "native_chart"} for t in types)
-    images = types.count("image")
-    n = len(elems)
-    score = n * 6.5 + min(chars, 1200) / 48 + charts * 15 + images * 7
-    if score < 26:
-        return "sparse", score
-    if score < 55:
-        return "balanced", score
-    if score < 84:
-        return "dense", score
-    return "overloaded", score
 
 
 def _uses_role(value, role_name: str, theme: dict) -> bool:
@@ -565,17 +546,6 @@ _INSIGHT_VERBS = (
 )
 
 
-def _looks_like_field_name(text: str) -> bool:
-    """判定一段标题/insight 是否退化成「字段名」。只做保守判定：宁漏勿错。"""
-    t = (text or "").strip()
-    if not t or len(t) > 8:            # 字段名很短；长句必然是结论
-        return False
-    if not t.endswith(FIELD_NAME_SUFFIXES):
-        return False
-    if any(v in t for v in _INSIGHT_VERBS):
-        return False                   # 含判断词 → 已是结论
-    return True
-
 
 def _hue_gap(a, b) -> float | None:
     if not a or not b:
@@ -866,14 +836,9 @@ def check_spec(spec: dict, rules: dict | None = None,
       accent_text_k  : 文字面积折算系数（默认 .30，文本框 ≠ 墨迹面积）
       max_charts     : 每页图表总数上限（VP-007=3 / VP-009=2）
       max_colors     : 每页颜色角色数上限（VP 主题 4–5）
-      check_rhythm   : 是否检查跨页节奏（默认 True）
-      narrative_lines_max : 每页叙事文字行数上限（默认 6）
-      semantic_colors_max : 每页语义色相上限（默认 3）
-      hue_families_max    : 全套色相族上限（默认 4；30° 一档，纸色/灰阶不计）
-      accent_hue_min      : Accent 与主/辅色的最小色相角（默认 12°，低于此强调不成其为强调）
-      chart_label_scale_tol: 同一图表类型跨页标签字号的最大倍数（默认 1.25）
-      alignments_max : 每页文本主对齐方式上限（默认 2）
-      decoration_area_max : 装饰面积上限（默认 .10）
+      hue_families_max    : 全套色相族上限（未声明不检查；30° 一档，纸色/灰阶不计）
+      accent_hue_min      : Accent 与主/辅色的最小色相角（未声明不检查）
+      chart_label_scale_tol: 同一图表类型跨页标签字号的最大倍数（未声明不检查）
       animation_types_max : 全套动画/切换类型上限（默认 2）
       font_levels_max     : 每页字号等级上限（默认 4，hint；可经 theme.constraints 传入）
       font_families_max   : 每页字体家族引用上限（默认 2，hint）
@@ -915,20 +880,18 @@ def check_spec(spec: dict, rules: dict | None = None,
     overlap_ratio = _rule_num(rules, "overlap_ratio", 0.12, float)
     text_ink_ratio = _rule_num(rules, "text_ink_ratio", 0.55, float)
     text_ink_v = _rule_num(rules, "text_ink_v", 0.70, float)
-    accent_max = _rule_num(rules, "accent_max", constraints.get("accent_max", 0.05), float)
-    accent_text_k = _rule_num(rules, "accent_text_k", 0.30, float)
     max_charts = rules.get("max_charts", constraints.get("max_charts"))
     max_colors = rules.get("max_colors", constraints.get("max_colors"))
-    check_rhythm = bool(rules.get("check_rhythm", True))
-    narrative_lines_max = _rule_num(rules, "narrative_lines_max", 6, int)
-    semantic_colors_max = _rule_num(rules, "semantic_colors_max", 3, int)
-    alignments_max = _rule_num(rules, "alignments_max", 2, int)
-    decoration_area_max = _rule_num(rules, "decoration_area_max",
-                                    constraints.get("decoration_area_max", 0.10), float)
-    animation_types_max = _rule_num(rules, "animation_types_max", 2, int)
-    hue_families_max = _rule_num(rules, "hue_families_max", 4, int)
-    accent_hue_min = _rule_num(rules, "accent_hue_min", 12, float)
-    chart_label_scale_tol = _rule_num(rules, "chart_label_scale_tol", 1.25, float)
+    # 色相族数量 / Accent 色相角 / 图表标签字号漂移：都是设计判断（§09 的「颜色太多 /
+    # 焦点是否准确 / 视觉语言是否统一」）。曾经各带一个发明出来的默认值（4 / 12° / 1.25），
+    # 于是包按自己的刻度判作者的稿——颜色多不多、强调够不够、图表风格统不统一，
+    # 该由设计判断。作者写进 rules / theme.constraints 才执法；不写就不检查。
+    hue_families_max = _rule_num(rules, "hue_families_max",
+                                 constraints.get("hue_families_max"), int)
+    accent_hue_min = _rule_num(rules, "accent_hue_min",
+                               constraints.get("accent_hue_min"), float)
+    chart_label_scale_tol = _rule_num(rules, "chart_label_scale_tol",
+                                      constraints.get("chart_label_scale_tol"), float)
     # §07 排版预算（hint 级软约束：提示层级过碎，不扣硬分）
     # 方向种子（数字约束）：未声明 = 不检查；声明了就按声明执法。
     # whitespace/bg_layers/bold_ratio/type_step 都是「方向要可执行」缺的那几个量，
@@ -941,10 +904,6 @@ def check_spec(spec: dict, rules: dict | None = None,
     type_step_min = _rule_num(rules, "type_step_min", constraints.get("type_step_min"), float)
     banner_cov = constraints.get("bg_layer_coverage")
     bg_layer_cov = _rule_num({}, "k", banner_cov, float) if banner_cov is not None else 0.60
-    font_levels_max = int(rules.get("font_levels_max",
-                                    constraints.get("font_levels_max", 4)))
-    font_families_max = int(rules.get("font_families_max",
-                                      constraints.get("font_families_max", 2)))
     # 可读性底线：注释/来源/标签类文字的最小字号（设计单位 px）
     min_font_size = _rule_num(rules, "min_font_size", 10, float)
     focus_scale = bool(rules.get("focus_scale", True))
@@ -970,7 +929,6 @@ def check_spec(spec: dict, rules: dict | None = None,
 
     checks: list[dict] = []      # 每项: {"rule", "id", "level", "msg"}
     warnings: list[str] = []
-    animation_types: set[str] = set()
 
     def add(rule, eid, level, msg):
         # QA 默认只验证工程事实；设计契约仍可由独立 guard 或显式 advisory 读取。
@@ -1101,7 +1059,6 @@ def check_spec(spec: dict, rules: dict | None = None,
     lm_limits = _measure_limits()
     grid_stats = {"checked": 0, "aligned": 0}
     measure_stats = {"checked": 0, "over": 0, "worst": 0.0, "worst_id": None}
-    accent_area = 0.0
     deck_hues: set[int] = set()
     chart_styles: dict[str, dict] = {}
     chart_meta: list[dict] = []   # 事实/口径治理：收集每张数值图表的来源/单位/期间/口径
@@ -1111,35 +1068,14 @@ def check_spec(spec: dict, rules: dict | None = None,
             continue
         sid = s.get("id", f"slide_{si}")
         _check_page_contract(s, sid, add, cw, ch)
-        # 标题语义：insight 若是字段名，提示改写为可复述结论（与 OS 审查语义同源）
-        _intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
-        _insight = _intent.get("insight") or s.get("insight")
-        if isinstance(_insight, str) and _looks_like_field_name(_insight):
-            add("title_semantics", sid, "hint",
-                f"insight「{_insight}」读起来是字段名而非洞察；标题应写可复述的"
-                f"结论（对象 + 变化/差异 + 含义），例如把「市场分析」写成「市场已从"
-                f"规模驱动转向效率驱动」")
         chart_count = 0
-        slide_accent_area = 0.0
         page_colors: set[str] = set()
-        semantic_colors: set[str] = set()
-        alignments: set[str] = set()
-        narrative_lines = 0
-        decoration_area = 0.0
-        icon_styles: set[str] = set()
-        font_levels: set[float] = set()
-        font_families: set[str] = set()
         for e in s.get("elements", []):
             if not isinstance(e, dict):
                 continue
             eid = e.get("id", f"{sid}[{si}]")
             typ = str(e.get("type", "text"))
             role = str(e.get("role", ""))
-            if include_advisory:
-                if e.get("animation") or e.get("transition"):
-                    animation_types.add(str(e.get("animation") or e.get("transition")))
-                if e.get("icon_style"):
-                    icon_styles.add(str(e.get("icon_style")))
             if typ == "text":
                 if "text" not in e:
                     hint = "；检测到 content，请改用 text" if "content" in e else ""
@@ -1151,17 +1087,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                 if "style" in e:
                     add("TEXT_STYLE_INVALID", eid, "error",
                         "text 元素使用了未消费的嵌套字段 'style'；请将 size、color、bold、line_height 等属性放到元素顶层")
-                if include_advisory:
-                    alignments.add(str(e.get("align", "left")))
-                    # §07 排版预算：字号等级 / 字体家族引用
-                    try:
-                        if e.get("size") is not None:
-                            font_levels.add(round(float(e["size"]), 1))
-                    except (TypeError, ValueError):
-                        pass
-                    fref = e.get("font") or e.get("family")
-                    if isinstance(fref, str) and fref:
-                        font_families.add(fref)
                 # 可读性底线：注释/来源/标签类文字不得低于最小字号（渲染后可读性复核）
                 if role in {"caption", "annotation", "source", "label", "axis", "data_label",
                             "legend", "metadata", "method", "eyebrow", "page_number"}:
@@ -1172,15 +1097,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                                 f"{min_font_size:g}px；提高字号或改由更高层级角色承担")
                     except (TypeError, ValueError):
                         pass
-                if role not in {"source", "method", "annotation", "axis", "label", "data_label",
-                                "legend", "metadata", "eyebrow", "page_number"}:
-                    declared = e.get("max_lines")
-                    if isinstance(declared, int) and declared > 0:
-                        narrative_lines += declared
-                    else:
-                        narrative_lines += max(1, str(e.get("text", "")).count("\n") + 1)
-            if role == "decoration" or e.get("decorative") is True:
-                decoration_area += _element_area(e)
             x = e.get("x", 0)
             y = e.get("y", 0)
             w = e.get("width", 0)
@@ -1344,18 +1260,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                 if not any(_inside_zone(e, z) for z in safe_zones if isinstance(z, dict)):
                     add("safe_zone", eid, "warn", "内容对象未完整落入任何声明的文字安全区")
 
-            # §06/§21 Accent 面积估算是设计 advisory；默认工程 QA 不扫描颜色角色。
-            if include_advisory:
-                fill = e.get("fill")
-                if _uses_role(fill, "accent", theme):
-                    accent_area += _element_area(e)
-                    slide_accent_area += _element_area(e)
-                if _uses_role(e.get("stroke"), "accent", theme):
-                    accent_area += _element_area(e) * 0.08   # 描边≈面积的零头
-                    slide_accent_area += _element_area(e) * 0.08
-                if typ == "text" and _uses_role(e.get("color"), "accent", theme):
-                    accent_area += _element_area(e) * accent_text_k
-                    slide_accent_area += _element_area(e) * accent_text_k
 
             # §19 图表容量与数据完整性
             if typ in ("chart", "native_chart"):
@@ -1572,7 +1476,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                     if isinstance(v, str) and v in theme.get("colors", {}):
                         page_colors.add(v)
                         if v not in NEUTRAL_COLOR_ROLES:
-                            semantic_colors.add(v)
                             fam = _hue_family(theme["colors"][v])
                             if fam is not None:
                                 deck_hues.add(fam)
@@ -1677,22 +1580,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                         add("overlap_declared", f"{a[1]}∩{b[1]}", "hint",
                             "存在已声明的空间遮挡；发布前须以渲染证据确认未遮挡关键内容")
 
-        # 新增克制约束：只报告，不替调用方改稿。
-        if narrative_lines > narrative_lines_max:
-            add("text_capacity", sid, "warn",
-                f"叙事文字估算 {narrative_lines} 行 > 上限 {narrative_lines_max}；应提炼或拆页")
-        if include_advisory:
-            if len(alignments) > alignments_max:
-                add("alignment_budget", sid, "warn",
-                    f"页面使用 {len(alignments)} 种文本对齐方式 > 上限 {alignments_max}")
-            if len(semantic_colors) > semantic_colors_max:
-                add("color_budget", sid, "warn",
-                    f"页面语义色 {len(semantic_colors)} 种 > 上限 {semantic_colors_max}（中性灰度不计）")
-            if cw * ch > 0 and decoration_area / (cw * ch) > decoration_area_max:
-                add("decoration_budget", sid, "warn",
-                    f"装饰面积 {decoration_area / (cw * ch):.1%} > 上限 {decoration_area_max:.0%}")
-            if len(icon_styles) > 1:
-                add("icon_consistency", sid, "warn", "页面混用多种图标风格")
         # 背景层资格（工程事实，非预测）：伪背景 error、无保护 warn
         _check_background_qualification(s, sid, cw, ch, add)
 
@@ -1741,19 +1628,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                 + (f"（最接近的是 {got}）" if got else "")
                 + "；主张必须能被页内证据推出")
 
-        if include_advisory:
-            # §07 排版预算（hint 级：字号等级过碎会让层级失焦，提示收拢）
-            if len(font_levels) > font_levels_max:
-                add("type_budget", sid, "hint",
-                    f"页面使用 {len(font_levels)} 个字号等级 > 上限 {font_levels_max}（OS §07，建议收拢层级）")
-            if len(font_families) > font_families_max:
-                add("type_budget", sid, "hint",
-                    f"页面引用 {len(font_families)} 个字体家族 > 上限 {font_families_max}（OS §07）")
-
-            # Accent 预算按页检查；全套平均值在页间检查后再计算。
-            if cw * ch > 0 and slide_accent_area / (cw * ch) > accent_max:
-                add("accent_budget", sid, "warn",
-                    f"本页 Accent 面积 {slide_accent_area / (cw * ch):.1%} > 上限 {accent_max:.0%}")
 
         # 焦点尺度：声明焦点为文字时，应获得页内最大字号（OS「一页一焦点」）
         if include_advisory and focus_scale:
@@ -1854,16 +1728,16 @@ def check_spec(spec: dict, rules: dict | None = None,
         # ---- 主题约束键：写错的名字要点名（同 theme_fonts 的做法）----
         if si == 0:
             _KNOWN_CONSTRAINTS = frozenset({
-                "accent_max", "max_charts", "max_colors", "font_levels_max", "font_families_max",
-                "whitespace_min", "min_whitespace", "type_step_min", "decoration_area_max",
-                "bg_layers_max", "bg_layer_coverage", "bold_ratio_max"})
+                "max_charts", "max_colors", "whitespace_min", "min_whitespace",
+                "type_step_min", "bg_layers_max", "bg_layer_coverage", "bold_ratio_max",
+                "hue_families_max", "accent_hue_min", "chart_label_scale_tol"})
             _unknown_cons = sorted(str(k) for k in constraints if str(k) not in _KNOWN_CONSTRAINTS)
             if _unknown_cons:
                 add("theme_constraints", "deck", "warn",
                     f"theme.constraints 里的 {_unknown_cons} 不生效（可用的键："
-                    f"accent_max / max_charts / max_colors / font_levels_max / font_families_max / "
-                    f"whitespace_min / type_step_min / decoration_area_max / bg_layers_max / "
-                    f"bold_ratio_max）——写了等于没写")
+                    f"max_charts / max_colors / whitespace_min / type_step_min / "
+                    f"bg_layers_max / bg_layer_coverage / bold_ratio_max / hue_families_max / "
+                    f"accent_hue_min / chart_label_scale_tol）——写了等于没写")
 
         # ---- 主题生产约束（来自 VP 主题「生产约束」章节） ----
         if max_charts is not None and chart_count > int(max_charts):
@@ -2043,12 +1917,8 @@ def check_spec(spec: dict, rules: dict | None = None,
                     f"证据编号不连续：{[l for _, l in _figures]}——编号断链会让「还有没有证据」"
                     f"变成猜谜；按页序重编 01…N")
 
-        if len(animation_types) > animation_types_max:
-            add("animation_budget", "deck", "warn",
-                f"全套动画/切换类型 {len(animation_types)} 种 > 上限 {animation_types_max}")
-
         # ---- 色彩系统纪律（deck 级）：单页合规不等于全套成套 ----
-        if len(deck_hues) > hue_families_max:
+        if hue_families_max is not None and len(deck_hues) > hue_families_max:
             add("palette_discipline", "deck", "warn",
                 f"全套使用 {len(deck_hues)} 个色相族（{HUE_BUCKET:.0f}° 一档）> 上限 "
                 f"{hue_families_max}；颜色已不成系统——收拢为一组主辅色 + 一个强调色")
@@ -2066,7 +1936,7 @@ def check_spec(spec: dict, rules: dict | None = None,
                 if not role_hls or role_hls[2] < NEUTRAL_SAT:
                     continue          # 中性主色不与强调色争色相：这是纪律，不是冲突
                 gap = _hue_gap(acc, role_hls)
-                if gap is not None and gap < accent_hue_min:
+                if accent_hue_min is not None and gap is not None and gap < accent_hue_min:
                     add("palette_discipline", f"theme.{role}", "warn",
                         f"accent {pal.get('accent')} 与 {role} {pal.get(role)} 色相差 "
                         f"{gap:.0f}° < {accent_hue_min:.0f}°：强调色与主色同族，页面拿不到"
@@ -2077,7 +1947,8 @@ def check_spec(spec: dict, rules: dict | None = None,
             sizes = rec["sizes"]
             if len(sizes) > 1:
                 lo, hi = min(sizes), max(sizes)
-                if lo > 0 and hi / lo > chart_label_scale_tol:
+                if (chart_label_scale_tol is not None and lo > 0
+                        and hi / lo > chart_label_scale_tol):
                     add("chart_style_drift", kind, "warn",
                         f"{kind} 出现在 {len(rec['pages'])} 页但标签字号 "
                         f"{lo:g}–{hi:g}px（>{chart_label_scale_tol:g}×）：同一图表类型应共用"
@@ -2138,38 +2009,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                 add("contrast", f"theme.{_role}", "hint",
                     f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 3:1：做装饰位没问题，"
                     f"做文字（刻度/注释/小字）会消失，换 ink/primary 或加深该 token")
-
-    if include_advisory:
-        # ---- Accent 面积汇总 ----
-        canvas_area = cw * ch
-        if canvas_area > 0:
-            ratio = accent_area / (canvas_area * max(len(slides), 1))
-            if ratio > accent_max:
-                add("accent_budget", "deck", "warn",
-                    f"全套平均 Accent 面积 {ratio:.1%} > 上限 {accent_max:.0%}（OS §06/§21）")
-
-    if include_advisory:
-        # ---- §12 跨页节奏：连续页面不得同密度 ----
-        # 只在**声明与结构同时重复**时提示：那是一个可测的冗余信号（连着两页
-        # 同权重），提示作者换构图算子或留白。反过来「声明变了但结构计数没变」
-        # 不发——结构密度是元素构成代理，量不出真实留白（实测：大留白的英雄页
-        # 会被计成 dense、97% 空白的文字页会被计成 overloaded），拿它去质疑
-        # 作者的密度声明等于让作者为一个测不准的数改稿；而「渲染后复核真实留白」
-        # 是静态工具给不出的证据，属设计判断，归 design-craft.md 与像素复核。
-        if check_rhythm and len(slides) > 1:
-            prev_struct = prev_declared = None
-            for si, s in enumerate(slides):
-                if not isinstance(s, dict):
-                    prev_struct = prev_declared = None
-                    continue
-                intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
-                declared = intent.get("density") or s.get("density")
-                cur, _ = _density_class(s)
-                if prev_struct is not None and cur == prev_struct and declared == prev_declared:
-                    add("rhythm", s.get("id", f"slide_{si}"), "hint",
-                        f"连续页面同为 {cur} 密度（OS §12，可拆页/换构图算子/加留白）")
-                prev_struct, prev_declared = cur, declared
-
 
     # 设计契约条目：标为 advisory（不进门槛）——它们进报告、进证据，不进任何分数。
     # 验证层不评分：打分等于用固定阈值重新裁决设计好坏，那是 Art Director 的职责。

@@ -277,5 +277,5 @@ def blocked_result(spec: dict, workflow: dict) -> dict:
             "verdict": {"verdict": "BLOCKED", "status": "BLOCKED", "blocking": len(problems),
                         "codes": ["ASSET_WORKFLOW_FAIL"]},
             "compile": {"passed": False, "skipped": True, "reason": "asset_workflow_preflight"},
-            "fix_plan": {"groups": [group]}, "warn_summary": [],
+            "fix_plan": {"groups": [group]}, "trace_summary": [],
             "next_action": group["fix"], "performance": {}}

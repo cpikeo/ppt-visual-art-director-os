@@ -115,7 +115,6 @@ def build_skeleton_module(bundle: dict) -> str:
     pairs = align_pages(plan_pages, intel_pages)["pairs"]
     color = bundle.get("color_plan") or {}
     seed = color.get("seed_skeleton") or {}
-    constraints = color.get("constraints") or {}
     raw_slides = need.get("slides") if isinstance(need.get("slides"), list) else []
 
     def _slot(name: str, fallback: str) -> str:
@@ -147,20 +146,16 @@ def build_skeleton_module(bundle: dict) -> str:
                 colors["muted"] = blend_toward(colors["muted"], readable)
     except Exception:
         pass                      # 骨架生成永远不因配色兜底而失败
-    try:
-        accent_max = float(constraints.get("accent_area_max", 0.05))
-    except (TypeError, ValueError):
-        accent_max = 0.05
-    # 方向种子：plan 的 theme.constraints 是「方向的数字部分」（留白下限/字号级差/
-    # 装饰面积/背景层/粗体占比），骨架原样交给生成侧——写进 spec 才会被 guard 执法。
-    _SEED_KEYS = ("accent_max", "max_colors", "max_charts", "font_levels_max",
-                  "font_families_max", "whitespace_min", "type_step_min",
-                  "decoration_area_max", "bg_layers_max", "bold_ratio_max")
+    # 约束只传作者写下的：路线预设不再替作者发明审美数字（留白下限/字号级差/
+    # 装饰面积/粗体占比）。包发明一个 58% 留白下限、再让 guard 去执法，等于用
+    # 自己的默认值给自己判卷——实测在整幅画心页上必然误报。设计判断归设计智能，
+    # 数字承诺归作者：写了才带下去，才被执法。
+    _CONSTRAINT_KEYS = ("max_colors", "max_charts", "font_levels_max", "font_families_max",
+                        "whitespace_min", "type_step_min", "bg_layers_max", "bold_ratio_max",
+                        "bg_layer_coverage")
     _plan_theme = plan.get("theme") if isinstance(plan.get("theme"), dict) else {}
     _plan_cons = _plan_theme.get("constraints") if isinstance(_plan_theme.get("constraints"), dict) else {}
-    seed_cons = {k: _plan_cons[k] for k in _SEED_KEYS if k in _plan_cons}
-    if not seed_cons:
-        seed_cons = {"accent_max": accent_max}
+    seed_cons = {k: _plan_cons[k] for k in _CONSTRAINT_KEYS if k in _plan_cons}
 
     from asset_workflow import digest
     # ── 骨架自足化：把 plan.json 里 AI 真正要用的 ~2KB 信号序列化进头注释 ──

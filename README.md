@@ -106,7 +106,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（148 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（155 项，含判断层与反退化检查）
 ```
 
 ## 设计上刻意不做的事
@@ -127,7 +127,7 @@ ppt-visual-art-director-os/
 
 ## 样张（assets/）
 
-`assets/` 里是四副匿名化验证样张（整副 deck 的方向预览 contact sheet），覆盖四种
+`assets/` 里是四副匿名化验证样张（整副 deck 的方向预览 contact sheet，JPEG q90），覆盖四种
 不同视觉世界：东方墨韵编辑 / 瑞士精密科技 / 安静极简 / 有机奢华。它们证明的是
 跨风格的版式纪律——章节页全幅重置、数据页单一强调、锚点同位——而不是供复制的
 版式截图。代码不引用它们：它们是给人目检的证据，不是流水线的输入。
@@ -135,7 +135,7 @@ ppt-visual-art-director-os/
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 148 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
+python scripts/selftest.py        # 155 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

@@ -532,11 +532,12 @@ def check_direction_seed(work: pathlib.Path) -> None:
     plan = json.loads(out.read_text(encoding="utf-8")).get("plan") or {}
     cons = (plan.get("theme") or {}).get("constraints") or {}
     body = skel.read_text(encoding="utf-8")
-    check("seed: 方向种子落进 plan.theme.constraints 并被骨架原样交给生成侧",
-          cons.get("whitespace_min") == 0.48 and cons.get("bg_layers_max") == 2
-          and "whitespace_min" in body and "guard 会照着它执法" in body,
+    # v5.6 减法后的契约：包不替作者发明审美数字（留白下限/字号级差/装饰面积/粗体占比）。
+    # 自己的默认值自己判卷，只在整幅画心页上必然误报；数字承诺归作者。
+    # 保留的执法能力由 check_direction_seed 覆盖（声明了就点名）；这里只测「不再发明」。
+    check("seed: 未声明约束时，plan 不发明审美数字，骨架也不写进 spec",
+          cons == {} and "whitespace_min" not in body,
           f"plan={sorted(cons)} · 骨架含种子={'whitespace_min' in body}")
-
 
 def check_chart_argument(work: pathlib.Path) -> None:
     """论点可见性：零基长度编码 + 数值几乎等长 + 图自己标了重点 ⇒ 差异看不见。
@@ -755,9 +756,14 @@ def check_silent_failure_seams() -> None:
     check("text: 装得下的文本不误报（新增阻断项不得制造假阳性）",
           not _text_box_capacity(fits)["over_height"])
 
-    # ⑤ 中性灰阶不参与色相族判定：规则不得对自家出厂配色每次都误报
-    def _palette_warns(colors: dict) -> list:
-        probe = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": colors},
+    # ⑤ 中性灰阶不参与色相族判定：规则不得对自家出厂配色每次都误报。
+    #    v5.6：色相角下限是**声明制**——不声明不检查（颜色关系归设计判断），
+    #    声明了照旧点名。所以探针显式带上约束。
+    def _palette_warns(colors: dict, declared: bool = True) -> list:
+        theme = {"colors": colors}
+        if declared:
+            theme["constraints"] = {"accent_hue_min": 12}
+        probe = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
                  "slides": [{"id": "s01", "elements": []}]}
         return [c for c in check_spec(probe)["checks"] if c.get("rule") == "palette_discipline"]
 
@@ -767,6 +773,10 @@ def check_silent_failure_seams() -> None:
     check("palette: 真正的同族撞色仍被点名（放宽不等于放弃）",
           bool(_palette_warns({"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
                                "primary": "#B3271E", "secondary": "#8A2018", "accent": "#D0402E"})))
+    check("palette: 未声明色相角下限时不判（颜色关系归设计，不归发明出来的刻度）",
+          not _palette_warns({"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
+                              "primary": "#B3271E", "secondary": "#8A2018", "accent": "#D0402E"},
+                             declared=False))
 
     # ⑥ CI 的门必须真的能跑：引用不存在的文件/形参 = 永远通过的假门。
     #    只扫**可执行行**（注释与说明文字不算实现，否则解释历史的注释会让用例变红）。
@@ -813,7 +823,7 @@ def check_silent_failure_seams() -> None:
 
     # ⑧ warning 必须保留可执行信息：聚合是为了不刷屏，不是为了丢掉「改哪、改成什么」。
     import qa as _qa
-    packed = _qa.build_warn_summary([
+    packed = _qa.build_trace_summary([
         {"domain": "guard", "level": "hint", "rule": "direction_seed", "count": 2,
          "ids": ["deck", "s03"], "samples": ["留白率 45% 低于下限 62%", "字号级差 1.09×"]},
     ])
@@ -821,7 +831,7 @@ def check_silent_failure_seams() -> None:
           bool(packed) and packed[0]["ids"] == ["deck", "s03"]
           and "45%" in packed[0]["samples"][0], str(packed))
     import vao as _vao
-    plan = _vao._polish_plan({"warn_summary": packed})
+    plan = _vao._polish_plan({"trace_summary": packed})
     check("warn: 打磨清单给出可执行改法，且不引用修复包里不存在的字段",
           bool(plan["groups"]) and plan["groups"][0]["evidence"]
           and "guard.checks" not in json.dumps(plan, ensure_ascii=False))
@@ -877,9 +887,9 @@ def check_silent_failure_seams() -> None:
             continue
         _qa_items.append({"domain": "compile", "level": "warn", "rule": "compiler",
                           "id": _ids[_i] if _i < len(_ids) else None, "msg": _w})
-    check("warn: 编译警告的元素 id 进得了 warning_summary（修现有链路，不新建体系）",
-          bool(_qa.build_warn_summary(_qa_items))
-          and _qa.build_warn_summary(_qa_items)[0]["ids"] == ["shp_bad"])
+    check("warn: 编译警告的元素 id 进得了 trace_summary（修现有链路，不新建体系）",
+          bool(_qa.build_trace_summary(_qa_items))
+          and _qa.build_trace_summary(_qa_items)[0]["ids"] == ["shp_bad"])
 
     # ⑫ 不消费的数据不计算 / 死常量不保留（但真在用的别误删）
     import compile_cache as _cc
@@ -1346,7 +1356,6 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     from PIL import Image, ImageDraw
     import vao, qa, compiler, asset_workflow as aw
     from asset_prompt import image_qc, qc_retry_decision
-    from primitives import spec_fingerprint
 
     d = work / "audit-fixes"
     d.mkdir()
@@ -1700,6 +1709,99 @@ def check_doc_counts() -> None:
     check(f"docs: README 里的自检项数与实际一致（实际 {total} 项）",
           stated == {total}, f"README 写着 {sorted(stated)}")
 
+def check_boundary_negatives(work: pathlib.Path) -> None:
+    """技能包的否定边界：不只测"能做什么"，更测**不该做什么**（§33）。
+
+    九条边界里，前面几组已被 seed / 契约 / 缓存测试覆盖；这里补的是最容易在
+    一次"优化"里悄悄越界的那几条：把审美变成阻断、把证据变成修复、把几何写进
+    生成提示词、让 guard 改稿、让 warning 变成对话循环。
+    """
+    import copy
+    import guard as _guard
+
+    colors = {"background": "#F6F5F1", "ink": "#1E211D", "muted": "#6E6A5F",
+              "primary": "#1E211D", "secondary": "#6E6A5F", "accent": "#5E7562"}
+
+    def spec(elements, theme_extra=None, slides_extra=None):
+        return {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": colors, **(theme_extra or {})},
+                "slides": [dict({"id": "s01",
+                                 "page_intent": {"insight": "x", "focus": "t1",
+                                                 "page_family": "EDITORIAL", "density": "balanced",
+                                                 "energy": "medium", "empty_space_role": "rest_eye"},
+                                 "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
+                                 "elements": elements}, **(slides_extra or {}))]}
+
+    def levels(elements, **kw):
+        checks = _guard.check_spec(spec(elements, **kw))["checks"]
+        return [c for c in checks if c.get("level") == "error"], checks
+
+    txt = lambda i, **kw: {"type": "text", "id": i, "x": 96, "y": 240, "width": 480, "height": 60,
+                           "text": "字", "size": 32, "color": "ink", "role": "title",
+                           "max_lines": 1, **kw}
+
+    # ① 审美不得成为阻断：颜色多、装饰多、两个字体家族、5 个色相族、混用图标风格
+    loud = [txt("t1", size=32, font="Songti SC"), txt("t2", y=320, size=44, font="Georgia"),
+            *[{"type": "shape", "id": f"d{i}", "x": 40 * i, "y": 520, "width": 160, "height": 64,
+               "fill": ["#8E2F28", "#A97E2F", "#2F5D8E", "#5E7562", "#7C4A8E"][i],
+               "role": "decoration", "icon_style": f"style{i}"} for i in range(5)]]
+    errors, all_checks = levels(loud)
+    taste_rules = {"palette_discipline", "chart_style_drift", "decoration_budget", "icon_consistency",
+                   "color_budget", "accent_budget", "type_budget", "rhythm", "alignment_budget"}
+    check("boundary: 审美问题永不阻断（颜色/装饰/字体/图标再杂也 0 条 error）",
+          not errors and not any(c.get("rule") in taste_rules for c in all_checks),
+          f"errors={len(errors)} 品味规则命中={sorted({c.get('rule') for c in all_checks} & taste_rules)}")
+
+    # ② 未声明的审美刻度不得自动执法（色相族 / Accent 色相角 / 图表标签漂移）
+    undeclared = [c for c in levels(loud)[1] if c.get("rule") == "palette_discipline"]
+    declared = [c for c in _guard.check_spec(
+        spec(loud, theme_extra={"constraints": {"hue_families_max": 1}}))["checks"]
+        if c.get("rule") == "palette_discipline"]
+    check("boundary: 未声明不检查；声明了才执法（hue_families_max 探针）",
+          not undeclared and bool(declared),
+          f"未声明={len(undeclared)} 条；声明={len(declared)} 条")
+
+    # ③ trace 不得触发修复：只有 warn/hint 时，判定仍是 PASS 且修复包为空
+    warn_only = spec([txt("t1", size=9, role="caption")])       # 低于可读下限 → warn
+    verdict = _guard.check_spec(warn_only)
+    warns = [c for c in verdict["checks"] if c.get("level") in ("warn", "hint")]
+    errors_only = [c for c in verdict["checks"] if c.get("level") == "error"]
+    check("boundary: 证据≠错误（trace 级存在时仍 0 阻断，不需要修复循环）",
+          bool(warns) and not errors_only, f"trace={len(warns)} error={len(errors_only)}")
+
+    # ④ guard 不得改稿：check_spec 是只读的（设计意图只能由作者改）
+    snapshot = copy.deepcopy(warn_only)
+    _guard.check_spec(warn_only)
+    check("boundary: Guard 只读（check_spec 前后 spec 完全一致，不擅自重设计）",
+          warn_only == snapshot, "spec 未被改动")
+
+    # ⑤ 生成提示词不得出现几何坐标（坐标是检查器的语言，不是给模型的指令）
+    from asset_prompt import build_asset_prompt
+    coords = re.compile(r"(\bx\s*[:=]\s*\d|\by\s*[:=]\s*\d|width\s*[:=]\s*\d|height\s*[:=]\s*\d|\d+\s*%)")
+    built = build_asset_prompt({"subject": "steam rising from a celadon cup on paper",
+                                "medium": "photography", "ratio": "16:9"},
+                               {"ratio": "16:9", "asset_function": "context",
+                                "safe_area": {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78},
+                                "text_color": "dark", "negative_space_anchor": "left",
+                                "asset_type": "background"})
+    prompt = built["prompt"] if isinstance(built, dict) else str(built)
+    hit = coords.search(prompt)
+    check("boundary: 资产提示词零几何坐标（% / x= / width: 一律不出现）",
+          hit is None, f"命中 {hit.group(0)!r}" if hit else "")
+
+    # ⑥ 生产路径不得读 references/（JIT：知识只在需要时由人/AI 取用）
+    offenders = []
+    for f in sorted(SCRIPTS.glob("*.py")):
+        body = f.read_text(encoding="utf-8")
+        for i, line in enumerate(body.splitlines(), 1):
+            if "references" not in line or line.lstrip().startswith("#"):
+                continue
+            if re.search(r'(read_text|read_bytes|open)\s*\(', line):
+                offenders.append(f"{f.name}:{i}")
+    check("boundary: 生产脚本不读 references/（无关参考不得进上下文）",
+          not offenders, f"命中 {offenders[:3]}" if offenders else "")
+
+
 def main() -> int:
     work = pathlib.Path(tempfile.mkdtemp(prefix="vao-selftest-"))
     try:
@@ -1716,6 +1818,7 @@ def main() -> int:
         check_audit_fixes(work)
         check_prompt_discipline()
         check_anti_regression()
+        check_boundary_negatives(work)
         check_doc_counts()
     finally:
         shutil.rmtree(work, ignore_errors=True)

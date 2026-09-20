@@ -1,5 +1,75 @@
 # 变更记录
 
+## 5.6.0 · 第五轮审计：规则层减法 + 图像留白从「画上去」回归「打出来」
+
+一个真实案例（15 页茶品牌 A 轮路演，release PASS）暴露了两件事：**坐标写在提示词里，
+模型会照字面画**；**包发明审美数字，再让 guard 判卷，在整幅画心页上必然误报**。
+按「删除 → 合并 → 简化 → 复用」处理，不新增抽象：
+
+**删除（guard.py −164 行）**
+
+- 9 条品味规则（只发 warn/hint、从不构成门槛）：`accent_budget` `alignment_budget`
+  `color_budget` `decoration_budget` `icon_consistency` `type_budget` `animation_budget`
+  `rhythm` `title_semantics`——强调/留白/层级/节奏/标题语义都是设计判断，
+  不该由固定阈值描述。设计契约清单同步收窄。
+- `text_capacity` 的 warn 变体（「叙事行数偏多」）：与阻断级的溢出判定重叠，只留后者。
+- 方向预设里 4 组 × 7 个审美数字（留白下限/字号级差/装饰面积/粗体占比/背景层/Accent 上限）：
+  包不再替作者发明承诺。**能力未减**：作者把它写进 `spec.theme.constraints` 照旧被执法
+  （`check_direction_seed` 覆盖），只是不再自动填。
+- 死配置与残留：`_SAFE_ZONES`、`accent_area_max`、9 个无消费者的阈值局部量、
+  8 个供已删规则用的累积量（`alignments` / `semantic_colors` / `decoration_area` /
+  `icon_styles` / `font_levels` / `font_families` / `slide_accent_area` / `animation_types`）、
+  2 个死函数（`_density_class` / `_looks_like_field_name`）、4 处未消费的局部与导入。
+- `qc_policy` 双源合并：asset manifest 的策略改由 `asset_prompt.qc_policy()` 派生。
+  此前清单与执法可以不一致（实测：`negative_space_ratio` 已降级，清单仍写 blocking）。
+
+**能力升级（唯一新增逻辑）**
+
+- **`hard_seam`（阻断）**：满高度列均值阶跃 + 阶跃一侧整带方差 < 1.2 灰阶 ⇒ 留白是被
+  画出来的平板。物理判据，不是品味：真实光影边界一侧仍有材质纹理（实测 1.7–5.3），
+  假面板 0.4–0.6。透明画布（Logo / 插画）豁免——平色在那里是设计本身。
+- **`negative_space_ratio` 从阻断降为 advisory**：它量的「平坦块占比」恰好被假留白面板
+  抬高——指标越漂亮，图越假。判断归设计智能，QC 只守物理事实。
+- **资产提示词不再写坐标**：`safe_area_phrase` 改说材质与光的衰减（「quiet and unbroken,
+  its tone coming from light falling off across the material」），不写 `x 6% y 8% w 34%`。
+  根因证据：两张交付资产在 18% / 33% 画宽处出现 8 / 29 灰阶硬边，一侧整带标准差 0.8 / 0.6
+  ——被圈出的坐标被模型画成了硬边平色板，还骗过了平坦块指标。通用反向同步补
+  `flat painted panel` / `hard-edged rectangle of flat tone` / `visible seam or step edge`。
+- QC 报告标签改为反映真实检查区域（右锚点曾打印成「安全区（left）」）。
+
+**边界校正（第二轮）**
+
+- 三个审美刻度改声明制：`hue_families_max` / `accent_hue_min` / `chart_label_scale_tol`
+  不再带发明默认值（4 / 12° / 1.25）——颜色多不多、强调够不够、图表风格统不统一属设计判断，
+  作者写进 `rules` 或 `theme.constraints` 才执法。白名单同步：删掉四个"写了等于没写"的键
+  （`accent_max` / `decoration_area_max` / `font_families_max` / `font_levels_max`），
+  补上三个真会被读的键。
+- 删 `design_intelligence.color_plan.constraints`（4 键、零消费者）与 `CALIBRATION_LAWS`
+  （10 行常量表，唯一读者随前者消失）。
+- §21 词汇统一：对外只发布 **BLOCK / PASS / TRACE** 三态。`warn_summary` → `trace_summary`，
+  verdict 里的 `warnings` 计数 → `trace`；TRACE 只记录证据，不触发修复、不进入对话。
+- 自检补 5 条**否定边界**（§33）：审美永不阻断 / 未声明不执法（声明才执法）/ 证据≠错误 /
+  Guard 只读不改稿 / 资产提示词零几何坐标 / 生产脚本不读 references——共 155 项。
+
+**边界校正（第三轮：背景图 vs 插图）**
+
+- 新增 `negative_space_anchor: none` / 显式空 `safe_area` 语义：版面不压文字时
+  （整幅画心、半幅出血带），提示词不再索要安静面，QC 的相关检查记为不适用——
+  没有文字压图，就没有安全区。此前它会静默回落到默认矩形，等于用一个不存在的
+  文字层去要求模型留白。
+- 无安全区时过滤空指令：`negative space reserved and aligned to the text-safe area`、
+  `leading lines drawing the eye toward the negative-space anchor` 这类句子在
+  "none" 下不再进提示词（一条空指令也不要）。
+- `hard_seam` 与 `brightness_balance` 抽为共用函数（两条返回路径同一实现）。
+- `design-system.md` 增加「背景图 vs 插图」判定行：有文字压图 → 背景层 + overlay；
+  栏内配图 → 插图，必须让开元素与来源区。案例里正是插图越界来源区被 `SOURCE_COLLISION`
+  拦住（背景层的豁免权不适用于插图）。
+
+**验收**：自检 155/155 通过；案例重跑 release PASS，15 页产物与指纹链完整，
+`trace_summary` 为空。
+
+
+
 ## 5.5.0 · 第四轮深度审计：spec 级二审层切除（Phase 15 三域证据驱动）
 
 Phase 15 跨域盲测（城市研究 / 品牌融资 / 科技发布三套 deck，全部 release PASS、

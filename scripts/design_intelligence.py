@@ -42,7 +42,7 @@ from design_intelligence_rules import (
     MEDIA_MODEL as _MEDIA_MODEL, FAMILY_ALIASES as _FAMILY_ALIASES,
     DIRECTION_ALIAS as _DIRECTION_ALIAS,
     FAMILY_MOVES, COMPLEX_LAYOUT_FAMILIES,
-    CALIBRATION_LAWS, JUDGMENT_KEYS, RESULT_MEMORY_KEYS, COLOR_DIRECTIONS)
+    JUDGMENT_KEYS, RESULT_MEMORY_KEYS, COLOR_DIRECTIONS)
 
 DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json"
 
@@ -587,7 +587,6 @@ def color_plan(direction, brief: dict | None = None) -> dict:
     entry = COLOR_DIRECTIONS.get(fam) or COLOR_DIRECTIONS["quiet_luxury"]
     fam_key = fam if fam in COLOR_DIRECTIONS else "quiet_luxury"
     brief = brief or {}
-    sat_cap = (CALIBRATION_LAWS.get("sat90") or {})
     brand = brief.get("brand_colors") or {}
     seed = dict(entry["seed"])
     seed_source = "family_seed"
@@ -630,15 +629,6 @@ def color_plan(direction, brief: dict | None = None) -> dict:
             seed_source = "brand_colors"
     return {
         "family": fam_key,
-        "constraints": {
-            "hue_families_page_max": CALIBRATION_LAWS.get("hue_families_page_max", 1),
-            "sat90_max": (sat_cap.get("warm_material_max", 0.65)
-                          if entry["sat"] == "warm"
-                          else sat_cap.get("quiet_max", 0.35)),
-            "accent_area_max": 0.05,
-            "brightness_regime": entry["regime"],
-            "brightness_band": (CALIBRATION_LAWS.get("brightness_regimes") or {}).get(entry["regime"]),
-        },
         "seed_skeleton": seed,
         "seed_source": seed_source,
         "material_language": entry["material"],

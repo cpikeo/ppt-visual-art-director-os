@@ -183,9 +183,6 @@ DIRECTION_PRESETS: dict[str, dict] = {
                    "display": "Helvetica Neue"},
             text_default="ink",
             chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
-            constraints={"accent_max": 0.05, "max_colors": 5, "whitespace_min": 0.62, 
-                              "type_step_min": 1.25, "decoration_area_max": 0.06,
-                              "bg_layers_max": 1, "bold_ratio_max": 0.50},
             color_intent=["hierarchy", "emotion", "brand"],
         )),
     "editorial_brand": dict(
@@ -202,9 +199,6 @@ DIRECTION_PRESETS: dict[str, dict] = {
             fonts={"cn": "Songti SC", "latin": "Georgia", "display": "Georgia"},
             text_default="ink",
             chart_primary="primary", chart_secondary="accent", chart_muted="muted",
-            constraints={"accent_max": 0.04, "max_colors": 5, "whitespace_min": 0.58,
-                              "type_step_min": 1.25, "decoration_area_max": 0.08,
-                              "bg_layers_max": 1, "bold_ratio_max": 0.45},
             color_intent=["brand", "emotion", "hierarchy"],
         )),
     "product_stage": dict(
@@ -219,9 +213,6 @@ DIRECTION_PRESETS: dict[str, dict] = {
                    "display": "Helvetica Neue"},
             text_default="ink",
             chart_primary="primary", chart_secondary="accent", chart_muted="muted",
-            constraints={"accent_max": 0.05, "max_colors": 5, "whitespace_min": 0.48,
-                              "type_step_min": 1.30, "decoration_area_max": 0.12,
-                              "bg_layers_max": 2, "bold_ratio_max": 0.65},
             color_intent=["emotion", "brand", "hierarchy"],
         )),
     "evidence_first": dict(
@@ -239,9 +230,6 @@ DIRECTION_PRESETS: dict[str, dict] = {
                    "display": "Helvetica Neue"},
             text_default="ink",
             chart_primary="primary", chart_secondary="accent", chart_muted="secondary",
-            constraints={"accent_max": 0.05, "max_colors": 5, "whitespace_min": 0.52,
-                              "type_step_min": 1.25, "decoration_area_max": 0.05,
-                              "bg_layers_max": 1, "bold_ratio_max": 0.60},
             color_intent=["hierarchy", "brand", "emotion"],
         )),
 }
@@ -799,7 +787,6 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     else:
         arc = ["establish", "context", "explain", "explain", "prove", "prove",
                "recommend", "close"]
-    density = [str(p.get("density") or "balanced") for p in pages]
     assets = plan.get("assets") or {}
 
     def _n(x):

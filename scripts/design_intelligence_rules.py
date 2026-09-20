@@ -105,17 +105,6 @@ COMPOSITION_BY_FAMILY = {
 }
 
 # ── 参考空间实测律（全局；内联唯一真源，无外部覆盖）─────
-CALIBRATION_LAWS = {
-    "area_ratio": {"c1": 0.55, "c1_band": (0.35, 0.85), "c2": 0.21,
-                   "c3": 0.11, "c4": 0.06},
-    "hue_families_page_max": 1,          # 页级（主题级宽一档 → 2）
-    "sat90": {"quiet_max": 0.35, "warm_material_max": 0.65},
-    "brightness_regimes": {"dark": (0.05, 0.35), "light": (0.55, 0.97)},
-    "negative_space_text_led": (0.40, 1.0),
-    "photo_share": (0.18, 0.60),
-    "type_edge_density": (0.016, 0.053),
-}
-
 # ── 自适应色彩：方向种子（兜底骨架）。面积律（foundation 70 / supporting 20 /
 # information 8 / accent 2）的槽位语义住在 design_intelligence 的 seed 别名逻辑里。
 COLOR_DIRECTIONS = {
