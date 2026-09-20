@@ -9,7 +9,6 @@ deterministic batch:
 
     plan:      brief -> compact plan -> optional skeleton
     assets:    brief + plan -> deduplicated batch asset manifest
-    asset-qc:  generated images -> one grouped QC report
     check:     normalize -> guard -> compile -> preview evidence -> repair packet
     run:       plan + check in one Python process
     preview:   spec -> ghost contact sheet (PIL only, no office renderer)
@@ -213,12 +212,17 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
                 deck: dict | None = None) -> tuple[dict, dict]:
     """brief + one route page → compact asset card + geometric page contract."""
     from asset_prompt import (enhance_asset_card, grammar_phrase,
-                              hex_to_color_name, normalize_safe_area)
+                              hex_to_color_name, normalize_safe_area,
+                              resolve_asset_role)
 
     raw = raw_slide if isinstance(raw_slide, dict) else {"content": str(raw_slide)}
     deck = deck or {}
     derived = deck.get("direction_execution") or {}
     asset = page_plan.get("asset") or {}
+    # 角色先于用途解析：asset_role（是什么）→ 执行类型 asset_type，一步到位。
+    # 未声明不猜（默认 background + 来源 assumed）；未知值 fail-closed，不静默忽略。
+    asset_role, asset_role_source = resolve_asset_role(raw.get("asset_role"),
+                                                       raw.get("asset_type"))
     function = str(raw.get("asset_function") or asset.get("function") or "frame")
     anchor = str(raw.get("negative_space_anchor") or {
         "hero": "left", "emotion": "left", "context": "left",
@@ -252,7 +256,12 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
                              else f"accent color {accent_hex}")
     card = {
         "apc": f"APC-{str(asset_id).upper().replace('-', '_')}",
-        "asset_type": raw.get("asset_type") or "background",
+        # asset_type 只有一个来源：角色解析结果（asset_role 声明 > 旧 asset_type 直写
+        # > assumed background）。二者不再各存一份——那会出现「声明了却仍是 background」
+        # 的裂缝：提示词按背景纪律写，作者以为自己在出插图。
+        "asset_type": asset_role,
+        "asset_role": asset_role,
+        "asset_role_source": asset_role_source,
         "medium": raw.get("medium") or brief.get("asset_medium"),
         "family": direction_family or str(page_plan.get("page_family") or "").lower(),
         "subject": [subject],
@@ -361,6 +370,9 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
                 from asset_prompt import normalize_safe_area
                 assets.append({"asset_id": aid, "slide_ids": [sid], "decision": "existing",
                                "origin": origin, "asset_function": raw.get("asset_function", "context"),
+                               # 既有素材不生成，故不解析角色；作者写了就原样留痕（不解释、不补齐）
+                               "asset_role": str(raw.get("asset_role") or "").strip().lower() or None,
+                               "asset_role_source": ("declared" if raw.get("asset_role") else None),
                                "safe_area": normalize_safe_area(raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
                                "meta": {"text_color": raw.get("text_color")}, "retry_budget": 0,
                                "background_color": ((plan.get("theme") or {}).get("colors") or {}).get("background", "#FFFFFF")})
@@ -406,6 +418,8 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             "decision": "generate",
             "fingerprint": fingerprint,
             "asset_type": card["asset_type"],
+            "asset_role": card["asset_role"],
+            "asset_role_source": card["asset_role_source"],
             "asset_function": page["asset_function"],
             "ratio": page["ratio"],
             "allow_crop": raw.get("asset_allow_crop") is True,
@@ -443,60 +457,7 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     }
 
 
-# 打磨手册：warning 规则 → 一句可执行的改法。
-# 与 FIX_CONTRACT_HINTS 的分工：那份管「不改不能交付」，这份管「改了更好看」。
-# 两者都不进对话——除非作者显式要求打磨（--polish）。
-POLISH_HINTS = {
-    "direction_seed": "按方向种子的数字约束回调：留白不足就删元素/加边距（不是缩字号），"
-                      "字号级差不足就拉开层级或改用字重与墨色。",
-    "typography": "行长超限：加宽盒或拆句；正文单行 CJK ≤38 字 / 拉丁 ≤75 字。",
-    "grid": "坐标或尺寸没落在 8 网格上：吸附到 8 的倍数，边缘对齐比居中更稳。",
-    "palette_discipline": "颜色已不成系统：收拢为一组主辅色 + 一个强调色，"
-                          "强调色与主色拉开色相族。",
-    "text_capacity": "叙事行数偏多：先提炼再拆页，不要靠缩字号塞进去。",
-    "min_font": "注记类文字低于可读下限：提高字号，或改由更高层级的角色承担。",
-    "theme_fonts": "字体键写错或缺字族：规范键是 cn / latin（display / body 是别名）。",
-    "theme_constraints": "约束键名写错：写错的键不会被执法，等于没写。",
-    "chart_capacity": "图表类别过多：合并长尾、拆图，或改用排行榜只留前几名。",
-    "chart_style_drift": "同一类图表跨页规格不一致：统一标签字号与图例位置。",
-    "geom_occlude": "元素互相遮挡：挪开或删掉其一，不要靠层级盖住。",
-    "safe_zone": "内容对象越出声明的安全区：把它挪回安全区内。",
-    "anchor": "锚点漂移：眉标固定上缘、页码固定象限、证据编号按页序连续。",
-    "deck_anchor": "跨页锚点不一致：眉标/页码/Fig. 编号三者位置与编号都要成套。",
-}
-
-
-def _polish_plan(result: dict) -> dict:
-    """PASS 之后的细节打磨清单：把 warning/hint 变成一份可执行的改动表。
-
-    纪律不变——**打磨不是交付门槛**：它只在作者显式要求时出现（--polish），
-    永远不改变 verdict，也永远不会把 warning 升级成阻断。
-    它存在的理由只有一个：作者说「PASS 了，再打磨一轮」时，
-    需要的是「改哪个元素、改成什么」，而不是「有 2 条提示」。
-    """
-    groups = []
-    for bucket in result.get("trace_summary") or []:
-        rule = str(bucket.get("rule") or "")
-        groups.append({
-            "rule": rule,
-            "level": bucket.get("level"),
-            "count": bucket.get("count", 0),
-            "ids": bucket.get("ids") or [],
-            "evidence": bucket.get("samples") or [],
-            "polish": POLISH_HINTS.get(rule, "按 evidence 原文判断；拿不准就不动——"
-                                             "打磨的第一纪律是不要为了改而改。"),
-        })
-    # 高频项排前面：同一条规则命中越多，越可能是系统性的手法问题而不是个案。
-    groups.sort(key=lambda g: (-g["count"], g["rule"]))
-    return {
-        "round_policy": "打磨是可选的一轮，不是门槛：改完复跑同档确认没引入阻断即可；"
-                        "没有把握的条目请原样保留（warning 本就允许存在）。",
-        "groups": groups,
-    }
-
-
-def _repair_packet(result: dict, mode: str, build: Path, output: Path,
-                   polish: bool = False) -> dict:
+def _repair_packet(result: dict, mode: str, build: Path, output: Path) -> dict:
     """The only AI-facing context emitted by default: blockers grouped by cause."""
     packet = {
         "schema": "vao-repair-v1",
@@ -517,8 +478,6 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path,
         "next_action": result.get("next_action"),
         "performance": result.get("performance", {}),
     }
-    if polish:
-        packet["polish_plan"] = _polish_plan(result)
     return packet
 
 
@@ -538,11 +497,15 @@ def _ghost(spec: dict, output_dir: str | Path, pages: list[int] | None = None,
             "evidence_scope": "direction_and_structure_not_pixel_proof"}
 
 
-def asset_qc(manifest_path: str, input_dir: str | None = None,
-             *, phase: str = "draft", output: str | None = None,
-             json_output: bool = False) -> tuple[dict, int]:
-    """QC generated assets once, with at most one draft retry recommendation."""
-    from asset_prompt import image_qc, qc_retry_decision
+def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
+                     *, phase: str = "draft",
+                     output: str | None = None) -> tuple[dict, int]:
+    """资产核验：一次判定，一条修法（draft 最多一次定向重出）。
+
+    这是 `check` 内部的一步，不是独立入口——绑定、核验、结论必须在同一次
+    执行里发生，否则分步执行会漂移（v5.7：asset-qc 与 check 合并）。
+    """
+    from asset_prompt import ROLE_AUTHORITATIVE_SOURCES, image_qc, qc_retry_decision
 
     manifest_file = Path(manifest_path).expanduser().resolve()
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
@@ -574,9 +537,15 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
                       image_bytes=blob, expected_ratio=entry.get("ratio"),
                       allow_crop=entry.get("allow_crop") is True,
                       background=entry.get("background_color") or "#FFFFFF")
+        # 角色只有「作者说过的话」才对 QC 有发言权（declared / legacy）；
+        # assumed 角色不得悄悄放宽或收紧任何一条判据。
+        role_authority = (entry.get("asset_role")
+                          if entry.get("asset_role_source") in ROLE_AUTHORITATIVE_SOURCES
+                          else None)
         decision = qc_retry_decision(qc, attempt=int(entry.get("attempt", 0) or 0),
                                      phase=phase, max_retries=entry.get("retry_budget", 1),
-                                     asset_function=entry.get("asset_function"))
+                                     asset_function=entry.get("asset_function"),
+                                     asset_role=role_authority)
         missing = (qc.get("status") == "error")   # 文件不存在 ≠ 图片不合格：修法不同
         item = {"asset_id": entry.get("asset_id"), "slide_ids": entry.get("slide_ids") or [],
                 "file": str(candidate), "file_sha256": image_sha, "qc": qc, "policy": decision,
@@ -603,25 +572,10 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
     }
     out_path = Path(output).expanduser() if output else manifest_file.with_name(
         manifest_file.stem + ".qc.json")
+    report["report_path"] = str(out_path)
     _json_write(out_path, report)
-    if json_output:
-        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    else:
-        summary = ", ".join(f"{k}×{v}" for k, v in report["summary"].items()) or "no generated assets"
-        print(f"VAO asset-qc: {summary}")
-        if report["retry_assets"]:
-            print("  retry-once: " + ", ".join(report["retry_assets"]))
-        if report["blocking_assets"]:
-            print("  blocking-group: " + ", ".join(report["blocking_assets"]))
-        if report["pending_assets"]:
-            print("  not-generated: " + ", ".join(report["pending_assets"])
-                  + "（先生成图再 QC，这不是图片质量问题）")
-        if workflow_issues:
-            print("  workflow: " + "; ".join(workflow_issues))
-        if report["status"] == "PASS":
-            print("  ✓ 无资产阻断；advisory 不进入对话")
-        print(f"  report: {out_path}")
-    # 0 只代表「每个应生成的资产都被验证过且无阻断」；未生成 = 无法验证 = 不能当作通过。
+    # 静默：一次执行只输出一条结论（check 打印）。0 只代表「每个应生成的资产都被
+    # 验证过且无阻断」；未生成 = 无法验证 = 不能当作通过。
     return report, 0 if report["status"] == "PASS" else 2
 
 
@@ -670,9 +624,9 @@ def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
 
 def run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
-              include_advisory: bool = False, json_output: bool = False,
+              json_output: bool = False,
               assets_manifest: str | None = None, assets_dir: str | None = None,
-              asset_qc_report: str | None = None, polish: bool = False) -> tuple[dict, int]:
+              asset_qc_report: str | None = None) -> tuple[dict, int]:
     """Fresh run identity and fail-closed reports, including errors before schema checks."""
     from uuid import uuid4
     from qa import fail_result
@@ -694,9 +648,9 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     publish_failure(initial)
     try:
         result, code = _run_check(build_path, output, mode=mode, packet=packet, preview=preview,
-            include_advisory=include_advisory, json_output=json_output,
+            json_output=json_output,
             assets_manifest=assets_manifest, assets_dir=assets_dir,
-            asset_qc_report=asset_qc_report, polish=polish, run_id=run_id)
+            asset_qc_report=asset_qc_report, run_id=run_id)
         if mode == "draft":
             _json_write(manifest_path, {"run_id": run_id, "mode": "draft", "status": result["status"],
                 "release_eligible": False, "verification": {"release_eligible": False},
@@ -714,11 +668,11 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
 
 def _run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
-              include_advisory: bool = False, json_output: bool = False,
+              json_output: bool = False,
               assets_manifest: str | None = None,
               assets_dir: str | None = None,
               asset_qc_report: str | None = None,
-              polish: bool = False, run_id: str | None = None) -> tuple[dict, int]:
+              run_id: str | None = None) -> tuple[dict, int]:
     """一次执行完成交付验证：normalize → guard → compile → 预览证据 → 修复包。
 
     零外部渲染器、零 reference 读取、零逐条修复循环：一个进程，一份结论。
@@ -732,11 +686,16 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
     from asset_workflow import verify_chain, blocked_result
     asset_binding = None
     binding_error = None
+    asset_qc_result = None
     if assets_manifest:
         try:
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             binding_error = str(exc)
+        # 资产核验在这里发生一次：分步执行会漂移，一次执行只给一条修法。
+        if asset_qc_report is None:
+            asset_qc_result, _ = _asset_qc_report(assets_manifest, assets_dir, phase=mode)
+            asset_qc_report = (asset_qc_result or {}).get("report_path")
     snapshots = {}
     workflow = verify_chain(spec, assets_manifest, asset_qc_report, assets_dir, image_bytes=snapshots)
     if binding_error:
@@ -749,11 +708,14 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
         result = blocked_result(normalized, workflow)
     else:
         result = run_qa(normalized, output_path, mode=mode,
-                        normalize=False, include_advisory=include_advisory,
+                        normalize=False,
                         spec_path=str(build), image_bytes=snapshots)
         normalized = result.pop("_effective_spec", normalized)
     result["run_id"] = run_id
     result["asset_workflow"] = workflow
+    if asset_qc_result is not None:
+        workflow["qc"] = {"status": asset_qc_result.get("status"),
+                          "summary": asset_qc_result.get("summary")}
     if result.get("normalization") is None:
         result["normalization"] = norm
     result.setdefault("execution", {})["reference_context"] = "none"
@@ -795,7 +757,7 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
 
     result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
-    packet_value = _repair_packet(result, mode, build, output_path, polish=polish)
+    packet_value = _repair_packet(result, mode, build, output_path)
     _json_write(packet_path, packet_value)
     if json_output:
         print(json.dumps(packet_value, ensure_ascii=False, indent=2, default=str))
@@ -813,21 +775,7 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
             print("  fix[asset-binding] ×{} → 补齐 manifest 引用或重新生成资产: {}".format(
                 len(ids) + len(files), "、".join(ids + files)))
         if not (result.get("fix_plan") or {}).get("groups"):
-            print("  ✓ 无阻断：trace 只留痕（Evidence ≠ Error），不进入对话")
-        if polish:
-            plan = packet_value.get("polish_plan") or {}
-            groups = plan.get("groups") or []
-            if result.get("blocking_items"):
-                # 有阻断时不谈打磨：先让它能交付，再谈好不好看。
-                # 否则「还有 2 处可打磨」会和「这份产物不能用」抢注意力。
-                print("  · 打磨：先修上面的阻断项，PASS 之后再跑 --polish")
-            elif not groups:
-                print("  ✓ 打磨：没有可打磨项（warning 为空）——这一版已经干净")
-            for g in (groups if not result.get("blocking_items") else []):
-                ids = "、".join(g.get("ids") or []) or "deck"
-                print(f"  polish[{g['rule']}] ×{g['count']} ({ids}) → {g['polish']}")
-                for ev in g.get("evidence") or []:
-                    print(f"      · {ev}")
+            print("  ✓ 无阻断：证据只留痕（warn/hint 不进入对话）")
         if ghost:
             suffix = "（同产物复用，未重渲）" if ghost.get("reused") else ""
             print(f"  preview: {ghost['count']} 页 ghost → "
@@ -863,36 +811,20 @@ def run_once(args: argparse.Namespace) -> int:
               f"· manifest={args.assets_out}")
     if not build:
         if not args.skeleton:
-            print(json.dumps({"plan": bundle, "next": "有图先 assets → 出图 → asset-qc；通过后填充骨架并 check"},
+            print(json.dumps({"plan": bundle, "next": "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）"},
                              ensure_ascii=False, indent=2))
         else:
             print(f"plan complete · skeleton: {args.skeleton} · "
-                  "有图先 assets → 出图 → asset-qc；通过后填充骨架并 check")
+                  "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）")
         return 0
     manifest_for_check = getattr(args, "assets_manifest", None) or getattr(args, "assets_out", None)
     _, code = run_check(build, args.output, mode=args.mode, packet=args.packet,
-                        preview=args.preview, include_advisory=args.advisory,
+                        preview=args.preview,
                         json_output=args.json, assets_manifest=manifest_for_check,
                         assets_dir=getattr(args, "assets_dir", None),
                         asset_qc_report=getattr(args, "asset_qc_report", None),
-                        polish=getattr(args, "polish", False))
+                        )
     return code
-
-
-def doctor() -> int:
-    """Fast environment check; the only required external capability is Python packages."""
-    checks = {}
-    for name in ("pptx", "PIL", "yaml", "numpy"):
-        try:
-            __import__(name)
-            checks[name] = True
-        except Exception:
-            checks[name] = False
-    checks.update({"external_renderer_policy": "disabled",
-                   "references_loaded": False})
-    ok = all(checks[k] for k in ("pptx", "PIL", "yaml", "numpy"))
-    print(json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, indent=2))
-    return 0 if ok else 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -912,19 +844,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="必需：先由 vao.py plan 保存的 plan.json")
     a.add_argument("--out", default="asset_manifest.json")
     a.add_argument("--assets-dir",
-                   help="图将被放到哪个目录（写进 manifest，asset-qc 与 check 默认据此找图）")
+                   help="图将被放到哪个目录（写进 manifest，check 默认据此找图并核验）")
     a.add_argument("--cache", help="prompt cache JSON; reuse identical visual-demand fingerprints")
     a.add_argument("--json", action="store_true")
-
-    aq = sub.add_parser("asset-qc", help="generated asset folder → grouped QC report")
-    aq.add_argument("manifest")
-    aq.add_argument("--input",
-                    help="directory containing asset_id.png files "
-                         "(default: manifest 的 assets_dir，其次 manifest 所在目录；"
-                         "与 check/run 的 --assets-dir 同一口径)")
-    aq.add_argument("--phase", choices=("draft", "release"), default="draft")
-    aq.add_argument("--out")
-    aq.add_argument("--json", action="store_true")
 
     c = sub.add_parser("check", help="build.py → normalize/guard/compile/preview → packet")
     c.add_argument("build")
@@ -935,9 +857,6 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     c.add_argument("--assets-dir", help="directory containing generated manifest filenames")
     c.add_argument("--asset-qc-report", help="QC报告；默认资产清单同目录的 <stem>.qc.json")
-    c.add_argument("--advisory", action="store_true", help="include guard design-contract diagnostics; off by default")
-    c.add_argument("--polish", action="store_true",
-                   help="PASS 后再走一轮细节打磨：把 warning 变成可执行的改动表（不改判定）")
     c.add_argument("--json", action="store_true")
 
     r = sub.add_parser("run", help="prepare plan/assets OR check an existing build after QC")
@@ -954,9 +873,6 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--mode", choices=("spec", "draft", "release"), default="draft")
     r.add_argument("--packet")
     r.add_argument("--preview")
-    r.add_argument("--advisory", action="store_true")
-    r.add_argument("--polish", action="store_true",
-                   help="PASS 后再走一轮细节打磨：把 warning 变成可执行的改动表（不改判定）")
     r.add_argument("--json", action="store_true")
 
     v = sub.add_parser("preview", help="spec/build → ghost contact sheet (PIL only)")
@@ -972,7 +888,6 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--check", action="store_true", help="validate the store (default action)")
     d.add_argument("--json", action="store_true")
 
-    sub.add_parser("doctor", help="check Python dependencies and policy state")
     return parser
 
 
@@ -1054,10 +969,6 @@ def main(argv: list[str] | None = None) -> int:
                             print(f"  Negative: {neg}")
                         print("-" * 60)
             return 0
-        if args.command == "asset-qc":
-            _, code = asset_qc(args.manifest, args.input, phase=args.phase,
-                               output=args.out, json_output=args.json)
-            return code
         if args.command == "dna":
             return _dna(args)
         if args.command == "plan":
@@ -1070,11 +981,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "check":
             _, code = run_check(args.build, args.output, mode=args.mode,
                                 packet=args.packet, preview=args.preview,
-                                include_advisory=args.advisory, json_output=args.json,
+                                json_output=args.json,
                                 assets_manifest=args.assets_manifest,
                                 assets_dir=args.assets_dir,
                                 asset_qc_report=args.asset_qc_report,
-                                polish=args.polish)
+                                )
             return code
         if args.command == "run":
             return run_once(args)
@@ -1090,7 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
                 info["asset_binding"] = binding
             print(json.dumps(info, ensure_ascii=False, indent=2))
             return 2 if binding and binding["status"] == "BLOCK" else 0
-        return doctor()
+        return 2
     except ModuleNotFoundError as exc:
         print(f"VAO error: missing Python dependency {exc.name!r}; "
               "install requirements.txt", file=sys.stderr)

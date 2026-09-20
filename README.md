@@ -6,37 +6,11 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
-## 当前版本：5.5.0
-
-5.5.0 是第四轮深度审计（跨域验证后的死层切除）：Phase 15 三域盲测（城市研究 /
-品牌融资 / 科技发布，均 release PASS）证明判断发生在**起草时**，spec 级二审层
-零消费——遂整体切除：`pre_critic`(414 行) + `risk_strategy`(140 行) + 9 个仅被
-它们消费的私有 helper + 11 个孤儿常量（`FOCUS_LEAD`/`STATEMENT_SIZE`/`PANEL_*`/
-`RHYTHM_INK_*` 等）+ primitives 的死几何函数群（`filled_panels`/`memory_anchor`/
-`content_occupancy`/第二套 bg 判定）。plan 期 `forecast_risk`（三域生产真实消费）
-与 guard 的 `--advisory` 诊断开关保留。design_intelligence.py 1369→645 行（-53%）。
-生产路径行为零变化（三域 plan 字节级一致，仅删一句陈旧 note）。
-回归 **148/148 PASS**，三域 bench 全链 release 回归 round 1/6 PASS。
-
-5.4.x 系列叙事（5.4.9 输出 schema 减法、5.4.8 AST 可达性清零、5.4.7 死常量清理与摘要合并、5.4.6 运行时
-契约减法、5.4.5 System 三层切分、5.4.4 Intelligence 减法收敛、5.4.3 Craft 减法
-重构、5.4.2 契约语义收紧、5.4.1 SKILL 决策系统重构、5.4.0 声明优先级语义）
-全文见 `CHANGELOG.md`。
-
-5.3.0 是**轮次与提示词质量版**：出图提示词去矛盾（光照单一来源、静物动势抑制、
-构图语法翻译、色名可读化、负向提示分层）、`run` 一次完成规划+资产契约、
-骨架升级为「完整作业单」（正常流程免读 plan.json）、删除全部零消费镜像字段、
-文档去重（SKILL.md -28%）。
-逐条对照见 `CHANGELOG.md`（5.2.0 及更早的修复叙事也在其中）。
-
-提示词与计划字段变更后，旧资产清单指纹自然失效：旧图可登记 reuse 迁移，旧 QC 不自动升级。
-对生成图片有意裁切时，可在对应 brief slide 中写 `asset_allow_crop: true`。
-最低分辨率与透明度检查不会替代人工设计判断。QC 和发布不通过清单隐式执行 Python brief；
-本包不是不可信代码沙箱。
+当前版本 **5.8.0**；逐版变更（做了什么、为什么、删了什么）见 `CHANGELOG.md`。
 
 ## 标准生产顺序（`run` 是标准入口；轮次由资产数量、QC 状态与根因修订决定）
 
-**brief → plan+资产契约（一次调用）→ 按清单出图 → asset-qc → 填骨架 → release 收口**
+**brief → plan+资产契约（一次调用）→ 按清单出图 → 填骨架 → check 收口**
 
 图片提示词由 `vao.py run/assets` 内置的 `asset_prompt.py` 产生，不是先自由出图后补清单。
 外部图片服务并未内置于技能包；执行者仍需调用实际的生成工具。
@@ -53,10 +27,8 @@ python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.p
 # 2) 用外部图片工具按清单 prompt / negative / ratio / safe_area 生成图片
 #    保存到 generated_assets；名称按 expected_filename（也支持同名 JPEG）
 
-# 3) 检查图片；缺文件、待重试或阻断时退出码为 2，不能继续编排
-python scripts/vao.py asset-qc asset_manifest.json --phase draft
-
-# 4) 填完骨架（头注释即完整作业单）直接 release 收口；确需迭代构图才先 --mode draft
+# 3) 填完骨架（头注释即完整作业单）直接 release 收口；确需迭代构图才先 --mode draft
+#    check 内部完成资产核验：缺图、待重试或阻断都退出 2，不编译
 python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```
 
@@ -66,7 +38,7 @@ python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manif
   不强制生成，但仍经资产清单与 QC。`kind` 也可为 `licensed / original / reuse`。
 - **有图旧项目迁移**：重新 plan → assets，既有图登记为 reuse；保留新骨架的
   `asset_workflow.plan_sha256` 与 `plan_path` 并为图片填入 `asset_id`，QC 通过后再检查。
-- **自定义 QC 路径**：`asset-qc --out` 后，给 `check --asset-qc-report` 同一路径。
+- **自定义 QC 路径**：默认找清单同目录的 `asset_manifest.qc.json`，或用 `check --asset-qc-report` 指定。
 - **流程边界**：发布通过证明本地文件证据一致，不证明外部模型按提示词执行，
   也不证明图片授权或艺术质量；不得以此替代人工设计判断。
 
@@ -78,12 +50,10 @@ python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manif
 |---|---|
 | `vao.py plan` | brief → plan.json（家族/页意图/叙事动作/构图语法提案/媒体闸门）+ build 骨架 |
 | `vao.py assets` | brief + plan → 去重后的批量资产清单（相同视觉需求只出一次图） |
-| `vao.py asset-qc` | 图片体检 + 清单/文件指纹凭证；retry/missing/block 均退出 2 / 对比度 |
-| `vao.py check` | normalize → guard → compile → ghost 预览 → 分组修复包（`spec`/`draft`/`release`） |
-| `vao.py run` | 规划/清单准备，或检查已有编排稿；不能一次跳过出图与 QC |
+| `vao.py check` | 资产核验 → normalize → guard → compile → ghost 预览 → 分组修复包（`spec`/`draft`/`release`） |
+| `vao.py run` | 规划/清单准备，或检查已有编排稿；不能一次跳过出图与资产核验 |
 | `vao.py preview` | 只出 ghost 方向预览（PIL，秒级） |
 | `vao.py dna` | 经验记忆：`--check` 体检 / `--add` 写入一条（校验后才入库） |
-| `vao.py doctor` | 环境自检 |
 
 ## 目录
 
@@ -106,7 +76,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（155 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（166 项，含判断层与反退化检查）
 ```
 
 ## 设计上刻意不做的事
@@ -127,15 +97,21 @@ ppt-visual-art-director-os/
 
 ## 样张（assets/）
 
-`assets/` 里是四副匿名化验证样张（整副 deck 的方向预览 contact sheet，JPEG q90），覆盖四种
+`assets/` 里是四副匿名化验证样张（整副 deck 的方向预览 contact sheet，PNG），覆盖四种
 不同视觉世界：东方墨韵编辑 / 瑞士精密科技 / 安静极简 / 有机奢华。它们证明的是
 跨风格的版式纪律——章节页全幅重置、数据页单一强调、锚点同位——而不是供复制的
 版式截图。代码不引用它们：它们是给人目检的证据，不是流水线的输入。
 
+| ![东方墨韵编辑](assets/1c2f20c6a78cd5c41dd344397e986f5b.png) | ![安静极简](assets/ffb347873654bd8176db4d7acbb3bd3d.png)  |
+|:--:|:--:|
+| 东方墨韵编辑 | 安静极简 |
+| ![有机奢华](assets/bb423798bd14650761b3e744dfcd9905.png)| ![瑞士精密](assets/af927d8d95970a43eaec3f6cc67102aa.png)  |
+|  有机奢华 | 瑞士精密 |
+
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 155 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
+python scripts/selftest.py        # 166 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

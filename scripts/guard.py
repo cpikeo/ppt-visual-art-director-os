@@ -28,26 +28,21 @@ from typing import Any
 
 from primitives import (AUX_TEXT_ROLES, DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT,
                         ELEMENT_TYPES, CHART_KINDS,
-                          contrast, bg_coverage, bg_overlay_opacity, is_background_declared,
-                         spec_fingerprint)
+                        BG_MIN_COVERAGE, BG_MIN_PROTECT_OPACITY,
+                        LINE_MEASURE_CJK_MAX, LINE_MEASURE_LATIN_MAX, LINE_MEASURE_FAIL_FACTOR,
+                        contrast, bg_coverage, bg_overlay_opacity, is_background_declared,
+                        spec_fingerprint)
 from design_intelligence_rules import (FAMILY_MOVES, FAMILY_ALIASES, MEDIA_MODEL, DENSITY_BANDS,
                                        EMPTY_SPACE_ROLES, ENERGY_LEVELS)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
-GRID = GRID_UNIT   # 基线网格唯一来源：primitives.GRID_UNIT（normalizer/文档同源）
 
-# ── 设计契约 = 观察，不扣分、不阻断────────────────────────────────
-# Guard 是 PPT 的 compiler linter：它只回答「这份 spec 是不是合法、数据是不是真的、
-# 文件能不能渲染、内容有没有被切掉」。「高级感」不在它的管辖范围——那属于
-# Design Intelligence（设计价值维度的基元常量住 primitives）。
-# 下面这些规则名保留在这里，只是为了让 Critic 与风险预测更快定位证据（同一份事实
-# 不重算第二次），它们**不构成任何门槛**；阈值是参考刻度，
-# 不是及格线。新增判断请先问一句：它能被一个固定阈值完全描述吗？
-# 能 → 那是工程约束，放这里；不能 → 那是设计判断，去 design-craft.md + Critic 证据。
-DESIGN_RULES = frozenset({
-    "chart_highlight", "focus", "focus_scale", "organic_layer",
-    "palette_discipline", "typography", "asset_contract", "chart_style_drift",
-})
+# ── Guard 只查工程事实 ────────────────────────────────────────────────
+# 它回答四件事：这份 spec 合法吗、数据是真的吗、内容会不会被切掉、文件能不能交付。
+# 「高级感」「节奏」「焦点尺度」不在管辖范围——那是 Design Intelligence 与
+# design-craft.md 的判断，验证层不评分、也不发设计提示（v5.7 起）。
+# 判据只有两类：工程错误（阻断），与**作者自己写下的数字**（写了才执法）。
+# 新增判断先问一句：它能被一个固定阈值完全描述，且不写就不检查吗？
 
 # 图表容量上限（OS §19 / USAGE §5.4）
 NUMERIC_CHART_KINDS = {
@@ -85,10 +80,6 @@ ROWS_CHART_KINDS = (
 ELEMENT_METRIC_KINDS = ("kpi", "executive_kpi", "big_number")
 
 
-def _is_grid_aligned(value: float) -> int:
-    """到最近 8 倍数网格的偏差（0–4）。"""
-    return int(round(abs(value - GRID * round(value / GRID))))
-
 
 def _is_cjk(ch: str) -> bool:
     o = ord(ch)
@@ -96,15 +87,11 @@ def _is_cjk(ch: str) -> bool:
             or 0xFF00 <= o <= 0xFF60 or 0x3000 <= o <= 0x303F)
 
 
-# 行长上限住 primitives（单一口径的物理载体）。
-_LINE_MEASURE_FALLBACK = {"LINE_MEASURE_CJK_MAX": 38, "LINE_MEASURE_LATIN_MAX": 75,
-                          "LINE_MEASURE_FAIL_FACTOR": 2.0}
+# 物理阈值住 primitives（单一口径），这里直连读取——不为 5 个常量搭缓存层。
 MEASURE_EXEMPT_ROLES = frozenset(AUX_TEXT_ROLES)   # 真源在 primitives（见其注释）
-
-
-def _measure_limits() -> dict:
-    """行长阈值，与 _bg_gate 同源同法。"""
-    return _cached_gate("lm", _LINE_MEASURE_FALLBACK)
+LINE_LIMITS = {"LINE_MEASURE_CJK_MAX": LINE_MEASURE_CJK_MAX,
+               "LINE_MEASURE_LATIN_MAX": LINE_MEASURE_LATIN_MAX,
+               "LINE_MEASURE_FAIL_FACTOR": LINE_MEASURE_FAIL_FACTOR}
 
 
 def line_measure(e: dict, limits: dict) -> dict | None:
@@ -334,10 +321,6 @@ def _check_page_contract(slide: dict, sid: str, add,
     def field(key):
         return intent.get(key) or slide.get(key)
 
-    for key in ("page_family", "empty_space_role", "energy"):
-        if not field(key):
-            add("page_contract", sid, "hint", f"缺少页面契约字段 {key}（建议声明以便可验证）")
-
     # 值校验：字段写了但值不存在 = 该页判断静默失效（家族 → 媒体/叙事动作/构图全回落；
     # 留白职责 → 免检与锚点判断失效；能量/密度 → 节奏判断失效）。点名到合法值，但不阻断——
     # 工程事实是「这个值引擎不认识」，不是「这页不合格」。
@@ -404,8 +387,7 @@ def _check_page_contract(slide: dict, sid: str, add,
         elif len(focus_matches) != 1:
             add("focus_contract", sid, "error",
                 f"focus={focus!r} 必须唯一；当前匹配 {len(focus_matches)} 个元素")
-    elif elements:
-        add("focus", sid, "hint", "未声明 focus；无法验证唯一视觉主锚点")
+    # 未声明 focus 不是工程错误：焦点可以落在图像/留白上，由设计判断负责。
 
 
 # ══════════════════════════════════════════════════════════════
@@ -417,46 +399,13 @@ def _check_page_contract(slide: dict, sid: str, add,
 # 预检条目为 hint 级：不改变 guard/QA 的通过判定，只提供可执行的最小修正。
 # ══════════════════════════════════════════════════════════════
 
-def _is_bg_layer(e: dict) -> bool:
-    """是否**声明**为背景层（只读意图，不判断资格）。判定在 primitives 共享。"""
-    return is_background_declared(e)
-
-
-# 声明 layer=background 即可免检，等于给任何内容图发一张免死金牌；资格判定要求它
-# 真的「承载空间」并给出阅读保护。阈值住 primitives（单一口径）。
-_BG_FALLBACK = {"BG_MIN_COVERAGE": 0.60, "BG_MIN_PROTECT_OPACITY": 0.20}
-
-
-_GATE_CACHE: dict = {}
-_BG_GATE_CACHE: dict = {}
-
-
-def _cached_gate(key: str, defaults: dict) -> dict:
-    """阈值住 primitives（v4.15 直连）；按 key 缓存，互不污染。"""
-    if key not in _GATE_CACHE:
-        import primitives as pr
-        th = dict(defaults)
-        for k in th:
-            v = getattr(pr, k, None)
-            if v is not None:
-                th[k] = v
-        _GATE_CACHE[key] = th
-    return dict(_GATE_CACHE[key])
-
-
-def _bg_gate() -> dict:
-    """背景层资格阈值（逐元素调用，只解析一次）。"""
-    return _cached_gate("bg", _BG_FALLBACK)
-
-
 def _bg_qualified(e: dict, cw: float, ch: float) -> tuple[bool, str | None]:
     """背景层免检资格：覆盖 ≥BG_MIN_COVERAGE 画布，且有真实保护层或显式免检声明。"""
-    if not _is_bg_layer(e):
+    if not is_background_declared(e):
         return False, "未声明为背景层"
-    th = _bg_gate()
-    cover = bg_coverage(e, cw, ch)          # 覆盖率与保护层解析在 primitives 共享，
-    if cover < th["BG_MIN_COVERAGE"]:       # 与 primitives 同一实现，不再各自算一遍
-        return False, (f"仅覆盖画布 {cover:.0%}（<{th['BG_MIN_COVERAGE']:.0%}）："
+    cover = bg_coverage(e, cw, ch)
+    if cover < BG_MIN_COVERAGE:
+        return False, (f"仅覆盖画布 {cover:.0%}（<{BG_MIN_COVERAGE:.0%}）："
                        f"这是内容对象，不是空间层")
     if e.get("readability_exempt"):
         return True, None
@@ -465,15 +414,10 @@ def _bg_qualified(e: dict, cw: float, ch: float) -> tuple[bool, str | None]:
         if why == "unparsable":
             return False, "overlay 无法解析出 opacity"
         return False, "未声明 overlay/content_protection：叠加文字的可读性无保障"
-    if op < th["BG_MIN_PROTECT_OPACITY"]:
-        return False, (f"遮罩不透明度 {op:.2f} < {th['BG_MIN_PROTECT_OPACITY']:.2f}，"
+    if op < BG_MIN_PROTECT_OPACITY:
+        return False, (f"遮罩不透明度 {op:.2f} < {BG_MIN_PROTECT_OPACITY:.2f}，"
                        f"形同虚设")
     return True, None
-
-
-def _bg_exempt(e: dict, cw: float, ch: float) -> bool:
-    """是否享受背景层豁免（声明 + 资格通过）。"""
-    return _bg_qualified(e, cw, ch)[0]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -487,7 +431,7 @@ def _check_background_qualification(slide: dict, sid: str, cw: float, ch: float,
     for e in (slide.get("elements") or []):
         if not isinstance(e, dict):
             continue
-        if e.get("type") == "image" and _is_bg_layer(e):
+        if e.get("type") == "image" and is_background_declared(e):
             ok, why = _bg_qualified(e, cw, ch)
             if not ok:
                 add("background_layer", f"{sid}:BACKGROUND_DISGUISED", "error",
@@ -532,21 +476,6 @@ def _hls(hexv) -> tuple[float, float, float] | None:
 # 任何判断动词/比较词；命中时给 hint（不扣分，与预检同立场：提前告诉你会被 Art
 # Critic 判「意图不清」，而不是替你重写）。
 # ---------------------------------------------------------------------------
-FIELD_NAME_SUFFIXES = (
-    "分析", "概览", "总览", "概况", "现状", "情况", "说明", "简介", "介绍",
-    "数据", "明细", "清单", "列表", "报告", "总结", "回顾", "展望", "规划",
-    "目标", "指标", "结构", "对比", "趋势", "格局", "分布", "排名", "排行",
-    "图谱", "框架", "模型", "流程", "历程", "沿革", "全景", "全貌", "画像",
-)
-# 判断词：出现任一，说明这行字已经是一个可复述的结论，不再是字段名
-_INSIGHT_VERBS = (
-    "是", "为", "达", "超", "涨", "降", "增", "减", "领先", "落后", "占比",
-    "贡献", "驱动", "来自", "源于", "高于", "低于", "第一", "唯一", "突破",
-    "收窄", "扩大", "转", "现", "成", "应", "需", "将", "已", "最", "更",
-)
-
-
-
 def _hue_gap(a, b) -> float | None:
     if not a or not b:
         return None
@@ -559,40 +488,6 @@ def _hue_family(hexv) -> int | None:
     if not c or c[2] < NEUTRAL_SAT:
         return None
     return int(c[0] // HUE_BUCKET) % int(360 // HUE_BUCKET)
-
-
-def _stop_color(stop):
-    if isinstance(stop, dict):
-        return stop.get("color")
-    if isinstance(stop, (list, tuple)) and len(stop) > 1:
-        return stop[1]
-    return None
-
-
-def _gradient_muck(fill) -> str | None:
-    """两色渐变是否会「混出脏灰」：色相接近互补 + 两端彩度都居中。
-
-    刻意不打击低对比的同族渐变（#F8F5EF→#EBE5D9 这类纸面呼吸是东方留白手法，
-    不是脏）；只有互补混色才会让中段失去方向感。
-    """
-    if not isinstance(fill, dict):
-        return None
-    stops = fill.get("stops")
-    if not isinstance(stops, (list, tuple)):
-        g = fill.get("gradient")
-        stops = g.get("stops") if isinstance(g, dict) else None
-    if not isinstance(stops, (list, tuple)) or len(stops) < 2:
-        return None
-    c1, c2 = _hls(_stop_color(stops[0])), _hls(_stop_color(stops[-1]))
-    if not c1 or not c2:
-        return None
-    gap = _hue_gap(c1, c2)
-    if gap is None or not (150.0 <= gap <= 210.0):
-        return None
-    if not all(0.08 <= s <= 0.40 and 0.20 <= l <= 0.80 for _, l, s in (c1, c2)):
-        return None
-    return (f"两端 {_stop_color(stops[0])}↔{_stop_color(stops[-1])} 色相差 {gap:.0f}°"
-            f"（互补）且彩度居中")
 
 
 def _box(e: dict, text_ink_ratio: float = 1.0,
@@ -640,47 +535,6 @@ def _geometry_occlusion(slide: dict):
             ratio = inter / smaller
             if ratio >= 0.30:
                 out.append((a[0], b[0], ratio))
-    return out
-
-
-def _optical_pair_alignment(slide: dict):
-    """小色块（图例块/圆点）与右侧紧贴文字必须垂直光学居中。
-
-    真实案例：10px 图例块与 12px 文字各写各的 y，渲染后文字上浮、色块下沉，
-    人眼立刻读作「没对齐」。柱条(h≤16)与端点读数同理。静态几何即可预防。"""
-    out = []
-    els = [e for e in slide.get("elements") or [] if isinstance(e, dict)]
-    texts = [e for e in els if str(e.get("type", "text")) == "text"]
-    for e in els:
-        if e.get("type") != "shape" or \
-                e.get("shape") not in ("rect", "rounded_rect", "oval"):
-            continue
-        try:
-            w = float(e.get("width", 0)); h = float(e.get("height", 0))
-            ex = float(e.get("x", 0)); ey = float(e.get("y", 0))
-        except (TypeError, ValueError):
-            continue
-        if not (0 < min(w, h) <= 16):
-            continue
-        right, cy = ex + w, ey + h / 2
-        for t in texts:
-            try:
-                tx = float(t.get("x", 0)); ty = float(t.get("y", 0))
-                th = float(t.get("height", 0))
-            except (TypeError, ValueError):
-                continue
-            # 同一行才算配对：水平紧贴 + 垂直范围相交，避免跨行误配
-            if not (right <= tx <= right + 24):
-                continue
-            if not (ty < ey + h and ty + th > ey):
-                continue
-            # 编译器文本顶锚+autofit：光学中心按行高模型算，而非声明盒中心
-            size = float(t.get("size", 12) or 12)
-            lh = float(t.get("line_height", 1.4) or 1.4)
-            single = (t.get("wrap") is False) or (t.get("max_lines") == 1)
-            lines = 1.0 if single else max(1.0, round(th / (size * lh)) if size * lh else 1.0)
-            delta = abs((ty + lines * size * lh / 2) - cy)
-            out.append((e.get("id"), t.get("id"), delta, tx - right))
     return out
 
 
@@ -783,10 +637,102 @@ def _rule_num(rules: dict, key: str, default, cast=float):
         return default
 
 
+
+def _check_deck_anchor(slides: list, ch: float, add) -> None:
+    """跨页锚（眉标 / 页码 / 证据编号）：锚不动，正文才可游走。
+
+    每页 anchor 由 plan 发下来（家族标签 / 页码），生成侧落成元素。查三件事：
+    声明了有没有落、落的位置是不是同一个、编号是否成套。这是工程事实
+    （存在性与位置），不是审美判断——所以它常开，默认就查。
+    """
+
+    _anc_decl: list[tuple[str, dict]] = []
+    _missing: list[str] = []
+    _eb_pos: list[tuple[float, float]] = []
+    _pn_pos: list[tuple[float, float]] = []
+    _figures: list[tuple[str, str]] = []
+    for s in slides:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id", "?"))
+        anc = s.get("anchor")
+        if not isinstance(anc, dict) or not anc:
+            continue
+        _anc_decl.append((sid, anc))
+        elems = [e for e in (s.get("elements") or []) if isinstance(e, dict)]
+        role_elems = lambda r: [e for e in elems if str(e.get("role", "")) == r]  # noqa: E731
+        if anc.get("eyebrow"):
+            cand = role_elems("eyebrow")
+            if not cand:
+                _missing.append(f"{sid} 眉标")
+            else:
+                for e in cand:
+                    try:
+                        _eb_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
+                    except (TypeError, ValueError):
+                        pass
+                want = str(anc["eyebrow"]).strip().upper()
+                if not any(str(e.get("text", "")).strip().upper() == want for e in cand):
+                    add("deck_anchor", sid, "warn",
+                        f"眉标与声明不一致：声明「{anc['eyebrow']}」，实际 "
+                        f"{[str(e.get('text', ''))[:24] for e in cand]}——眉标是导航，"
+                        f"必须用 plan 给的词汇表原文")
+        if anc.get("page_number") is not None:
+            cand = role_elems("page_number")
+            if not cand:
+                _missing.append(f"{sid} 页码")
+            else:
+                for e in cand:
+                    try:
+                        _pn_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
+                    except (TypeError, ValueError):
+                        pass
+                want = str(anc["page_number"]).strip()
+                if not any(str(e.get("text", "")).strip() == want for e in cand):
+                    add("deck_anchor", sid, "warn",
+                        f"页码与声明不一致：声明 {want}，实际 "
+                        f"{[str(e.get('text', ''))[:12] for e in cand]}")
+        # 证据编号（Fig. 01…）不再由 plan 发放，也不再要求落成元素：
+        # 它是论文的交叉引用装置，演示文稿里没有「见 Fig. 02」这种回指，
+        # 编号就只是来源行前面一串没人读的字符。
+        # 但作者显式声明了 figure 的老 deck 仍要保证编号成套——
+        # 半套编号（有的页有、有的页没有）比没有编号更让人怀疑「是不是漏了证据」。
+        if anc.get("figure"):
+            _figures.append((sid, str(anc["figure"])))
+
+    if _missing:
+        add("deck_anchor", "deck", "warn",
+            f"声明了锚但没有落到页面上：{'、'.join(_missing[:6])}"
+            + ("…" if len(_missing) > 6 else "")
+            + "——锚不是装饰，缺一页就断链")
+    if len({(round(x, 3), round(y, 3)) for x, y in _eb_pos}) > 1:
+        add("deck_anchor", "deck", "warn",
+            f"眉标落在 {len({(round(x, 3), round(y, 3)) for x, y in _eb_pos})} 个不同位置"
+            f"（{sorted({(round(x), round(y)) for x, y in _eb_pos})}）：眉标要固定上缘，"
+            f"位置一动，读者就得每页重新找它")
+    if _eb_pos and min(y for _, y in _eb_pos) > 0.12 * ch:
+        add("deck_anchor", "deck", "hint",
+            f"眉标最低一处在 y={min(y for _, y in _eb_pos):.0f}（> 12% 页高）："
+            f"眉标属于页面家具，习惯在上缘")
+    if len({(round(x, 3), round(y, 3)) for x, y in _pn_pos}) > 1:
+        add("deck_anchor", "deck", "warn",
+            f"页码落在 {len({(round(x, 3), round(y, 3)) for x, y in _pn_pos})} 个不同位置"
+            f"（{sorted({(round(x), round(y)) for x, y in _pn_pos})}）：页码要固定象限")
+    if len(_figures) >= 2:
+        nums = []
+        for _sid, label in _figures:
+            m = re.search(r"(\d+)", label)
+            nums.append(int(m.group(1)) if m else None)
+        if None not in nums and nums != list(range(nums[0], nums[0] + len(nums))):
+            add("deck_anchor", "deck", "warn",
+                f"证据编号不连续：{[l for _, l in _figures]}——编号断链会让「还有没有证据」"
+                f"变成猜谜；按页序重编 01…N")
+
+
 def _invalid_spec_result(message: str) -> dict:
     """Return a stable guard report for malformed top-level inputs."""
     check = {"rule": "spec_schema", "id": "spec", "level": "error", "msg": message}
-    return {"passed": False, "checks": [check], "advisory_rules": sorted(DESIGN_RULES),
+    return {"passed": False, "checks": [check],
             "warnings": [f"[spec_schema] {message}"],
             "grid": {"checked": 0, "aligned": 0, "adherence": None},
             "line_measure": {"checked": 0, "over": 0, "worst": 0.0, "worst_id": None}}
@@ -817,18 +763,15 @@ def _weak_text_roles(theme: dict, slides: list) -> set[str]:
     return roles & {"muted", "secondary"}
 
 
-def check_spec(spec: dict, rules: dict | None = None,
-               *, include_advisory: bool = True) -> dict:
+def check_spec(spec: dict, rules: dict | None = None) -> dict:
     """
     静态治理：对调用方传入的 spec 做 OS 硬约束断言。
 
     rules（可配置阈值，调用方传入；缺省用默认值；脏输入一律回落默认不炸链。
-    include_advisory=False 时跳过设计契约诊断；工程错误（结构、数据、几何、
-    越界、来源和可读性底线）仍保留。独立 guard CLI 默认保留 advisory，便于诊断。
+    只做工程判定与「作者自己写下的数字」执法：结构、数据、几何、越界、来源、
+    可读性底线、资产链。设计判断不在这里、也不产生提示。
     主题约束 `spec.theme.constraints` 仅对 accent_max/max_charts/max_colors/
     font_levels_max/font_families_max 五项在未显式传入 rules 时生效）:
-      grid_bias      : 网格偏差最大容忍（0–4，0=必须严格 8 倍数）
-      safety_min     : 安全区最小边距（默认 48，通栏条豁免）
       overlap_ratio  : 元素重叠容忍上限（默认 .12）
       text_ink_ratio : 文本框参与重叠的有效宽度系数（默认 .55，文本框≠墨迹）
       text_ink_v     : 文本框参与重叠的有效高度系数（默认 .70，行高/padding 余量）
@@ -843,7 +786,6 @@ def check_spec(spec: dict, rules: dict | None = None,
       font_levels_max     : 每页字号等级上限（默认 4，hint；可经 theme.constraints 传入）
       font_families_max   : 每页字体家族引用上限（默认 2，hint）
       min_font_size       : 注释/来源/标签类文字最小字号（默认 10，warn）
-      focus_scale         : 焦点文字应获得页内最大字号（默认 True，hint）
       require_provenance  : 数值图表必须声明来源/单位/期间/比较口径（默认 False=warn，True=error）
 
     事实/口径治理（本版本新增，业务级）：
@@ -875,8 +817,6 @@ def check_spec(spec: dict, rules: dict | None = None,
     theme = spec.get("theme") or {}
     # 主题生产约束（来自 VP 主题「生产约束」章节，可被 rules 显式覆盖）
     constraints = dict(theme.get("constraints") or {})
-    grid_bias = _rule_num(rules, "grid_bias", 4, int)          # 非严格：≤4 仅提示
-    safety_min = _rule_num(rules, "safety_min", 48, float)
     overlap_ratio = _rule_num(rules, "overlap_ratio", 0.12, float)
     text_ink_ratio = _rule_num(rules, "text_ink_ratio", 0.55, float)
     text_ink_v = _rule_num(rules, "text_ink_v", 0.70, float)
@@ -906,7 +846,6 @@ def check_spec(spec: dict, rules: dict | None = None,
     bg_layer_cov = _rule_num({}, "k", banner_cov, float) if banner_cov is not None else 0.60
     # 可读性底线：注释/来源/标签类文字的最小字号（设计单位 px）
     min_font_size = _rule_num(rules, "min_font_size", 10, float)
-    focus_scale = bool(rules.get("focus_scale", True))
     require_provenance = bool(rules.get("require_provenance", False))
 
     canvas = spec.get("canvas") or {}
@@ -931,9 +870,6 @@ def check_spec(spec: dict, rules: dict | None = None,
     warnings: list[str] = []
 
     def add(rule, eid, level, msg):
-        # QA 默认只验证工程事实；设计契约仍可由独立 guard 或显式 advisory 读取。
-        if not include_advisory and rule in DESIGN_RULES:
-            return
         checks.append({"rule": rule, "id": eid, "level": level, "msg": msg})
         if level in ("warn", "error"):
             warnings.append(f"[{rule}] {msg}")
@@ -1011,8 +947,6 @@ def check_spec(spec: dict, rules: dict | None = None,
             columns = int(canvas["grid_columns"])
             if columns <= 0:
                 raise ValueError
-            if columns != 12:
-                add("grid", "canvas", "hint", "推荐使用 12 列逻辑网格；8 单位仅用于基线与间距")
         except (TypeError, ValueError, OverflowError):
             add("canvas_schema", "canvas", "error", "canvas.grid_columns 必须是正整数")
     if "grid_unit" in canvas:
@@ -1022,8 +956,6 @@ def check_spec(spec: dict, rules: dict | None = None,
             unit = float(canvas["grid_unit"])
             if not math.isfinite(unit) or unit <= 0:
                 raise ValueError
-            if unit != GRID:
-                add("grid", "canvas", "hint", f"推荐使用 {GRID} 单位基线网格")
         except (TypeError, ValueError, OverflowError):
             add("canvas_schema", "canvas", "error", "canvas.grid_unit 必须是正的有限数字")
 
@@ -1056,8 +988,7 @@ def check_spec(spec: dict, rules: dict | None = None,
         return None if raw in _known_tokens else raw
 
     # ---- 每页 ----
-    lm_limits = _measure_limits()
-    grid_stats = {"checked": 0, "aligned": 0}
+    lm_limits = LINE_LIMITS
     measure_stats = {"checked": 0, "over": 0, "worst": 0.0, "worst_id": None}
     deck_hues: set[int] = set()
     chart_styles: dict[str, dict] = {}
@@ -1142,34 +1073,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                         f"geometry 退化（width={_fw:g}, height={_fh:g} ≤ 0 "
                         "→ 元素渲染不可见）")
 
-            # §02.1 网格：坐标与尺寸偏离 8 倍数
-            # 发丝线（≤2px）与通栏元素（宽/高等于画布）四个维度一并豁免：这类对象的
-            # 位置由「居中一条线 / 铺满画布」决定，按 8 倍数要求它是伪误差。
-            thin = False
-            try:
-                thin = (float(w) <= 2 or float(h) <= 2
-                        or abs(float(w) - cw) < 1 or abs(float(h) - ch) < 1)
-            except (TypeError, ValueError):
-                pass
-            try:
-                for axis, v in (("x", float(x)), ("y", float(y)),
-                                ("width", float(w)), ("height", float(h))):
-                    if not math.isfinite(v) or thin:
-                        continue
-                    bias = _is_grid_aligned(v)
-                    grid_stats["checked"] += 1
-                    grid_stats["aligned"] += 1 if bias == 0 else 0
-                    if axis in ("height", "width") and float(e.get(axis, 0)) <= 2:
-                        continue
-                    if bias > grid_bias:
-                        add("grid", eid, "warn",
-                            f"{axis}={v:.0f} 偏离 8 网格 {bias}px（OS §02.1）")
-                    elif bias > 0:
-                        add("grid", eid, "hint",
-                            f"{axis}={v:.0f} 偏离 8 网格 {bias}px（微调对齐更稳）")
-            except (TypeError, ValueError):
-                add("geometry", eid, "warn", "坐标/尺寸非数值，无法校验")
-
             # 色彩 token 拼写：认不出的名字在渲染层会被静默吞掉（回落 ink / 跳过描边），
             # 于是「配色写了没生效」不留任何痕迹。这里只判**名字认不认得**，
             # 不判颜色好不好看——后者是设计判断，不归治理层。
@@ -1245,12 +1148,6 @@ def check_spec(spec: dict, rules: dict | None = None,
                 y_out = not bleed_y and (_fy < -1 or _fy + _fh > ch + 1)
                 if x_out or y_out:
                     add("safety", eid, "error", "元素越出画布边界")
-                elif _fx < safety_min and _fx > 0:
-                    add("safety", eid, "hint",
-                        f"x={_fx:.0f} < 安全区 {safety_min:.0f}")
-                elif _fy < safety_min and _fy > 0:
-                    add("safety", eid, "hint",
-                        f"y={_fy:.0f} < 安全区 {safety_min:.0f}")
             except (TypeError, ValueError):
                 pass
 
@@ -1469,28 +1366,23 @@ def check_spec(spec: dict, rules: dict | None = None,
                     add("chart_label_collision", eid, "error",
                         "图表标签安全参数必须是数字")
 
-            # §06/§21 页面颜色角色与图表风格属于设计 advisory；默认 QA 不扫描。
-            if include_advisory:
-                for key in ("color", "fill", "stroke"):
-                    v = e.get(key)
-                    if isinstance(v, str) and v in theme.get("colors", {}):
-                        page_colors.add(v)
-                        if v not in NEUTRAL_COLOR_ROLES:
-                            fam = _hue_family(theme["colors"][v])
-                            if fam is not None:
-                                deck_hues.add(fam)
-                    elif isinstance(v, str) and v.startswith("#"):
-                        page_colors.add(v.upper())
-                        fam = _hue_family(v)
+            # 颜色角色的收集只为「作者声明的 max_colors / 色相族上限」服务。
+            for key in ("color", "fill", "stroke"):
+                v = e.get(key)
+                if isinstance(v, str) and v in theme.get("colors", {}):
+                    page_colors.add(v)
+                    if v not in NEUTRAL_COLOR_ROLES:
+                        fam = _hue_family(theme["colors"][v])
                         if fam is not None:
                             deck_hues.add(fam)
-                _mud = _gradient_muck(e.get("fill"))
-                if _mud:
-                    add("palette_discipline", eid, "hint",
-                        f"{typ}「{eid}」填充渐变{_mud}；插值中段会灰成脏块——"
-                        f"改成同族明度阶，或补色时把两端拉开明度")
+                elif isinstance(v, str) and v.startswith("#"):
+                    page_colors.add(v.upper())
+                    fam = _hue_family(v)
+                    if fam is not None:
+                        deck_hues.add(fam)
+
             if typ in ("chart", "native_chart"):
-                if include_advisory:
+                if chart_label_scale_tol is not None:
                     rec = chart_styles.setdefault(
                         str(e.get("chart_kind") or e.get("kind") or typ),
                         {"pages": set(), "sizes": set(), "legend": set()})
@@ -1544,7 +1436,7 @@ def check_spec(spec: dict, rules: dict | None = None,
         for e in s.get("elements", []):
             if not isinstance(e, dict):
                 continue
-            if _bg_exempt(e, cw, ch):
+            if _bg_qualified(e, cw, ch)[0]:
                 # 合格背景层由空间与阅读保护负责，不按内容对象计算几何冲突
                 continue
             if isinstance(source_zone, dict) and e.get("role") not in {"source", "method", "metadata"}:
@@ -1576,9 +1468,7 @@ def check_spec(spec: dict, rules: dict | None = None,
                     if not _overlap_allowed(ae, be):
                         add("overlap", f"{a[1]}∩{b[1]}", "error",
                             f"有效墨迹重叠 {ratio:.0%} > 容忍 {overlap_ratio:.0%}；需拆分、缩短或重新布局")
-                    else:
-                        add("overlap_declared", f"{a[1]}∩{b[1]}", "hint",
-                            "存在已声明的空间遮挡；发布前须以渲染证据确认未遮挡关键内容")
+                    # 已声明的空间遮挡是合法手法，不提示（是否遮挡关键内容由图看）。
 
         # 背景层资格（工程事实，非预测）：伪背景 error、无保护 warn
         _check_background_qualification(s, sid, cw, ch, add)
@@ -1591,26 +1481,6 @@ def check_spec(spec: dict, rules: dict | None = None,
             add("geom_occlude", sid, "warn",
                 f"「{a_id}」与「{b_id}」重叠 {ratio:.0%}（互相遮挡，"
                 f"其中一方信息实际不可读；挪开或删掉其一）")
-
-        # ── 光学对齐：小色块与紧贴文字必须垂直居中、间距一致 ──
-        _pairs = _optical_pair_alignment(s)
-        _gaps = []
-        for a_id, b_id, delta, gap in _pairs:
-            if delta > 3:
-                add("optical_alignment", sid, "warn",
-                    f"色块「{a_id}」与右侧文字「{b_id}」垂直偏差 {delta:.1f}px"
-                    f"（小色块/圆点与文字须光学居中，否则读作未对齐）")
-            if not 4 <= gap <= 20:
-                add("optical_alignment", sid, "warn",
-                    f"色块「{a_id}」与文字「{b_id}」间距 {gap:.0f}px 异常"
-                    f"（舒适区 4–20px）")
-            else:
-                _gaps.append((a_id, b_id, gap))
-        if len(_gaps) >= 2 and max(g for *_, g in _gaps) - min(g for *_, g in _gaps) > 2:
-            add("optical_alignment", sid, "warn",
-                "页内色块-文字间距不一致（"
-                + "、".join(f"「{b}」{g:.0f}px" for _, b, g in _gaps)
-                + "；图例/读数对应组的间距应处处相等）")
 
         # ── 柱体不得穿过基线（柱底压线是编辑式图表的契约）──
         for b_id, r_id, over in _baseline_crossings(s):
@@ -1630,82 +1500,6 @@ def check_spec(spec: dict, rules: dict | None = None,
 
 
         # 焦点尺度：声明焦点为文字时，应获得页内最大字号（OS「一页一焦点」）
-        if include_advisory and focus_scale:
-            intent = s.get("page_intent") if isinstance(s.get("page_intent"), dict) else {}
-            focus_id = intent.get("focus") or s.get("focus_subject_id") or s.get("focus")
-            if focus_id:
-                focus_el = next((e for e in s.get("elements", [])
-                                 if isinstance(e, dict) and e.get("id") == focus_id), None)
-                if focus_el and focus_el.get("type") == "text":
-                    try:
-                        fsize = float(focus_el.get("size") or 0)
-                        others = [float(e.get("size") or 0) for e in s.get("elements", [])
-                                  if isinstance(e, dict) and e.get("type") == "text"
-                                  and e is not focus_el]
-                        if others and max(others) > fsize:
-                            add("focus_scale", sid, "hint",
-                                f"焦点文字 {fsize:g}px 小于页内最大文字 {max(others):g}px，"
-                                f"主焦点未获得尺度优势")
-                    except (TypeError, ValueError):
-                        pass
-
-        if include_advisory:
-            # ---- §3.1 视觉资产引擎契约：叠加层 / 有机层 / 资产合同 ----
-            # 防御性：仅当 spec 实际声明相关字段时才校验，绝不臆造缺失设计决策。
-            for e in s.get("elements", []):
-                if not isinstance(e, dict):
-                    continue
-                etyp = e.get("type")
-                eid = e.get("id", "?")
-                fill = e.get("fill")
-                # 叠加层透明度（权威区间见 production-contract.md Background Layer Contract）
-                if etyp == "shape" and isinstance(fill, dict):
-                    # 兼容 Fill Contract（{"type":"gradient","stops":[...]}）与历史
-                    # {"gradient":{"stops":[...]}} 两种写法
-                    grad = fill if fill.get("type") == "gradient" else (
-                        fill.get("gradient") if isinstance(fill.get("gradient"), dict) else None)
-                    if isinstance(grad, dict):
-                        for stop in (grad.get("stops") or []):
-                            op = stop.get("opacity") if isinstance(stop, dict) else (
-                                stop[2] if isinstance(stop, (list, tuple)) and len(stop) >= 3 else None)
-                            try:
-                                op = float(op) if op is not None else None
-                            except (TypeError, ValueError):
-                                op = None
-                            if op is not None and (op > 0.80 or op < 0.10):
-                                add("overlay_opacity", eid, "warn",
-                                    f"gradient 叠加透明度 {op:.0%} 超出 10%–80%")
-                    # 兼容 {"type":"solid","opacity":...} 与历史 {"solid_color":...}
-                    if fill.get("type") == "solid" or "solid_color" in fill:
-                        op = fill.get("opacity")
-                        if isinstance(op, (int, float)) and (op > 0.70 or op < 0.20):
-                            add("overlay_opacity", eid, "warn",
-                                f"solid 叠加透明度 {op:.0%} 超出 20%–70%")
-                # 有机层（organize_layer）
-                ol = e.get("organic_layer")
-                if ol is None and isinstance(fill, dict):
-                    ol = fill.get("organic_layer")
-                if isinstance(ol, dict) and ol.get("enabled", True):
-                    op = ol.get("opacity")
-                    if isinstance(op, (int, float)) and (op > 0.35 or op < 0.05):
-                        add("organic_layer", eid, "warn",
-                            f"有机层透明度 {op:.0%} 超出 5%–35%（背景引擎 §3.1）")
-                    if not ol.get("purpose"):
-                        add("organic_layer", eid, "warn",
-                            "有机层 purpose 为空（不得为纯装饰 blob）")
-                # 资产合同（仅校验已显式声明 asset 元的图像）
-                asset = e.get("asset")
-                if isinstance(asset, dict):
-                    if not asset.get("theme_ref") and not asset.get("apc"):
-                        add("asset_contract", eid, "warn",
-                            "图像资产未绑定 VP 人格（theme_ref/apc 缺失），色彩可能偏离 spec.theme.colors")
-                    neg = asset.get("negative") or []
-                    if neg and not any(
-                            k in str(x).lower()
-                            for x in neg for k in ("text", "logo", "watermark")):
-                        add("asset_contract", eid, "hint",
-                            "资产 negative 未包含 no-text / no-logo / no-watermark 约束")
-
         # ---- 主题字体键（deck 级，逐页重复没意义，但每页都被它影响）----
         if si == 0:
             fonts = theme.get("fonts") if isinstance(theme.get("fonts"), dict) else None
@@ -1733,7 +1527,7 @@ def check_spec(spec: dict, rules: dict | None = None,
                 "hue_families_max", "accent_hue_min", "chart_label_scale_tol"})
             _unknown_cons = sorted(str(k) for k in constraints if str(k) not in _KNOWN_CONSTRAINTS)
             if _unknown_cons:
-                add("theme_constraints", "deck", "warn",
+                add("theme_constraint", "deck", "warn",
                     f"theme.constraints 里的 {_unknown_cons} 不生效（可用的键："
                     f"max_charts / max_colors / whitespace_min / type_step_min / "
                     f"bg_layers_max / bg_layer_coverage / bold_ratio_max / hue_families_max / "
@@ -1831,131 +1625,48 @@ def check_spec(spec: dict, rules: dict | None = None,
     for _rule, _scope, _level, _msg in _seed_hits:
         add(_rule, _scope, _level, _msg)
 
-    if include_advisory:
-        # ---- 跨页锚（眉标 / 页码 / 证据编号）：锚不动，正文才可游走 ----
-        # 每页 anchor 由 plan 发下来（家族标签 / 页码 / Fig. 编号），生成侧落成元素。
-        # 这里查三件事：声明了没有落、落的位置是不是同一个、证据编号是不是连续。
-        _anc_decl: list[tuple[str, dict]] = []
-        _missing: list[str] = []
-        _eb_pos: list[tuple[float, float]] = []
-        _pn_pos: list[tuple[float, float]] = []
-        _figures: list[tuple[str, str]] = []
-        for s in slides:
-            if not isinstance(s, dict):
-                continue
-            sid = str(s.get("id", "?"))
-            anc = s.get("anchor")
-            if not isinstance(anc, dict) or not anc:
-                continue
-            _anc_decl.append((sid, anc))
-            elems = [e for e in (s.get("elements") or []) if isinstance(e, dict)]
-            role_elems = lambda r: [e for e in elems if str(e.get("role", "")) == r]  # noqa: E731
-            if anc.get("eyebrow"):
-                cand = role_elems("eyebrow")
-                if not cand:
-                    _missing.append(f"{sid} 眉标")
-                else:
-                    for e in cand:
-                        try:
-                            _eb_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
-                        except (TypeError, ValueError):
-                            pass
-                    want = str(anc["eyebrow"]).strip().upper()
-                    if not any(str(e.get("text", "")).strip().upper() == want for e in cand):
-                        add("deck_anchor", sid, "warn",
-                            f"眉标与声明不一致：声明「{anc['eyebrow']}」，实际 "
-                            f"{[str(e.get('text', ''))[:24] for e in cand]}——眉标是导航，"
-                            f"必须用 plan 给的词汇表原文")
-            if anc.get("page_number") is not None:
-                cand = role_elems("page_number")
-                if not cand:
-                    _missing.append(f"{sid} 页码")
-                else:
-                    for e in cand:
-                        try:
-                            _pn_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
-                        except (TypeError, ValueError):
-                            pass
-                    want = str(anc["page_number"]).strip()
-                    if not any(str(e.get("text", "")).strip() == want for e in cand):
-                        add("deck_anchor", sid, "warn",
-                            f"页码与声明不一致：声明 {want}，实际 "
-                            f"{[str(e.get('text', ''))[:12] for e in cand]}")
-            # 证据编号（Fig. 01…）不再由 plan 发放，也不再要求落成元素：
-            # 它是论文的交叉引用装置，演示文稿里没有「见 Fig. 02」这种回指，
-            # 编号就只是来源行前面一串没人读的字符。
-            # 但作者显式声明了 figure 的老 deck 仍要保证编号成套——
-            # 半套编号（有的页有、有的页没有）比没有编号更让人怀疑「是不是漏了证据」。
-            if anc.get("figure"):
-                _figures.append((sid, str(anc["figure"])))
+    _check_deck_anchor(slides, ch, add)
 
-        if _missing:
-            add("deck_anchor", "deck", "warn",
-                f"声明了锚但没有落到页面上：{'、'.join(_missing[:6])}"
-                + ("…" if len(_missing) > 6 else "")
-                + "——锚不是装饰，缺一页就断链")
-        if len({(round(x, 3), round(y, 3)) for x, y in _eb_pos}) > 1:
-            add("deck_anchor", "deck", "warn",
-                f"眉标落在 {len({(round(x, 3), round(y, 3)) for x, y in _eb_pos})} 个不同位置"
-                f"（{sorted({(round(x), round(y)) for x, y in _eb_pos})}）：眉标要固定上缘，"
-                f"位置一动，读者就得每页重新找它")
-        if _eb_pos and min(y for _, y in _eb_pos) > 0.12 * ch:
-            add("deck_anchor", "deck", "hint",
-                f"眉标最低一处在 y={min(y for _, y in _eb_pos):.0f}（> 12% 页高）："
-                f"眉标属于页面家具，习惯在上缘")
-        if len({(round(x, 3), round(y, 3)) for x, y in _pn_pos}) > 1:
-            add("deck_anchor", "deck", "warn",
-                f"页码落在 {len({(round(x, 3), round(y, 3)) for x, y in _pn_pos})} 个不同位置"
-                f"（{sorted({(round(x), round(y)) for x, y in _pn_pos})}）：页码要固定象限")
-        if len(_figures) >= 2:
-            nums = []
-            for _sid, label in _figures:
-                m = re.search(r"(\d+)", label)
-                nums.append(int(m.group(1)) if m else None)
-            if None not in nums and nums != list(range(nums[0], nums[0] + len(nums))):
-                add("deck_anchor", "deck", "warn",
-                    f"证据编号不连续：{[l for _, l in _figures]}——编号断链会让「还有没有证据」"
-                    f"变成猜谜；按页序重编 01…N")
+    # ---- 色彩系统纪律（deck 级）：单页合规不等于全套成套 ----
+    if hue_families_max is not None and len(deck_hues) > hue_families_max:
+        add("palette_discipline", "deck", "warn",
+            f"全套使用 {len(deck_hues)} 个色相族（{HUE_BUCKET:.0f}° 一档）> 上限 "
+            f"{hue_families_max}；颜色已不成系统——收拢为一组主辅色 + 一个强调色")
+    pal = theme.get("colors") or {}
+    acc = _hls(pal.get("accent"))
+    # 中性色没有色相可言：#1E1E1C 与 #6E6E6A 的 HLS 色相都会算成 60°，
+    # 于是「灰阶 accent + 灰阶 primary」被判成同族——而这恰恰是本技能包
+    # 自己的 zen_minimal / 安静极简种子生成的骨架配色。规则对自家出厂配色
+    # 每次都误报，作者学到的是「这条 warning 可以忽略」，真正的同族撞色
+    # 反而被一起忽略。彩度低于 NEUTRAL_SAT 的色不参与色相族判定
+    # （与 _hue_family 的中性判定同一口径）。
+    if acc and acc[2] >= NEUTRAL_SAT:
+        for role in ("primary", "secondary"):
+            role_hls = _hls(pal.get(role))
+            if not role_hls or role_hls[2] < NEUTRAL_SAT:
+                continue          # 中性主色不与强调色争色相：这是纪律，不是冲突
+            gap = _hue_gap(acc, role_hls)
+            if accent_hue_min is not None and gap is not None and gap < accent_hue_min:
+                add("palette_discipline", f"theme.{role}", "warn",
+                    f"accent {pal.get('accent')} 与 {role} {pal.get(role)} 色相差 "
+                    f"{gap:.0f}° < {accent_hue_min:.0f}°：强调色与主色同族，页面拿不到"
+                    f"「唯一重点」信号——把强调色移出色相族，或改由明度/尺度承担强调")
+    for kind, rec in sorted(chart_styles.items()):
+        if len(rec["pages"]) < 2:
+            continue
+        sizes = rec["sizes"]
+        if len(sizes) > 1:
+            lo, hi = min(sizes), max(sizes)
+            if (chart_label_scale_tol is not None and lo > 0
+                    and hi / lo > chart_label_scale_tol):
+                add("chart_style_drift", kind, "warn",
+                    f"{kind} 出现在 {len(rec['pages'])} 页但标签字号 "
+                    f"{lo:g}–{hi:g}px（>{chart_label_scale_tol:g}×）：同一图表类型应共用"
+                    f"一套标签规格，差异只会读成没对齐")
+        if len(rec["legend"]) > 1:
+            add("chart_style_drift", kind, "hint",
+                f"{kind} 的图例开关在不同页不一致（{sorted(rec['legend'])}）：统一为全开或全关")
 
-        # ---- 色彩系统纪律（deck 级）：单页合规不等于全套成套 ----
-        if hue_families_max is not None and len(deck_hues) > hue_families_max:
-            add("palette_discipline", "deck", "warn",
-                f"全套使用 {len(deck_hues)} 个色相族（{HUE_BUCKET:.0f}° 一档）> 上限 "
-                f"{hue_families_max}；颜色已不成系统——收拢为一组主辅色 + 一个强调色")
-        pal = theme.get("colors") or {}
-        acc = _hls(pal.get("accent"))
-        # 中性色没有色相可言：#1E1E1C 与 #6E6E6A 的 HLS 色相都会算成 60°，
-        # 于是「灰阶 accent + 灰阶 primary」被判成同族——而这恰恰是本技能包
-        # 自己的 zen_minimal / 安静极简种子生成的骨架配色。规则对自家出厂配色
-        # 每次都误报，作者学到的是「这条 warning 可以忽略」，真正的同族撞色
-        # 反而被一起忽略。彩度低于 NEUTRAL_SAT 的色不参与色相族判定
-        # （与 _hue_family 的中性判定同一口径）。
-        if acc and acc[2] >= NEUTRAL_SAT:
-            for role in ("primary", "secondary"):
-                role_hls = _hls(pal.get(role))
-                if not role_hls or role_hls[2] < NEUTRAL_SAT:
-                    continue          # 中性主色不与强调色争色相：这是纪律，不是冲突
-                gap = _hue_gap(acc, role_hls)
-                if accent_hue_min is not None and gap is not None and gap < accent_hue_min:
-                    add("palette_discipline", f"theme.{role}", "warn",
-                        f"accent {pal.get('accent')} 与 {role} {pal.get(role)} 色相差 "
-                        f"{gap:.0f}° < {accent_hue_min:.0f}°：强调色与主色同族，页面拿不到"
-                        f"「唯一重点」信号——把强调色移出色相族，或改由明度/尺度承担强调")
-        for kind, rec in sorted(chart_styles.items()):
-            if len(rec["pages"]) < 2:
-                continue
-            sizes = rec["sizes"]
-            if len(sizes) > 1:
-                lo, hi = min(sizes), max(sizes)
-                if (chart_label_scale_tol is not None and lo > 0
-                        and hi / lo > chart_label_scale_tol):
-                    add("chart_style_drift", kind, "warn",
-                        f"{kind} 出现在 {len(rec['pages'])} 页但标签字号 "
-                        f"{lo:g}–{hi:g}px（>{chart_label_scale_tol:g}×）：同一图表类型应共用"
-                        f"一套标签规格，差异只会读成没对齐")
-            if len(rec["legend"]) > 1:
-                add("chart_style_drift", kind, "hint",
-                    f"{kind} 的图例开关在不同页不一致（{sorted(rec['legend'])}）：统一为全开或全关")
 
     # ---- 事实/口径跨页一致性（业务级，deck 级）：同一指标的单位/期间/口径必须全 deck 一致 ----
     # 单页各自合规、跨页口径打架，是金融/董事会材料最隐蔽也最致命的错误：
@@ -2010,20 +1721,11 @@ def check_spec(spec: dict, rules: dict | None = None,
                     f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 3:1：做装饰位没问题，"
                     f"做文字（刻度/注释/小字）会消失，换 ink/primary 或加深该 token")
 
-    # 设计契约条目：标为 advisory（不进门槛）——它们进报告、进证据，不进任何分数。
-    # 验证层不评分：打分等于用固定阈值重新裁决设计好坏，那是 Art Director 的职责。
-    for c in checks:
-        if c.get("rule") in DESIGN_RULES:
-            c["advisory"] = True
     return {
         "passed": not any(c["level"] == "error" for c in checks),
         "checks": checks,
-        "advisory_rules": sorted(DESIGN_RULES),
         "warnings": warnings,
         # 可报告的对齐/行长事实：比率本身不扣分（新提示族不得计分），供人复核
-        "grid": {**grid_stats,
-                 "adherence": (round(grid_stats["aligned"] / grid_stats["checked"], 3)
-                               if grid_stats["checked"] else None)},
         "line_measure": dict(measure_stats),
     }
 

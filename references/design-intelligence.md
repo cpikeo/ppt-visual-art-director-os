@@ -81,6 +81,14 @@ direction:
   motion_posture: "still | reveal | progressive"
 ```
 
+`background_scene` 说的是**整副 deck 的页面背景世界**：`solid_world`（原生色面 / 材质场 /
+极简空间）· `atmospheric`（允许光、空气、材质、景深形成背景环境）· `cinematic`（允许完整
+空间、场景与摄影叙事形成页面背景）。它**不判断「这一页有没有背景图」**——那是逐页
+`asset` + `asset_role: background` 的事。四个概念各管一件事，不得互相替代：
+`background_scene`＝页面背景世界 · `asset_role`＝这张资产是什么（背景/插图/hybrid）·
+`asset_function`＝它为什么存在（hero/proof/emotion/context/frame/separate）·
+`asset_subject`＝画面具体出现什么。
+
 隐喻必须能回答：什么材质 / 光从哪来、什么性格 / 元素并列、层叠还是纵深。内容不需要隐喻时，`solid_world` + 编辑版心即正确选择——诚实比意象重要。色彩派生：品牌色 > 材质/光性判断 > 方向种子（兜底）；图表色走语义角色，不写死色值。
 
 `color_behavior` 是**饱和与明度的人格**，不是品味标签：`quiet_neutral` 不是高级的同义词，四种人格平权；先问内容的情绪温度、行业语境与观看场景再选，选定后把纪律执行到底——克制 ≠ 低饱和：高饱和承担单一职责时同样克制，低饱和铺满而职责不清同样廉价。

@@ -210,7 +210,7 @@ def build_skeleton_module(bundle: dict) -> str:
          '页码 role=page_number；位置全 deck 一致。论文式证据编号已弃用——'
          '出处信息只进 source_zone 框（role=source/method/metadata）',
          '',
-         '有图页先执行 assets → 出图 → asset-qc；图片元素必须写 asset_id。',
+         '有图页先执行 assets → 出图；图片元素必须写 asset_id（核验在 check 内部完成）。',
          '填完后一次收口（release 含 Manifest 证据链）：',
          '  python scripts/vao.py check <本文件> out.pptx --mode release --assets-manifest asset_manifest.json',
          '首轮目标就是一次过 release；确需迭代构图时才先 --mode draft，终稿必须回到 release。',
@@ -248,8 +248,13 @@ def build_skeleton_module(bundle: dict) -> str:
         family = skel.get("page_family") or pg.get("page_family") or "TODO"
         comp = intel.get("composition") or {}
         move = str((intel.get("move") or {}).get("move") or "").strip()
+        # 作者声明了资产角色就写在作业面上：填空的人据此决定这张图是整幅承载
+        # （layer=background + overlay）还是立在栏内的独立视觉对象。
+        role = (pg.get("asset") or {}).get("role")
+        role_txt = f" · role={role}" if role else ""
         L.append(f'        # ── {sid} · family={family}'
-                 f' · density={pg.get("density")} · energy={pg.get("energy")} · media={media}')
+                 f' · density={pg.get("density")} · energy={pg.get("energy")}'
+                 f' · media={media}{role_txt}')
         if move:
             L.append(f'        #    叙事动作: {move}')
         if comp.get("intent") or comp.get("grammar"):

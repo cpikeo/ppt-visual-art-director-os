@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect as _inspect
 import json
 import os
 import pathlib
@@ -516,8 +517,8 @@ def check_direction_seed(work: pathlib.Path) -> None:
                                              "density": "sparse", "energy": "high",
                                              "empty_space_role": "hold_emotion"},
                              "elements": [txt("t1")]}]}
-    typo = [c for c in _guard.check_spec(spec_typo)["checks"] if c["rule"] == "theme_constraints"]
-    check("seed: min_whitespace 别名仍生效、写错的约束键被 theme_constraints 点名",
+    typo = [c for c in _guard.check_spec(spec_typo)["checks"] if c["rule"] == "theme_constraint"]
+    check("seed: min_whitespace 别名仍生效、写错的约束键被 theme_constraint 点名",
           bool(alias) and bool(typo) and _guard.check_spec(spec_typo)["passed"],
           f"别名={len(alias)} 条 · 未知键={len(typo)} 条")
 
@@ -827,14 +828,15 @@ def check_silent_failure_seams() -> None:
         {"domain": "guard", "level": "hint", "rule": "direction_seed", "count": 2,
          "ids": ["deck", "s03"], "samples": ["留白率 45% 低于下限 62%", "字号级差 1.09×"]},
     ])
-    check("warn: 聚合后仍保留元素 id 与样本原文（PASS 后的打磨要有据可依）",
+    check("warn: 聚合后仍保留元素 id 与样本原文（改哪个、为什么，仍然说得出）",
           bool(packed) and packed[0]["ids"] == ["deck", "s03"]
           and "45%" in packed[0]["samples"][0], str(packed))
     import vao as _vao
-    plan = _vao._polish_plan({"trace_summary": packed})
-    check("warn: 打磨清单给出可执行改法，且不引用修复包里不存在的字段",
-          bool(plan["groups"]) and plan["groups"][0]["evidence"]
-          and "guard.checks" not in json.dumps(plan, ensure_ascii=False))
+    packet = _vao._repair_packet({"trace_summary": packed}, "draft",
+                                 pathlib.Path("b.py"), pathlib.Path("o.pptx"))
+    check("warn: 修复包只有一条指令通道（fix_plan；不再有第三份打磨清单）",
+          bool(packet.get("fix_plan")) and "polish_plan" not in packet
+          and "trace_summary" in packet)
 
     # ⑨ 线性分割必须可用：它是「场 > 线 > 型 > 盒」里第二轻的分组语言，
     #    一旦写法被拦或预览看不见，作者就只能退回画卡片——工具的默认值
@@ -897,16 +899,19 @@ def check_silent_failure_seams() -> None:
         _ledger = _cc.note_round(pathlib.Path(_td), mode="draft", spec_hash="h1")
     check("budget: 轮次账本不再算无人消费的 over_budget（budget 仍用于显示 round n/6）",
           "over_budget" not in _ledger and _ledger.get("budget") == _cc.ROUND_BUDGET)
+    # ⑬ 验证层不评分、也不发设计提示：guard 只查工程事实与作者写下的数字。
+    #     这一条防的是「优化时把审美悄悄装回门槛/提示」——一旦回来，
+    #     AI 就会为了消掉提示去改设计（那正是本包反对的循环）。
     _adv_probe = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
                   "slides": [{"id": "s01", "elements": _panels("rect")}]}
-    _adv_off = {c["rule"] for c in
-                check_spec(_adv_probe, include_advisory=False)["checks"]}
-    _adv_on = {c["rule"] for c in
-               check_spec(_adv_probe, include_advisory=True)["checks"]}
-    check("advisory: DESIGN_RULES 是真开关——它决定哪些设计规则不进默认判定，不是死常量",
-          bool(_adv_on - _adv_off)
-          and (_adv_on - _adv_off) <= set(_guard_mod.DESIGN_RULES),
-          f"被它挡下的={sorted(_adv_on - _adv_off)}")
+    _design_hint_rules = {"focus_scale", "organic_layer", "asset_contract",
+                          "chart_style_drift", "overlay_opacity"}
+    _probe_rules = {c["rule"] for c in check_spec(_adv_probe)["checks"]}
+    check("verification: 设计诊断已整套移除（无 DESIGN_RULES、无 include_advisory、无审美提示）",
+          not hasattr(_guard_mod, "DESIGN_RULES")
+          and "include_advisory" not in _inspect.signature(check_spec).parameters
+          and not (_probe_rules & _design_hint_rules),
+          f"残留={sorted(_probe_rules & _design_hint_rules)}")
 
 
 def check_anti_regression() -> None:
@@ -1246,26 +1251,35 @@ def check_asset_workflow(work: pathlib.Path) -> None:
     bm = read_json(d / "blocked.manifest.json")
     check("assets: direct-src/no-manifest cannot release",
           blocked.returncode == 2 and not bm["release_eligible"] and bm["status"] == "BLOCKED")
-    missing = run_vao("asset-qc", str(manifest_path))
+    missing, missing_code = vao._asset_qc_report(str(manifest_path))
     check("assets: missing file is pending and exits nonzero",
-          missing.returncode == 2 and bool(read_json(qcpath)["pending_assets"]))
+          missing_code == 2 and bool(read_json(qcpath)["pending_assets"]))
     # Fixture is deliberately a neutral blank image; this tests the chain, not aesthetics.
     picture = images / pathlib.Path(entry["expected_filename"]).with_suffix(".jpg")
     Image.new("RGB", (640, 400), (242, 240, 230)).save(picture)
     bound, binding = vao.bind_asset_manifest(spec, manifest_path)
     check("assets: manifest directory + JPEG resolution agree with binding",
           binding["status"] == "PASS" and bound["slides"][0]["elements"][-1]["src"] == str(picture.resolve()))
+    (images / pathlib.Path(entry["expected_filename"]).with_suffix(".jpg")).unlink()
     pending = run_vao("check", str(mod), str(d / "pending.pptx"), "--assets-manifest", str(manifest_path))
-    check("assets: QC must pass before draft compilation", pending.returncode == 2 and not (d / "pending.pptx").exists())
+    check("assets: 一次 check 同时完成绑定与资产核验（缺图即阻断，不编译）",
+          pending.returncode == 2 and not (d / "pending.pptx").exists()
+          and bool(read_json(qcpath)["pending_assets"])
+          and not read_json(d / "pending.manifest.json")["release_eligible"])
+    # 缺图是「还没生成」，不是「图不合格」：报 pending 而不是 retry。
+    check("assets: 缺图归入 pending（生成与返工分得开）",
+          bool(read_json(qcpath)["pending_assets"])
+          and not read_json(qcpath)["retry_assets"])
+    Image.new("RGB", (640, 400), (242, 240, 230)).save(picture)
     with patch("asset_prompt.image_qc", return_value={"status":"ok", "checks":[
             {"check":"text_safe_area", "status":"issue"}]}), contextlib.redirect_stdout(io.StringIO()):
-        retry, code = vao.asset_qc(str(manifest_path), phase="draft")
+        retry, code = vao._asset_qc_report(str(manifest_path), phase="draft")
     check("assets: retry is not PASS and returns 2", code == 2 and retry["status"] == "BLOCKED" and bool(retry["retry_assets"]))
-    success = run_vao("asset-qc", str(manifest_path), "--phase", "release")
+    _, success_code = vao._asset_qc_report(str(manifest_path), phase="release")
     qc = read_json(qcpath)
     check("assets: real image QC binds inspected bytes to manifest",
-          success.returncode == 0 and qc["manifest_sha256"] == digest(manifest)
-          and bool(qc["results"][0]["file_sha256"]), success.stdout[-300:])
+          success_code == 0 and qc["manifest_sha256"] == digest(manifest)
+          and bool(qc["results"][0]["file_sha256"]))
     released = run_vao("check", str(mod), str(d / "deck.pptx"), "--mode", "release",
                        "--assets-manifest", str(manifest_path))
     rm = read_json(d / "deck.manifest.json")
@@ -1312,9 +1326,9 @@ def check_asset_workflow(work: pathlib.Path) -> None:
           verify_chain(bound, manifest_path)["status"] == "BLOCKED")
     brief.write_text(json.dumps(need), encoding="utf-8")
     run_vao("assets", str(brief), "--plan", str(plan), "--out", str(manifest_path), "--assets-dir", str(images))
-    existing_bytes = run_vao("asset-qc", str(manifest_path), "--phase", "release")
+    existing_bytes, existing_code = vao._asset_qc_report(str(manifest_path), phase="release")
     check("assets: pre-existing generated bytes require explicit reuse",
-          existing_bytes.returncode == 2 and bool(read_json(qcpath)["workflow_issues"]))
+          existing_code == 2 and bool(read_json(qcpath)["workflow_issues"]))
     # Explicit author-provided asset: same workflow except no image generation.
     need["slides"][0]["asset_source"] = {"kind":"provided", "path":str(picture), "source":"user fixture"}
     brief.write_text(json.dumps(need), encoding="utf-8")
@@ -1325,7 +1339,7 @@ def check_asset_workflow(work: pathlib.Path) -> None:
     spec["asset_workflow"]["plan_sha256"] = digest(read_json(plan))
     spec["slides"][0]["elements"][-1]["asset_id"] = existing["asset_id"]
     bound, _ = vao.bind_asset_manifest(spec, manifest_path)
-    run_vao("asset-qc", str(manifest_path), "--phase", "release")
+    vao._asset_qc_report(str(manifest_path), phase="release")
     check("assets: provided/reused materials need source+QC, not regeneration",
           existing["decision"] == "existing" and verify_chain(bound, manifest_path)["status"] == "PASS")
     text_spec = {"slides":[{"id":"s01", "elements":[{"type":"text", "text":"Only text"}]}]}
@@ -1393,8 +1407,7 @@ def check_audit_fixes(work: pathlib.Path) -> None:
         for e in entries:
             a,b = map(float, e.get("ratio","16:10").split(":"))
             Image.new("RGB", (640, round(640*b/a)), (242,240,230)).save(folder/"images"/e["expected_filename"])
-        q = run_vao("asset-qc", str(mp), "--phase", "release")
-        assert q.returncode == 0, q.stdout + q.stderr
+        assert vao._asset_qc_report(str(mp), phase="release")[1] == 0
         first = entries[0]
         pic = folder/"images"/first["expected_filename"]
         spec["asset_workflow"] = {"plan_sha256":aw.digest(read(pp)), "plan_path":str(pp)}
@@ -1432,7 +1445,7 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     evil["workflow"]["brief_path"] = str(payload)
     evil["workflow"]["brief_file_sha256"] = "invalid"
     evil_path = d/"evil.json";save(evil_path,evil)
-    q = run_vao("asset-qc",str(evil_path))
+    q = run_vao("check",str(sp),str(folder/"evil.pptx"),"--assets-manifest",str(evil_path))
     check("H-02: JSON manifest cannot execute nested Python/text brief", q.returncode == 2 and not marker.exists())
 
     # H-03: simultaneous source overwrite cannot change the verified bytes consumed by PPT or preview.
@@ -1507,7 +1520,7 @@ def check_audit_fixes(work: pathlib.Path) -> None:
 
     folder, sp, spec, mp, pic = asset_case("resolution")
     Image.new("RGB",(320,200),(242,240,230)).save(pic)
-    assert run_vao("asset-qc",str(mp),"--phase","release").returncode == 0
+    assert vao._asset_qc_report(str(mp), phase="release")[1] == 0
     result,code=invoke(sp,folder/"deck.pptx",mp)
     check("M-05: QC-passed image still needs sufficient pixels for its actual placement",
           code==2 and any("分辨率" in t for t in result["asset_workflow"]["issues"]))
@@ -1540,11 +1553,10 @@ def check_audit_fixes(work: pathlib.Path) -> None:
 
     # M-07: one effective spec goes to compile, preview and manifest.
     folder, sp, spec=native("fit")
-    spec["slides"][0]["elements"][0].update(text="Title",size=44,height=40,line_height=1.35,padding=8,auto_fit=True)
     save(sp,spec);result,code=invoke(sp,folder/"deck.pptx")
     manifest=read(folder/"deck.manifest.json")
-    check("M-07: successful auto_fit has consistent release provenance",code==0 and result["auto_fit"]["applied"]==1
-          and manifest["release_eligible"] and not manifest["validation"]["issues"])
+    check("M-07: one effective spec reaches compile, preview and manifest",
+          code==0 and manifest["release_eligible"] and not manifest["validation"]["issues"])
     with patch.object(qa,"preview_issues",return_value=["Injected preview evidence failure"]):
         result,code=invoke(sp,folder/"bad-preview.pptx")
     check("M-07: evidence failure produces actionable BLOCKED, never ready",
@@ -1598,7 +1610,7 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     save(bp,need);bundle=vao._plan(str(bp),str(pp))
     manifest=aw.prepare_manifest(vao.build_asset_manifest(need,bundle),need,bundle,bp,pp,mp)
     save(mp,manifest)
-    assert run_vao("asset-qc",str(mp),"--phase","release").returncode==0
+    assert vao._asset_qc_report(str(mp), phase="release")[1] == 0
     spec["asset_workflow"]={"plan_path":str(pp),"plan_sha256":aw.digest(bundle)}
     spec["slides"][0]["elements"].append({"id":"photo","type":"image","asset_id":aw.asset_entries(manifest)[0]["asset_id"],
         "x":760,"y":280,"width":384,"height":256,"fit":"cover","asset_function":"context"})
@@ -1694,6 +1706,153 @@ def check_prompt_discipline() -> None:
     issues = validate_asset_card(cjk)
     check("card: 中文 subject 收到「改英文」提醒（非阻断，清单保留原文）",
           any("subject 含中文" in s for s in issues), str(issues))
+
+
+def check_asset_role_separation() -> None:
+    """角色分离（v5.7）：背景图与插图的职责边界，不是第三个枚举系统。
+
+    这一组回答的是两个具体的失效：**背景图被当成一张大插图**（被要求明确主体、
+    被抠成透明剪影）与**插图被当成背景纹理**（被要求整块低密度、被融进版面底色）。
+    角色只有一个出口（asset_role → 执行类型 asset_type），用途不得偷换角色，
+    生成纪律与 QC 判据都跟着角色走——而判据只改变「问哪几个问题」，阈值一个没动。
+    纯函数级断言 + 一条声明链集成。
+    """
+    import route as _route
+    import vao as _vao
+    from asset_prompt import (ASSET_ROLES, ROLE_AUTHORITATIVE_SOURCES, build_asset_prompt,
+                              enhance_asset_card, qc_retry_decision, resolve_asset_role)
+
+    # R1 角色解析：未声明不猜（background/assumed）；声明即 declared；未知值 fail-closed
+    fail_closed = False
+    try:
+        resolve_asset_role("bg")
+    except ValueError:
+        fail_closed = True
+    check("role: 解析唯一出口（未声明=background/assumed · 声明=declared · 旧 asset_type=legacy）",
+          resolve_asset_role(None) == ("background", "assumed")
+          and resolve_asset_role("illustration") == ("illustration", "declared")
+          and resolve_asset_role(None, "icon") == ("icon", "legacy")
+          and fail_closed and set(ASSET_ROLES) == {"background", "illustration", "hybrid"},
+          f"{resolve_asset_role(None)} / {resolve_asset_role('illustration')} / fail_closed={fail_closed}")
+
+    def _card(**over) -> dict:
+        card = {"apc": "APC-ROLE", "asset_type": "background", "asset_function": "hero",
+                "subject": ["a celadon tea bowl on a wooden table"],
+                "color": ["neutral tonal range with one restrained accent"],
+                "material": ["glazed ceramic and warm oak"], "lighting": ["soft box light"],
+                "composition": ["calm evidence-field composition"],
+                "medium": "photography", "negative": []}
+        card.update(over)
+        return card
+
+    page = {"negative_space_anchor": "left", "light_direction": "left", "energy": "low",
+            "safe_area": {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78},
+            "text_color": "dark"}
+
+    # R2 背景的生成纪律：连续视觉场 + 大面积负空间；不给「主体给文字让位」句式
+    bg = build_asset_prompt(_card(), page)["prompt"]
+    check("prompt: 背景走空间纪律（连续材质场 / 大面积负空间；不出现主体让位句式）",
+          "large clean negative space on the left side" in bg
+          and "visual environment, not a picture of a thing" in bg
+          and "continuous tonal and material field" in bg
+          and "open for the page's text" not in bg, bg[:120])
+
+    # R3 插图的生成纪律：独立视觉对象 + 主体↔文字关系；不要求整块画面低密度
+    illus = build_asset_prompt(_card(asset_type="illustration"), page)["prompt"]
+    check("prompt: 插图走对象纪律（独立视觉对象 + 与文字建立关系；不要求整块负空间）",
+          "independent visual object" in illus
+          and "stays open for the page's text" in illus
+          and "large clean negative space" not in illus
+          and "visual environment, not a picture of a thing" not in illus, illus[:120])
+
+    # R4 介质已声明时，插图不吃透明剪影与风格预设（一张摄影插图不是抠图）
+    no_medium = {k: v for k, v in _card(asset_type="illustration").items() if k != "medium"}
+    cutout = build_asset_prompt(no_medium, page)["prompt"]
+    check("prompt: 插图介质已声明时风格词让位（无 3D/透明剪影，保留独立对象结构）",
+          "3D minimal illustration" not in illus
+          and "isolated on pure transparent background" not in illus
+          and "clean separation from what surrounds it" in illus
+          and "3D minimal illustration" in cutout, illus[:120])
+
+    # R5 空间融合按角色：空间资产融进版面，独立视觉对象保住边界
+    # （融合句由 enhance_asset_card 注入——按生产路径建卡，别测一张没经过增强的卡）
+    melt = "image melts into the layout background"
+
+    def _enhanced(**over) -> dict:
+        return enhance_asset_card(_card(**over), family="quiet_minimal")
+
+    fused_bg = build_asset_prompt(_enhanced(), page)
+    fused_hybrid = build_asset_prompt(_enhanced(asset_type="hybrid"), page)
+    fused_il = build_asset_prompt(_enhanced(asset_type="illustration"), page)
+    check("prompt: 空间融合按角色（background/hybrid 融入版面；illustration 保留自身边界）",
+          fused_bg["meta"]["fusion_enabled"] and fused_hybrid["meta"]["fusion_enabled"]
+          and not fused_il["meta"]["fusion_enabled"]
+          and melt in fused_bg["prompt"] and melt in fused_hybrid["prompt"]
+          and melt not in fused_il["prompt"],
+          f"bg={fused_bg['meta']['fusion_enabled']} il={fused_il['meta']['fusion_enabled']}")
+
+    # R6 无安全区（版面不压文字）时，「给页面文字让空间」的句子是空指令
+    no_area = build_asset_prompt(_card(asset_type="illustration"),
+                                 {**page, "safe_area": {}})["prompt"]
+    check("prompt: 无安全区时「让空间给文字」句式全部消失（插图同样适用）",
+          "page's text" not in no_area and "negative space" not in no_area, no_area[:120])
+
+    def _qc(*names: str) -> dict:
+        return {"status": "issue",
+                "checks": [{"check": n, "status": "issue"} for n in names]}
+
+    # R7 声明的角色决定问哪几个问题（未声明则沿用旧口径，新字段不放宽旧判据）
+    bg_pos = qc_retry_decision(_qc("subject_position"), phase="release",
+                              asset_role="background", asset_function="hero")
+    il_pos = qc_retry_decision(_qc("subject_position"), phase="release",
+                               asset_role="illustration")
+    hy_pos = qc_retry_decision(_qc("subject_position"), phase="release", asset_role="hybrid")
+    legacy_pos = qc_retry_decision(_qc("subject_position"), phase="release",
+                                   asset_function="emotion")
+    check("QC: 角色决定判据（background 免主体裁切判定；illustration/hybrid 不豁免；未声明走旧口径）",
+          bg_pos["action"].startswith("accept") and il_pos["action"] == "block"
+          and hy_pos["action"] == "block" and legacy_pos["action"].startswith("accept")
+          and il_pos["asset_role"] == "illustration",
+          f"{bg_pos['action']}/{il_pos['action']}/{hy_pos['action']}/{legacy_pos['action']}")
+
+    # R8 插图的安全区纹理密度降为 advisory；背景承诺没变，判据不动
+    il_tex = qc_retry_decision(_qc("text_safe_area"), phase="release", asset_role="illustration")
+    bg_tex = qc_retry_decision(_qc("text_safe_area"), phase="release", asset_role="background")
+    check("QC: 插图的安全区纹理密度为 advisory（背景仍阻断——判据跟着承诺走，阈值不动）",
+          il_tex["action"] == "accept_with_advisory"
+          and il_tex["advisory_checks"] == ["text_safe_area"] and bg_tex["action"] == "block")
+
+    # R9 声明链：brief 的 asset_role 一路落到 plan / 卡片，且不被 function 推导
+    brief = {"design_direction": "quiet_minimal", "slides": [
+        {"id": "s01", "family": "cover", "title": "封面", "asset": "required",
+         "asset_role": "illustration", "asset_function": "hero",
+         "asset_subject": "a celadon tea bowl standing on its own"}]}
+    plan = _route.plan_deck(brief)
+    card, _ = _vao._asset_page(brief, plan["pages"][0], brief["slides"][0],
+                               asset_id="asset-role-probe", deck=plan)
+    brief2 = {"design_direction": "quiet_minimal", "slides": [
+        {"id": "s01", "family": "cover", "title": "封面", "asset": "required",
+         "asset_function": "hero", "asset_subject": "mist over still water"}]}
+    plan2 = _route.plan_deck(brief2)
+    card2, _ = _vao._asset_page(brief2, plan2["pages"][0], brief2["slides"][0],
+                                asset_id="asset-role-probe-2", deck=plan2)
+    check("role: 声明链（plan.asset.role → 卡片执行类型；hero 用途不得把角色推成插图）",
+          (plan["pages"][0]["asset"] or {}).get("role") == "illustration"
+          and card["asset_type"] == "illustration" and card["asset_role_source"] == "declared"
+          and card["asset_function"] == "hero"
+          and card2["asset_type"] == "background" and card2["asset_role_source"] == "assumed"
+          and ROLE_AUTHORITATIVE_SOURCES == ("declared", "legacy"),
+          f"{card['asset_type']}/{card['asset_role_source']} vs {card2['asset_type']}/{card2['asset_role_source']}")
+
+    # R10 契约活在文档里：声明字段与四步判断必须写在作者看得见的地方
+    brief_yml = (ROOT / "templates" / "brief.yml").read_text(encoding="utf-8")
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    refs = ROOT / "references"
+    workflow_doc = (refs / "asset-workflow.md").read_text(encoding="utf-8")
+    check("docs: 角色分离写进契约（brief.yml 声明 asset_role；SKILL 四步判断不填图）",
+          "asset_role: background" in brief_yml
+          and "Asset Decision ≠ Image Filling" in skill
+          and "asset_role" in workflow_doc)
 
 
 def check_doc_counts() -> None:
@@ -1817,6 +1976,7 @@ def main() -> int:
         check_asset_workflow(work)
         check_audit_fixes(work)
         check_prompt_discipline()
+        check_asset_role_separation()
         check_anti_regression()
         check_boundary_negatives(work)
         check_doc_counts()

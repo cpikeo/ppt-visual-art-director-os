@@ -589,6 +589,12 @@ def _plan_deck(brief: dict) -> dict:
                         page["density_explicit"] = True
             if _intent_value(item.get("asset_function")):
                 page.setdefault("asset", {})["function"] = str(item["asset_function"]).strip()
+            # asset_role = 这张资产「是什么」（背景/插图/hybrid），与「为什么存在」
+            # （asset_function）是两个轴，互不推导。这里只**原样带过去**，不做判断也
+            # 不校验枚举——角色词汇的唯一真源在 asset_prompt.ASSET_ROLES，
+            # 未知值在那里 fail-closed（route 再存一份枚举只会长出第二个口径）。
+            if _intent_value(item.get("asset_role")):
+                page.setdefault("asset", {})["role"] = str(item["asset_role"]).strip().lower()
             # 契约规则 #1「写了的字段原样生效」——asset 声明不例外：
             # asset: required/reuse/none 直接改写决策；写了 asset_subject 即视为要出图。
             # （此前这两种声明落在 decision=none 的页上会被静默跳过——声明被吃掉，

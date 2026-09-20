@@ -60,15 +60,57 @@ slides:
 # 这是「这张图需要什么」的声明，不是模板、不是固定构图。
 # 未声明 → Skill 判断；已声明 → 不得被 direction / family / quality_level 覆盖。
 #
-# ── Asset Decision ────────────────────────────────────────────────────────
+# ── Asset Decision ≠ Image Filling ───────────────────────────────────────
+# 判断顺序固定四步，不许跳步、不许倒着走：
+#   1) 这一页需不需要视觉资产            → asset
+#   2) 它是「建立空间」还是「表达对象」  → asset_role
+#   3) 它为什么存在                      → asset_function
+#   4) 画面里具体出现什么                → asset_subject / material / lighting / texture
+#   最后才决定生成、复用，还是用原生表达（形状 / 图表 / 排版）。
 # asset: required       # required|reuse|none
-#   required：必须存在图像资产，进入生成 / QC 链。
+#   required：这一页必须有图像资产，进入生成 / QC 链。
+#     ⚠ required ≠ 必须做一张主体图。它只意味着这一页必须有图像资产——
+#     是整幅背景、局部插图、主视觉、环境照片还是独立资产，由 asset_role +
+#     asset_function + 构图决定。看到 required 就自动生成一张漂亮图片塞进页面，
+#     是本包明确禁止的做法。
 #   reuse：不生成新图，复用既有画心；真实既有文件必须用 asset_source 登记（照样过 QC）。
 #   none：明确禁止该页使用图像资产。
 #   注意：asset_subject 非空等价于 asset=required（除非你另行显式写了 asset）——
 #   这是一条显式声明，不允许被任何默认策略覆盖。
+#
+# ── Asset Role：先判断「这张图在页面里扮演什么角色」 ───────────────────────
+# asset_role: background   # background | illustration | hybrid
+#   background   = 空间 / 氛围 / 材质 / 光 / 页面负空间 / 内容的视觉环境
+#   illustration = 对象 / 叙事 / 视觉符号 / 具象表达 / 独立视觉焦点
+#   hybrid       = 同一资产确实同时承担「空间 + 对象」——非默认选项
+#   未声明 → Skill 按角色纪律判断（资产清单记 asset_role_source=assumed；
+#   写错值会让 assets 当场停下，不静默降级）。
+#
+#   asset_role 与 asset_function 是两个轴，不重复、不互相推导：
+#     asset_role     = 它**是什么**
+#     asset_function = 它**为什么存在**
+#   因此：asset_role=background ≠ asset_function=hero（背景再漂亮也不会自动成为
+#   页面主角）；asset_role=illustration ≠ 必须成为 hero（插图可以只是 separate，
+#   服务于一个局部叙事）。不要发明 background_hero / illustration_context 这类
+#   组合枚举——组合就是这两轴相乘，二维判断不该被摊平成组件表。
+#
+#   background（空间纪律）：优先判断 空间 → 光 → 材质 → 调域 → 负空间 → 页面融合；
+#     倾向大面积连续视觉场、低主体竞争、保留文字安全区、光影有方向但不过度戏剧化、
+#     材质与空气感优先于具体物件；不主动制造「主角」，不做海报式完整插画，
+#     不为「高级」堆细节，不承担页面唯一信息结论。背景是页面的视觉环境，不是第二个标题。
+#   illustration（对象纪律）：优先判断 对象 → 轮廓 → 尺度 → 位置 → 视觉含义 →
+#     与文字的关系；允许明确主体、明确轮廓、更高识别度、局部细节、独立构图，
+#     必要时成为页面主要视觉焦点。仍然禁止：无意义装饰 / 为填空而生成 /
+#     与内容无关的漂亮物件 / 多个没有层级的插图堆叠 / 承担本应由原生图形表达的数据。
+#     插图是页面中的视觉对象，不是背景纹理。
+#   两者不是审美选择而是职责差异：背景要「能与文字共存」，插图要「自身作为视觉对象成立」。
+#   只写 medium 不等于声明了插图角色——medium 说用什么工艺说话，asset_role 说它是什么。
+#
 # asset_subject: "a celadon tea bowl at right, empty space on the left for text"
-#   描述画面中「出现什么」，不是表达观点。不写则用 title 弱兜底，并在 QC 提醒补充。
+#   描述画面中「出现什么」，不是表达观点。不写 asset_subject：Skill 不得凭 title
+#   脑补具体对象（清单会记 title_fallback 并提醒补充），只允许按 asset_role 判断视觉类型。
+#   background：描述空间、环境、材质、光线、氛围、视觉密度，不要求形成完整主体。
+#   illustration：描述明确对象、人物、器物、场景或视觉符号，必须能作为独立视觉对象被识别。
 #   建议用英文写 subject：图像模型对英文遵循度更高；中文 subject 保留原文，
 #   只产生提示、不阻断流程。
 # medium: photography   # photography / chinese ink-wash painting / illustration …
@@ -77,12 +119,19 @@ slides:
 # asset_ratio: "16:9"   # 16:9 | 4:3 | 3:2
 #   生成比例与页面需求不一致需要裁切时，必须显式声明 asset_allow_crop: true
 # asset_function: hero  # hero|proof|emotion|context|frame|separate
+#   hero      → 页面视觉主角          proof    → 证据 / 事实主体
+#   emotion   → 情绪与氛围            context  → 环境 / 场景背景
+#   frame     → 为页面建立空间边界     separate → 独立视觉资产
 #   hero / proof：具象主体，严格检查主体裁切，且不注入运动模糊类动势语言。
-#   emotion / context：画面边界由材质、光线、空间填充，不做具象裁切判断。
-#   frame：构成页面空间关系。separate：独立资产，不承担页面主体构图。
+#   emotion / context / frame / separate：画面边界由材质、光线、空间填充，
+#   不做具象裁切判断。QC 判据跟着 asset_role 的承诺走（见 references/asset-workflow.md §7）。
 # negative_space_anchor: left   # left|right|top|bottom|center —— 文字安全区主要落点
+#   对 background：重点是保持文字区域干净、低信息密度、可读。
+#   对 illustration：重点是控制主体与文字之间的关系，不要求整块画面都保持低信息密度。
 # safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}
 #   仅在需要精确指定时写；未声明由 Skill 按构图判断。
+#   版面不压文字（整幅画心 / 栏内插图）时写 safe_area: {}，S 版面自己承担安静面；
+#   此时所有「留白 / 安全区」句式与检查一并停用（没有文字压图，就没有安全区）。
 # text_color: dark      # dark|light —— 安全区文字明暗，QC 按实际亮度验证
 # material: "rice paper ground, ink wash gradient"    # 自然语言描述材质，不写设计模板
 # lighting: "single soft north window light from the upper left, gentle falloff"
@@ -107,6 +156,14 @@ visual_world: ""        # 一句话：材质 + 光影 + 空间（例：哑光纸
 composition_grammar: "" # soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence
                         # 构图倾向，不是固定版式
 background_scene: ""    # solid_world | atmospheric | cinematic
+                        # 描述**整副 deck 的页面背景世界属于什么世界**，不判断
+                        # 「这一页有没有背景图」（那是逐页 asset + asset_role 的事）：
+                        #   solid_world → 背景以原生色面 / 材质场 / 极简空间为主
+                        #   atmospheric → 允许光、空气、材质、景深形成背景环境
+                        #   cinematic   → 允许完整空间、场景与摄影叙事形成页面背景
+                        # 四者职责不得混淆：background_scene 决定「页面背景世界」，
+                        # asset_role 决定「这张资产是什么」，asset_function 决定
+                        # 「它为什么存在」，asset_subject 决定「画面具体出现什么」。
 avoid: []               # 明确不要出现的视觉语言（例：[dashboard feeling,
                         # decorative stock imagery, excessive cards]），进入相关资产 negative
 

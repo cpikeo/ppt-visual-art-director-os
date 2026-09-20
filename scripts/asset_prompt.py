@@ -226,6 +226,24 @@ NEGATIVE_SPACE_PHRASES = {
     "center": "quiet calm center area, activity pushed to the edges",
 }
 
+# 插图的空间纪律与背景**不同**：背景要给文字让出整块低信息密度区，
+# 插图只需要控制「主体 ↔ 文字」的关系，本身可以中高密度。
+SUBJECT_TEXT_RELATION_PHRASES = {
+    "left": "subject held toward the right so the left side of the frame stays open for the page's text",
+    "right": "subject held toward the left so the right side of the frame stays open for the page's text",
+    "top": "subject kept low in the frame so the upper area stays open for the page's text",
+    "bottom": "subject kept high in the frame so the lower area stays open for the page's text",
+    "center": "subject pulled away from the centre so a calm middle stays open for the page's text",
+}
+
+# 插图遇「介质已声明」（photography / ink-wash / illustration …）时，风格词归介质，
+# 类型后缀不许再替它宣告「3D minimal illustration / soft material / editorial style」，
+# 也不许要求透明剪影——一张摄影插图不是抠图。此时只保留「独立视觉对象」的结构纪律。
+ILLUSTRATION_STRUCTURE: tuple[str, ...] = (
+    "single subject readable as an independent visual object",
+    "clean separation from what surrounds it, nothing competing for attention",
+)
+
 # deck 级构图语法键名 → 可读英文构图语言。内部枚举键（evidence_field /
 # soft_asymmetry …）对图像模型没有任何含义，裸键名进提示词是纯噪声，
 # 还计入资产指纹（换个键名 = 整批重出图）。翻译只发生在这一处。
@@ -364,9 +382,100 @@ ASSET_FUNCTION_PHRASES = {
     "immersive": "immersive cinematic full-bleed background environment, soft atmospheric depth, spacious foreground for typography",
 }
 
+# --------------------------------------------------------------------------
+# Asset Role Separation（v5.7 · 背景图与插图的职责边界）
+#
+# 背景图是「承载页面空间」的资产，插图是「表达页面对象」的资产——两者不能用同一套
+# 生成纪律。这一层只做一件事：把二者的差别变成可执行语言，不做第三个枚举系统。
+#
+# 二维模型（两个轴，互不替代）：
+#
+#                   为什么存在？（asset_function）
+#               Hero  Proof  Emotion  Context  Frame  Separate
+#   什么类型？   │      │       │        │       │       │
+#   Background ──┼──────┼───────┼────────┼───────┼───────┤   空间 / 氛围 / 材质 / 光
+#   Illustration ┼──────┼───────┼────────┼───────┼───────┤   对象 / 叙事 / 视觉符号
+#   Hybrid ──────┼──────┼───────┼────────┼───────┼───────┤   同一资产确实同时承担两者
+#
+#   asset_role     = 这张资产**是什么**（背景 / 插图 / 混合）
+#   asset_function = 这张资产**为什么存在**（主角 / 证据 / 情绪 / 环境 / 边界 / 独立）
+#   asset_subject  = 画面里**具体出现什么**
+#
+# 禁止把 asset_role 做成更多 asset_function 枚举（background_hero / illustration_context …）
+# —— 那会把一个二维判断摊平成组件/模板表，正是本包反对的退化方向。
+#
+# 两级不可互相偷换：
+#   asset_role=background  ≠  asset_function=hero   （背景再漂亮也不是页面主角）
+#   asset_role=illustration ≠  必须成为 hero        （插图可以只是 separate）
+#
+# 流水线位置：`asset_role` 解析结果直接就是**执行类型** `asset_type`——
+# 一个语义只允许有一个字段，避免出现「声明了 asset_role 而 asset_type 仍然是
+# background」这种写得却没生效的裂缝。
+ASSET_ROLES: tuple[str, ...] = ("background", "illustration", "hybrid")
+DEFAULT_ASSET_ROLE = "background"
+# 解析来源（审计用）：declared 逐页显式声明 · legacy 旧 asset_type 直写 · assumed 未声明。
+# 只有前两种是**作者说过的话**——QC 只承认作者说过的角色；assumed 不得悄悄放宽任何判据。
+ROLE_AUTHORITATIVE_SOURCES: tuple[str, ...] = ("declared", "legacy")
+
+
+def resolve_asset_role(declared=None, legacy_type=None) -> tuple[str, str]:
+    """逐页 asset_role → (执行类型 asset_type, 来源)。
+
+    未声明时**不猜**：角色恒有值（默认 background，与执行层历史默认一致），
+    但来源记为 `assumed`——只有作者写下的才算 declared。
+    刻意不接受 asset_function 作为推导输入：角色不许被用途偷换
+    （把 hero 当插图的推导会把摄影主体变成透明剪影，那不是判断，是串轴）。
+
+    未知角色值 fail-closed：写了却读不懂，比没写更贵（作者会以为它生效了）。
+    """
+    role = str(declared or "").strip().lower()
+    if role:
+        if role not in ASSET_ROLES:
+            raise ValueError(
+                f"未知 asset_role: {declared!r}（合法值 {'|'.join(ASSET_ROLES)}）："
+                "background=承载页面空间 / illustration=表达页面对象 / "
+                "hybrid=同一资产确实同时承担两者")
+        return role, "declared"
+    legacy = str(legacy_type or "").strip().lower()
+    if legacy:
+        if legacy not in ASSET_TYPE_SUFFIX:
+            raise ValueError(f"未知 asset_type: {legacy!r}"
+                             f"（可选 {sorted(ASSET_TYPE_SUFFIX)}）")
+        return legacy, "legacy"
+    return DEFAULT_ASSET_ROLE, "assumed"
+
+
+# 角色纪律：正向的**生成纪律**，只讲职责，不讲风格（风格由 medium / material 决定）。
+# 每个角色两句为限——提示词密度也是克制的一部分。
+ROLE_DISCIPLINE: dict[str, tuple[str, ...]] = {
+    "background": (
+        "the frame is a visual environment, not a picture of a thing",
+        "space, material and light carry the frame; no single dominant protagonist",
+    ),
+    "illustration": (
+        "one clearly readable subject treated as an independent visual object",
+        "silhouette, scale and position are decided; light shapes the subject rather than the scene",
+    ),
+    "hybrid": (
+        "one defined subject set inside a continuous spatial field",
+        "subject and space share the frame with a clear depth order",
+    ),
+    "icon": (),          # icon 有专属后缀，不叠加场景纪律
+}
+
+# 背景资产的空间纪律（背景图默认倾向）：大面积连续视觉场、不以具体物件竞争。
+BACKGROUND_DISCIPLINE: tuple[str, ...] = (
+    "one continuous tonal and material field with no competing objects",
+)
+
 # 资产类型后缀
 ASSET_TYPE_SUFFIX = {
     "background": (),  # 比例句（"16:9 presentation background"）由组装第 4 步按实际 ratio 生成
+    # hybrid：同一资产确实同时承担「空间 + 对象」。非默认选项——只有真的两者都要时才用。
+    "hybrid": (
+        "single frame where one defined subject and its surrounding space are inseparable",
+        "depth order kept legible: subject forward, material and light receding",
+    ),
     "illustration": (
         "3D minimal illustration",
         "soft material",
@@ -581,6 +690,11 @@ def validate_asset_card(card: dict) -> list[str]:
     if asset_type not in ASSET_TYPE_SUFFIX:
         issues.append(f"未知 asset_type: {asset_type}"
                       f"（可选 {sorted(ASSET_TYPE_SUFFIX)}）")
+    declared_role = str(card.get("asset_role") or "").strip().lower()
+    if declared_role and declared_role not in ASSET_ROLES:
+        issues.append(f"未知 asset_role: {declared_role}"
+                      f"（可选 {'|'.join(ASSET_ROLES)}）：background=承载空间 / "
+                      "illustration=表达对象 / hybrid=两者兼有")
     if not card.get("apc"):
         issues.append("缺少 apc：资产卡编号未溯源")
     if card.get("subject_source") == "title_fallback":
@@ -648,15 +762,16 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
             segments.append(f"{layers['organic_shapes']} organic shapes")
 
     # --- 三层：动势 / 微浮雕 / 空间融合（enhance_asset_card 注入）---
-    # 融合只对背景/框景类资产默认开启；icon、产品主体和明确分离的
-    # 资产保留边界，避免「无贴纸边缘」变成所有图片的同一种质感。
+    # 融合按**角色**定，不按用途定：空间资产要融进版面（消灭贴纸边），
+    # 独立视觉对象要保住自己的边界。用途（frame/separate/context）不再决定这件事——
+    # 那正是「插图被当成背景纹理」的来源。
     function_hint = str(asset_function or page.get("asset_function")
                          or card.get("asset_function") or "frame").lower()
     fusion_allowed = card.get("fusion_enabled")
     if fusion_allowed is None:
-        fusion_allowed = asset_type == "background" or function_hint in {
-            "frame", "separate", "context", "contextualize"
-        }
+        fusion_allowed = asset_type in ("background", "hybrid") or (
+            asset_type != "illustration" and function_hint in {
+                "frame", "separate", "context", "contextualize"})
     segments.extend(_as_list(card.get("motion"))[:1])
     texture = _as_list(card.get("texture"))
     # One material cue + one discipline cue is enough; prompt length is part
@@ -683,10 +798,19 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     text_color = page.get("text_color") or page.get("safe_area_text_color")
     medium = str(card.get("medium") or card.get("render_mode") or "").strip().lower()
 
+    # 角色纪律：背景优先判断 空间 → 光 → 材质 → 负空间；插图优先判断 对象 → 轮廓 →
+    # 尺度 → 位置 → 与文字的关系。同一张图只走其中一条链。
+    segments.extend(ROLE_DISCIPLINE.get(asset_type, ()))
+    if asset_type == "background":
+        segments.extend(BACKGROUND_DISCIPLINE)
     if medium:
         segments.append(f"{medium} medium")
-    if anchor in NEGATIVE_SPACE_PHRASES:
-        segments.append(NEGATIVE_SPACE_PHRASES[anchor])
+    # 留白锚点按角色说不同的话：背景承诺「干净的安静面」，插图只承诺
+    # 「主体与文字的关系」——把插图的整块画面压成低密度是错的指令。
+    space_phrases = (SUBJECT_TEXT_RELATION_PHRASES if asset_type == "illustration"
+                     else NEGATIVE_SPACE_PHRASES)
+    if anchor in space_phrases:
+        segments.append(space_phrases[anchor])
     # 光向/能量句式只在「光没有被介质纪律或作者声明接管」时注入（见函数头）。
     if not (photo_light_override or lighting_declared):
         if light in LIGHT_PHRASES:
@@ -703,16 +827,21 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         # production uses a compact tail and resolves ratio at the call site.
         segments.extend(PROMPT_QC_COMPACT)
         segments.append(f"{ratio} presentation background")
-    segments.extend(ASSET_TYPE_SUFFIX[asset_type])
-    # 仅对透明资产（illustration / icon）追加对比度防护
-    segments.extend(ASSET_CONTRAST_GUARD.get(asset_type, ()))
+    if asset_type == "illustration" and medium:
+        # 介质说了算：类型后缀只留结构纪律（见 ILLUSTRATION_STRUCTURE）。
+        segments.extend(ILLUSTRATION_STRUCTURE)
+    else:
+        segments.extend(ASSET_TYPE_SUFFIX[asset_type])
+        # 仅对透明资产（illustration / icon）追加对比度防护
+        segments.extend(ASSET_CONTRAST_GUARD.get(asset_type, ()))
 
-    # 无安全区（画心独占版面）时，凡是「把眼睛引向留白锚点 / 留白对齐到文字安全区」
-    # 一类句子都是空指令——版面根本不压文字。提示词只留版面真正要用的话。
+    # 无安全区（画心独占版面）时，凡是「把眼睛引向留白锚点 / 留白对齐到文字安全区 /
+    # 把某一侧让给页面文字」一类句子都是空指令——版面根本不压文字。
+    # 提示词只留版面真正要用的话。
     if not area:
         segments = [x for x in segments
                     if not any(k in x for k in ("negative space", "negative-space",
-                                                "text-safe area"))]
+                                                "text-safe area", "page's text"))]
     prompt = separator.join(s_ for s_ in _dedup(segments) if s_)
 
     # --- 5. 反向提示词（分层组装：核心恒注入，场景层按画面可能有什么注入）---
@@ -740,6 +869,9 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
             "apc": card.get("apc"),
             "theme_ref": card.get("theme_ref"),
             "asset_type": asset_type,
+            # 角色与来源一并留痕：审计要能区分「作者说的」与「默认假设的」。
+            "asset_role": asset_type,
+            "asset_role_source": card.get("asset_role_source"),
             "ratio": ratio,
             "negative_space_anchor": anchor,
             "safe_area": area,
@@ -823,12 +955,19 @@ ASSET_QC_PHASES = frozenset({"draft", "review", "release"})
 
 def qc_retry_decision(qc: dict, *, attempt: int = 0,
                       phase: str = "draft", max_retries: int = ASSET_QC_MAX_RETRIES,
-                      asset_function: str | None = None) -> dict:
+                      asset_function: str | None = None,
+                      asset_role: str | None = None) -> dict:
     """把 image_qc 结果翻译成有界动作，不改变 run_qa 的 review/release 档位。
 
     ``attempt`` 从 0 开始。draft 只对影响文字安全区/构图可用性的检查自动
     允许一次定向重出；brightness_balance 仅建议。review/release 不自动重出，
     release 的阻断信号仍须由最终 QA/Manifest 消费，而不是由这层伪造通过。
+
+    ``asset_role`` 只传**作者显式声明的**角色（未声明传 None）：QC 的判据跟着
+    这张资产的承诺走——背景承诺「可与文字共存」，于是查可读性、连续性与负空间；
+    插图承诺「自身作为视觉对象成立」，于是查主体完整性、识别度与位置关系。
+    角色不是审美评分，它决定的是**问哪几个问题**。未声明时沿用既有
+    asset_function 口径，不因新字段而放宽任何一条。
     """
     phase = str(phase or "draft").strip().lower()
     if phase not in ASSET_QC_PHASES:
@@ -845,14 +984,27 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
     retry_cap = min(requested, ASSET_QC_MAX_RETRIES)
     checks = qc.get("checks") or [] if isinstance(qc, dict) else []
     issues = [c for c in checks if isinstance(c, dict) and c.get("status") == "issue"]
-    # 氛围/语境类资产不适用「主体贴边」：它们的画面边界本就由材质与光填满，
-    # 边界延伸是自然的，不是被裁断的主体（判据见 ASSET_QC_CONTEXT_FUNCTIONS）。
-    # 这一条省掉的是整整一轮「重出一张 → 还是过不了 → 换意象」的往返，
-    # 而那个往返曾把设计判断也带偏：为了过检查去改意象，而不是因为意象该改。
-    context_asset = str(asset_function or "").strip().lower() in ASSET_QC_CONTEXT_FUNCTIONS
+    # 「主体贴边被裁」这条判据为**具象主体**而设：产品、人物、建筑被画框切掉一眼就是错的。
+    # 而空间资产的画面边界本来就该由材质与光填满——宣纸撕边、石面颗粒、雾的过渡延伸
+    # 到画外是自然的，不是被裁断的主体。
+    # 声明的角色优先（背景豁免 / 插图与 hybrid 必须成立）；未声明的沿用既有
+    # asset_function 口径（emotion/context/frame/separate 豁免）——新字段不偷偷放宽旧判据。
+    declared_role = str(asset_role or "").strip().lower()
+    if declared_role in ("illustration", "hybrid"):
+        subject_bearing = True
+    elif declared_role == "background":
+        subject_bearing = False
+    else:
+        subject_bearing = str(asset_function or "").strip().lower() \
+            not in ASSET_QC_CONTEXT_FUNCTIONS
     blocking = [c for c in issues
                 if c.get("check") in ASSET_QC_BLOCKING_CHECKS
-                and not (context_asset and c.get("check") == "subject_position")]
+                and not (not subject_bearing and c.get("check") == "subject_position")]
+    # 插图的承诺是「主体与文字建立关系」，不是「整块画面保持低信息密度」：
+    # 安全区纹理密度对插图降为 advisory——压字可读性由 contrast_suitability（亮度）
+    # 与编排层的保护/遮罩负责。承诺变了，判据跟着变；背景资产的承诺没变，判据不动。
+    if declared_role == "illustration":
+        blocking = [c for c in blocking if c.get("check") != "text_safe_area"]
     advisory = [c for c in issues if c not in blocking]
     missing_file = isinstance(qc, dict) and qc.get("status") == "error"
     if missing_file:
@@ -871,6 +1023,7 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
         "attempt": attempt,
         "max_retries": retry_cap,
         "phase": phase,
+        "asset_role": declared_role or None,
         "blocking_checks": [c.get("check") for c in blocking],
         "advisory_checks": [c.get("check") for c in advisory],
         "manual_required": bool(blocking and action != "retry") or missing_file,

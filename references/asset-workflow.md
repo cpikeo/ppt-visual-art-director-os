@@ -2,7 +2,7 @@
 
 ## 1. 顺序与责任
 
-**brief → plan → assets → 按清单生成图片 → asset-qc → PPT 编排 → release**
+**brief → plan → assets → 按清单生成图片 → PPT 编排 → check（含资产核验）→ release**
 
 | 步骤 | 入口 / 执行者 | 产物 | 何时可继续 |
 |---|---|---|---|
@@ -10,7 +10,7 @@
 | 规划 | `vao.py plan` | plan + 编排骨架 | brief 与计划绑定，骨架保留计划指纹 |
 | 资产契约 | `vao.py assets --plan` | 资产清单 | 当前 brief 与已保存计划一致 |
 | 出图 | 外部生成工具 / 执行者 | 图像文件 | 按清单提示词、负向提示词、比例与安全区生成 |
-| 检查 | `vao.py asset-qc` | QC 报告 + 图片 SHA-256 | 全部资产 accept 或 accept_with_advisory |
+| 检查 | `vao.py check`（内部一步） | 资产 QC 报告 + 图片 SHA-256 | 全部资产 accept 或 accept_with_advisory |
 | 编排 | 作者 + `vao.py check --mode draft` | 原生可编辑 PPT | 图片带 asset_id，资产链有效 |
 | 发布 | `vao.py check --mode release` | PPT + 方向预览 + Manifest | 资产链、编译、来源与发布证据均有效 |
 
@@ -36,7 +36,7 @@
 python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.py \
     --assets-out asset_manifest.json --assets-dir generated_assets
 # 外部工具按清单批量出图；完成后再运行：
-python scripts/vao.py asset-qc asset_manifest.json --phase draft
+python scripts/vao.py check build_deck.py out.pptx --assets-manifest asset_manifest.json
 # 填充骨架（头注释即完整作业单）：图片元素必须带 asset_id；目标一次过 release
 python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```
@@ -46,7 +46,7 @@ vao.py
  ├─ run        # 标准生产入口
  ├─ plan       # 局部重跑
  ├─ assets     # 局部重跑
- ├─ asset-qc   # 资产验证
+ ├─ asset-qc   # 资产验证（check 内部一步，无独立命令）
  └─ check      # 编译 / 验证 / 发布
 ```
 
@@ -60,18 +60,67 @@ Skill 层只暴露 `vao.py`，不逐个调用 scripts/ 底层模块。
 
 ## 3. 生成、既有、无图三条路径
 
-**职责两行**：资产只承担视觉叙事（`asset_function`: hero / emotion / context / proof /
-frame / separate）；PPT 原生对象承担信息（文字 / 数据 / 图表 / 表格 / Logo）。
+**职责两行**：资产只承担视觉叙事；PPT 原生对象承担信息（文字 / 数据 / 图表 / 表格 / Logo）。
 图片不烘焙正文、图表或 Logo——图片 ≠ 内容承载层。
+
+**角色与用途是两个轴（Asset Role Separation）**：
+
+```
+                    为什么存在？（asset_function）
+                ─────────────────────────────────────────────
+                Hero   Proof   Emotion   Context   Frame   Separate
+ 什么类型？      │       │        │         │        │        │
+ Background ─────┼───────┼────────┼─────────┼────────┼────────┤  建立空间
+ Illustration ───┼───────┼────────┼─────────┼────────┼────────┤  表达对象
+ Hybrid ─────────┼───────┼────────┼─────────┼────────┼────────┤  两者确实兼有
+```
+
+- `asset_role` = 这张资产**是什么**（background / illustration / hybrid）；
+- `asset_function` = 这张资产**为什么存在**（hero / proof / emotion / context / frame / separate）；
+- `asset_subject` = 画面里**具体出现什么**；
+- `background_scene`（deck 级）= **页面背景世界**属于什么世界——它不回答「这张图是什么」。
+
+不新增 `background_hero` / `illustration_context` 这类组合枚举：组合就是两轴相乘。
+也不许用 `asset_function` 偷换角色——`asset_role=background` ≠ `asset_function=hero`
+（背景再漂亮也不会自动成为页面主角）；`asset_role=illustration` ≠ 必须成为 hero。
+
+**`asset = required` ≠ 必须做一张主体图。** 它只意味着这一页必须有图像资产；
+至于是整幅背景、局部插图、主视觉、环境照片还是独立资产，由 `asset_role` +
+`asset_function` + 构图决定。看到 required 就自动出图塞进页面，是本包禁止的做法。
+
+**背景与插图的编排区别**（生成纪律也按这条分化）：
+
+| 判断项 | Background | Illustration |
+|---|---|---|
+| 核心职责 | 建立空间 | 表达对象 |
+| 视觉密度 | 通常低 | 可中高 |
+| 主体要求 | 不要求明确主体 | 通常需要明确主体 |
+| 文字关系 | 给文字让空间 | 与文字建立构图关系 |
+| 裁切 | 可大幅裁切 | 主体裁切需谨慎 |
+| 光线 | 服务整体氛围 | 服务主体塑造 |
+| 细节 | 克制 | 可适度突出 |
+| 页面地位 | 环境层 | 内容 / 视觉对象层 |
+| QC 重点 | 可读性、连续性、负空间 | 主体完整性、识别度、位置关系 |
+| 默认风险 | 抢文字 | 抢主结论 |
+
+执行落点（不是审美评分，而是**判据跟着承诺走**）：`asset_role: background` 由
+`primitives.is_background_declared` + `guard` 的背景层资格（覆盖 ≥60% 画布、有 overlay /
+content_protection 或显式 `readability_exempt`）承担编排层，QC 不做主体裁切判定；
+`illustration` / `hybrid` 按具象主体判定（主体完整性、位置关系）；插图的
+`text_safe_area`（安全区纹理密度）为 advisory——插图的承诺是「主体与文字建立关系」，
+不是「整块画面保持低信息密度」，压字可读性由 `contrast_suitability` 与编排层保护负责。
+未声明角色时沿用既有 `asset_function` 口径，新字段不放宽任何一条旧判据。
 
 ### 新生成图片
 
 brief 的 slide 可写 `asset_subject / medium / asset_ratio / asset_function /
 negative_space_anchor / safe_area / text_color / negative`。先据此规划，后产生清单。
 
-清单条目分两层——**证据可以复杂，AI 的工作上下文不能复杂**。作业上下文只需要九个字段：
-`asset_id / slide_ids / decision / prompt / negative / ratio / safe_area / expected_filename /
-status`；指纹与生产控制（`plan_sha256`、`brief_sha256`、`preexisting_sha256`、`attempt`、
+清单条目分两层——**证据可以复杂，AI 的工作上下文不能复杂**。作业上下文只需要十个字段：
+`asset_id / slide_ids / decision / asset_role / prompt / negative / ratio / safe_area /
+expected_filename / status`（`asset_role_source` 记 declared / legacy / assumed——出图的人
+要能一眼看出「这是作者说的角色」还是「默认假设的背景」）；指纹与生产控制
+（`plan_sha256`、`brief_sha256`、`preexisting_sha256`、`attempt`、
 `retry_budget`、`run_id`、schema/解析器版本）由运行时内部保存——不围绕它们推理。
 
 默认文件名可为 PNG；照片推荐同 stem 的 JPEG。QC 与编排使用同一个解析器：
@@ -127,14 +176,14 @@ asset_source:
 
 ## 5. 检查结果与退出码（retry 是根因驱动，不是次数驱动）
 
-- `asset-qc`: `accept / accept_with_advisory` 才通过；亮度平衡等建议不阻断。
+- 资产核验（`check` 内部）: `accept / accept_with_advisory` 才通过；亮度平衡等建议不阻断。
 - `retry` 表示仍需重出，不是通过；返回 2。**重出走根因判断，不走剩余次数**：
   失败 → 判断根因（prompt / subject / 构图 / asset requirement）→ 一次根因修正 → 重新 QC。
   `retry_budget` 只是生产控制上限，不是设计输入——不做「图不好 → 原样重试」的次数循环。
 - draft 最多建议一次定向重出；重出后将清单条目 `attempt` 置为 1，并重新 QC（旧 QC 指纹失效）。
 - 缺图、解码失败、flag、block 或流程不一致同样返回 2。
 - `check` 各档在编译之前检查有图项目的资产链；不通过就不执行本轮编译。
-- 自定义 QC 路径：`asset-qc --out` 与 `check --asset-qc-report` 配套使用。
+- 自定义 QC 路径：默认找清单同目录的 `asset_manifest.qc.json`，或 `check --asset-qc-report` 指定。
 
 以下情况以 `ASSET_WORKFLOW_FAIL` 聚合报告：无清单/无有效QC、待重试、未知asset_id、
 未登记的使用页、图片字节变化、清单或计划过期、brief不一致、绑定路径不一致。
@@ -164,6 +213,11 @@ Manifest 记录核验版本的哈希。源文件之后改变时，下一轮须�
 它**不回答 Design Quality**——「这张图好不好」：主体、构图、留白、光线、视觉世界契合、
 叙事增强，属于 Intelligence 与 Craft（加人眼），不由 QC 作硬门。QC 没有、也永远不加
 artistic / beauty / prompt-adherence / premium 一类审美评分。
+
+角色只改变**问哪几个问题**，不改变「不评分」这条底线：背景资产查可读性、连续性与负空间
+（不做主体裁切判定）；插图与 hybrid 查主体完整性、识别度与位置关系（安全区纹理密度为
+advisory，不拿「整块画面必须低密度」去要求一个独立的视觉对象）。判据跟着承诺走，
+阈值一个都没动；未声明角色时沿用既有 `asset_function` 口径。
 
 本工具核对的是本地内容哈希、已保存依赖关系以及实际检查的图像字节。
 它不提供防篡改签名、不监控外部生成服务，也不能自动确认 prompt 的语义是否完全被遵守、

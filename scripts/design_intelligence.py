@@ -30,12 +30,10 @@ Layer -1 · Design Intelligence（设计智能层——所有流程的大脑）
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 from pathlib import Path
 
-from primitives import estimate_lines
 # 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
 from design_intelligence_rules import (
     COMPOSITION_BY_FAMILY, COMPOSITION_POOL,
@@ -356,30 +354,6 @@ def quality_budget(page: dict) -> dict:
     return b
 
 
-def _est_overflow(e: dict) -> float | None:
-    """文本元素预估溢出量（px）。无文本/无几何返回 None。"""
-    text = e.get("text")
-    if not isinstance(text, str) or not text.strip():
-        return None
-    for k in ("size", "width", "height"):
-        if isinstance(e.get(k), bool) or not isinstance(e.get(k), (int, float)):
-            return None
-    try:
-        size = float(e["size"])
-        lh = float(e.get("line_height") or 1.2)
-        pad = float(e.get("padding") or 0)
-        if not all(math.isfinite(v) for v in (size, lh, pad)) or size <= 0 or lh <= 0:
-            return None
-    except (TypeError, ValueError, OverflowError):
-        return None
-    wrap = e.get("wrap") is not False
-    lines = 0
-    for seg in str(text).split("\n"):
-        lines += estimate_lines(seg, float(e["width"]) - 2 * pad, size, wrap)
-    need = lines * size * lh
-    return need - (float(e["height"]) - 2 * pad)
-
-
 # ── Page Intent Skeleton（标准家族的意图骨架，AI 只填洞 ──────────
 # 生成速度的大头不是渲染（毫秒级），是每页重新推理。骨架把「家族决定得了的」
 # （能量/密度/负空间职责/阅读序）确定性给出，AI 只填「内容决定得了的」
@@ -451,7 +425,7 @@ def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
 
     这是「Risk Prediction 在 Design Intelligence 内部」的落点——不是生成前审核
     一次 spec，而是在**还没有 spec** 时就按内容路由预判该 deck 会在哪里出问题，
-    并把结论变成预算：文本密度风险高 → 收紧 text_budget / 全局 auto_fit；
+    并把结论变成预算：文本密度风险高 → 收紧 text_budget 与行长；
     图片不足风险高 → 提高 generate 预算；布局复杂风险高 → 降低并行构图算子。
 
     传入已计算的 plan 可复用 route 结果。纯函数、零渲染、~0.1ms（复用 route 的决策缓存）。
@@ -500,8 +474,7 @@ def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
         if out["risks"][key] >= thr:
             pol.setdefault(key, []).extend(a for a in actions if a)
 
-    _on("text_density", 0.34, "逐页 text_budget -1，正文统一声明 auto_fit:true",
-        "行长上限收到 32 字（CJK），超出即拆句")
+    _on("text_density", 0.34, "逐页 text_budget -1，行长上限收到 32 字（CJK），超出即拆句")
     _on("media_shortage", 0.5, "媒体政策：只在 cover/brand/product/closing 生成图片",
         "数据/结构页明确 zero-image，并把省下的预算换成锚点尺度")
     _on("hero_visual", 0.4, "含图页 ≤1 张且必须声明功能（context/emotion/proof/hero）")
@@ -515,59 +488,6 @@ def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════════════
-# Smart Fit Resolver（auto_fit 光学阶梯：显式 opt-in，永不默认）
-# ════════════════════════════════════════════════════════════════════════
-def apply_fit_ladder(spec: dict) -> tuple[dict, dict]:
-    """对声明 auto_fit:true 且预估溢出的文本，按阶梯吸附（纯函数，留痕）。
-
-    阶梯（与生产契约一致——缩字号是最后手段）：
-        ① padding → 0   ② line_height → 1.05   ③ 字号 -2px 递降至 12px 下限
-    仍溢出 → 记 needs_rewrite（文案级问题，机器不再退让）。
-    未声明 auto_fit 的元素零改动（编译器仍只警告不修改——本函数是 spec 层的
-    显式授权，不是编译器行为）。
-    """
-    # Most specs do not opt into auto_fit. Avoid a full deepcopy in that common path:
-    # this resolver is advisory and must be zero-copy when it has nothing to change.
-    slides = (spec or {}).get("slides") or []
-    has_auto_fit = any(
-        isinstance(e, dict) and e.get("auto_fit") is True
-        for slide in slides if isinstance(slide, dict)
-        for e in (slide.get("elements") or [])
-    )
-    if not has_auto_fit:
-        return spec, {"applied": 0, "items": [], "needs_rewrite": []}
-
-    import copy
-    out = copy.deepcopy(spec)
-    items: list[dict] = []
-    for slide in (out.get("slides") or []):
-        if not isinstance(slide, dict):
-            continue
-        for e in (slide.get("elements") or []):
-            if not isinstance(e, dict) or e.get("auto_fit") is not True:
-                continue
-            sid = slide.get("id")
-            steps = []
-            ov = _est_overflow(e)
-            if ov is None or ov <= 1:
-                continue
-            if e.get("padding"):
-                steps.append(f"padding {e['padding']}→0")
-                e["padding"] = 0
-            if _est_overflow(e) > 1 and float(e.get("line_height") or 1.2) > 1.05:
-                steps.append(f"line_height {e['line_height']}→1.05")
-                e["line_height"] = 1.05
-            while _est_overflow(e) > 1 and float(e.get("size") or 16) > 12:
-                e["size"] = float(e["size"]) - 2
-                steps.append(f"size →{e['size']:.0f}")
-            needs_rewrite = _est_overflow(e) > 1
-            items.append({"slide": sid, "id": e.get("id"), "steps": steps,
-                          "needs_rewrite": needs_rewrite})
-    report = {"applied": len(items), "items": items,
-              "needs_rewrite": [i["id"] for i in items if i["needs_rewrite"]]}
-    return out, report
-
-
 # ════════════════════════════════════════════════════════════════════════
 # Parallel Intelligence：一次调用汇合三条智能线
 # ════════════════════════════════════════════════════════════════════════

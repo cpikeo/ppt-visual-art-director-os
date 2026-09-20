@@ -5,12 +5,13 @@
 | 层 | 核心问题 | 是否阻断 |
 |---|---|---|
 | **Contract / Guard** | 文件正确、数据正确、结构正确、可编译、无溢出、无碰撞、资产链完整 | **是**（10 个阻断码） |
-| **Advisory / Risk** | 可读性风险、节奏风险、焦点风险、视觉异常（`DESIGN_RULES` 留痕 + forecast 预测） | 否（只进 `trace_summary`） |
+| **留痕 / Risk** | 可读性风险、节奏风险、图表论点风险（仅留痕 + plan 期 forecast 预测） | 否（只进 `trace_summary`） |
 | **Intelligence / Craft** | 高级感、审美、构图、节奏、视觉价值、应不应该这么设计 | 不属于 Contract |
 
-**验证层不评分**：`guard.check_spec` 没有 score，不排序、不评级。焦点尺度、密度节奏、
-accent 面积、色相族、记忆锚点这类**设计代理指标全部是 advisory 或风险预测**——给作者的
-线索，不是交付门。变化不是目的，必要性才是目的。
+**验证层不评分**：`guard.check_spec` 没有 score，不排序、不评级。它只查**工程事实**
+（能不能编译、会不会溢出、数据是否成立、文件是否可交付）与**作者自己写下的数字**
+（`constraints` / 声明过的上限）。审美、节奏、重点是否突出属于设计判断，不进门槛，
+也不以提示的形式回灌给作者。变化不是目的，必要性才是目的。
 
 ## Contract Map（写 spec 前查表）
 
@@ -29,11 +30,10 @@ accent 面积、色相族、记忆锚点这类**设计代理指标全部是 advi
 | 资产链 | 先 `assets --plan` 再出图，QC 记录清单与图片 SHA-256；retry/missing/block 均退出 2；有图稿件缺有效 QC 则不编译（`ASSET_WORKFLOW_FAIL`）。详见 `asset-workflow.md` |
 | 编译与发布证据 | `semantic_compile_view` 是输入投影（判要不要重编）；`artifact/output_sha256` 是本次 PPTX 字节戳（判文件是不是它）；release 门 = 0 阻断 + 资产链凭证 + 预览证据 + Manifest |
 
-### Advisory / Risk（只留痕，不阻断，不逐条修复）
+### 留痕信号（只留痕，不阻断，不逐条修复）
 
 | 信号 | 度量（代码常量为准） | 等级 |
 |---|---|---|
-| 焦点优先级 | focus 落在**文字**上才度量：它应拿到页内最大字号；焦点也可以是图像、留白、小数字——字号只是手段之一 | `focus_scale`（hint） |
 | 密度节奏 | `sparse/balanced/dense` 是输入语义（枚举合法性才是工程事实）；占用带（`DENSITY_BANDS`）实测只是参考，不是「必须和上页不同」的义务 | `rhythm`（hint，仅声明与结构同时重复才发） |
 | 色彩 | 色相族 ≤4（`max_colors`）= `constraints` 声明数字的执法，未声明不检查；值为什么存在在 Intelligence | `palette_discipline`（warn/hint） |
 | 图表论点 | 差异主张 + 零基长度编码 + 声明 `highlight`/`target` + max/min <1.25× = 差异不可见 | `chart_argument`（warn） |
@@ -113,9 +113,9 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 | 代码 | 状态 | 处理 |
 |---|---|---|
 | `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_WORKFLOW_FAIL` | BLOCKED | 必修：按 `fix_plan` 根因组一次改完 |
-| 其他 warn/hint（`BG_UNPROTECTED`、`DESIGN_RULES` 16 条、节奏与对齐提示等） | PASS | 只进 `trace_summary`，不解释、不询问、不逐条修复 |
+| 其他 warn/hint（`BG_UNPROTECTED`、图表论点、对齐与网格提示等） | PASS | 只进 `trace_summary`，不解释、不询问、不逐条修复 |
 
-`guard.check_spec` 的返回只有 `passed / checks / advisory_rules / warnings / grid / line_measure`——
+`guard.check_spec` 的返回只有 `passed / checks / warnings / grid / line_measure`——
 **没有 score，也不恢复 score**：一旦出现总分，系统会退化成规则 → 指标 → 分数 → 排名 →
 模板化优化，反过来削弱设计智能。
 
@@ -139,7 +139,7 @@ Release Manifest 的 `asset_workflow` 记录 `status`、brief/plan/清单/QC 指
 QC 本身包含每张图片的 SHA-256。验证失败时两层 `release_eligible` 均为 false；
 编译 PASS 不可代替完整流程 PASS。
 
-- 以 auto_fit 后的有效 spec 同时编译、预览与盖指纹；不得各用一版输入。
+- 以作者交付的那一版 spec 同时编译、预览与盖指纹；验证不改写 spec。
 - 图片采用核验 bytes 快照；预览必须有完整页 ID 及每个文件的 SHA-256。
 - 有计划的稿件必须覆盖计划的全部页 ID/顺序，包括无图稿件。
 - 每轮 check 分配 run_id；旧资格先失效，异常也写本轮失败报告。草稿不拥有发布资格。

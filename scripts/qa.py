@@ -61,16 +61,15 @@ def mode_profile(mode: str | None) -> dict:
     return {"mode": key, **prof}
 
 
-def _has_auto_fit(spec: dict | None) -> bool:
-    """轻量探测 auto_fit，避免普通 QA 为一次显式可选功能导入设计智能层。"""
-    for slide in (spec or {}).get("slides") or []:
-        if not isinstance(slide, dict):
-            continue
-        for element in slide.get("elements") or []:
-            if isinstance(element, dict) and element.get("auto_fit") is True:
-                return True
-    return False
-
+_RULE_CODES = {
+    "overlap": "OVERLAP", "source_zone": "SOURCE_COLLISION",
+    "chart_label_collision": "CHART_LABEL_COLLISION",
+    "text_capacity": "TEXT_OVERFLOW", "contrast": "READABILITY_FAIL",
+    "data_integrity": "DATA_INTEGRITY_FAIL",
+    "data_provenance": "DATA_INTEGRITY_FAIL",
+    "chart_type": "CHART_TYPE_FAIL",
+    "safety": "GUARD_FAIL",
+}
 
 # ── 修复包（报告自足性）───────────────────────────────────────────────────
 # 阻断码 → 首修动作 + 内嵌契约行。目标：修正轮照单一次改完，零文档回读。
@@ -90,16 +89,6 @@ FIX_CONTRACT_HINTS = {
     "CHART_TYPE_FAIL": "图表类型在白名单内且数据形态匹配（占比≠趋势）。",
     "COMPILE_FAIL": "编译诊断给出具体元素与字段；按 warnings 修 schema，不绕过 Guard。",
     "GUARD_FAIL": "按 checks 中 error 级条目逐项修；element_schema/focus/几何合法性优先。",
-}
-
-_RULE_CODES = {
-    "overlap": "OVERLAP", "source_zone": "SOURCE_COLLISION",
-    "chart_label_collision": "CHART_LABEL_COLLISION",
-    "text_capacity": "TEXT_OVERFLOW", "contrast": "READABILITY_FAIL",
-    "data_integrity": "DATA_INTEGRITY_FAIL",
-    "data_provenance": "DATA_INTEGRITY_FAIL",
-    "chart_type": "CHART_TYPE_FAIL",
-    "safety": "GUARD_FAIL",
 }
 
 # 状态由「有无阻断」决定；这些码是阻断性失败码集合。
@@ -122,8 +111,6 @@ def build_fix_plan(failure_codes, guard_checks, compile_report) -> dict:
 
     for chk in guard_checks or []:
         if not isinstance(chk, dict) or chk.get("level") != "error":
-            continue
-        if chk.get("advisory"):
             continue
         g = _g(_rule_to_code(chk.get("rule")))
         g["count"] += 1
@@ -192,7 +179,6 @@ def build_trace_summary(items) -> list:
 def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
            normalize: bool = True, compile: bool | None = None,
            guard_rules: dict | None = None,
-           include_advisory: bool = False,
            spec_path: str | Path | None = None,
            cache: bool = True,
            cache_dir: str | Path | None = None,
@@ -202,7 +188,6 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     - `mode`：spec（只诊断）/ draft（默认）/ release（交付门）。
     - `normalize`：入口归一化（网格/色/字体的机械吸附）。生产链在 vao.py 已归一，
       故传入 False 避免二次深拷贝；重复归一化本身幂等。
-    - `include_advisory`：显式开启 guard 设计契约诊断（默认关；它不是发布门槛）。
     - `cache`：编译复用。semantic view 与 PPTX 字节戳都对得上才复用，否则重编。
     """
     t0 = time.time()
@@ -223,13 +208,6 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         from guard import normalize_spec
         spec, norm_report = normalize_spec(spec)
 
-    # 0.1) Smart Fit Resolver（显式 opt-in）：只有声明 auto_fit 时才付这份成本。
-    if _has_auto_fit(spec):
-        from design_intelligence import apply_fit_ladder
-        spec, fit_report = apply_fit_ladder(spec)
-    else:
-        fit_report = {"applied": 0, "items": [], "needs_rewrite": []}
-
     if do_compile and cache:
         from compile_cache import compile_reuse, record_compile, spec_view
 
@@ -239,7 +217,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         effective_rules["require_provenance"] = True
     provenance_required = bool(effective_rules.get("require_provenance", False))
     t_guard = time.time()
-    guard = check_spec(spec, rules=effective_rules, include_advisory=include_advisory)
+    guard = check_spec(spec, rules=effective_rules)
     t_guard_end = time.time()
     guard_errors = [c for c in guard.get("checks", []) if c.get("level") == "error"]
 
@@ -337,7 +315,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     items: list[dict] = []
     hint_buckets: dict[str, dict] = {}
     for c in guard.get("checks", []):
-        if c.get("advisory") or c.get("level") == "hint":
+        if c.get("level") == "hint":
             # 聚合是为了不刷屏，不是为了**丢掉可执行的话**。此前这里把每条 hint
             # 的正文替换成 “{rule} 微调提示（详见 guard.checks）”——而 guard.checks
             # 根本不在修复包里（packet 只有 fix_plan / trace_summary），
@@ -379,9 +357,6 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     if any(check.get("level") == "error" for check in guard.get("checks")) \
             and "GUARD_FAIL" not in failure_codes:
         failure_codes.append("GUARD_FAIL")
-    if any("估算高度" in str(w) or "max_lines" in str(w) for w in compile_warnings) \
-            and "TEXT_OVERFLOW" not in failure_codes:
-        failure_codes.append("TEXT_OVERFLOW")
     if not compile_report.get("passed", False):
         failure_codes.append("COMPILE_FAIL")
     blocking_codes = [c for c in failure_codes if c in BLOCKING_CODES]
@@ -400,7 +375,6 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         # 自证戳：报告属于哪一份 spec（Normalizer 确定性吸附的证明链见 normalization）
         "source_spec_hash": spec_fingerprint(spec),
         "normalization": norm_report,
-        "auto_fit": fit_report,
         "execution": {"entrypoint": "vao.py", "mode": mode, "profile": prof["label"],
                       "compiled": do_compile, "provenance_required": provenance_required,
                       "external_renderer": "disabled",
@@ -421,7 +395,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         "affected_slides": sorted({str(it.get("id")) for it in blocking_items if it.get("id")}),
         "guard": {"checks": len(guard.get("checks", [])),
                   "errors": len(guard_errors),
-                  "grid": guard.get("grid"), "line_measure": guard.get("line_measure")},
+                  "line_measure": guard.get("line_measure")},
         "compile": {"passed": compile_report.get("passed"),
                     "skipped": compile_report.get("skipped"),
                     "reason": compile_report.get("reason"),

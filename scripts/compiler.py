@@ -16,7 +16,7 @@ from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
     RenderContext, emu, pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
     highlight_index, series_highlight_index,
-    split_runs, is_cjk, estimate_lines,
+    split_runs, is_cjk,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
     align_of, anchor_of,
@@ -179,9 +179,9 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
     if element.get("fill"):
         apply_fill(tb, element["fill"], ctx)
 
-    lines = str(element.get("text", "")).split("\n")
-    total = 0
-    for i, line in enumerate(lines):
+    # 容量（行数/高度）在 guard 的 text_capacity 里判定到元素 id；渲染器只渲染，
+    # 不再复算同一件事——同一事实两处判断时，两处都可能漂移。
+    for i, line in enumerate(str(element.get("text", "")).split("\n")):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.alignment = align
         p.line_spacing = pt(size * lh)
@@ -190,24 +190,12 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
         if element.get("space_before") is not None:
             p.space_before = pt(float(element["space_before"]))
         if not line:
-            total += 1
             continue
-        # 中西混排间隙：估算与渲染共用同一份 gapped 文本，保证容量口径一致。
-        line_gapped = insert_script_gaps(line)
-        total += estimate_lines(line_gapped, w - 2 * pad, size, wrap)
-        for rv, iscjk in split_runs(line_gapped):
+        for rv, iscjk in split_runs(insert_script_gaps(line)):
             run = p.add_run()
             run.text = rv
             set_run_font(run, cn if iscjk else latin, cn, size_pt, color,
                          bold, italic, spacing if not iscjk else None, alpha, uppercase)
-
-    max_lines = element.get("max_lines")
-    if isinstance(max_lines, int) and max_lines >= 1 and total > max_lines:
-        ctx.warn(f"text '{element.get('id')}': 估算 {total} 行 > max_lines {max_lines}", element.get("id"))
-    need = total * size * lh
-    if need > (h - 2 * pad) + 1:
-        ctx.warn(f"text '{element.get('id')}': 估算高度 {need:.0f}px 超出文本框 "
-                 f"{h - 2 * pad:.0f}px（建议增大 height 或减小 size）", element.get("id"))
 
 
 # --------------------------------------------------------------------------

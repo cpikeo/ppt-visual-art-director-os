@@ -270,7 +270,7 @@ def blocked_result(spec: dict, workflow: dict) -> dict:
     from primitives import spec_fingerprint
     problems = workflow.get("issues") or ["资产链不完整"]
     group = {"root_cause": "ASSET_WORKFLOW_FAIL", "count": len(problems), "ids": [],
-             "samples": problems, "fix": "先 plan → assets → 出图 → asset-qc；保留 asset_id 和 plan 指纹，再 check"}
+             "samples": problems, "fix": "先 plan → assets → 出图；保留 asset_id 与 plan 指纹，再 check（资产核验在 check 内完成）"}
     return {"source_spec_hash": spec_fingerprint(spec), "status": "BLOCKED", "passed": False,
             "release_eligible": False, "blocking_items": len(problems),
             "failure_codes": ["ASSET_WORKFLOW_FAIL"], "affected_slides": [],

@@ -1,5 +1,151 @@
 # 变更记录
 
+## 5.8.0 · Structural Subtraction（结构化减法：删掉复杂度，不是删掉能力）
+
+第六轮深度审计按用户当面指令执行：**删除 → 合并 → 简化 → 复用 → 最后才是新增**，
+禁止为了"优化"增加系统复杂度。判断依据是四个问题：删掉 20% 代码，质量会下降吗？
+删掉 30% 规则，设计判断会下降吗？删掉 30% context？减少 30% 调用？答"不会"的，
+继续删。
+
+### 一、四处同义判断合并成一处
+
+1. **资产核验并回 `check`**。`vao.py asset-qc` 曾与 `check` 两步执行同一件事（绑定清单 →
+   核验图片 → 给结论），两步之间必然漂移：`check` 拿到的是一份可能过期的 QC 报告，
+   而"缺图/待重试/阻断"要在两次调用里各解释一遍。现在 `_asset_qc_report` 是 `check`
+   内部的一步：一次执行完成绑定、核验、结论，`workflow.qc` 直接汇报状态与分组；
+   独立命令、独立 `--advisory`/`--json` 参数与重复的摘要输出一并删除。
+   缺图归入 `pending`（"还没生成"），不与"图不合格"混为一谈。
+2. **验证层不再改写 spec**。Smart Fit 阶梯（`design_intelligence.apply_fit_ladder` +
+   `_est_overflow` + `qa._has_auto_fit` + `result["auto_fit"]`）整套删除：它替作者把
+   padding→0、line-height→1.05、字号 -2px 递降，直到"能塞进框里"。这与本包的核心纪律
+   直接冲突——**字号是设计判断，不是布局的奴隶**；验证只回答"能不能交付"，
+   溢出就报 `TEXT_OVERFLOW` 并点名元素，改法是加框高/减行数/删字，由作者决定。
+3. **编译器不再复算 guard 已判定的事实**。`compiler.add_text` 曾自己再估一遍行数与高度
+   并发 warn——同一事实两处判断，两处都可能漂移。容量现在只在 guard 的 `text_capacity`
+   判一次（error 级、带元素 id）；`qa.py` 里"从编译 warning 反推 TEXT_OVERFLOW"的兜底
+   随之删除。
+4. **网格偏差检查删除**。`normalize_spec` 已经按 `grid_unit` 吸附坐标与尺寸，
+   guard 再逐元素查一次"偏离 8 网格 N px"是同义兜底，只会把作者的合法微调报成提示。
+   网格只有一个真源：归一化。
+
+### 二、规则名 43 → 33（-23%）：消失 10 条，新增 0 条
+
+`focus_scale`（焦点字号）、`organic_layer` / `asset_contract` /
+`overlay_opacity`（幽灵资产引擎契约块：读的是编译器从不读取的元素级字段）、
+`grid`（含"推荐 12 列 / 8 单位"两处值建议）、`optical_alignment`（色块-文字光学校准，
+含 45 行 helper）、`overlap_declared`（已声明遮挡提示）、`focus`（未声明焦点提示）、
+`geometry`（非数值坐标的告警兜底——`element_schema` 已以 error 级拦截，实测确认）、
+`theme_constraints`（双名合并进 `theme_constraint`）。另删 `safety` 的两条边距提示
+与 `page_contract` 的字段缺失提醒（error 级与值校验保留）。
+判据只有一条：**它能否明显提升最终结果**。看不出来、AI 自己就能判、或只是把某个偏好
+写进门槛的，删除。同时删除随之失去消费者的旋转钮（`grid_bias` / `safety_min`）、
+常量（`CHART_FLAT_RATIO` 保留：它守的是"差异看不见"）与死 helper。
+
+### 三、三条旁路删除
+
+- `--advisory`（check/run）：设计诊断开关；`include_advisory` 参数、`DESIGN_RULES`
+  白名单、`advisory_rules` 返回键、`§3.1 资产引擎契约`校验块（读的是编译器从不读取的
+  元素级 `asset` / `organic_layer`）全部随之删除。验证层的判据只剩两类：**工程事实**
+  与**作者自己写下的数字**。
+- `--polish`：第三套修复指令（打磨手册 15 条 + `_polish_plan`）。修复包已经有唯一的
+  指令通道 `fix_plan`，再挂一份"改了更好看"的清单只会让作者为了消掉提示改设计。
+- `vao.py doctor`：依赖自检；`pip install -r requirements.txt` 已经会明确报错。
+
+### 四、其它
+
+- `estimate_tokens`（无人消费的体积提示）删除；`README`/`SKILL`/`references` 同步：
+  命令表 7→6、生产顺序 4 步、`check` 说明含资产核验。
+- 命令数 7→6；`check` 的参数少 3 个；scripts 总量 13092→12569 行（-4%），
+  guard.py 2254→1956 行（-13%）；回归 **166/166 PASS**，三页 demo 全链 release PASS。
+
+### 五、下一轮待办（未完成，不在本版）
+
+压缩 context 层（SKILL.md 与 references 的重复表）、`route.py` 与 `asset_prompt.py`
+的深层结构审计、以及"每页一次核心判断"的判断层复核。
+
+## 5.7.0 · Asset Role Separation（背景图与插图的职责边界）
+
+一次图像排查暴露的问题不是缺字段，而是**职责边界没建立**：`background_scene`、
+`asset_function`、`asset_subject` 三者各说各话，`hero / proof / emotion / context /
+frame / separate` 只定义了「资产用途」，没有告诉任何人**背景图是「承载页面空间」的资产，
+插图是「表达页面对象」的资产**——两者不能用同一套生成与编排逻辑。于是必然出现：
+背景图被当成一张大插图（被要求明确主体、被抠成透明剪影），插图被当成背景纹理
+（被要求整块低密度、被融进版面底色）。
+
+更硬的一层是代码：`asset_type`（真正的执行类型）**从未出现在 brief 契约里**，
+于是 `vao._asset_page` 对每一张资产都取默认值 `background`——作者写 `asset_subject`、
+写 `medium`、写 `asset_function`，全都改变不了「这张图会被当成背景资产处理」这个事实。
+写得等于没写，没有报错、没有痕迹，只有产物不对。
+
+**唯一的新概念：`asset_role`（两轴模型，不是第三个枚举系统）**
+
+```
+                    为什么存在？（asset_function）
+                Hero   Proof   Emotion   Context   Frame   Separate
+ 什么类型？      │       │        │         │        │        │
+ Background ─────┼───────┼────────┼─────────┼────────┼────────┤  建立空间
+ Illustration ───┼───────┼────────┼─────────┼────────┼────────┤  表达对象
+ Hybrid ─────────┼───────┼────────┼─────────┼────────┼────────┤  两者确实兼有
+```
+
+- 逐页 `asset_role: background | illustration | hybrid`——`asset_role` = 它**是什么**，
+  `asset_function` = 它**为什么存在**，`asset_subject` = 画面里**具体出现什么**，
+  `background_scene`（deck 级）= **页面背景世界**。四者职责不得混淆。
+- 刻意**不新增** `background_hero` / `illustration_context` 一类组合枚举：组合就是两轴
+  相乘，摊平成表就是把设计智能重新做成组件系统。
+- 角色不许被用途偷换：`asset_role=background` ≠ `asset_function=hero`（背景再漂亮也不会
+  自动成为页面主角）；`asset_role=illustration` ≠ 必须成为 hero（插图可以只是 `separate`）。
+- 解析只有一个出口 `asset_prompt.resolve_asset_role()`：声明即 `declared`，旧 `asset_type`
+  直写算 `legacy`，未声明记 `assumed`（默认 background，但与「作者说的」严格分开）。
+  **未知角色值 fail-closed**——写了却读不懂比没写更贵，作者会以为它生效了。
+  `resolve_asset_role` 不接受 `asset_function` 作输入：推导会把摄影主体变成透明剪影。
+
+**生成纪律按角色分化（提示词层）**
+
+- 背景：连续材质场 + 大面积负空间 + 不做主角；`negative_space_anchor` 承诺「干净的安静面」。
+- 插图：独立视觉对象 + 明确轮廓/尺度/位置 + 与文字建立关系；锚点改为
+  「主体让出这一侧给页面文字」，**不要求整块画面低密度**。
+- 空间融合（fusion）改为按角色：`background`/`hybrid` 融进版面，`illustration` 保留自身边界
+  （此前由 `asset_function` 决定——那正是「插图被当成背景纹理」的来源）。
+- 插图遇已声明介质（photography / ink-wash / illustration …）时，透明剪影与
+  「3D minimal illustration」风格预设让位给结构纪律——一张摄影插图不是抠图。
+- 无安全区（版面不压文字）时，「让空间给文字」一类句式全部消失（插图同样适用）。
+
+**QC 判据跟着承诺走（阈值一个没动）**
+
+- `background`：不做主体裁切判定（空间资产的边界本就由材质与光填满），
+  仍查可读性、连续性与负空间。
+- `illustration` / `hybrid`：按具象主体判定（主体完整性、识别度、位置关系）；
+  安全区**纹理密度**降为 advisory——插图的承诺是「与文字建立关系」，不是「整块画面
+  保持低信息密度」，压字可读性由亮度对比与编排层保护负责。
+- 未声明角色时沿用既有 `asset_function` 口径：新字段不放宽也不收紧任何一条旧判据。
+  实测同一张「主体贴下边缘」的图：声明 `background` → advisory 通过，
+  声明 `illustration` → 阻断。
+
+**契约与文档（活的文档才拦得住错）**
+
+- `templates/brief.yml` §03 重写为四步判断（需要资产？→ 建立空间还是表达对象？→
+  为什么存在？→ 画面出现什么），并写明「`asset: required` ≠ 必须做一张主体图」、
+  背景/插图各自的生成纪律、以及「不写 asset_subject 时不得凭 title 脑补具体对象」。
+  §04 写明 `background_scene` 只管「页面背景世界」，不判断这一页有没有背景图。
+- `SKILL.md` §12 改为 **Asset Decision ≠ Image Filling** + 四步链 + 两轴边界。
+- `references/asset-workflow.md` §3 增加二维矩阵与「背景 / 插图编排区别」表
+  （视觉密度 / 主体要求 / 文字关系 / 裁切 / 光线 / 细节 / 页面地位 / QC 重点 / 默认风险），
+  §7 写明角色只改变「问哪几个问题」、不改变「不评分」；清单作业字段增加 `asset_role`
+  （含 `asset_role_source`——出图的人要能看出这是作者说的角色还是默认假设的背景）。
+- `references/design-system.md`（Image / 首轮设对：生成侧角色与编排侧 `layer` 要一致）、
+  `references/design-intelligence.md`（四者职责）。
+- 骨架每页注释带上作者声明的 `role=`，填空时就知道这张图是整幅承载还是立在栏内。
+
+**刻意不做的事（防过度设计）**：不新增模块、不新增报告字段、不新增评分维度、
+不新增 `asset_role` 之外的枚举，`background_scene` 不新增生成门（保持 deck 级世界声明，
+判断归 Intelligence / Craft）。`plan`/`assets`/`check` 的命令行一条没改。
+
+**验证**：`selftest` 155 → 165 项（新增角色分离 10 项：解析唯一出口 / 背景纪律 /
+插图纪律 / 介质让位 / 融合按角色 / 空安全区 / 角色决定判据 / 插图纹理 advisory /
+声明链与「用途不得推导角色」/ 契约文档在位）。全链烟测：brief → plan → 骨架 `role=`
+→ 清单 `asset_role` + `asset_role_source` → asset-qc 按角色判定。
+
 ## 5.6.0 · 第五轮审计：规则层减法 + 图像留白从「画上去」回归「打出来」
 
 一个真实案例（15 页茶品牌 A 轮路演，release PASS）暴露了两件事：**坐标写在提示词里，

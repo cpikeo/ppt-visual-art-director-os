@@ -146,10 +146,10 @@ brief 是唯一需求契约（`templates/brief.yml`）：人负责声明意图�
 ```
 R1  python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.py \
         --assets-out asset_manifest.json --assets-dir generated_assets
-R2  外部图片工具按清单 prompt / negative / ratio / safe_area 批量出图（无图稿跳过 R2/R3）
-R3  python scripts/vao.py asset-qc asset_manifest.json --phase draft
-R4  填完骨架 → python scripts/vao.py check build_deck.py out.pptx --mode release \
+R2  外部图片工具按清单 prompt / negative / ratio / safe_area 批量出图（无图稿跳过 R2）
+R3  填完骨架 → python scripts/vao.py check build_deck.py out.pptx --mode release \
         --assets-manifest asset_manifest.json
+    （check 内部完成资产核验；缺图/待重试/阻断都退出 2，不编译）
 ```
 
 ## 10 · Context Economy
@@ -185,6 +185,27 @@ R4  填完骨架 → python scripts/vao.py check build_deck.py out.pptx --mode r
 未声明字段，与逐页留痕不重叠。
 
 ## 12 · Asset Discipline
+
+**Asset Decision ≠ Image Filling.** 每页遇到图像需求时只执行四步，不跳步、不倒着走：
+
+```
+需要视觉资产？ → 它在建立空间，还是表达对象？ → 它为什么存在？ → 画面出现什么？
+asset           asset_role: background/illustration/hybrid
+                asset_function: hero/proof/emotion/context/frame/separate
+                asset_subject / medium / material / lighting
+→ 生成 / 复用 / 原生表达
+```
+
+`asset: required` **不等于**「必须做一张主体图」——它只意味着这一页必须有图像资产；
+至于是整幅背景、局部插图、主视觉还是环境照片，由 `asset_role` + `asset_function` 决定。
+看到 required 就自动生成一张漂亮图片塞进页面，是本包禁止的做法。
+
+角色与用途是两个轴，不互相推导：`asset_role`＝它是什么，`asset_function`＝它为什么存在，
+`asset_subject`＝画面里出现什么，`background_scene`（deck 级）＝页面背景世界。
+背景再漂亮也不会自动成为 Hero（`background` ≠ `hero`）；插图也不必是 Hero
+（`illustration` + `separate` 合法）。背景不负责「讲东西」，插图不负责「铺满页面」：
+**背景建立视觉世界，插图表达视觉对象，Hero 决定注意力，Context 决定环境**——
+四者可以同时存在，但不能互相替代。
 
 - **A · Generated**：`Plan → Asset Contract → Generate → Asset QC`，一步不可跳。
   出不出图由逐页声明决定（`asset: required|reuse|none`；写 `asset_subject` 即视为要出图）。

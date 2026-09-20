@@ -22,14 +22,6 @@ import json
 UNKNOWN = "unknown"
 
 
-def estimate_tokens(obj) -> int:
-    """粗估 token：中文 ~1.6 字/token、英文 ~4 字符/token。只用于体积提示。"""
-    import json as _json
-    text = _json.dumps(obj, ensure_ascii=False, default=str)
-    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-    return int(cjk / 1.6 + (len(text) - cjk) / 4)
-
-
 def _value(need: dict, *keys: str) -> str:
     for key in keys:
         raw = need.get(key)
@@ -52,7 +44,7 @@ def compile_brief(need: dict | str, route_plan: dict | None = None) -> dict:
     visual_world/tone_hint/媒体与构图声明/brand_colors）或一段自然语言。
     route_plan 可传入统一 pipeline 已算好的 route 结果，避免重复推导。
     返回 {design_intent, strategy_seed, direction_seed, slides_seed, unresolved,
-    token_estimate, source_hash}。
+    source_hash}。
     """
     if isinstance(need, str):
         need = {"subject": need}
@@ -137,7 +129,6 @@ def compile_brief(need: dict | str, route_plan: dict | None = None) -> dict:
                   "warnings": plan.get("warnings") or [],
                   "execution": (plan.get("execution") or {}).get("recommended")},
     }
-    brief["token_estimate"] = estimate_tokens(brief)
     brief["source_hash"] = hashlib.sha256(
         json.dumps(need, ensure_ascii=False, sort_keys=True,
                    default=str).encode()).hexdigest()[:12]
