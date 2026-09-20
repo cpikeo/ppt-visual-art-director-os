@@ -12,7 +12,50 @@ Layer 0 · Primitives（基础层）
 """
 from __future__ import annotations
 
+import hashlib
 import math
+from pathlib import Path
+
+
+def json_write(path, value, *, indent: int = 2, trailing_newline: bool = True,
+               fsync: bool = False) -> Path:
+    """原子 JSON 写入·全库唯一实现（同目录临时文件 + replace，中断不留半个文件）。
+
+    indent/换行/fsync 是消费方（vao 报告 vs compile_cache 缓存）仅有的口味差；
+    原子性语义只住这里。default=str：报告里允许出现 Path 等非 JSON 原生类型。
+    """
+    import json
+    import os
+    import tempfile
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix="." + target.name, dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(value, ensure_ascii=False, indent=indent,
+                                    default=str))
+            if trailing_newline:
+                handle.write("\n")
+            if fsync:
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.replace(tmp, target)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    return target
+
+
+def file_digest(path) -> str | None:
+    """全文件字节 SHA-256（全库唯一实现，qa/asset_workflow/compile_cache 共用）。
+    缺失/不可读返回 None——证据链把 None 当「文件不存在」处理，不当空串。"""
+    try:
+        h = hashlib.sha256()
+        with Path(path).open("rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except (OSError, TypeError, ValueError):
+        return None
 
 # ── python-pptx 延迟加载（契约，别改回顶层 import）────────────────────
 # 本层被 guard / normalizer / qa 复用，而它们**只处理 spec 数据**：draft 一轮
@@ -78,18 +121,9 @@ def highlight_index(element, rows, default: int = -1) -> int:
 
 
 def series_highlight_index(element, names, default: int = -1) -> int:
-    """多序列图表的 highlight：整数索引，或写序列名。"""
-    raw = element.get("highlight") if isinstance(element, dict) else None
-    if raw is None:
-        return default
-    text = str(raw).strip()
-    for i, name in enumerate(names or []):
-        if str(name).strip() == text:
-            return i
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return default
+    """多序列图表的 highlight：整数索引，或写序列名——与 highlight_index 同一语义，
+    序列名就是 label 列表，直接复用（写名字被静默忽略的坑只修一次）。"""
+    return highlight_index(element, [{"label": n} for n in (names or [])], default)
 
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
@@ -293,7 +327,6 @@ def spec_fingerprint(spec: dict) -> str:
 # 同一事实在两处判出两种结论的口径漂移，只能在这里修，不在上层打补丁。
 # --------------------------------------------------------------------------
 BACKGROUND_LAYERS = frozenset({"background", "backdrop"})
-ROUNDED_SHAPES = frozenset({"rounded_rect", "round_rect"})   # 形状语言一致性用
 
 
 def is_background_declared(element: dict) -> bool:
@@ -347,37 +380,6 @@ def bg_coverage(element: dict, cw: float, ch: float) -> float:
         return 0.0
     return max(0.0, area / denom) if denom > 0 else 0.0
 
-
-def filled_panels(elements, canvas_w: float = 0, canvas_h: float = 0) -> list[dict]:
-    """卡片 = **有底色的、够大的**矩形容器。圆角与否无关。
-
-    原口径只数 rounded_rect，把判据挂在了圆角半径上：五张直角填充卡片
-    与五张圆角卡片在读者眼里是同一堵墙（都要为每一块重新建立视觉关系），
-    但只有后者拿得到 CARD_WALL_RISK。判据应该落在**成本来源**上——
-    底色在纸面上切出一块 territory，这才是卡片贵的地方。
-
-    不算卡片：只描边不填色（那是框线）、短边 ≤8px（分隔条/色带/进度轨）、
-    占画面 ≥55%（背景分区）、line/arrow（一维分割线）。
-    """
-    out = []
-    for e in (elements or []):
-        if not isinstance(e, dict) or e.get("type") != "shape":
-            continue
-        if str(e.get("shape", "rect")).lower() in ("line", "arrow"):
-            continue
-        fill = e.get("fill")
-        if fill is None or str(fill).lower() in ("none", "transparent"):
-            continue
-        try:
-            w, h = float(e.get("width", 0)), float(e.get("height", 0))
-        except (TypeError, ValueError):
-            continue
-        if min(w, h) <= PANEL_MIN_SIDE:
-            continue
-        if canvas_w > 0 and canvas_h > 0 and (w * h) / (canvas_w * canvas_h) >= PANEL_MAX_SHARE:
-            continue
-        out.append(e)
-    return out
 
 
 def with_alpha(hex_color: str, alpha: float) -> str:
@@ -653,8 +655,8 @@ def text_units(value: str) -> float:
     拉丁字母平均宽度与 CJK 字符宽度的经验比值（0.50–0.58 区间的中位）。
     修正点：原 0.53 在大字号下偏低估，密集正文的容量估算易「乐观」，
     表现为 Guard 通过、渲染溢出。把 0.55 设为默认后，估算与渲染
-    可读性复核的对齐误差更小（参见 design-intelligence.md Typography
-    Engine 的"回退顺序"）。
+    可读性复核的对齐误差更小（字号阶梯与回退顺序参见 design-system.md
+    §字号阶梯、design-craft.md §五）。
     中西混排细空格（HAIR_SPACE）计 0.2，使插入脚本间隙后的估算与渲染一致。"""
     total = 0.0
     for c in value:
@@ -897,145 +899,13 @@ class RenderContext:
         self.warnings.append(message)
         self.warning_ids.append(str(element_id) if element_id else None)
 
-# ── 设计判断基元（单一口径，v4.15 自 art_critic 下沉；该模块已移除）────────────
-# 这些常量与几何函数此前由 guard/qa 懒读取保持同源——真源理应住在基元层；
-# 9 维判断叙事归 references/design-craft.md §判断基线。移植保口径，零行为变化。
-MEDIA_ROLES = {"hero", "emotion", "proof", "context"}
-STATEMENT_SIZE = 40          # 超过该字号的文字视为 Statement 级记忆锚点
-FOCUS_LEAD = 1.25            # 焦点文字需领先第二大文字的比例
-FOCUS_AREA_LEAD = 2.0        # 其他元素面积不得超过焦点面积的倍数
-MEDIA_CHART_MAX = 2          # 每页媒体/图表对象上限（竞争性视觉信号）
-MEDIA_BUDGET_MAX = 1         # 每页争夺注意力的媒体上限
-TEXT_MAX = 8                 # 每页文本对象上限（碎片化阅读）
-TEXT_BUDGET_MAX = 4          # 每页阅读文本上限（低权重来源/图例不计）
-PANEL_MAX = 4                # 填充容器上限（卡片墙风险）——判据是**底色**不是圆角
-ROUNDED_MAX = PANEL_MAX      # 旧名别名：语义已从「圆角」改为「填充」，保留以免外部引用断裂
-PANEL_MIN_SIDE = 8           # 短边 ≤ 此值的填充块是分隔条/色带/轨道，不圈地
-PANEL_MAX_SHARE = 0.55       # 占画面 ≥ 此比例的是背景分区，不是卡片
-LR_SPLIT_MAX = 0.45          # 左右墨迹失衡阈值（未声明非对称构图时）
-AXIS_TOLERANCE = 0.045
-AXIS_LINES = (0.25, 1 / 3, 0.5, 2 / 3, 0.75)
-GOLDEN_LINES = (0.382, 0.618)
-AXIS_NAMES = {0.25: "1/4 线", 1 / 3: "三分线", 0.5: "中线", 2 / 3: "三分线",
-              0.75: "1/4 线", 0.382: "黄金分割", 0.618: "黄金分割"}
-BG_MIN_COVERAGE = 0.60           # 至少覆盖 60% 画布面积
+# ── 物理底线阈值（guard 经 _cached_gate 直连读取，单一口径住这里）────────────
+# （历史：此块曾住 art_critic 下沉的整套「设计判断基元」——焦点领先/记忆锚点/
+#   卡片墙/节奏墨差等常量与几何函数。spec 级二审层删除后全部零消费，已清。）
+BG_MIN_COVERAGE = 0.60           # 背景层免检：至少覆盖 60% 画布面积
 BG_MIN_PROTECT_OPACITY = 0.20    # 内容保护层最低不透明度
 LINE_MEASURE_CJK_MAX = 38        # 每行 CJK 字数上限（编辑式排版经验值 22–38）
 LINE_MEASURE_LATIN_MAX = 75      # 每行拉丁字符上限
 LINE_MEASURE_FAIL_FACTOR = 2.0   # 超过上限 2× 视为不可读
-RHYTHM_INK_DELTA = 0.10          # 相邻页实测占用率差 ≥0.10 视为节奏成立
-RHYTHM_INK_FLAT = 0.03           # 标签变了但占用率差 ≤0.03 视为空转
-ASYMMETRIC_GRAMMARS = {"soft_asymmetry", "cinematic_stage", "path_sequence"}
-ANCHOR_DRIFT = 0.18              # 几何重心与声明锚点的归一化偏移阈值
 
-
-def _slide_elems(slide: dict) -> list:
-    return [e for e in slide.get("elements", []) if isinstance(e, dict)]
-
-
-def _slide_field(slide: dict, key: str, default=None):
-    """page_intent 优先，兼容字段直挂 slide 顶层的历史写法。"""
-    intent = slide.get("page_intent") if isinstance(slide.get("page_intent"), dict) else {}
-    v = intent.get(key)
-    return v if v not in (None, "") else (
-        slide.get(key) if slide.get(key) not in (None, "") else default)
-
-
-def _num_e(e: dict, key: str, default: float = 0.0) -> float:
-    try:
-        return float(e.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _area_e(e: dict) -> float:
-    return max(0.0, _num_e(e, "width")) * max(0.0, _num_e(e, "height"))
-
-
-def is_background_layer(e: dict) -> bool:
-    """是否**声明**为背景层（不判断资格）。"""
-    return is_background_declared(e)
-
-
-def background_layer_ok(e: dict, cw: float | None = None,
-                        ch: float | None = None) -> tuple:
-    """背景层免检资格：面积占比够大 + 有真实内容保护（或显式声明免检）。
-
-    返回 (合格?, 不合格原因)。不合格的背景层按普通媒体对待：计入媒体预算、
-    参与遮挡与来源区检查——这是「用 layer 标签躲检」的唯一封堵点。
-    """
-    if not is_background_layer(e):
-        return False, "未声明为背景层"
-    if cw and ch:
-        cover = bg_coverage(e, cw, ch)
-        if cover < BG_MIN_COVERAGE:
-            return False, f"仅覆盖画布 {cover:.0%}（<{BG_MIN_COVERAGE:.0%}），不是空间层而是内容对象"
-    if e.get("readability_exempt"):
-        return True, None
-    op, why = bg_overlay_opacity(e)
-    if op is None:
-        if why == "unparsable":             # fail-closed：解析不出按无保护处理
-            return False, "overlay 无法解析出 opacity（解析不出即视为无保护）"
-        return False, "未声明 overlay/content_protection：叠加文字的可读性无保障"
-    if op < BG_MIN_PROTECT_OPACITY:
-        return False, (f"内容保护层不透明度 {op:.2f} < {BG_MIN_PROTECT_OPACITY:.2f}，"
-                       f"遮罩形同虚设")
-    return True, None
-
-
-def bg_exempt(e: dict, cw: float | None = None, ch: float | None = None) -> bool:
-    """是否享受背景层豁免（声明 + 资格通过）。"""
-    return background_layer_ok(e, cw, ch)[0]
-
-
-def content_occupancy(elems: list, cw: float, ch: float) -> float:
-    """内容几何占用率 = Σ(非背景元素 bbox 面积) / 画布面积。
-
-    density 的「留白」语义是「视觉密度」（内容对象占用的视觉空间），故用几何
-    占用率（= 1 - 留白率）。不用墨迹率：细线/细柱图表墨迹像素天然极低
-    （一条占 70% 画布的折线，墨迹率可能只有 8%），会系统性低估图表页密度。
-    """
-    area = sum(_area_e(e) for e in elems if not bg_exempt(e, cw, ch))
-    return min(1.0, area / max(1.0, cw * ch))
-
-
-def memory_anchor(slide: dict) -> str | None:
-    """识别页面可复现的视觉记忆锚点（可观察，不臆造）。"""
-    elems = _slide_elems(slide)
-    kinds = []
-    spark_count = 0
-    for e in elems:
-        if e.get("type") == "text" and _num_e(e, "size") >= STATEMENT_SIZE:
-            kinds.append(f"statement 尺度({_num_e(e, 'size'):.0f}px)")
-        if e.get("type") in ("chart", "native_chart"):
-            kind = str(e.get("chart_kind") or e.get("kind", ""))
-            if kind in ("kpi", "executive_kpi", "big_number"):
-                kinds.append("big_number 数据锚点")
-            # 数据叙事锚点（design-system §图表「一眼读到结论」的可读表达，
-            # 非装饰）：只有 spec 显式声明了这些叙事动作才计，普通 bar/line 不算。
-            if e.get("highlight") is not None:
-                kinds.append("高亮强调点")
-            if e.get("target") is not None or e.get("target_label"):
-                kinds.append("目标线叙事")
-            if kind in ("donut", "donut_composition") and (
-                    e.get("center_value") is not None or e.get("center_label")):
-                kinds.append("环心结论")
-            if kind == "sparkline":
-                spark_count += 1
-            data = e.get("data")
-            if isinstance(data, list) and any(
-                    isinstance(d, dict) and d.get("subtotal") for d in data):
-                kinds.append("瀑布桥接")
-        if e.get("type") == "image":
-            fn = e.get("asset_function") or (e.get("asset") or {}).get("function")
-            if fn in ("hero", "emotion", "proof") or str(e.get("role", "")) in MEDIA_ROLES:
-                kinds.append(f"图像锚点({fn or e.get('role')})")
-    if spark_count >= 2:
-        kinds.append(f"small multiples({spark_count} 组形状对比)")
-    if _slide_field(slide, "density") == "sparse" and _slide_field(
-            slide, "empty_space_role") in ("protect_focus", "hold_emotion"):
-        kinds.append("主动留白")
-    if not kinds:
-        return None
-    return " + ".join(kinds)
 

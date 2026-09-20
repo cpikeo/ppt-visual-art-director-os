@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 from guard import check_spec
-from primitives import spec_fingerprint
+from primitives import file_digest as _sha256_file, spec_fingerprint
 
 # ── 执行模式（三个已足够：诊断 / 创作 / 交付）─────────────────────────────
 # 简单任务走 draft，复杂任务才需要 release 的全量收口——深度由任务赢得，
@@ -70,17 +70,6 @@ def _has_auto_fit(spec: dict | None) -> bool:
             if isinstance(element, dict) and element.get("auto_fit") is True:
                 return True
     return False
-
-
-def _sha256_file(path: Path) -> str | None:
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as handle:
-            for chunk in iter(lambda: handle.read(1 << 16), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception:
-        return None
 
 
 # ── 修复包（报告自足性）───────────────────────────────────────────────────
@@ -213,7 +202,7 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     - `mode`：spec（只诊断）/ draft（默认）/ release（交付门）。
     - `normalize`：入口归一化（网格/色/字体的机械吸附）。生产链在 vao.py 已归一，
       故传入 False 避免二次深拷贝；重复归一化本身幂等。
-    - `include_advisory`：显式开启风险预测（默认关；它不是发布门槛）。
+    - `include_advisory`：显式开启 guard 设计契约诊断（默认关；它不是发布门槛）。
     - `cache`：编译复用。semantic view 与 PPTX 字节戳都对得上才复用，否则重编。
     """
     t0 = time.time()
@@ -344,29 +333,6 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
     t_attest_end = time.time()
     compile_warnings = list(compile_report.get("warnings", []))
 
-    # 3) advisory（可选）：只在工程干净时跑，且不改变任何门槛。
-    risk_report = None
-    if include_advisory:
-        compile_ok = bool(compile_report.get("passed", False))
-        if guard_errors or not compile_ok:
-            risk_report = {"skipped": True, "reason": "engineering_gate",
-                           "gate": {"guard_errors": len(guard_errors),
-                                    "compile_passed": compile_ok},
-                           "risks": [], "strategy": None,
-                           "summary": {"high": 0, "med": 0, "pages_at_risk": 0,
-                                       "total_pages": len(spec.get("slides") or [])}}
-        else:
-            try:
-                from design_intelligence import pre_critic, risk_strategy
-                risk_report = pre_critic(spec)
-                risk_report["strategy"] = risk_strategy(spec, risk_report)
-                risk_report["gate"] = {"guard_errors": 0, "compile_passed": compile_ok}
-            except Exception as exc:      # 建议层失败不阻断主链
-                risk_report = {"error": str(exc), "risks": [], "summary": {},
-                               "strategy": None,
-                               "gate": {"guard_errors": 0, "compile_passed": compile_ok}}
-    t_advisory_end = time.time()
-
     # 4) 判定：只有阻断项改变状态；分数与警告都不参与。
     items: list[dict] = []
     hint_buckets: dict[str, dict] = {}
@@ -472,18 +438,14 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
             "guard_ms": int((t_guard_end - t_guard) * 1000),
             "compile_ms": int((t_attest - t_guard_end) * 1000),
             "attestation_ms": int((t_attest_end - t_attest) * 1000),
-            "advisory_ms": int((t_advisory_end - t_attest_end) * 1000),
             "slides": len(spec.get("slides") or []),
             "compile_reused": bool(compile_report.get("reused")),
             "cache_enabled": bool(cache),
             "cache_reason": cache_reason,
             "cache_dir": str(cache_root) if do_compile else None,
-            "risk_items": len((risk_report or {}).get("risks") or []),
         },
         "elapsed_ms": int((time.time() - t0) * 1000),
     }
-    if include_advisory:
-        result["risk"] = risk_report
     result["_effective_spec"] = spec  # consumed by vao before report serialization
     return result
 

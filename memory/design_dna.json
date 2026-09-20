@@ -463,6 +463,131 @@
     "revisions": null,
     "lessons": "问题：均匀年份刻度让读者自己归纳阶段 → 决策：时期以意义命名、四段封顶、当前段唯一强调 → 规律：历史叙事的单位是时期，不是年份。"
    }
+  },
+  {
+   "id": "crossover_column_recede_advance",
+   "pattern": "两序列交叉反转用分组柱＋明暗进退，不用堆叠、不用强调色铺面",
+   "signature": {
+    "keywords": [
+     "交叉",
+     "反转",
+     "份额",
+     "此消彼长",
+     "crossover",
+     "份额位移",
+     "结构反转",
+     "column",
+     "多序列"
+    ]
+   },
+   "design_problem": "「A 降 B 升并发生交叉」是一个关系而不是两个数值：堆叠条形（单条构成）只能讲一个整体的切分，讲不了交叉；而强调色一旦铺到整条序列，就与全 deck 的 accent 指针语法冲突，页面失去唯一重点",
+   "judgment": {
+    "space": "图表占页面右半或下半的主证据位；左侧/上方留一列事实注脚（起止值与累计），图与注脚互不重复叙事",
+    "structure": "分组柱：类别=时间刻度，序列=两条命运线；序列名即判断（财政直接投入/社会资本），不另加图例标题",
+    "color_behavior": "退场序列给 supporting 暗色（退后），进场序列给 information 亮色（前进）；明度差承担交叉可读性；accent 不铺序列面，保留给全 deck 的指针（圆点/发丝线）",
+    "type_voice": "标题直接说出交叉结论（「社会资本首次过半」），图只负责让结论被看见",
+    "media": "不需要图片；结构反转是纯数据叙事",
+    "charts": "分组柱（原生 column 多序列）；声明 series_roles 时不要再叠 highlight——角色色会覆盖 accent 升级，二者选一",
+    "anchor_rule": "交叉发生的那个刻度（年份）由标题与注脚文字指认，不靠颜色点名"
+   },
+   "works_because": "明暗是前注意通道：读者先看见「一列退进阴影、一列站到光里」，再读标题确认交叉；accent 保持稀缺，全 deck 的重点语法统一",
+   "avoid": [
+    "单条堆叠讲交叉（它讲构成，不讲反转）",
+    "强调色铺满整条序列",
+    "双轴折线强行同框异单位",
+    "用图例颜色名代替序列判断名"
+   ],
+   "when_not_to": "序列多于三条（分组柱会碎）；类别超过六个刻度；差异极小需要精确读数时改用表",
+   "proven": {
+    "source": "Phase 14 真实生产 bench/urban（城市再生 2026，9 页暗世界 deck）：s03 投入结构页，release PASS，deck.pptx chart1.xml 实测序列色 5C4A33/ EFE3CE",
+    "qa": "release PASS（round 6/6），DATA_INTEGRITY/GUARD/CHART_TYPE 全清",
+    "critic": null,
+    "revisions": "首稿误路由 stacked_bar（编译空载告警）→ 读编译器契约后改 column；首稿 highlight 与 series_roles 并写，实测 roles 覆盖 highlight 的 accent 升级 → 二选一保留 roles",
+    "lessons": "问题：交叉反转被路由成单条堆叠，关系丢失 → 决策：改分组柱、明暗承担进退、accent 保留指针语法 → 理由：图表种类选择的是几何语义（构成/交叉/趋势），明度是暗世界最快的分离通道 → outcome：release 通过，序列色实测落证，全 deck accent 仍只是圆点与发丝线。"
+   }
+  },
+  {
+   "id": "accent_one_dwelling_per_page",
+   "pattern": "accent 每页只有一个住所：指针/端点/线段语音，永不铺成面",
+   "signature": {
+    "keywords": [
+     "accent",
+     "强调色",
+     "单色",
+     "monochrome",
+     "ramp",
+     "ranked_bar",
+     "series_color",
+     "图表填色"
+    ]
+   },
+   "design_problem": "系统图表词汇里若干 kind 默认把 accent 当序列面铺（ranked_bar 全条、原生单序列 line/series 级填色）；一旦接受，accent 就从『指针』变成『表面』，全 deck 的唯一重点语法塌掉，且撞 accent_area 纪律",
+   "judgment": {
+    "space": "accent 的出现位置先列清单再落笔：章节 tape / 线端 marker / 时间轴当前点，每页 ≤1 处语汇",
+    "structure": "需要单色序列时用 theme seriesN 令牌显式声明 monochrome ramp（ink→stone→light→pale），不把缺省回退留给 accent 族",
+    "color_behavior": "排序/构成类图表默认单色 ramp；答案由重量（最深段/首段）或页内 tape 指认，不靠 hue 点名",
+    "type_voice": "accent 不上正文不上标签，只上形状与线",
+    "media": "摄影世界的色彩住所同理：全片一个信号色（拉链头/标记旗/线头），其余全单色矿料",
+    "charts": "发现 kind 的默认填色与 accent 纪律冲突时换几何（ranked→stacked 构成语义），不改系统、不绕 guard",
+    "anchor_rule": "每页落笔前自问：accent 住在哪？答不出第二处才画第一处"
+   },
+   "works_because": "稀缺是指针的前提：accent 只出现一次时，读者无需图例就知道『这是答案』；铺成面后强调退化为装饰",
+   "avoid": [
+    "ranked_bar 默认全条 accent 当『排名即强调』",
+    "原生单序列图接受 accent 序列面",
+    "同页 tape +  accent 填充 + accent 文字三处同住",
+    "用 hue 区分序列而不是明度 ramp"
+   ],
+   "when_not_to": "多序列交叉叙事（分组柱明暗进退是另一条经验 crossover_column_recede_advance）；风险序列需要 negative 语义时走 chart_role",
+   "proven": {
+    "source": "Phase 15 跨域盲测 #2 bench/outdoor（JIDAO 极道 Series A，10 页冷矿料 deck）：s07 渠道构成从 ranked_bar→horizontal_bar→stacked_bar 三轮实测填色（deck.pptx slide7 XML：EE4E0B×3 → 系列级 EE4E0B → seriesN 单色 1B1E20/6E767A/9AA0A3）",
+    "qa": "release PASS round 6/6；slide7 accent 计数=1（tape）、slide9=0、s03 accent 仅线+端点标记",
+    "critic": null,
+    "revisions": "首稿接受 ranked_bar 默认填色 → XML 终审发现 accent 铺面 → 换几何并声明 seriesN 令牌",
+    "lessons": "问题：系统图表缺省填色把 accent 铺成面 → 决策：换几何 + 显式 monochrome ramp 令牌 → 理由：accent 的强调力来自稀缺，DNA monochrome_photo_carries_color 同向 → outcome：release 通过，accent 面积实测回到 tape/marker 量级，deck 重点语法统一。"
+   }
+  },
+  {
+   "id": "axis_follows_narrative_voice",
+   "pattern": "标题轴是叙事声音的判断，不是版式习惯：论证走左轴，宣言走中轴",
+   "signature": {
+    "keywords": [
+     "标题轴",
+     "对齐",
+     "居中",
+     "左对齐",
+     "axis",
+     "align",
+     "锚点",
+     "反模板",
+     "惯性"
+    ]
+   },
+   "design_problem": "连续生产多份 deck 后，内页标题位置/锚点系统会固化为惯性（前两个域都是 x96 左轴 + 左上 eyebrow）；惯性本身不是错，但不再回答『为什么』时就是模板化——宣言式内容被文档式排版稀释，或反之",
+   "judgment": {
+    "space": "落笔前先判叙事声音：研究/论证/案例=文档感=左轴（阅读起点固定，扫读效率高）；发布/宣言/立场=舞台感=中轴（对称即权威，观众面对声明而非文件）",
+    "structure": "轴一旦选定，锚点系统整体切换：中轴=eyebrow 顶中+页码底中+lead/注记同轴；不许半页左轴半页中轴的混装（consistency≠repetition 的边界在『同一声音内』）",
+    "color_behavior": "轴切换与色彩无关：中轴 deck 依然全 deck 单信号色，accent 语法（注记/端点/index）不随轴改变",
+    "type_voice": "中轴排版对行长更敏感：居中长行会失去起点，标题≤22 字、lead 手动断行成 2 行内，超出即拆句",
+    "media": "零图像内容（软件/引擎/方法论）不需要为『页面太空』补图：图形词汇（架构图/折线/流程带）+排版 hero 数字就是图像位，密度曲线由图形页承担",
+    "charts": "系统图表默认色语义（chart_primary→accent）只是缺省值；element 级 primary_color/secondary_color/color_role 是判断进编译器的合法接口——发现默认与本 deck 语法冲突时用接口覆写，不改系统不绕 guard",
+    "anchor_rule": "每次新 deck 第一问：这份内容的声音是文件还是宣言？答完才定轴"
+   },
+   "works_because": "读者对轴的感知先于对内容的感知：中轴对称触发『被宣告』的预期，左轴触发『被论证』的预期；轴与声音一致时排版消失，不一致时读者持续轻微错位",
+   "avoid": [
+    "把上一份 deck 的标题坐标当默认值直接抄",
+    "中轴 deck 里混入左对齐正文列（图表注记除外——图内文字服从图形结构）",
+    "为打破惯性而打破：同声音的两份 deck 用同轴不是错",
+    "居中行长放任到 30+ 字导致行起点漂移"
+   ],
+   "when_not_to": "混合声音 deck（前半论证后半宣言）可在 section 切换处换轴一次，但一页之内不换；数据密集型内页若标题居中导致与图表左缘脱钩，宁可回到左轴",
+   "proven": {
+    "source": "Phase 15 跨域盲测 #3 bench/tech（LIMNET 静水 v2.0 发布会，8 页零图像中轴 deck）：域 #1 城市研究/域 #2 品牌融资均左轴 x96，域 #2 复盘自我指认『内页标题轴=惯性』；域 #3 判叙事声音=宣言（发布会 keynote）→ 全 deck 中轴 + eyebrow 顶中 + 页码底中",
+    "qa": "draft PASS 3/6、release PASS 4/6（8 页 algn=ctr 全数成立；XML 终审 accent 仅文本注记 ×12 + chart 高亮线，零面填充）",
+    "critic": null,
+    "revisions": "architecture/process_flow 首层默认 accent 面填充 → 用 element 级 primary_color 覆写为 ink/stone（s03 首层=ink 有『调度是主角』语义依据；s05 四步等权=全 stone）",
+    "lessons": "问题：三域连续生产中轴位置出现惯性风险 → 决策：把轴判定前移为叙事声音判断（宣言=中轴），锚点系统整体切换 → 理由：Manifesto『每元素须答为什么存在』+ Phase 15 反模板测试槽位 → outcome：三域 8/8 反模板差异确认，同等级质量（release 均一次通过区间），惯性被判断替换。"
+   }
   }
  ]
 }

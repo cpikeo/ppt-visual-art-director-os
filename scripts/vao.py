@@ -130,18 +130,8 @@ def load_spec(path: str | Path) -> tuple[dict, Path]:
 
 
 def _json_write(path: str | Path, value: Any) -> Path:
-    import os
-    import tempfile
-    target = Path(path).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix="." + target.name, dir=target.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n")
-        os.replace(tmp, target)
-    finally:
-        Path(tmp).unlink(missing_ok=True)
-    return target
+    from primitives import json_write   # 原子写入唯一实现住 primitives
+    return json_write(path, value)
 
 
 def bind_asset_manifest(spec: dict, manifest_path: str | Path,
@@ -222,7 +212,8 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
 def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
                 deck: dict | None = None) -> tuple[dict, dict]:
     """brief + one route page → compact asset card + geometric page contract."""
-    from asset_prompt import enhance_asset_card, normalize_safe_area
+    from asset_prompt import (enhance_asset_card, grammar_phrase,
+                              hex_to_color_name, normalize_safe_area)
 
     raw = raw_slide if isinstance(raw_slide, dict) else {"content": str(raw_slide)}
     deck = deck or {}
@@ -254,7 +245,11 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
     if not color_cue:
         color_cue = ["neutral tonal range with one restrained accent"]
         if theme_colors.get("accent"):
-            color_cue.append(f"accent color {theme_colors['accent']}")
+            # 图像模型对 #hex 基本不响应，颜色名才是可执行语言；hex 保留在括号里供人核对。
+            accent_hex = str(theme_colors["accent"])
+            accent_name = hex_to_color_name(accent_hex)
+            color_cue.append(f"accent color {accent_name} ({accent_hex})" if accent_name
+                             else f"accent color {accent_hex}")
     card = {
         "apc": f"APC-{str(asset_id).upper().replace('-', '_')}",
         "asset_type": raw.get("asset_type") or "background",
@@ -272,7 +267,9 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
         "lighting": [str(raw.get("lighting") or derived.get("light") or "single soft directional light")],
         "lighting_source": ("declared" if raw.get("lighting")
                             else "direction" if derived.get("light") else "fallback"),
-        "composition": [str(derived.get("composition_grammar") or "asymmetric editorial composition")],
+        # 构图语法：内部键名（evidence_field …）由 grammar_phrase 翻译成可读语言，
+        # 自由文本原样保留——裸键名对图像模型是纯噪声，还污染资产指纹。
+        "composition": [grammar_phrase(derived.get("composition_grammar"))],
         "motion": [str(derived.get("motion"))] if derived.get("motion") else [],
         # deck 级视觉世界进提示词当氛围语言，但**不参与介质闸门扫描**：
         # 它描述整副 deck 的材质与光，不该替单张资产决定「这张是画还是照片」。
@@ -552,6 +549,7 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
 
     manifest_file = Path(manifest_path).expanduser().resolve()
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    import hashlib
     from asset_workflow import (ACCEPTED, asset_entries, digest, file_digest,
                                 now, resolve_asset, verify_sources)
     workflow_issues = verify_sources(manifest)
@@ -560,7 +558,6 @@ def asset_qc(manifest_path: str, input_dir: str | None = None,
     pending: list[str] = []        # 还没生成（先出图再 QC），与「生成不合格」分开报
     for entry in asset_entries(manifest):
         candidate = resolve_asset(entry, manifest, manifest_file, input_dir)
-        import hashlib
         blob = candidate.read_bytes() if candidate.is_file() else None
         image_sha = hashlib.sha256(blob).hexdigest() if blob is not None else None
         if entry["decision"] == "generate" and image_sha and image_sha == entry.get("preexisting_sha256"):
@@ -941,7 +938,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     c.add_argument("--assets-dir", help="directory containing generated manifest filenames")
     c.add_argument("--asset-qc-report", help="QC报告；默认资产清单同目录的 <stem>.qc.json")
-    c.add_argument("--advisory", action="store_true", help="explicit risk forecast; off by default")
+    c.add_argument("--advisory", action="store_true", help="include guard design-contract diagnostics; off by default")
     c.add_argument("--polish", action="store_true",
                    help="PASS 后再走一轮细节打磨：把 warning 变成可执行的改动表（不改判定）")
     c.add_argument("--json", action="store_true")

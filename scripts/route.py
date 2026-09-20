@@ -56,53 +56,60 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 # ─────────────────────────────────────────────────────────────
-# 路由表：content_type → 页面家族 / 密度 / 能量 / 素材策略 / 字阶
-#   asset: required 必须出图 · optional 视质量等级 · none 禁止出图（省时间、省 token）
+# 路由表：content_type → 页面家族 / 密度 / 能量 / 素材策略 / 预算
+#   asset: required 必须出图 · optional 默认不出图（作者逐页声明才出）· none 禁止出图
 #   density 与渲染占用率目标同向（sparse .30 / balanced .55 / dense .75）
+#   字阶不在路由表里：全库唯一真源是 design-system.md §字号阶梯的驻点表
+#   （64/44/32/22/17/12.5），路由再发一份 type_scale 只会造出第二套口径
+#   ——旧字段无消费者且 fast 档缩放值落在驻点之外，已删除。
 # ─────────────────────────────────────────────────────────────
 ROUTES: dict[str, dict] = {
     "cover":        dict(family="COVER", density="sparse", energy="high",
-                         asset="required", asset_function="hero", type_scale=(64, 20, 12),
+                         asset="required", asset_function="hero",
                          media=1, texts=4, empty_space="hold_emotion"),
     "brand_story":  dict(family="EDITORIAL", density="sparse", energy="medium",
-                         asset="required", asset_function="emotion", type_scale=(48, 20, 12),
+                         asset="required", asset_function="emotion",
                          media=1, texts=4, empty_space="hold_emotion"),
     "product":      dict(family="HERO", density="balanced", energy="high",
-                         asset="required", asset_function="hero", type_scale=(52, 18, 12),
+                         asset="required", asset_function="hero",
                          media=1, texts=4, empty_space="protect_focus"),
     "case":         dict(family="CASE_STUDY", density="balanced", energy="medium",
-                         asset="optional", asset_function="proof", type_scale=(44, 18, 12),
+                         asset="optional", asset_function="proof",
                          media=2, texts=4, empty_space="create_authority"),
     "statement":    dict(family="MINIMAL_STATEMENT", density="sparse", energy="low",
                          asset="optional", asset_function="emotion",
-                         type_scale=(56, 20, 12), media=1, texts=4, empty_space="hold_emotion"),
+                         media=1, texts=4, empty_space="hold_emotion"),
     "closing":      dict(family="MINIMAL_STATEMENT", density="sparse", energy="medium",
                          asset="optional", asset_function="emotion",
-                         type_scale=(56, 20, 12), media=1, texts=4, empty_space="hold_emotion"),
+                         media=1, texts=4, empty_space="hold_emotion"),
     "business":     dict(family="EXECUTIVE_SUMMARY", density="balanced", energy="medium",
-                         asset="none", asset_function=None, type_scale=(44, 18, 12),
+                         asset="none", asset_function=None,
                          media=1, texts=4, empty_space="create_authority"),
     "agenda":       dict(family="EXECUTIVE_SUMMARY", density="balanced", energy="low",
-                         asset="none", asset_function=None, type_scale=(40, 18, 12),
+                         asset="none", asset_function=None,
                          media=1, texts=5, empty_space="separate_chapter"),
     "data":         dict(family="DATA_STORY", density="balanced", energy="low",
-                         asset="none", asset_function=None, type_scale=(44, 18, 12),
+                         asset="none", asset_function=None,
                          media=1, texts=4, empty_space="protect_focus"),
     "comparison":   dict(family="COMPARISON", density="balanced", energy="low",
-                         asset="none", asset_function=None, type_scale=(44, 18, 12),
+                         asset="none", asset_function=None,
                          media=1, texts=4, empty_space="protect_focus"),
     "timeline":     dict(family="TIMELINE", density="balanced", energy="medium",
-                         asset="none", asset_function=None, type_scale=(44, 18, 12),
+                         asset="none", asset_function=None,
                          media=1, texts=4, empty_space="separate_chapter"),
     "architecture": dict(family="FRAMEWORK", density="balanced", energy="medium",
                          asset="optional", asset_function="context",
-                         type_scale=(48, 20, 12), media=1, texts=4,
-                         empty_space="separate_chapter"),
+                         media=1, texts=4, empty_space="separate_chapter"),
     "process":      dict(family="NARRATIVE", density="balanced", energy="medium",
-                         asset="none", asset_function=None, type_scale=(44, 18, 12),
+                         asset="none", asset_function=None,
                          media=1, texts=4, empty_space="separate_chapter"),
 }
 DEFAULT_ROUTE = ROUTES["business"]
+
+# 证据型家族：这些页没有真实 content 就不成立（数据 / 对比口径 / 案例细节 /
+# 时间线事实）。content 为空时在 plan.warnings 与骨架注释里留痕 unresolved——
+# 标题只是观点，不是证据；缺信息不是虚构的许可。
+EVIDENCE_TYPES = frozenset({"data", "comparison", "case", "business", "timeline"})
 
 # 显式声明的内容类型/家族 → 路由 key。作者写 `family: DATA_STORY` 或 `type: 数据`
 # 都必须落到同一条路由；关键词嗅探只在作者什么都没写时才允许介入。
@@ -157,14 +164,6 @@ def explicit_content_type(item) -> str | None:
             if hit:
                 return hit
     return None
-
-
-def _alternative_route_key(item) -> str | None:
-    """作者写的是英文家族名但表里没有时的兜底提示（不改写，只用于留痕）。"""
-    if not isinstance(item, dict):
-        return None
-    raw = item.get("family") or item.get("type")
-    return str(raw).strip() if _intent_value(raw) else None
 
 
 # 设计方向 → 视觉推导（材质 / 光线 / 图表风格 / 背景策略）。只列可执行差异，不做形容词堆叠。
@@ -363,12 +362,14 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
 
     asset = r["asset"]
     if asset == "optional":
-        asset = "required" if quality == "advanced" else "none"
+        # advanced ≠ 更多图片（契约：质量等级提升的是判断与证据预算，不是视觉数量）。
+        # 可选页默认不出图——Native-First：出不出图由作者逐页声明决定
+        # （asset: required / asset_subject，见 _plan_deck），或由生成侧判断后声明。
+        # 曾经「advanced 把全部 optional 页升为 required」：那会把最适合纯排版的页
+        # 强塞一张图 → 为放图改版式 → 多一次出图 + 多一轮 QC，审美与速度双输。
+        asset = "none"
     if quality == "fast" and asset == "required" and r["asset_function"] in ("emotion",):
         asset = "reuse"          # 快速路径：复用已有画心，不再新出图
-    statement, body, caption = r["type_scale"]
-    if quality == "fast":        # 快速路径收一档尺度，降低构图与裁切复杂度
-        statement = max(40, int(statement * 0.85) // 4 * 4)
 
     return {
         "content_type": content_type,
@@ -379,11 +380,10 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
         "empty_space_role": r["empty_space"],
         "media_budget": r["media"],
         "text_budget": r["texts"],
-        "type_scale": {"statement": statement, "body": body, "caption": caption},
         "asset": {"decision": asset, "function": r["asset_function"],
                   "why": _asset_reason(content_type, asset)},
-        # 焦点恒为 Statement 级结论（≥ STATEMENT_SIZE 且尺度领先 1.25×）；
-        # 元素 id 由生成侧决定，这里只给尺度关系，不给坐标、不给命名模板。
+        # 焦点恒为结论句（statement 级）；元素 id 由生成侧决定，
+        # 这里只给语义指向，不给坐标、不给命名模板。
         "focus": "statement",
     }
 
@@ -393,13 +393,13 @@ def _asset_reason(ctype: str, decision: str) -> str:
         return f"{ctype} 承担空间/情绪/实证职责，画心是内容的一部分"
     if decision == "none":
         return f"{ctype} 的注意力预算属于数据与结论，出图会争夺第一注意点"
-    return f"{ctype} 可视质量等级决定，advanced 才出图"
+    return f"{ctype} 出不出图由作者逐页声明决定（asset / asset_subject）"
 
 
 _DECK_CACHE: dict[str, dict] = {}
 MAX_DECK_CACHE = 32   # 只缓存整副 deck 的规划结果；有界，不演化成配置系统
 
-# 方向的构图语法词表（与 design-intelligence.md §Direction 的键一致）。
+# 方向的构图语法词表（与 design-intelligence.md §04 direction 的键一致）。
 # 注意：它和页面级的 `design_intelligence.COMPOSITION_POOL`
 # （scale_contrast / split_field / grid_evidence …）**不是同一套词**——
 # 前者说「这副 deck 的轴线性格」（软偏轴还是硬网格），后者说「这一页怎么摆」。
@@ -534,41 +534,7 @@ def _intent_value(value) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
-_PAGE_INTENT_FIELDS = (
-    "type", "family", "title", "content", "insight", "focus", "page_family",
-    "content_type", "density", "energy", "empty_space_role", "narrative_role",
-    "asset", "asset_function", "media", "reading_order",
-)
 
-
-def _page_intent_interpretation(item, text: str, explicit_type, page_plan: dict) -> dict:
-    """保留页面意图的来源：显式输入、路由推断，以及两者的可见冲突。"""
-    explicit = {}
-    if isinstance(item, dict):
-        explicit = {k: item.get(k) for k in _PAGE_INTENT_FIELDS
-                    if k in item and _intent_value(item.get(k))}
-    inferred = {
-        "content_type": {"value": page_plan.get("content_type"),
-                          "basis": "explicit declaration" if _intent_value(explicit_type)
-                                   else "keyword detection"},
-        "page_family": {"value": page_plan.get("page_family"), "basis": "content_type route"},
-        "density": {"value": page_plan.get("density"), "basis": "content_type route"},
-        "energy": {"value": page_plan.get("energy"), "basis": "content_type route"},
-        "asset": {"value": (page_plan.get("asset") or {}).get("decision"),
-                  "basis": "quality and content route"},
-    }
-    conflicts = []
-    keyword_type = detect_type(text)
-    if explicit_type and explicit_type != keyword_type:
-        conflicts.append({"field": "content_type", "explicit": explicit_type,
-                          "keyword_signal": keyword_type,
-                          "reason": "关键词与显式声明不一致；显式声明生效（Content > Template），仅留痕"})
-    for field in ("density", "energy", "empty_space_role"):
-        if field in explicit and str(explicit[field]) != str(page_plan.get(field)):
-            conflicts.append({"field": field, "explicit": explicit[field],
-                              "inferred": page_plan.get(field),
-                              "reason": "显式声明生效；推断值仅记录，不改写作者判断"})
-    return {"explicit": explicit, "inferred": inferred, "conflicts": conflicts}
 
 
 def _deck_intent_interpretation(brief: dict, requested_direction, direction,
@@ -635,56 +601,64 @@ def _plan_deck(brief: dict) -> dict:
                         page["density_explicit"] = True
             if _intent_value(item.get("asset_function")):
                 page.setdefault("asset", {})["function"] = str(item["asset_function"]).strip()
+            # 契约规则 #1「写了的字段原样生效」——asset 声明不例外：
+            # asset: required/reuse/none 直接改写决策；写了 asset_subject 即视为要出图。
+            # （此前这两种声明落在 decision=none 的页上会被静默跳过——声明被吃掉，
+            # 是最贵的一类契约违约：作者以为写了就生效。）
+            declared_asset = str(item.get("asset") or "").strip().lower()
+            if declared_asset in ("required", "reuse", "none"):
+                page.setdefault("asset", {})["decision"] = declared_asset
+                page["asset"]["why"] = "作者显式声明（逐页 asset 压过家族默认与质量等级）"
+                page["asset"]["author_declared"] = True
+            elif (_intent_value(item.get("asset_subject"))
+                  and (page.get("asset") or {}).get("decision") == "none"):
+                page.setdefault("asset", {})["decision"] = "required"
+                page["asset"]["why"] = "作者声明了 asset_subject：这一页的画面是内容的一部分"
+                page["asset"]["author_declared"] = True
+            # 标题不代替内容：证据型家族页 content 为空 → 标成待判断项（不阻断）。
+            # 缺信息不是虚构的许可——下游不得由标题脑补曲线、数字或案例细节。
+            if (not str(item.get("content") or "").strip()
+                    and page.get("content_type") in EVIDENCE_TYPES):
+                page["content_missing"] = True
             if _intent_value(item.get("composition")):
                 page["composition_explicit"] = str(item["composition"]).strip()
         page["index"] = i + 1
         page["id"] = (item.get("id") if isinstance(item, dict) and item.get("id")
                       else f"s{i + 1:02d}")
         page["declared_type"] = declared_type
-        page["intent_interpretation"] = _page_intent_interpretation(
-            item, text, declared_type, page)
         pages.append(page)
+    # 逐页 intent_interpretation（显式/推断/冲突镜像）在 plan.pages 之外零消费：
+    # 作者覆盖已直接生效在页面字段上（上面 density_explicit 等），冲突留痕
+    # deck 级一份（plan.intent_interpretation）足够——每页再发一份约 500 字节
+    # 的机器镜像只增大计划与骨架，不改变任何决策，已删除。
     _alternate_density(pages)
-    for pg in pages:
-        inferred = (pg.get("intent_interpretation") or {}).get("inferred") or {}
-        if "density" in inferred:
-            inferred["density"]["value"] = pg.get("density")
-            inferred["density"]["basis"] = (
-                "explicit declaration" if pg.get("density_explicit")
-                else "content_type route + deck rhythm pass")
 
-    needed = [p["id"] for p in pages if p["asset"]["decision"] in ("required",)]
+    # 预算上限只约束 **Skill 判断产生的**出图；作者逐页显式声明（asset: required /
+    # asset_subject）永不被预算截断——执行策略吃掉契约声明是优先级倒置
+    # （Declaration Priority：显式声明 > Skill 判断 > 兜底，预算属于执行器）。
+    needed = [p for p in pages if p["asset"]["decision"] == "required"]
+    declared = [p["id"] for p in needed if p["asset"].get("author_declared")]
+    judged = [p["id"] for p in needed if not p["asset"].get("author_declared")]
     reused = [p["id"] for p in pages if p["asset"]["decision"] == "reuse"]
     cap = 2 if quality == "fast" else 4
-    assets = {"generate": needed[:cap], "generate_extra": needed[cap:], "reuse": reused,
+    generate = declared + judged[:cap]
+    assets = {"generate": generate, "generate_extra": judged[cap:], "reuse": reused,
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
-    assets["planned_calls"] = len(assets["generate"])
+    assets["planned_calls"] = len(generate)
     exec_mode = recommend_mode(brief)
     # V3：P1 就召回 Design DNA（经验线并行，不串行等待）。可选智能层失败可以降级，
     # 但必须留在 plan.warnings，不能把异常伪装成「无 DNA/无媒体判断」。
     intelligence_warnings = []
     try:
-        from design_intelligence import recall_dna, media_decision, quality_budget
+        from design_intelligence import recall_dna
         dna_hit = recall_dna(brief)
     except Exception as exc:
         intelligence_warnings.append({"rule": "design_intelligence", "scope": "deck",
                                       "error": f"{type(exc).__name__}: {exc}"})
         dna_hit = {"matched": None, "confidence": 0.0, "dna": None,
                    "note": "design_intelligence 不可用，按主题种子起步；详见 warnings"}
-    for pg in pages:
-        # 媒体判断：置信度 + 理由（闸门管预算，模型管判断）
-        try:
-            md = media_decision({"page_intent": {"page_family": pg.get("page_family"),
-                                                 "density": pg.get("density")}})
-            pg["media_confidence"] = md["confidence"]
-            pg["media_reason"] = md["reason"]
-            pg["quality_budget"] = quality_budget(
-                {"page_intent": {"page_family": pg.get("page_family"),
-                                 "density": pg.get("density")}})
-        except Exception as exc:
-            intelligence_warnings.append({
-                "rule": "design_intelligence", "scope": pg.get("id"),
-                "error": f"{type(exc).__name__}: {exc}"})
+    # 逐页 media_confidence/media_reason/quality_budget 全库零消费（媒体决策
+    # 已由 plan.assets 闸门 + 每页 asset.decision 承担），已随意图镜像一并删除。
     # 跨页锚（deck 级事实）：成套 deck 才需要连续性装置，短 deck 不发锚——为两页做家具是浪费。
     # 眉标用家族词汇原文（全场统一），页码从第 2 页起（封面不编号）。
     # 两样落成元素后由 guard 的 deck_anchor 查：在不在、是不是同一个位置。
@@ -715,7 +689,11 @@ def _plan_deck(brief: dict) -> dict:
     seed = _seed_from_brand(seed, brief.get("brand_colors")
                             if isinstance(brief, dict) else None)
     plan_warnings = ([w for w in (direction_warning, quality_warning) if w]
-                     + intelligence_warnings)
+                     + intelligence_warnings
+                     + [{"rule": "unresolved_content", "scope": pg.get("id"),
+                         "msg": "content 缺失：证据型页面不能由标题脑补数据/案例——"
+                                "补真实证据，或改成纯排版观点页，或删掉这一页"}
+                        for pg in pages if pg.get("content_missing")])
     intent_interpretation = _deck_intent_interpretation(
         brief, requested_direction, direction, quality_input, quality, pages,
         plan_warnings)
@@ -737,7 +715,9 @@ def _plan_deck(brief: dict) -> dict:
         "direction_execution": _execution_with_brief_overrides(direction, brief),  # 介质/光照/图表手法（deck 级）
         "pages": pages,
         "assets": assets,
-        "budget": {"max_asset_calls": cap,
+        "budget": {"max_asset_calls": len(assets["generate"]),
+                   # ↑ 预算数字是执行器内部策略（cap 已在上面约束 Skill 判断项），
+                   # 对作者显式声明不设限；契约文档（brief 模板）不出现这些数字。
                    "max_charts_per_page": 1,
                    "max_text_objects_per_page": 4},
     }
@@ -807,7 +787,6 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     纯确定性派生；卡上留的洞（visual_world / type_voice / 每页 insight）
     是内容级判断，仍是 Art Director 的职责。
     """
-    from collections import Counter
     plan = plan if plan is not None else plan_deck(brief)
     pages = plan.get("pages") or []
     n = len(pages)
@@ -832,9 +811,7 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
                    "visual_world": None,      # 洞：一句话隐喻（材质/光影/空间）
                    "type_voice": None},       # 洞
         "composition": {"rule": "页面拿到家族与叙事动作；几何与构图由生成侧判断；"
-                                "相邻页至少换一个构图算子"},
-        "density_curve": density,
-        "density_profile": dict(sorted(Counter(density).items())),
+                                "相邻页的变化要有内容理由（结构雷同由布局指纹风险点名）"},
         "media_policy": {"generate": _n(assets.get("generate")),
                          "reuse": _n(assets.get("reuse")),
                          "skipped": _n(assets.get("skipped"))},
@@ -914,8 +891,7 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
     except Exception as exc:
         forecast = {"error": str(exc), "policies": {}}
     return {"plan": plan, "deck_decision": card, "color_plan": color,
-            "forecast": forecast, "pages": pages,
-            "policy": (forecast or {}).get("policies") or {}}
+            "forecast": forecast, "pages": pages}
 
 
 def align_pages(plan_pages: list[dict], other_pages: list[dict]) -> dict:

@@ -15,14 +15,11 @@ Layer -1 · Design Intelligence（设计智能层——所有流程的大脑）
   ③ Page Quality Budget  页面质量预算：不同页面家族追求不同的好——Hero 页允许
                           高复杂度换情绪，数据页把清晰与准确放第一位。
   ④ Risk Prediction Engine 风险预测（**不是独立审查环节，是本层内部的预测子模块**）：
-                          `pre_critic(spec)` 用与 QA 同一套 primitives 常量在渲染之前估计
-                          accent 超载、锚点缺失、对比度、焦点冲突、文本溢出、节奏趋平、
-                          密度失配、媒体误用；`risk_strategy(spec)` 把预测**翻译成生成
-                          策略**（逐页媒体/文本/字阶/图表/构图调整 + 整套 deck 政策），
-                          在起草之前消费。每条风险标注根因（与交付判定同一分类法）。
-
-analyze(brief, spec) 把三条智能线（内容/视觉/风险与策略）汇合成一次调用——
-内容分析、视觉分析、风险分析互不依赖，无需串行等待。
+                          `forecast_risk(brief, plan)` 在**还没有 spec** 时按内容路由
+                          预判该 deck 会在哪里出问题，并把结论直接翻译成生成政策
+                          （文本预算 / 媒体预算 / 复杂度约束），在起草之前消费。
+                          （历史：曾有 spec 级 pre_critic + risk_strategy 二审层——
+                          三域生产实测零消费：判断发生在起草时，不在起草后；已删除。）
 
 与既有层的关系（**职责边界，不重叠**）：本层负责「设计判断 + 未来风险」；
 `guard.py` / `qa.py` 负责工程正确性（溢出、越界、重叠、数据合同、渲染完整性），
@@ -36,33 +33,16 @@ import json
 import math
 import os
 import re
-import time
 from pathlib import Path
-from typing import Any
 
-from primitives import DEFAULT_WIDTH, DEFAULT_HEIGHT, contrast, estimate_lines
-from primitives import (memory_anchor as _memory_anchor,
-                        content_occupancy as _content_occupancy,
-                        filled_panels as _filled_panels,
-                        FOCUS_LEAD, FOCUS_AREA_LEAD,
-                        TEXT_BUDGET_MAX, PANEL_MAX, MEDIA_BUDGET_MAX,
-                        RHYTHM_INK_DELTA, RHYTHM_INK_FLAT)
+from primitives import estimate_lines
 # 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
 from design_intelligence_rules import (
     COMPOSITION_BY_FAMILY, COMPOSITION_POOL,
-    BAR_FAMILY as _BAR_FAMILY,
-    SMALL_ACCENT_CHART_SHARE as _SMALL_ACCENT,
-    TEXT_INK_FACTOR as _TEXT_INK_FACTOR,
-    SHAPE_FILL_FACTOR as _SHAPE_FILL_FACTOR,
     MEDIA_MODEL as _MEDIA_MODEL, FAMILY_ALIASES as _FAMILY_ALIASES,
-    LADDER_TOL as _LADDER_TOL, TYPE_WEIGHTS as _TYPE_WEIGHTS,
-    ASYMMETRIC_OK_FAMILIES as _ASYMMETRIC_OK,
     DIRECTION_ALIAS as _DIRECTION_ALIAS,
-    DENSITY_BANDS, FAMILY_MOVES, LADDER_RUNGS, COMPLEX_LAYOUT_FAMILIES,
-    CALIBRATION_LAWS, CALIBRATION_FAMILIES,
-    JUDGMENT_KEYS, RESULT_MEMORY_KEYS,
-    COLOR_RATIO_TARGETS, COLOR_FORBIDDEN, COLOR_DIRECTIONS,
-    RISK_CATALOG as _RISK_CATALOG)
+    FAMILY_MOVES, COMPLEX_LAYOUT_FAMILIES,
+    CALIBRATION_LAWS, JUDGMENT_KEYS, RESULT_MEMORY_KEYS, COLOR_DIRECTIONS)
 
 DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json"
 
@@ -291,7 +271,7 @@ def _leaf_strings(v):
 def normalize_family(raw) -> str:
     """家族名归一（内容家族 COVER/DATA_STORY… → route/媒体家族 HERO/DATA…）。
 
-    两套命名的单一映射源：media_decision / pre_critic / page_move
+    两套命名的单一映射源：media_decision / page_move
     都经此归一，禁止各自维护别名表（漂移的别名表 = 判断不一致）。
     """
     up = str(raw or "").strip().upper()
@@ -376,74 +356,6 @@ def quality_budget(page: dict) -> dict:
     return b
 
 
-# ════════════════════════════════════════════════════════════════════════
-# ④ Pre-Critic Engine
-# ════════════════════════════════════════════════════════════════════════
-def _theme_colors(spec: dict) -> dict:
-    theme = spec.get("theme") if isinstance(spec, dict) and isinstance(spec.get("theme"), dict) else {}
-    colors = theme.get("colors") if isinstance(theme.get("colors"), dict) else {}
-    return dict(colors)
-
-
-def _hex_of(color: Any, colors: dict) -> str | None:
-    if not isinstance(color, str):
-        return None
-    c = color.strip()
-    if c.startswith("#"):
-        return c
-    return colors.get(c)          # token → hex
-
-
-def _area(e: dict) -> float:
-    try:
-        return float(e.get("width", 0)) * float(e.get("height", 0))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _chart_accent_ratio(e: dict, colors: dict, cw: float, ch: float) -> float:
-    """图表元素预估 accent 面积 / 画布面积（按物理形态校准的保守估计）。
-
-    highlight 为 1-based 索引（与 charts 契约一致）；0/越界视为未声明。
-    """
-    kind = str(e.get("chart_kind") or e.get("kind") or "")
-    area_ratio = _area(e) / max(1.0, cw * ch)
-    hl = e.get("highlight")
-    rows = e.get("data") or []
-    vals = [abs(float(r.get("value"))) for r in rows
-            if isinstance(r, dict) and isinstance(r.get("value"), (int, float))]
-    hl_val = None
-    if isinstance(hl, int) and 1 <= hl <= len(vals):
-        hl_val = vals[hl - 1]
-    if kind in ("donut", "donut_composition", "pie"):
-        if hl_val is None:
-            return 0.0                     # 未声明高亮：扇区走系列色，不计 accent
-        sector = hl_val / (sum(vals) or 1.0)
-        return area_ratio * 0.62 * sector
-    if kind in _BAR_FAMILY:
-        if hl_val is None or not vals:
-            return 0.0
-        return area_ratio * 0.07 * (hl_val / max(vals))
-    return area_ratio * _SMALL_ACCENT.get(kind, 0.05)
-
-
-def _accent_share(page: dict, colors: dict, cw: float, ch: float) -> float:
-    accent_hex = (_hex_of("accent", colors) or "").upper()
-    total = 0.0
-    for e in (page.get("elements") or []):
-        if not isinstance(e, dict):
-            continue
-        if e.get("layer") == "background":
-            continue                       # 背景画心另行免检判定
-        hexv = (_hex_of(e.get("color") or e.get("stroke"), colors) or "").upper()
-        if e.get("type") in ("chart", "native_chart"):
-            total += _chart_accent_ratio(e, colors, cw, ch)
-        elif hexv and hexv == accent_hex:
-            factor = _TEXT_INK_FACTOR if e.get("type") == "text" else _SHAPE_FILL_FACTOR
-            total += _area(e) * factor / max(1.0, cw * ch)
-    return total
-
-
 def _est_overflow(e: dict) -> float | None:
     """文本元素预估溢出量（px）。无文本/无几何返回 None。"""
     text = e.get("text")
@@ -466,47 +378,6 @@ def _est_overflow(e: dict) -> float | None:
         lines += estimate_lines(seg, float(e["width"]) - 2 * pad, size, wrap)
     need = lines * size * lh
     return need - (float(e["height"]) - 2 * pad)
-
-
-def _risk(code, level, slides, why, prevention, predicted, cause, confidence):
-    return {"code": code, "level": level, "slides": slides, "why": why,
-            "prevention": prevention, "predicted": predicted,
-            "root_cause": cause, "confidence": confidence}
-
-
-
-# ── 预测扩展：把「渲染后才看得见」前移到生成前 ────────────────────
-# gravity_drift 超标 / 字阶混乱 / 布局指纹连续重复 / 记忆线断裂——这四个失败
-# 模式原来要等渲染证据才暴露；现在 spec 级静态估计就能点名（预测→决策→生成）。
-# 字阶驻点/容差/视觉重量/偏轴白名单 → design_intelligence_rules（真源）。
-
-
-def _weighted_centroid(elems: list[dict]):
-    """墨量加权质心（文本 1.0 / 图 1.2 / 图表 1.1 / 形状 0.7；背景层不计）。"""
-    wx = ws = 0.0
-    for e in elems:
-        try:
-            w = _TYPE_WEIGHTS.get(str(e.get("type")), 0.8) \
-                * float(e["width"]) * float(e["height"])
-            wx += w * (float(e["x"]) + float(e["width"]) / 2.0)
-            ws += w
-        except (KeyError, TypeError, ValueError):
-            continue
-    return (wx / ws) if ws > 0 else None
-
-
-def _layout_fingerprint(elems: list[dict]) -> tuple:
-    """粗粒度布局指纹（类型 + 96px 网格桶）：识别「换字不换版」的连续重复。"""
-    out = []
-    for e in elems:
-        try:
-            out.append((str(e.get("type")), int(float(e.get("x", 0))) // 96,
-                        int(float(e.get("y", 0))) // 96,
-                        int(float(e.get("width", 0))) // 96,
-                        int(float(e.get("height", 0))) // 96))
-        except (TypeError, ValueError):
-            continue
-    return tuple(sorted(out))
 
 
 # ── Page Intent Skeleton（标准家族的意图骨架，AI 只填洞 ──────────
@@ -575,420 +446,6 @@ def page_intent_skeleton(family: str, rhythm_stage: str = "body",
     return base
 
 
-def pre_critic(spec: dict) -> dict:
-    """spec → 风险报告 + 生成策略（确定性，~10ms/页，零渲染零编译）。
-
-    本函数是 **Design Intelligence 内部的预测子模块**，不是生产链上的独立审查
-    环节：它的产物是「下一步该怎么设计」，不是「这一版能不能过」。因此
-    ① 不阻断任何阶段（异常由调用方兜底）；② 与 QA 的关系是时间差而非
-    重复层——QA 用真实渲染证据判「已经发生的」，本模块用几何/声明估计判
-    「将要发生的」，同一套常量，跑在时间前面；③ 输出携带 `strategy`
-    （`risk_strategy(spec, report)` 的结果），起草/修订时直接消费。
-
-    每条风险：{code, level(high/med/low), slides, why, prevention,
-    predicted(下游失败码), root_cause(与交付失败码同分类法), confidence}。
-    """
-    t0 = time.time()
-    if not isinstance(spec, dict):
-        return {"risks": [], "summary": {"high": 0, "med": 0, "low": 0,
-                                           "pages_at_risk": 0, "total_pages": 0},
-                "by_root_cause": {}, "root_cause_summary": [], "predicted_codes": [],
-                "pages_at_risk": [], "first_fix": None, "elapsed_ms": 0,
-                "error": "spec 顶层必须是对象/dict"}
-    colors = _theme_colors(spec)
-    canvas = spec.get("canvas") if isinstance(spec.get("canvas"), dict) else {}
-    try:
-        cw = float(canvas.get("width", DEFAULT_WIDTH))
-        ch = float(canvas.get("height", DEFAULT_HEIGHT))
-        if not math.isfinite(cw) or not math.isfinite(ch) or cw <= 0 or ch <= 0:
-            raise ValueError
-    except (TypeError, ValueError, OverflowError):
-        cw, ch = DEFAULT_WIDTH, DEFAULT_HEIGHT
-    try:
-        accent_max = float((spec.get("theme") or {}).get("constraints", {}).get(
-            "accent_max", 0.05)) or 0.05
-        if not math.isfinite(accent_max) or accent_max <= 0:
-            raise ValueError
-    except (TypeError, ValueError, AttributeError, OverflowError):
-        accent_max = 0.05
-    slides = [s for s in (spec.get("slides") or []) if isinstance(s, dict)]
-    risks: list[dict] = []
-    pages_at_risk: set[str] = set()
-    fps: list[tuple[str, tuple]] = []      # (页 id, 布局指纹)
-    deck_sizes: set[float] = set()         # 全 deck 出现过的字号
-
-    def _add(**kw):
-        r = _risk(**kw)
-        risks.append(r)
-        pages_at_risk.update(str(s) for s in r["slides"])
-
-    # ── 逐页预测 ─────────────────────────────────────────────────────
-    prev = None
-    for i, slide in enumerate(slides):
-        sid = str(slide.get("id") or f"page_{i + 1}")
-        elems = [e for e in (slide.get("elements") or []) if isinstance(e, dict)]
-        pi = slide.get("page_intent") if isinstance(slide.get("page_intent"), dict) else {}
-
-        # 0. 意图不清 / 焦点未绑定（原 guard preflight 信号并入 risk_prediction）
-        insight = pi.get("insight") or slide.get("insight")
-        if not (isinstance(insight, str) and insight.strip()):
-            _add(code="INTENT_UNCLEAR", level="high", slides=[sid],
-                 why="页面没有可复述的单一 insight（发布链会 BLOCKED）",
-                 prevention="先写一句 object + change + implication，再排版",
-                 predicted="INTENT_UNCLEAR", cause="intent_clarity", confidence=0.95)
-
-        # 1. accent 超载（V1 案例实录：donut 52% 扇区 6.7% > 4%）
-        share = _accent_share(slide, colors, cw, ch)
-        if share > accent_max:
-            chart_kinds = [str(e.get("chart_kind")) for e in elems
-                           if e.get("type") in ("chart", "native_chart")]
-            cause = ("chart_selection" if chart_kinds else "color_discipline")
-            prev_hint = (f"（构成图高亮扇区 ≈{share:.0%}——关系选错图表时，强调色必然超载："
-                         f"改 ranked_bar/直接标注）" if chart_kinds else "（削减 accent 元素面积）")
-            _add(code="ACCENT_OVERFLOW", level="high", slides=[sid],
-                 why=f"预估 accent 像素 {share:.1%} > 主题上限 {accent_max:.0%}{prev_hint}",
-                 prevention=("换图表（一图一关系：合计关系用 ranked_bar/大数字，构成关系才用环图）"
-                             if cause == "chart_selection" else
-                             "accent 只留一个元素；装饰回退主色/辅色"),
-                 predicted="accent_budget", cause=cause, confidence=0.85)
-        elif share > 0.8 * accent_max:
-            _add(code="ACCENT_TIGHT_RISK", level="med", slides=[sid],
-                 why=f"预估 accent 像素 {share:.1%} 已用预算 {share / accent_max:.0%}"
-                     f"（上限 {accent_max:.0%}），渲染实测可能贴线",
-                 prevention="accent 只留一个强调元素，其余回退主色/辅色——贴线值要留余量",
-                 predicted="accent_budget(临界)", cause="color_discipline",
-                 confidence=0.6)
-
-        # 2. 记忆锚点缺失（V1 案例实录：s03/s06/s10 三页 CRITIC_LOW）
-        if _memory_anchor(slide) is None:
-            _add(code="NO_MEMORY_ANCHOR", level="high", slides=[sid],
-                 why="全页无可指认记忆锚点（无 ≥40px 文本、无声明高亮/环心/目标线）",
-                 prevention=("给焦点文字 ≥40px（Statement 级），或给图表声明 highlight/"
-                             "center_value/target——真实存在的东西才可声明"),
-                 predicted="CRITIC_LOW(memorability)", cause="memory_anchor",
-                 confidence=0.9)
-
-        # 3. 对比度风险（V1 案例实录：secondary 做 lead，纸底 2.98:1）
-        bg = _hex_of("background", colors)
-        worst = None
-        for e in elems:
-            if e.get("type") != "text":
-                continue
-            fg = _hex_of(e.get("color"), colors)
-            if not fg or not bg:
-                continue
-            backing = bg
-            # 文本压在实心形状上时以形状填充为底
-            for s in elems:
-                if s is e or s.get("type") not in ("shape",) or not s.get("fill"):
-                    continue
-                fill = s.get("fill") if isinstance(s.get("fill"), str) else \
-                    (s.get("fill") or {}).get("color")
-                if fill and _overlap(e, s):
-                    bhex = _hex_of(fill, colors)
-                    if bhex:
-                        backing = bhex
-            ratio = contrast(fg, backing)
-            try:
-                _text_size = float(e.get("size") or 16)
-                if not math.isfinite(_text_size):
-                    _text_size = 16.0
-            except (TypeError, ValueError, OverflowError):
-                _text_size = 16.0
-            if worst is None or ratio < worst[1]:
-                worst = (str(e.get("id")), ratio, _text_size)
-        if worst and worst[1] < 3.0:
-            _add(code="CONTRAST_FAIL_RISK", level="high", slides=[sid],
-                 why=f"「{worst[0]}」与底色预估对比 {worst[1]:.2f}:1 < 3.0:1 阻断线",
-                 prevention="加深文字 token（如 secondary→muted/primary）或换更浅的底",
-                 predicted="READABILITY_FAIL", cause="theme_contrast",
-                 confidence=0.95)
-        elif worst and worst[1] < 4.5 and worst[2] < 24:
-            _add(code="CONTRAST_WARN_RISK", level="med", slides=[sid],
-                 why=f"「{worst[0]}」{worst[2]:.0f}px 正文预估对比 {worst[1]:.2f}:1 < WCAG AA 4.5:1",
-                 prevention="正文级文字用对比 ≥4.5:1 的 token（淡墨是装饰色不是可读色）",
-                 predicted="text_contrast(warn)", cause="theme_contrast",
-                 confidence=0.8)
-
-        # 4. 焦点冲突（V1 案例实录：s10 主线图 378k > 25% 画布）
-        focus_id = pi.get("focus")
-        focus_el = next((e for e in elems if e.get("id") == focus_id), None)
-        if focus_id and focus_el is None:
-            _add(code="FOCUS_UNBOUND", level="med", slides=[sid],
-                 why=f"focus={focus_id!r} 未对应页面元素",
-                 prevention="把 focus 指向真实元素 id；唯一 L4 通常是结论文字",
-                 predicted="CRITIC_LOW(visual_hierarchy)", cause="focus_anchor",
-                 confidence=0.9)
-        if focus_el is not None:
-            fsize = focus_el.get("size") if focus_el.get("type") == "text" else None
-            others = []
-            for e in elems:
-                if e is focus_el or e.get("type") != "text":
-                    continue
-                try:
-                    _size = float(e.get("size") or 0)
-                    if math.isfinite(_size):
-                        others.append(_size)
-                except (TypeError, ValueError, OverflowError):
-                    continue
-            try:
-                _fsize = float(fsize)
-            except (TypeError, ValueError, OverflowError):
-                _fsize = 0.0
-            if math.isfinite(_fsize) and others and max(others) > 0 \
-                    and _fsize / max(others) < FOCUS_LEAD:
-                _add(code="FOCUS_SCALE_RISK", level="med", slides=[sid],
-                     why=f"焦点 {_fsize:.0f}px 领先第二大文字 {_fsize / max(others):.2f}× < {FOCUS_LEAD}×",
-                     prevention="拉开尺度比（焦点 ≥1.25× 第二大文字）或降级竞争文字",
-                     predicted="CRITIC_LOW(visual_hierarchy)", cause="focus_anchor",
-                     confidence=0.85)
-            for e in elems:
-                if e is focus_el or e.get("layer") == "background":
-                    continue
-                if _area(e) > max(FOCUS_AREA_LEAD * _area(focus_el), 0.25 * cw * ch):
-                    _add(code="FOCUS_AREA_RISK", level="high", slides=[sid],
-                         why=f"「{e.get('id')}」面积 {_area(e) / 1000:.0f}k 超过 "
-                             f"max(2×焦点, 25%画布)={max(FOCUS_AREA_LEAD * _area(focus_el), 0.25 * cw * ch) / 1000:.0f}k",
-                         prevention="焦点做大（Statement 级）或收窄竞争对象；或焦点改声明真实锚点",
-                         predicted="CRITIC_LOW(visual_hierarchy)", cause="focus_anchor",
-                         confidence=0.9)
-
-        # 5. 文本溢出（V1 案例实录：40px×1.15×2 行 = 92px > 64px 框）
-        for e in elems:
-            ov = _est_overflow(e)
-            if ov is not None and ov > 1:
-                _add(code="TEXT_OVERFLOW_RISK", level="high", slides=[sid],
-                     why=f"「{e.get('id')}」预估高度超出文本框 {ov:.0f}px",
-                     prevention=f"修复阶梯（优先级从上到下）：padding {e.get('padding', 0)}→0 → "
-                                f"line_height {e.get('line_height', 1.2)}→1.05 → 字号降一级 → 重写文案拆行"
-                                f"（声明 auto_fit:true 可由系统按此阶梯自动吸附）",
-                     predicted="TEXT_OVERFLOW", cause="layout_collision",
-                     confidence=0.95)
-
-        # 6. 媒体误用
-        md = media_decision(slide)
-        images = [e for e in elems if e.get("type") == "image"]
-        family = md["family"]
-        if images and family in ("DATA", "STRUCTURE", "PROCESS", "COMPARISON", "EVIDENCE"):
-            _add(code="MEDIA_MISUSE_RISK", level="high", slides=[sid],
-                 why=f"{family} 页携带 {len(images)} 张图：{md['reason']}",
-                 prevention="删除图片，或把页面改叙事/情绪定位（内容决定家族，家族决定媒体）",
-                 predicted="MEDIA_UNJUSTIFIED", cause="media_governance",
-                 confidence=0.9)
-        # 注意力媒体预算：图表 + 非背景图（sparkline 组只占一个席位）
-        media_objs = [e for e in elems
-                      if e.get("type") in ("chart", "native_chart")
-                      and str(e.get("chart_kind") or e.get("kind", "")) != "sparkline"]
-        media_objs += [e for e in images if e.get("layer") != "background"]
-        if any(str(e.get("chart_kind") or e.get("kind", "")) == "sparkline"
-               for e in elems):
-            media_objs.append({"_kind": "sparkline_group"})
-        if len(media_objs) > MEDIA_BUDGET_MAX:
-            _add(code="MEDIA_BUDGET_RISK", level="med", slides=[sid],
-                 why=f"争夺注意力的媒体/图表 {len(media_objs)} 个 > 预算 {MEDIA_BUDGET_MAX}",
-                 prevention="保留承担核心关系的一个，其余改注释或拆页",
-                 predicted="CRITIC_LOW(visual_hierarchy)", cause="media_governance",
-                 confidence=0.7)
-
-        # 6b. 卡片墙 + 文本预算（原 guard preflight 信号并入 risk_prediction）
-        panels = _filled_panels(elems, cw, ch)
-        if len(panels) > PANEL_MAX:
-            _add(code="CARD_WALL_RISK", level="med", slides=[sid],
-                 why=f"{len(panels)} 块填充容器 > {PANEL_MAX}（卡片墙：不敢做层级的症状；"
-                     f"判据是底色不是圆角——直角卡片墙一样是卡片墙）",
-                 prevention="先删容器：同级并列用发丝线分隔 + 留白 + 字阶分组，"
-                            "底色只留给真正需要被圈出来的那一块（KPI/数据面板）",
-                 predicted="CRITIC_LOW(visual_hierarchy)", cause="container_discipline",
-                 confidence=0.7)
-        reading = [t for t in elems if t.get("type") == "text"
-                   and str(t.get("role", "")) not in
-                   {"caption", "annotation", "source", "label", "axis",
-                    "data_label", "legend", "metadata", "method"}]
-        if len(reading) > TEXT_BUDGET_MAX:
-            _add(code="TEXT_BUDGET_RISK", level="med", slides=[sid],
-                 why=f"阅读文本 {len(reading)} 个 > 预算 {TEXT_BUDGET_MAX}（碎片化阅读）",
-                 prevention="合并重复语句：一个文本框只承担一个语义角色",
-                 predicted="CRITIC_LOW(visual_hierarchy)", cause="text_budget",
-                 confidence=0.6)
-
-        # 7. 密度失配 + 8. 节奏趋平（V1 案例实录：Δ0.099 差 0.001 双扣）
-        occ = _content_occupancy(elems, cw, ch)
-        density = str(pi.get("density") or "").lower()
-        band = DENSITY_BANDS.get(density)
-        if band and not (band[0] - 0.06 <= occ <= band[1] + 0.10):
-            _add(code="DENSITY_MISMATCH_RISK", level="med", slides=[sid],
-                 why=f"声明 density={density}（带 {band[0]:.2f}–{band[1]:.2f}），"
-                     f"几何占用估计 {occ:.2f} 在带外",
-                 prevention="按真实占用重新声明，或调整内容量兑现声明（标签必须与现实一致）",
-                 predicted="rhythm(空转/趋平)", cause="rhythm_density", confidence=0.6)
-        if prev is not None:
-            p_pi, p_occ = prev
-            d_occ = abs(occ - p_occ)
-            same_label = p_pi.get("density") == pi.get("density")
-            both_same = same_label and p_pi.get("energy") == pi.get("energy")
-            if same_label and d_occ < RHYTHM_INK_DELTA:
-                level = "high" if both_same else "med"
-                _add(code="RHYTHM_FLAT_RISK", level=level,
-                     slides=[str(slides[i - 1].get("id")), sid],
-                     why=f"相邻页同密度 {pi.get('density')}，占用差估计 {d_occ:.3f} < {RHYTHM_INK_DELTA}"
-                         + ("，且能量相同（双重趋平）" if both_same else ""),
-                     prevention="改动一页的密度/能量恢复呼吸；同密度相邻页需要真实墨迹差 ≥0.10"
-                                "（宁可改声明为不同密度，也不虚增墨迹）",
-                     predicted="RHYTHM_FLAT", cause="rhythm_density", confidence=0.55)
-            elif not same_label and d_occ <= RHYTHM_INK_FLAT:
-                _add(code="RHYTHM_FAKE_RISK", level="high",
-                     slides=[str(slides[i - 1].get("id")), sid],
-                     why=f"密度标签变了但占用差估计 {d_occ:.3f} ≤ {RHYTHM_INK_FLAT}（空转）",
-                     prevention="标签变化必须伴随真实占用变化，否则视为空转扣分",
-                     predicted="rhythm(空转)", cause="rhythm_density", confidence=0.55)
-        # 9. 视觉平衡（预测 gravity_drift——内容页墨量质心严重偏轴）
-        vis = [e for e in elems if e.get("type") in _TYPE_WEIGHTS
-               and e.get("layer") != "background" and e.get("role") != "background"]
-        cx = _weighted_centroid(vis)
-        if (cx is not None and len(vis) >= 2 and family not in _ASYMMETRIC_OK
-                and abs(cx - cw / 2.0) > 0.18 * cw):
-            _add(code="BALANCE_SKEW_RISK", level="med", slides=[sid],
-                 why=f"墨量加权质心 x≈{cx:.0f}，偏离画布中轴 "
-                     f"{abs(cx - cw / 2.0):.0f}px（>18% 画布宽）——视觉重量压在一侧",
-                 prevention=("配平视觉重量（成组/加锚/镜像留白），或在 design_rationale "
-                             "声明刻意偏轴的构图理由"),
-                 predicted="gravity_drift", cause="balance_composition", confidence=0.5)
-
-        # 10. 字阶纪律（每页 ≤4 级；驻点 64/44/32/22/17/12.5）
-        page_sizes = []
-        for e in elems:
-            if e.get("type") != "text" or e.get("size") is None:
-                continue
-            try:
-                size = float(e.get("size"))
-                if math.isfinite(size) and size > 0:
-                    page_sizes.append(size)
-            except (TypeError, ValueError, OverflowError):
-                continue
-        page_sizes = sorted(set(page_sizes))
-        if len(page_sizes) > 4:
-            _add(code="TYPE_LADDER_RISK", level="med", slides=[sid],
-                 why=f"本页 {len(page_sizes)} 个不同字号 {page_sizes}，超过每页 4 级上限",
-                 prevention="并级：同层信息同字号，层次交给字重/墨色（驻点 64/44/32/22/17/12.5）",
-                 predicted="CRITIC_LOW(typography)", cause="type_system", confidence=0.6)
-        deck_sizes.update(page_sizes)
-        fps.append((sid, _layout_fingerprint(elems)))
-
-        prev = (pi, occ)
-
-    # 11. 布局单调（连续 ≥3 页同布局指纹 = 换字不换版
-    j = 0
-    while j < len(fps):
-        k = j
-        while k + 1 < len(fps) and fps[k + 1][1] == fps[j][1] and fps[j][1]:
-            k += 1
-        if k - j >= 2 and fps[j][1]:
-            _add(code="LAYOUT_MONOTONE_RISK", level="med",
-                 slides=[fps[m][0] for m in range(j, k + 1)],
-                 why=f"连续 {k - j + 1} 页布局指纹相同（换字不换版）——"
-                     "读者会预判版式，注意力流失",
-                 prevention="同根因批量换版式：相邻页至少改一个构图算子（切分/轴/尺度对偶）",
-                 predicted="RHYTHM_FLAT", cause="layout_monotony", confidence=0.5)
-        j = k + 1
-
-    # 12. 记忆线断裂（token 只出现一次 = 线没有成线
-    if len(slides) >= 4:
-        token_pages: dict[str, list[str]] = {}
-        for s in slides:
-            tok = (s.get("page_intent") or {}).get("continuity_token")
-            if tok:
-                token_pages.setdefault(str(tok), []).append(str(s.get("id")))
-        for tok, pages in token_pages.items():
-            if len(pages) == 1:
-                _add(code="CONTINUITY_BROKEN_RISK", level="med", slides=pages,
-                     why=f"记忆线「{tok}」只在 1 页出现——单点不成线，读者无法当作导航线索",
-                     prevention="让该线索在 ≥2 个关键位置复现（章节转场/收尾呼应），或撤掉声明",
-                     predicted="CRITIC_LOW(narrative)", cause="narrative_continuity",
-                     confidence=0.45)
-
-    # 13. deck 级字阶漂移（全 deck 字号数失控
-    if len(deck_sizes) > 8:
-        off = sorted(s for s in deck_sizes
-                     if all(abs(s - r) > _LADDER_TOL for r in LADDER_RUNGS))
-        _add(code="TYPE_SCALE_DRIFT_RISK", level="med", slides=[],
-             why=f"全 deck {len(deck_sizes)} 个不同字号（>8），字阶在漂移"
-                 + (f"；其中 {len(off)} 个离驻点 >±{_LADDER_TOL:g}px" if off else ""),
-             prevention="deck 级归并到驻点字阶（64/44/32/22/17/12.5），页内 ≤4 级；"
-                        "字重与墨色先于字号",
-             predicted="CRITIC_LOW(typography)", cause="type_system", confidence=0.45)
-
-    by_cause: dict[str, list[str]] = {}
-    for r in risks:
-        by_cause.setdefault(r["root_cause"], []).append(r["code"])
-    high = [r for r in risks if r["level"] == "high"]
-    _level_rank = {"high": 0, "med": 1, "low": 2}
-    cause_rank = {}
-    for cause, codes in by_cause.items():
-        members = [r for r in risks if r["root_cause"] == cause]
-        cause_rank[cause] = (
-            min(_level_rank.get(r.get("level"), 3) for r in members),
-            -max(float(r.get("confidence") or 0) for r in members),
-            -len(members), cause)
-    root_cause_order = sorted(by_cause, key=lambda c: cause_rank[c])
-    ranked_risks = sorted(risks, key=lambda r: (
-        _level_rank.get(r.get("level"), 3),
-        -float(r.get("confidence") or 0),
-        str(r.get("root_cause") or ""), str(r.get("code") or "")))
-    first = ranked_risks[0] if ranked_risks else None
-
-    # advisory 的消费面以根因为主：逐页风险仍保留作可追溯原始证据，但默认展示
-    # 每个根因的代表页与批量修复入口，避免同一根因刷满整份报告。
-    slide_order = {str(s.get("id") or f"page_{i + 1}"): i
-                   for i, s in enumerate(slides)}
-    root_cause_summary = []
-    for cause in root_cause_order:
-        members = [r for r in risks if r.get("root_cause") == cause]
-        page_stats: dict[str, dict] = {}
-        for r in members:
-            for page in r.get("slides") or []:
-                sid = str(page)
-                stat = page_stats.setdefault(sid, {"count": 0, "level": 3,
-                                                   "confidence": 0.0})
-                stat["count"] += 1
-                stat["level"] = min(stat["level"], _level_rank.get(r.get("level"), 3))
-                stat["confidence"] = max(stat["confidence"],
-                                          float(r.get("confidence") or 0))
-        representative_pages = [sid for sid, _ in sorted(
-            page_stats.items(), key=lambda kv: (
-                kv[1]["level"], -kv[1]["count"], -kv[1]["confidence"],
-                slide_order.get(kv[0], 10 ** 9), kv[0]))[:3]]
-        top_member = sorted(members, key=lambda r: (
-            _level_rank.get(r.get("level"), 3),
-            -float(r.get("confidence") or 0), str(r.get("code") or "")))[0]
-        root_cause_summary.append({
-            "root_cause": cause,
-            "priority": len(root_cause_summary) + 1,
-            "risk_count": len(members),
-            "codes": sorted({str(r.get("code")) for r in members}),
-            "affected_pages": sorted(page_stats, key=lambda p: (slide_order.get(p, 10 ** 9), p)),
-            "representative_pages": representative_pages,
-            "fix_first": top_member.get("prevention"),
-            "predicted": sorted({str(r.get("predicted")) for r in members
-                                  if r.get("predicted")}),
-        })
-    return {"risks": risks,
-            "summary": {"high": len(high), "med": sum(1 for r in risks if r["level"] == "med"),
-                        "low": 0, "pages_at_risk": len(pages_at_risk),
-                        "total_pages": len(slides)},
-            "by_root_cause": {k: sorted(set(by_cause[k])) for k in root_cause_order},
-            "root_cause_order": root_cause_order,
-            "root_cause_summary": root_cause_summary,
-            "predicted_codes": sorted({r["predicted"] for r in high}),
-            "pages_at_risk": sorted(pages_at_risk),
-            "first_fix": ({"root_cause": first["root_cause"],
-                           "code": first["code"],
-                           "level": first["level"],
-                           "batch": [r["code"] for r in ranked_risks
-                                     if r["root_cause"] == first["root_cause"]]}
-                          if first else None),
-            "elapsed_ms": int((time.time() - t0) * 1000)}
-
-
 def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
     """起草之前：brief → 风险预测（0–1 向量）→ 生成政策。
 
@@ -1053,167 +510,8 @@ def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
     _on("rhythm_flat", 0.5, "疏密曲线重排：相邻页 density 互斥，能量至少一处随之变化")
     _on("layout_monotony", 0.99, "同家族连续 ≥3 页换构图语法，或在 design_rationale 声明品牌连续性")
     out["policies"] = pol
-    out["planned_mode"] = (plan.get("execution") or {}).get("mode")
-    out["notes"].append(f"{n} 页 · 预测来自内容路由（无渲染）；落 spec 后跑 pre_critic 复核")
+    out["notes"].append(f"{n} 页 · 预测来自内容路由（无渲染）")
     return out
-
-
-# ════════════════════════════════════════════════════════════════════════
-# ④b Risk → Strategy：把预测翻译成**生成策略**（预测层的出口是决策，不是审核）
-#     原则：风险不是要「过一遍审核」，而是要在起草之前改掉生成参数。
-#     纯函数、零改动 spec、零渲染；输出是给 AI 的决策块 + 可机读的逐页预算。
-# ════════════════════════════════════════════════════════════════════════
-
-
-
-def risk_strategy(spec: dict, report: dict | None = None) -> dict:
-    """风险 → 生成策略（生成前消费的决策块；纯函数，不改 spec）。
-
-    返回：
-      adjusted      : 每条策略键的「当前值 → 建议值」，AI 起草/修订时直接采用
-      pages         : 逐页调整清单（该页要改什么，为什么）
-      generation    : 一句话生成指令（本轮起草的最小决策集）
-      risk_scores   : 归一化风险向量（0–1，供对比不同方向/候选骨架）
-      predicted     : 若不调整将命中的下游失败码（QA 侧）
-    """
-    spec = spec if isinstance(spec, dict) else {}
-    report = report or pre_critic(spec)
-    report = report if isinstance(report, dict) else pre_critic(spec)
-    slides = [s for s in (spec.get("slides") or []) if isinstance(s, dict)]
-    ids = [str(s.get("id") or f"page_{i + 1}") for i, s in enumerate(slides)]
-    by_page: dict[str, list[dict]] = {sid: [] for sid in ids}
-    policies: dict[str, dict] = {}
-    predicted: set[str] = set()
-    per_page_score: dict[str, float] = {sid: 0.0 for sid in ids}
-    for r in report.get("risks") or []:
-        weight = {"high": 1.0, "med": 0.5, "low": 0.25}.get(r.get("level"), 0.25)
-        hit = [s for s in (r.get("slides") or []) if str(s) in by_page] or ids
-        for sid in hit:
-            by_page[sid].append(r)
-            per_page_score[sid] += weight
-        if r.get("predicted"):
-            predicted.add(str(r["predicted"]).split("(")[0])
-        meta = _RISK_CATALOG.get(str(r.get("code"))) or {}
-        key, page_action, deck_policy = meta.get("strategy") or (
-            "general_policy", str(r.get("prevention") or ""), "")
-        slot = policies.setdefault(key, {"risk": str(r.get("code")), "page_actions": [],
-                                         "deck_policies": []})
-        if page_action and page_action not in slot["page_actions"]:
-            slot["page_actions"].append(page_action)
-        if deck_policy and deck_policy not in slot["deck_policies"]:
-            slot["deck_policies"].append(deck_policy)
-
-    n = max(1, len(ids))
-    top_score = max(list(per_page_score.values()) + [0.0])
-    order = {"color_policy": 0, "text_policy": 1, "type_policy": 2, "media_policy": 3,
-             "hierarchy_policy": 4, "focus_anchor": 5, "rhythm_policy": 6,
-             "composition_policy": 7, "type_color_policy": 8, "continuity_policy": 9,
-             "general_policy": 99}
-    level_order = {"high": 0, "med": 1, "low": 2}
-
-    def risk_sort_key(risk: dict):
-        meta = _RISK_CATALOG.get(str(risk.get("code"))) or {}
-        strategy_key = (meta.get("strategy") or ("general_policy",))[0]
-        return (level_order.get(str(risk.get("level")), 3),
-                order.get(strategy_key, 98),
-                -float(risk.get("confidence") or 0),
-                str(risk.get("root_cause") or ""),
-                str(risk.get("code") or ""))
-
-    # 页级修正仍保留作可追溯明细，但默认出口先给根因和代表页：先修高置信/高影响
-    # 的根因，再处理由它派生的 medium 症状，减少「逐页刷屏 + 往返调参」。
-    page_details = []
-    for sid in ids:
-        if not by_page[sid]:
-            continue
-        ranked = sorted(by_page[sid], key=risk_sort_key)
-        page_details.append({"slide": sid, "risk_weight": round(per_page_score[sid], 2),
-                             "risks": [str(r.get("code")) for r in ranked],
-                             "root_causes": [str(r.get("root_cause")) for r in ranked],
-                             "fix_first": ranked[0].get("prevention") if ranked else None})
-    root_cause_summary = [x for x in (report.get("root_cause_summary") or [])
-                          if isinstance(x, dict)]
-    if not root_cause_summary:
-        # 外部调用方可能传入旧版 report；在这里做一次兼容聚合，不另起诊断脚本。
-        grouped: dict[str, list[dict]] = {}
-        for risk in report.get("risks") or []:
-            grouped.setdefault(str(risk.get("root_cause") or "general"), []).append(risk)
-        for priority, (cause, members) in enumerate(grouped.items(), start=1):
-            pages_for_cause = []
-            for risk in members:
-                for sid in risk.get("slides") or []:
-                    sid = str(sid)
-                    if sid not in pages_for_cause:
-                        pages_for_cause.append(sid)
-            top = sorted(members, key=risk_sort_key)[0]
-            root_cause_summary.append({"root_cause": cause, "priority": priority,
-                                       "risk_count": len(members),
-                                       "codes": sorted({str(r.get("code")) for r in members}),
-                                       "affected_pages": pages_for_cause,
-                                       "representative_pages": pages_for_cause[:3],
-                                       "fix_first": top.get("prevention"),
-                                       "predicted": sorted({str(r.get("predicted"))
-                                                             for r in members if r.get("predicted")})})
-    # 代表页按根因优先级合并，同一页可承担多个根因，但不会重复打印多次。
-    representative_by_page: dict[str, dict] = {}
-    for cause in root_cause_summary:
-        name = str(cause.get("root_cause") or "general")
-        for sid in cause.get("representative_pages") or []:
-            sid = str(sid)
-            row = representative_by_page.setdefault(
-                sid, {"slide": sid, "root_causes": [], "risks": [], "fix_first": None})
-            if name not in row["root_causes"]:
-                row["root_causes"].append(name)
-            for code in cause.get("codes") or []:
-                if code not in row["risks"]:
-                    row["risks"].append(str(code))
-            if row["fix_first"] is None:
-                row["fix_first"] = cause.get("fix_first")
-    representative_pages = list(representative_by_page.values())
-    representative_pages.sort(key=lambda row: (
-        min((next((int(c.get("priority", 10 ** 9)) for c in root_cause_summary
-                   if str(c.get("root_cause")) == name), 10 ** 9)
-             for name in row["root_causes"]), default=10 ** 9),
-        ids.index(row["slide"]) if row["slide"] in ids else 10 ** 9,
-        row["slide"]))
-    adjusted = {k: policies[k] for k in sorted(policies, key=lambda x: (order.get(x, 98), x))}
-    summary = report.get("summary") or {}
-    first = summary.get("high", 0)
-    root_lines = [
-        f"{c.get('root_cause')}（代表页 {','.join(c.get('representative_pages') or []) or 'deck'}）→"
-        f"{c.get('fix_first') or '按该根因批量修复'}"
-        for c in root_cause_summary
-    ]
-    policy_lines = [f"{k}→{'、'.join(v['deck_policies'])}" for k, v in adjusted.items()
-                    if v["deck_policies"]]
-    generation = (
-        "按根因优先、代表页取样起草，不要先出稿再等检查：" +
-        "；".join(root_lines or policy_lines)[:600]
-        if (root_lines or policy_lines) else "无预测风险：按页面骨架直接起草，一次通过")
-    return {"adjusted": adjusted,
-            "pages": representative_pages,
-            "page_details": page_details,
-            "root_causes": root_cause_summary,
-            "generation": generation,
-            "risk_scores": {sid: round(v / max(1e-6, top_score), 3)
-                            for sid, v in per_page_score.items() if v},
-            "predicted": sorted(predicted),
-            "applied_before": "spec 起草/修订（不是渲染前的审核闸）",
-            "summary": {"policies": len(adjusted), "pages_adjusted": len(representative_pages),
-                        "page_details": len(page_details),
-                        "root_causes": len(root_cause_summary),
-                        "high": first, "total_pages": n}}
-
-
-
-def _overlap(a: dict, b: dict) -> bool:
-    try:
-        return (float(a["x"]) < float(b["x"]) + float(b["width"])
-                and float(b["x"]) < float(a["x"]) + float(a["width"])
-                and float(a["y"]) < float(b["y"]) + float(b["height"])
-                and float(b["y"]) < float(a["y"]) + float(a["height"]))
-    except (KeyError, TypeError, ValueError):
-        return False
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1274,26 +572,6 @@ def apply_fit_ladder(spec: dict) -> tuple[dict, dict]:
 # Parallel Intelligence：一次调用汇合三条智能线
 # ════════════════════════════════════════════════════════════════════════
 # ════════════════════════════════════════════════════════════════════
-# 参考空间律（Calibration Laws · 判断阈值，不是模板）。
-# 阈值唯一真源 = design_intelligence_rules 内联常量；无外部存储/覆盖层。
-# （历史：曾从 memory/calibration_space.json 可选覆盖——覆盖值经逐键核实与内联
-#   完全一致或零消费，遂删除覆盖层与文件，避免「内联被外部静默覆盖」的双真相源。）
-
-
-def calibration_laws(family: str | None = None) -> dict:
-    """全局律（内联常量，唯一真源）+ 可选家族带（内联，缺省按全局律判读）。
-
-    家族带是证据（p10/p50/p90），不是目标模板；缺失时按全局律判读。
-    """
-    laws = dict(CALIBRATION_LAWS)
-    fams = dict(CALIBRATION_FAMILIES)
-    if family and fams.get(family):
-        laws["family_bands"] = fams[family]
-        laws.update({k: v for k, v in fams[family].items() if k not in laws})
-    laws["family_personality"] = fams
-    laws["source"] = "inline"
-    return laws
-
 def color_plan(direction, brief: dict | None = None) -> dict:
     """自适应色彩智能：内容 × DNA × 情绪 → 比例目标 + 约束 + 种子骨架。
 
@@ -1309,10 +587,7 @@ def color_plan(direction, brief: dict | None = None) -> dict:
     entry = COLOR_DIRECTIONS.get(fam) or COLOR_DIRECTIONS["quiet_luxury"]
     fam_key = fam if fam in COLOR_DIRECTIONS else "quiet_luxury"
     brief = brief or {}
-    laws = calibration_laws(fam_key)
-    personality = ((laws.get("family_personality") or {}).get(fam_key) or {})
-    sat_cap = (laws.get("sat90") or {})
-    brief = brief or {}
+    sat_cap = (CALIBRATION_LAWS.get("sat90") or {})
     brand = brief.get("brand_colors") or {}
     seed = dict(entry["seed"])
     seed_source = "family_seed"
@@ -1355,22 +630,16 @@ def color_plan(direction, brief: dict | None = None) -> dict:
             seed_source = "brand_colors"
     return {
         "family": fam_key,
-        "ratio_targets": dict(COLOR_RATIO_TARGETS),
         "constraints": {
-            "hue_families_page_max": laws.get("hue_families_page_max", 1),
-            "sat90_max": sat_cap.get("warm_material_max", 0.65)
-            if (personality.get("sat_class") or entry["sat"]) == "warm"
-            else sat_cap.get("quiet_max", 0.35),
+            "hue_families_page_max": CALIBRATION_LAWS.get("hue_families_page_max", 1),
+            "sat90_max": (sat_cap.get("warm_material_max", 0.65)
+                          if entry["sat"] == "warm"
+                          else sat_cap.get("quiet_max", 0.35)),
             "accent_area_max": 0.05,
             "brightness_regime": entry["regime"],
-            "brightness_band": (laws.get("brightness_regimes") or {}).get(entry["regime"]),
+            "brightness_band": (CALIBRATION_LAWS.get("brightness_regimes") or {}).get(entry["regime"]),
         },
         "seed_skeleton": seed,
         "seed_source": seed_source,
         "material_language": entry["material"],
-        "motion_keys": list(entry["motion"]),
-        "texture_keys": list(entry["texture"]),
-        "forbidden": list(COLOR_FORBIDDEN),
-        "derivation": "brand_colors > visual_world material/light > family seed skeleton; "
-                      "ratios follow measured area law (foundation c1 p50≈0.55, accent≤8%)",
     }

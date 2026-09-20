@@ -56,7 +56,6 @@ def build_plan_bundle(need: dict) -> dict:
         "color_plan": intelligence.get("color_plan"),
         "forecast": intelligence.get("forecast"),
         "pages": intelligence.get("pages") or [],
-        "policy": intelligence.get("policy") or {},
         "performance": {
             "planning_ms": round((time.perf_counter() - t0) * 1000, 2),
             "route_calls": 1,
@@ -164,23 +163,62 @@ def build_skeleton_module(bundle: dict) -> str:
         seed_cons = {"accent_max": accent_max}
 
     from asset_workflow import digest
+    # ── 骨架自足化：把 plan.json 里 AI 真正要用的 ~2KB 信号序列化进头注释 ──
+    # （方向族事实 / 统一契约 / 待判断槽位 / DNA 命中）。plan.json 仍是链路凭证，
+    # 但正常填稿流程不再需要读它——41KB≈1.2 万 token 只为取几行事实，不值。
+    dex = plan.get("direction_execution") if isinstance(plan.get("direction_execution"), dict) else {}
+    dd = bundle.get("deck_decision") if isinstance(bundle.get("deck_decision"), dict) else {}
+    dna = plan.get("dna") if isinstance(plan.get("dna"), dict) else {}
+    unity = dd.get("unity") if isinstance(dd.get("unity"), dict) else {}
+    slots = dd.get("slots") if isinstance(dd.get("slots"), list) else []
+    facts: list[str] = []
+    mat = dex.get("material") or color.get("material_language")
+    world_bits = [x for x in (
+        f"材质/世界: {mat}" if mat else "",
+        f"光: {dex.get('light')}" if dex.get("light") else "",
+        f"图表手法: {dex.get('chart_style')}" if dex.get("chart_style") else "") if x]
+    if world_bits:
+        facts.append(" · ".join(world_bits))
+    if unity.get("same_world"):
+        facts.append("统一契约 · 全 deck 必须统一: " + " / ".join(map(str, unity["same_world"]))
+                     + "；允许每页不同: " + " / ".join(map(str, unity.get("may_differ") or [])))
+    if slots:
+        facts.append("等你判断的槽位（SPEC/页面里已留 TODO）: " + " / ".join(map(str, slots)))
+    if dna.get("matched"):
+        facts.append(f"经验召回（DNA）: {dna['matched']} · 置信 {dna.get('confidence')}"
+                     "——DNA 是起点不是模板，按本稿内容与受众重组")
+        if dna.get("design_problem"):
+            facts.append(f"  核心矛盾: {str(dna['design_problem'])[:76]}")
+        if dna.get("avoid"):
+            facts.append("  避讳: " + " / ".join(map(str, list(dna["avoid"])[:6])))
     L = ['# -*- coding: utf-8 -*-',
          '"""plan → build 骨架：只给出已决策的事实，零几何/样式预设。',
          '',
-         '本骨架刻意不给坐标：构图、尺度、留白由你按内容判断。',
+         '本文件即完整作业单：下面列出的事实、契约与公式已经齐了，正常流程不需要',
+         '再读 plan.json（那是链路凭证，不是作业输入）。骨架刻意不给坐标：',
+         '构图、尺度、留白由你按内容判断。',
+         f'方向: {plan.get("design_direction")} · 质量: {plan.get("quality_level")}（{plan.get("mode")}）'
+         f' · 页数: {len(raw_slides) or len(plan_pages)}']
+    L += [f'  {line}' for line in facts]
+    L += ['',
          '落笔清单（一次做完，不要回来补第二遍）：',
          '  1) 每页 page_intent.insight（本页唯一结论）与 focus（视线第一落点元素 id）',
          '  2) elements 平铺写：x/y/width/height 数值（8 的倍数）+ text + size/color/',
-         '     bold/align/max_lines/line_height/padding；框高 ≥ 字号 × 行高 × 行数',
-         '  3) theme.fonts 写 {{cn, latin}}（家族 ≤2）；direction.color_intent: [brand, emotion, hierarchy]\n'
+         '     bold/align/max_lines/line_height/padding；框高 ≥ 字号 × 行高(默认1.35) × 行数；',
+         '     行宽容量 ≈ 盒宽/字号（CJK 每字 1.0，拉丁 ~0.55，中西边界自动加 0.2 细空格），',
+         '     标题按 +20% 余量给宽；wrap=False 的单行文本盒宽 ≥ 1.5× 估算宽度',
+         '  3) theme.fonts 写 {cn, latin}（家族 ≤2）；direction.color_intent: [brand, emotion, hierarchy]\n'
          '     theme.constraints 是方向发下来的数字下限/上限，照抄别改——guard 会照着它执法',
          '  4) 图表页齐 source/unit/period/basis；source_zone 内只放 role∈{source,method,metadata}',
          '  5) 文本/图表/图片/来源区墨迹不相交；内容过多时先删句、再改写，不要缩字号',
          '  6) 每页 anchor（眉标/页码）要落成元素：眉标 role=eyebrow（家族词汇原文）、'
-         '页码 role=page_number、证据编号写进该页 caption 开头；位置全 deck 一致、编号连续',
+         '页码 role=page_number；位置全 deck 一致。论文式证据编号已弃用——'
+         '出处信息只进 source_zone 框（role=source/method/metadata）',
          '',
          '有图页先执行 assets → 出图 → asset-qc；图片元素必须写 asset_id。',
-         '再执行：python scripts/vao.py check <本文件> out.pptx --mode draft --assets-manifest asset_manifest.json',
+         '填完后一次收口（release 含 Manifest 证据链）：',
+         '  python scripts/vao.py check <本文件> out.pptx --mode release --assets-manifest asset_manifest.json',
+         '首轮目标就是一次过 release；确需迭代构图时才先 --mode draft，终稿必须回到 release。',
          '"""',
          '',
          'SPEC = {',
@@ -213,12 +251,21 @@ def build_skeleton_module(bundle: dict) -> str:
         media = ((intel.get("media") or {}).get("decision")
                  or (pg.get("asset") or {}).get("decision") or "none")
         family = skel.get("page_family") or pg.get("page_family") or "TODO"
-        comp = (intel.get("composition") or {}).get("grammar")
+        comp = intel.get("composition") or {}
+        move = str((intel.get("move") or {}).get("move") or "").strip()
         L.append(f'        # ── {sid} · family={family}'
-                 f' · density={pg.get("density")} · energy={pg.get("energy")} · media={media}'
-                 + (f' · 构图语法建议={comp}（可推翻）' if comp else ''))
+                 f' · density={pg.get("density")} · energy={pg.get("energy")} · media={media}')
+        if move:
+            L.append(f'        #    叙事动作: {move}')
+        if comp.get("intent") or comp.get("grammar"):
+            grammar = comp.get("grammar") or "自由"
+            intent_txt = str(comp.get("intent") or "").strip() or "（按家族惯例构图）"
+            L.append(f'        #    构图意图: {intent_txt}（语法={grammar}，可推翻）')
         if ref:
             L.append(f'        #    内容参考: {ref[:90]}')
+        if pg.get("content_missing"):
+            L.append('        #    ⚠ 未决（unresolved）: content 缺失——标题不是证据，不得由它'
+                     '脑补数据/案例；补真实证据，或改成纯排版观点页，或删掉这一页')
         L.append('        {')
         L.append(f'            "id": {sid!r},')
         L.append(f'            "page_intent": {json.dumps(skel, ensure_ascii=False)},'

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from pathlib import Path
+
+from primitives import file_digest
 
 CACHE_NAME = "compile_cache.json"
 # 编译器/底层 primitives 改变时，即使 spec 投影不变，旧 PPTX 也不能继续冒充当前
@@ -32,27 +32,12 @@ NON_GEOMETRIC_THEME_KEYS = (
 
 
 def _file_sha(path: Path) -> str | None:
-    """短指纹：缓存键用，够快。"""
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 16), b""):
-                h.update(chunk)
-        return h.hexdigest()[:16]
-    except Exception:
-        return None
+    """短指纹：缓存键用（截全文件 SHA-256 前 16 位，口径与完整指纹同源）。"""
+    d = file_digest(path)
+    return d[:16] if d else None
 
 
-def _file_sha_full(path: Path) -> str | None:
-    """完整 SHA-256：产物凭证不使用短缓存指纹。"""
-    try:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 16), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception:
-        return None
+_file_sha_full = file_digest   # 完整 SHA-256：产物凭证不使用短缓存指纹
 
 
 def _media_stamp(slide: dict | None, base_path: str | Path | None,
@@ -114,21 +99,9 @@ def _load_meta(work: Path) -> dict:
 
 
 def _atomic_json_write(path: Path, value: dict) -> None:
-    """写临时文件后 replace，避免进程中断留下半个缓存文件。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
-                                    dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, ensure_ascii=False, indent=1)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-    finally:
-        try:
-            os.unlink(tmp_name)
-        except FileNotFoundError:
-            pass
+    """原子写入（唯一实现住 primitives.json_write）；缓存文件加 fsync 防断电半页。"""
+    from primitives import json_write
+    json_write(path, value, indent=1, trailing_newline=False, fsync=True)
 
 
 def _patch_meta(work: Path, **fields) -> None:

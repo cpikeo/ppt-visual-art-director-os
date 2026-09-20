@@ -10,6 +10,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from primitives import file_digest   # 全库唯一实现；本模块 re-export 给 vao
+
 ACCEPTED = {"accept", "accept_with_advisory"}
 ASSET_DECISIONS = {"generate", "existing"}
 
@@ -21,17 +23,6 @@ def now() -> str:
 def digest(value) -> str:
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                      separators=(",", ":"), default=str).encode()).hexdigest()
-
-
-def file_digest(path) -> str | None:
-    try:
-        h = hashlib.sha256()
-        with Path(path).open("rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
-    except (OSError, TypeError, ValueError):
-        return None
 
 
 def read_json(path) -> dict:

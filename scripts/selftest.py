@@ -850,9 +850,7 @@ def check_silent_failure_seams() -> None:
     check("rule: 预览画得出分割线（产物有线而预览空白 = 作者看不见自己画的线）",
           _ghost_ink(_line()) > 0 and _ghost_ink(_line(y=120, width=0, height=480)) > 0)
 
-    # ⑩ 卡片墙判据落在**底色**上，不落在圆角半径上
-    from primitives import filled_panels
-
+    # ⑩ 面板墙探针工厂（供 ⑫ 的 advisory 开关测试使用）
     def _panels(shape, n=5, **kw):
         els = []
         for i in range(n):
@@ -861,27 +859,6 @@ def check_silent_failure_seams() -> None:
             e.update(kw)
             els.append(e)
         return els
-
-    check("card: 直角填充卡片墙与圆角卡片墙同等计数（判据是底色，不是圆角）",
-          len(filled_panels(_panels("rect"), 1280, 720)) == 5
-          and len(filled_panels(_panels("rounded_rect"), 1280, 720)) == 5)
-    check("card: 发丝线/细分隔条/整幅背景块都不计为卡片（它们不圈地）",
-          not filled_panels([_line()], 1280, 720)
-          and not filled_panels([{"id": "b", "type": "shape", "shape": "rect", "x": 96,
-                                  "y": 300, "width": 1088, "height": 2, "fill": "hairline"}],
-                                1280, 720)
-          and not filled_panels([{"id": "bg", "type": "shape", "shape": "rect", "x": 0,
-                                  "y": 0, "width": 1280, "height": 720, "fill": "panel_soft"}],
-                                1280, 720))
-    check("card: 只描边不填色的框线不计为卡片（卡片的成本来自底色）",
-          not filled_panels([{"id": "o", "type": "shape", "shape": "rect", "x": 96, "y": 220,
-                              "width": 300, "height": 200, "stroke": "hairline"}], 1280, 720))
-    from design_intelligence import pre_critic as _pre_critic
-    _wall = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
-             "slides": [{"id": "s01", "page_intent": {"insight": "x", "density": "dense"},
-                         "elements": _panels("rect")}]}
-    check("card: 直角卡片墙触发 CARD_WALL_RISK（此前只有圆角墙触发，直角墙零信号）",
-          "CARD_WALL_RISK" in [r.get("code") for r in (_pre_critic(_wall).get("risks") or [])])
 
     # ⑪ 编译期警告必须带元素 id：没有 id 的 fix_plan 只能说「有问题」，说不出「改哪个」
     from primitives import RenderContext as _RC
@@ -1029,6 +1006,63 @@ def check_judgment_layer(work: pathlib.Path) -> None:
     check("plan: 每页带 composition（构图语法提案，零坐标）",
           all((pg.get("composition") or {}).get("grammar") for pg in plan.get("pages") or []))
 
+    # D3b 骨架自足（v5.3）：叙事动作 / 统一契约 / 容量公式 / 方向事实必须在骨架里。
+    #     缺任何一样，AI 就得回读 41KB 的 plan.json 去取 2KB 信号——多一轮、多一万 token。
+    check("skeleton: 骨架即完整作业单（统一契约/容量公式/叙事动作/构图意图都在场）",
+          all(s in body for s in ("统一契约", "行宽容量", "叙事动作:", "构图意图:",
+                                  "本文件即完整作业单")),
+          [s for s in ("统一契约", "行宽容量", "叙事动作:", "构图意图:") if s not in body])
+
+    # D3c 零消费镜像字段清退：intent_interpretation / media_confidence / media_reason /
+    #     quality_budget / type_scale 全库没有消费者，只会膨胀 plan 与上下文体积。
+    dead = sorted({k for pg in route_pages
+                   for k in ("intent_interpretation", "media_confidence", "media_reason",
+                             "quality_budget", "type_scale") if k in pg})
+    check("plan: pages 不再携带零消费镜像字段（type_scale/intent_interpretation/media_*）",
+          not dead, str(dead))
+
+    # D3e 声明优先级：advanced ≠ 更多图片——optional 家族页不再被质量等级升格出图
+    #     （曾经 advanced 把 case/statement/closing/architecture 全部升为必须出图，
+    #     与 Native-First 纪律正面冲突）；逐页 asset / asset_subject 写了就原样生效。
+    adv_case = route.plan_page("case", "quiet_minimal", "advanced")["asset"]["decision"]
+    fast_case = route.plan_page("case", "quiet_minimal", "fast")["asset"]["decision"]
+    decl = route.plan_deck({"audience": "a", "decision": "b", "slides": [
+        {"id": "s01", "family": "data", "title": "t", "asset": "required"},
+        {"id": "s02", "family": "statement", "title": "t", "asset_subject": "a stone"},
+        {"id": "s03", "family": "cover", "title": "t", "asset": "none"},
+    ]})
+    dec = {p["id"]: p["asset"]["decision"] for p in decl["pages"]}
+    check("priority: advanced 不升格 optional 页出图；逐页 asset/asset_subject 原样生效",
+          adv_case == "none" and fast_case == "none"
+          and dec == {"s01": "required", "s02": "required", "s03": "none"},
+          f"case={adv_case}/{fast_case} dec={dec}")
+
+    # D3f 标题不代替内容：证据型页缺 content → unresolved_content 留痕（不阻断、
+    #     不脑补），且骨架注释把待判断项送到落笔处——缺信息不是虚构的许可。
+    warns = [w for w in decl.get("warnings") or [] if w.get("rule") == "unresolved_content"]
+    check("unresolved: 证据页缺 content 留痕 plan.warnings（标题≠内容，不得脑补数据）",
+          len(warns) == 1 and warns[0].get("scope") == "s01"
+          and decl["pages"][0].get("content_missing") is True,
+          str([w.get("rule") for w in decl.get("warnings") or []]))
+    check("skeleton: unresolved 标注到落笔处（缺 content 的证据页带 ⚠ 注释）",
+          "unresolved" in body and "content 缺失" in body,
+          "families.yml 的 s02（DATA_STORY，无 content）应在骨架里被标注")
+
+    # D3g 预算是执行器策略，不是契约权力：fast 档 cap 只截断 Skill 判断产生的出图，
+    #     作者显式声明（asset / asset_subject）永不被 budget_skip 吃掉。
+    budgeted = route.plan_deck({"audience": "a", "decision": "b", "slides": [
+        {"id": "s01", "family": "cover", "title": "t", "content": "c"},
+        {"id": "s02", "family": "product", "title": "t", "content": "c"},
+        {"id": "s03", "family": "statement", "title": "t", "asset_subject": "a stone"},
+        {"id": "s04", "family": "closing", "title": "t", "asset": "required"},
+    ]})
+    gen = (budgeted.get("assets") or {}).get("generate") or []
+    check("priority: 资产预算只截断 Skill 判断项，作者显式声明永不被预算吃掉",
+          {"s03", "s04"} <= set(gen) and len(gen) == 4      # fast cap=2 只约束 s01/s02
+          and (budgeted.get("budget") or {}).get("max_asset_calls") == len(gen)
+          and not (budgeted.get("assets") or {}).get("generate_extra"),
+          f"generate={gen} budget={budgeted.get('budget')}")
+
     # D9 deck 卡必须携带整体统一契约：统一的与可不同的都成立、且不相交——
     #    这是「整体高级统一」的机器可守形态；被静默删掉即视为判断层退化。
     card = route.deck_decision({"slides": [{"id": "s01", "family": "cover", "title": "t"}]})
@@ -1052,19 +1086,18 @@ def check_judgment_layer(work: pathlib.Path) -> None:
     # D5 家族链路三处判断必须齐全：媒体判断（含别名）、质量预算、构图起点。
     #    任何一处少一条，那一类页面就会静默退回默认——判断看起来发生了，其实没有。
     from design_intelligence_rules import (FAMILY_MOVES, FAMILY_ALIASES, MEDIA_MODEL,
-                                           ASYMMETRIC_OK_FAMILIES, COMPLEX_LAYOUT_FAMILIES)
+                                           COMPLEX_LAYOUT_FAMILIES)
     unnamed = sorted(fam for fam in FAMILY_MOVES
                      if "未知家族" in str(di.media_decision(
                          {"page_intent": {"page_family": fam}}).get("reason")))
     no_budget = sorted(fam for fam in FAMILY_MOVES
                        if di.normalize_family(fam) not in di.QUALITY_BUDGETS)
     bad_alias = sorted(t for t in FAMILY_ALIASES.values() if t not in MEDIA_MODEL)
-    drift = sorted(ASYMMETRIC_OK_FAMILIES - set(MEDIA_MODEL)) + \
-        sorted(COMPLEX_LAYOUT_FAMILIES - set(FAMILY_MOVES))
+    drift = sorted(COMPLEX_LAYOUT_FAMILIES - set(FAMILY_MOVES))
     check("families: 媒体判断/质量预算/别名目标三处齐全（无静默回落）",
           not unnamed and not no_budget and not bad_alias,
           f"无名={unnamed} 无预算={no_budget} 坏别名={bad_alias}")
-    check("families: 家族常量不越界（豁免集/复杂集都在真源命名空间内）", not drift, str(drift))
+    check("families: 复杂集在家族真源命名空间内", not drift, str(drift))
     check("composition: 构图起点表与家族真源同集（两处各写一份必分叉）",
           set(di.COMPOSITION_BY_FAMILY) == set(FAMILY_MOVES),
           str(sorted(set(di.COMPOSITION_BY_FAMILY) ^ set(FAMILY_MOVES))))
@@ -1564,6 +1597,96 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     check("control: explicit existing external asset can QC, compile and release",authorized and code==0)
 
 
+def check_prompt_discipline() -> None:
+    """提示词纪律（v5.3）：光照单一来源、静物动势抑制、语法翻译、负向分层、色名。
+
+    这一组的共同失效模式是「prompt 自相矛盾 → 模型对矛盾指令做平均 →
+    不可预测的光比/动感/风格」，废图只能重出，是最贵的一轮。全部单元级断言，
+    不跑管线：prompt 组装是纯函数。
+    """
+    from asset_prompt import (build_asset_prompt, enhance_asset_card, grammar_phrase,
+                              hex_to_color_name, subject_implies_people,
+                              validate_asset_card, GRAMMAR_PHRASES)
+
+    def _photo_card(**over) -> dict:
+        card = {"asset_type": "background", "asset_function": "hero",
+                "subject": ["a celadon tea bowl resting on a wooden table"],
+                "color": ["neutral tonal range with one restrained accent"],
+                "material": ["glazed ceramic and warm oak wood"],   # 勿含水墨词（rice paper 会点火水墨闸门）
+                "lighting": ["soft box light from above"],   # 标记句：出现即泄漏
+                "composition": ["calm evidence-field composition"],
+                "medium": "photography", "negative": []}
+        card.update(over)
+        return card
+
+    page = {"light_direction": "left", "energy": "high"}
+
+    # P1 预设/兜底光让位给摄影写实光语：卡内 lighting 标记句与方向/能量光句都不得出现
+    r1 = build_asset_prompt(_photo_card(lighting_source="preset"), page)
+    p1 = r1["prompt"]
+    check("prompt: 摄影卡光照单一来源（预设光与方向光让位给摄影光语，只出现一次）",
+          "soft box light from above" not in p1
+          and "soft directional light from the upper left" not in p1
+          and "one dramatic light source" not in p1
+          and p1.count("single natural light source") == 1,
+          p1[:160])
+
+    # P2 作者逐页声明 lighting：声明句赢，摄影层的光句让位（介质句保留）
+    r2 = build_asset_prompt(_photo_card(lighting_source="declared"), page)
+    p2 = r2["prompt"]
+    check("prompt: 作者声明的光照是唯一光来源（摄影光句让位、介质句保留）",
+          "soft box light from above" in p2
+          and "single natural light source" not in p2
+          and "soft directional light from the upper left" not in p2
+          and "medium format film character" in p2, p2[:160])
+
+    # P3 静物主体（hero/proof/direct）不吃运动模糊与光轨；氛围类保留动势句
+    hero = enhance_asset_card(_photo_card(), family="song_elegance")
+    ambient = enhance_asset_card(_photo_card(asset_function="emotion"), family="song_elegance")
+    hero_tech = enhance_asset_card(_photo_card(), family="precision_tech")
+    check("card: 静物主体的动势层取静态安全句（motion blur / light trails 只属于氛围资产）",
+          "motion blur" not in " ".join(hero["motion"])
+          and "motion blur" in " ".join(ambient["motion"])
+          and "light trails" not in " ".join(hero_tech["motion"]),
+          f"hero={hero['motion']}")
+
+    # P4 构图语法：键名翻译成可读语言，自由文本原样透传，空值有兜底
+    check("prompt: 构图语法键名不泄漏（内部枚举 → 可读语言，自由文本永远赢）",
+          grammar_phrase("evidence_field") == GRAMMAR_PHRASES["evidence_field"]
+          and "evidence_field" not in grammar_phrase("evidence_field")
+          and grammar_phrase("diagonal tension across the frame")
+              == "diagonal tension across the frame"
+          and grammar_phrase(None) == "asymmetric editorial composition",
+          grammar_phrase("evidence_field"))
+
+    # P5 负向分层：静物不注人物词；人物主体注入；ASCII 词边界防 handmade 误判
+    bowl_neg = build_asset_prompt(_photo_card(), page)["negative"]
+    people_card = _photo_card(subject=["founder team portrait in the studio"])
+    people_neg = build_asset_prompt(people_card, page)["negative"]
+    craft = _photo_card(subject=["handmade paper craft on a workbench"])
+    check("negative: 分层注入（静物无人物反向词 / 人物主体有 / handmade 不误判成 hand）",
+          "posed smiling people" not in bowl_neg and "corporate handshake" not in bowl_neg
+          and "cyberpunk" in bowl_neg                      # 非水墨 → 科技风格反向在
+          and "posed smiling people" in people_neg and "corporate handshake" in people_neg
+          and not subject_implies_people(craft) and subject_implies_people(people_card),
+          bowl_neg[:120])
+
+    # P6 hex → 可读色名：图像模型对 #hex 基本不响应；近白不得被 HLS 饱和度放大成彩色
+    check("prompt: hex 译成可读色名（中性判定用 chroma，近白不偏黄）",
+          hex_to_color_name("#5E7562") == "muted green"
+          and hex_to_color_name("#F5F4EF") == "white"
+          and hex_to_color_name("#111111") == "near black"
+          and hex_to_color_name("nope") is None
+          and (hex_to_color_name("#C8501E") or "").endswith("orange"),
+          f"got={hex_to_color_name('#5E7562')},{hex_to_color_name('#F5F4EF')}")
+
+    # P7 中文 subject 给换英文提醒（issues 是提示通道，不阻断出图）
+    cjk = _photo_card(subject=["一只青瓷茶盏"])
+    issues = validate_asset_card(cjk)
+    check("card: 中文 subject 收到「改英文」提醒（非阻断，清单保留原文）",
+          any("subject 含中文" in s for s in issues), str(issues))
+
+
 def check_doc_counts() -> None:
     """文档里的自检项数必须等于实际项数。
 
@@ -1591,6 +1714,7 @@ def main() -> int:
         check_silent_failure_seams()
         check_asset_workflow(work)
         check_audit_fixes(work)
+        check_prompt_discipline()
         check_anti_regression()
         check_doc_counts()
     finally:

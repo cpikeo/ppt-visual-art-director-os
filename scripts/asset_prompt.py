@@ -25,34 +25,15 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 # 通用质量控制后缀（英文原样，模型侧不翻译）
 # --------------------------------------------------------------------------
-UNIVERSAL_QC: tuple[str, ...] = (
-    "premium presentation design",
-    "luxury editorial aesthetic",
-    "minimal but sophisticated",
-    "high-end visual identity",
-    "professional keynote background",
-    "cinematic lighting",
-    "balanced negative space",
-    "subtle depth",
-    "clean composition",
-    "no text",
-    "no logo",
-    "no watermark",
-    "no letters",
-    "no numbers",
-    "no UI elements",
-    "no clutter",
-    "16:9 presentation background",
-)
-
-# 组装时使用的紧凑质量尾段；泛化的 luxury/premium 词不应稀释主体、空间和材质。
-# 完整 UNIVERSAL_QC 保留作为兼容词库，但生产 prompt 只取这组最小契约。
+# 组装时使用的紧凑质量尾段；泛化的 luxury/premium 词会稀释主体、空间和材质，
+# 因此生产 prompt 只保留这组最小契约。旧 UNIVERSAL_QC 全量词库已无消费者，
+# 按「死常量不保留」纪律删除；比例句由组装第 4 步按实际 ratio 生成。
 PROMPT_QC_COMPACT: tuple[str, ...] = (
     "clean composition", "no text", "no logo", "no watermark",
     "no UI elements", "no clutter",
 )
 
-# 基础反向约束（与 UNIVERSAL_QC 的 no-* 项对应，供支持独立 negative 的模型使用）
+# 基础反向约束（与 PROMPT_QC_COMPACT 的 no-* 项对应，供支持独立 negative 的模型使用）
 NEGATIVE_BASE: tuple[str, ...] = (
     "text",
     "letters",
@@ -74,14 +55,18 @@ NEGATIVE_BASE: tuple[str, ...] = (
 # 守门纪律：排除廉价，不堆砌高级词——prompt 通胀（叠 luxury 词）不是质量门。
 # 刻意缺席：「3d render」——illustration 正向本就要求 3D minimal，
 # 3D Decoration 症状由水墨闸门按族拒绝，不进通用层（防自相矛盾）。
+#
+# v5.3 分层：全量负向清单对每张图无差别注入，会稀释对**这一张**真正要紧的
+# 反向词——静物青瓷摄影并不需要「no humanoid robot」。按「画面里可能有什么」
+# 分三层组装（见 build_asset_prompt 第 5 步）：
+#   UNIVERSAL_CHEAP_REJECTS  恒注入（画幅失效/图库感/廉价 AI 感，任何主体都中招）
+#   HUMAN_SCENE_REJECTS      主体可能出现人物时才注入（摆拍/握手/机器人）
+#   TECH_STYLE_REJECTS       非水墨资产才注入（赛博朋克/玻璃拟态；水墨闸门有自己的反向清单）
 # --------------------------------------------------------------------------
 UNIVERSAL_CHEAP_REJECTS: tuple[str, ...] = (
-    "generic stock photo", "cliché corporate imagery", "corporate handshake",
-    "posed smiling people", "thumbs up",          # Stock Photo Feeling / 人物摆拍
+    "generic stock photo",                        # Stock Photo Feeling
     "clip art", "clipart illustration",           # Excessive Icons → 剪贴画感
-    "neon glow", "cyberpunk",                     # Neon Cyberpunk（D06 禁项）
-    "humanoid robot", "robot mascot",             # 机器人元素（D06 禁项）
-    "glassmorphism", "frosted glass panels",      # Glassmorphism
+    "neon glow",                                  # Neon（D06 禁项）
     "tech blue gradient", "rainbow gradient",     # Excessive Gradients / 科技蓝渐变
     "plastic skin", "oversaturated colors",       # Cheap AI Aesthetic
     "heavy HDR", "AI artifacts",
@@ -91,6 +76,44 @@ UNIVERSAL_CHEAP_REJECTS: tuple[str, ...] = (
     # 是画幅失效，所以放进通用反向，不留给逐页去记。
     "white border", "black bars", "letterbox", "picture frame", "poster mockup",
 )
+HUMAN_SCENE_REJECTS: tuple[str, ...] = (
+    "cliché corporate imagery", "corporate handshake",
+    "posed smiling people", "thumbs up",          # 人物摆拍
+    "humanoid robot", "robot mascot",             # 机器人元素（D06 禁项）
+)
+TECH_STYLE_REJECTS: tuple[str, ...] = (
+    "cyberpunk",                                  # Neon Cyberpunk（D06 禁项）
+    "glassmorphism", "frosted glass panels",      # Glassmorphism
+)
+
+# 主体可能涉及人物的词：命中任一即注入 HUMAN_SCENE_REJECTS。
+# 宁可多注入（反向词不伤正向画面），不可漏注入（图库握手照是最贵的废图）。
+PERSON_SUBJECT_TERMS: tuple[str, ...] = (
+    "人", "用户", "客户", "团队", "员工", "创始", "肖像", "手部", "面部", "身影",
+    "people", "person", "team", "founder", "user", "customer", "portrait",
+    "hands", "face", "crowd", "audience", "silhouette",
+)
+
+
+def _term_hit(text: str, term: str) -> bool:
+    """CJK 用子串；ASCII 用词边界（避免 handmade 命中 hand、user 命中 userland）。"""
+    import re
+    if all(ord(c) < 128 for c in term):
+        return re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", text) is not None
+    return term in text
+
+
+def subject_implies_people(card: dict) -> bool:
+    """主体/世界/风格语言里是否可能出现人物（决定人物场景反向词注不注入）。
+
+    只扫 subject / world / style：material 与 texture 是材质语言
+    （handmade paper 里有 hand，但那不是人手），不参与判定。
+    """
+    if not isinstance(card, dict):
+        return False
+    blob = " ".join(str(x) for k in ("subject", "world", "style")
+                    for x in _as_list(card.get(k))).lower()
+    return any(_term_hit(blob, t) for t in PERSON_SUBJECT_TERMS)
 
 # --------------------------------------------------------------------------
 # 水墨纪律闸门（F6/v4.17——材质语言的执行质量保底）
@@ -200,6 +223,68 @@ NEGATIVE_SPACE_PHRASES = {
     "center": "quiet calm center area, activity pushed to the edges",
 }
 
+# deck 级构图语法键名 → 可读英文构图语言。内部枚举键（evidence_field /
+# soft_asymmetry …）对图像模型没有任何含义，裸键名进提示词是纯噪声，
+# 还计入资产指纹（换个键名 = 整批重出图）。翻译只发生在这一处。
+GRAMMAR_PHRASES: dict[str, str] = {
+    "soft_asymmetry": "asymmetric editorial composition with deliberate off-center balance",
+    "strict_grid": "disciplined grid composition with margins aligned to a strict module",
+    "cinematic_stage": "cinematic staged composition with a single lit focal plane",
+    "evidence_field": "calm evidence-field composition, subject and captions sharing one axis",
+    "path_sequence": "sequential composition leading the eye along a clear path",
+}
+
+
+def grammar_phrase(value) -> str:
+    """构图语法：键名翻译成可读语言；自由文本原样保留（显式写下的句子永远赢）。"""
+    text = str(value or "").strip()
+    if not text:
+        return "asymmetric editorial composition"
+    return GRAMMAR_PHRASES.get(text.lower(), text)
+
+
+# 颜色 hex → 可读色名：图像模型对 #hex 基本不响应，颜色名才是可执行语言。
+# 只做「色相族 + 明度/饱和修饰」三档，不做色名词典——够模型选对颜料即可。
+_HUE_NAMES: tuple[tuple[float, str], ...] = (
+    (15.0, "red"), (45.0, "orange"), (70.0, "yellow"), (100.0, "olive green"),
+    (160.0, "green"), (200.0, "teal"), (255.0, "blue"), (290.0, "indigo"),
+    (335.0, "magenta"), (361.0, "red"),
+)
+
+
+def hex_to_color_name(value) -> str | None:
+    """'#5E7562' → 'muted green' 风格的可读色名；解析失败返回 None（调用方保留 hex）。"""
+    import colorsys
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(c * 2 for c in text)
+    if len(text) != 6:
+        return None
+    try:
+        r, g, b = (int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return None
+    mx, mn = max(r, g, b), min(r, g, b)
+    chroma = mx - mn
+    light = (mx + mn) / 2.0
+    if chroma < 0.08:                      # 近无彩：按明度命名，不进色相桶
+        if light >= 0.93:
+            return "white"
+        if light >= 0.72:
+            return "pale gray"
+        if light >= 0.38:
+            return "neutral gray"
+        if light >= 0.16:
+            return "charcoal"
+        return "near black"
+    hue = colorsys.rgb_to_hls(r, g, b)[0] * 360.0
+    sat = chroma / (2.0 - mx - mn) if light > 0.5 else (chroma / (mx + mn) if (mx + mn) > 0 else 0.0)
+    name = next(n for upper, n in _HUE_NAMES if hue < upper)
+    tone = "pale" if light >= 0.78 else "deep" if light <= 0.26 else ""
+    mod = "muted" if sat < 0.28 else "vivid" if sat > 0.72 else ""
+    return " ".join(p for p in (tone, mod, name) if p)
+
+
 # Normalized safe zones are shared by prompt generation and asset QC.  The
 # prompt receives both a human direction and the geometric fraction so a model
 # can preserve a usable text field instead of merely hearing "leave space".
@@ -264,7 +349,7 @@ ASSET_FUNCTION_PHRASES = {
 
 # 资产类型后缀
 ASSET_TYPE_SUFFIX = {
-    "background": (),  # UNIVERSAL_QC 已含 "16:9 presentation background"
+    "background": (),  # 比例句（"16:9 presentation background"）由组装第 4 步按实际 ratio 生成
     "illustration": (
         "3D minimal illustration",
         "soft material",
@@ -346,6 +431,11 @@ TEXTURE_LAYERS: dict[str, tuple[str, ...]] = {
 TEXTURE_DISCIPLINE: tuple[str, ...] = (
     "texture faint and low-contrast, perceivable only at close range",
     "no obvious pattern, no grunge, no heavy grain")
+# 具象主体（hero 产品 / proof 实证）的清晰度与可辨识是硬要求：
+# 「流水运动模糊 / 光轨」这类动势语言注进静物摄影就是废图指令。
+# 键名展开时，静态主体改取各层的静态安全句（自由文本仍原样保留——作者显式写的永远赢）。
+STATIC_MOTION_INDEX: dict[str, int] = {"spatial": 0, "natural": 3, "tech": 1}
+STATIC_SUBJECT_FUNCTIONS = frozenset({"hero", "proof", "direct"})
 FUSION_LAYERS: tuple[str, ...] = (
     "image melts into the layout background, no sticker edges, no hard rectangle",
     "negative space reserved and aligned to the text-safe area",
@@ -372,13 +462,14 @@ FAMILY_TEXTURE: dict[str, tuple[str, ...]] = {
 }
 
 
-def _expand_layer(spec, table: dict) -> list[str]:
+def _expand_layer(spec, table: dict, index: dict | None = None) -> list[str]:
     """把「层键名 or 自由文本」统一展开成可读语言。
 
-    键名（`eastern` / `natural` / `luxury` …）查表取第一句；自由文本原样保留
-    —— 调用方显式写下的句子永远赢，这是全包的既有纪律，不在这一层改变。
-    方向族传下来的是键名（见 route._direction_execution），brief 里逐页写的是文本，
-    两种写法都要能用，且展开只发生在这一处。
+    键名（`eastern` / `natural` / `luxury` …）查表取句：默认第一句；
+    `index` 给出按层键的替代下标（静物主体避开运动模糊句，见 STATIC_MOTION_INDEX）。
+    自由文本原样保留——调用方显式写下的句子永远赢，这是全包的既有纪律，
+    不在这一层改变。方向族传下来的是键名（见 route._direction_execution），
+    brief 里逐页写的是文本，两种写法都要能用，且展开只发生在这一处。
     """
     out: list[str] = []
     for item in _as_list(spec):
@@ -387,7 +478,8 @@ def _expand_layer(spec, table: dict) -> list[str]:
             continue
         key = text.lower()
         if key in table:
-            out.extend(table[key][:1])
+            phrases = table[key]
+            out.append(phrases[min((index or {}).get(key, 0), len(phrases) - 1)])
         else:
             out.append(text)
     return out
@@ -410,10 +502,14 @@ def enhance_asset_card(card: dict, family: str | None = None,
     fam = family or str(card.get("family") or card.get("direction_family") or "")
     m_keys = FAMILY_MOTION.get(fam, ("spatial",))
     t_keys = FAMILY_TEXTURE.get(fam, ("luxury",))
+    # 具象主体（hero/proof/direct）不吃运动模糊与光轨：动势语言只属于氛围类资产。
+    static_subject = (str(card.get("asset_function") or "").lower()
+                      in STATIC_SUBJECT_FUNCTIONS)
+    m_index = STATIC_MOTION_INDEX if static_subject else None
     if motion is None:
-        motion = _expand_layer(m_keys, MOTION_LAYERS)[:1]
+        motion = _expand_layer(m_keys, MOTION_LAYERS, m_index)[:1]
     else:
-        motion = _expand_layer(motion, MOTION_LAYERS)
+        motion = _expand_layer(motion, MOTION_LAYERS, m_index)
     if texture is None:
         texture = _expand_layer(t_keys, TEXTURE_LAYERS)[:1]
     else:
@@ -474,6 +570,10 @@ def validate_asset_card(card: dict) -> list[str]:
         issues.append("未声明 asset_subject：主体描述取自页面标题。"
                       "标题是观点（「这一年真正的收获，不是增速」），不是画面；"
                       "照着它出图会跑偏——补一句画面描述再出图。")
+    subject_blob = " ".join(str(x) for x in _as_list(card.get("subject")))
+    if any("\u4e00" <= ch <= "\u9fff" for ch in subject_blob):
+        issues.append("subject 含中文：多数图像模型对英文主体的遵循度更高，"
+                      "建议把画面描述改写为英文（清单保留原文供人核对；这是提醒，不阻断）")
     return issues
 
 
@@ -504,9 +604,22 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     if asset_type not in ASSET_TYPE_SUFFIX:
         raise ValueError(f"未知 asset_type: {asset_type}")
 
+    # 介质闸门只判一次，正向纪律与光照纪律、反向分层共用同一个结论。
+    ink = ink_gate_active(card)
+    photo = photo_gate_active(card)
+    # 光照单一来源：逐页显式声明 > 介质纪律光语 > 方向/兜底光。三层同时注入会
+    # 自相矛盾（flat even ambient vs one dramatic light source vs negative 的
+    # no uniform flat studio lighting），模型只能对矛盾指令做平均——不可预测的
+    # 光比没有光更贵。摄影资产由 PHOTO_REALISM_DISCIPLINE 独家给光；
+    # 作者逐页写了 lighting 时以作者为准，方向光与句式光全部让位。
+    lighting_declared = str(card.get("lighting_source") or "").lower() == "declared"
+    photo_light_override = photo and not lighting_declared
+
     # --- 1. 资产卡主体段 -------------------------------------------------
     segments = []
     for key in CARD_SEGMENTS:
+        if key == "lighting" and photo_light_override:
+            continue        # 预设/兜底光让位给摄影写实光语，避免同帧两种光
         segments.extend(_as_list(card.get(key)))
 
     # --- 2. 有机层 / 叠加层描述（可选，只作为弱描述进入 prompt） --------
@@ -536,10 +649,13 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         segments.extend(_as_list(card.get("fusion"))[:2])
 
     # --- 水墨纪律闸门：已选水墨语言 → 注入工艺纪律 + 廉价症状反向清单 ---
-    if ink_gate_active(card):
+    if ink:
         segments.extend(INK_DISCIPLINE)
-    if photo_gate_active(card):
-        segments.extend(PHOTO_REALISM_DISCIPLINE)
+    if photo:
+        # 光照单一来源的最后一块：作者逐页声明了 lighting 时，摄影写实层的
+        # 光句（首句）也让位——介质句（大气透视/胶片质感）保留，那不是光。
+        segments.extend(PHOTO_REALISM_DISCIPLINE[1:] if lighting_declared
+                        else PHOTO_REALISM_DISCIPLINE)
 
     # --- 3. OS 强制三段 --------------------------------------------------
     anchor = str(negative_space or page.get("negative_space_anchor") or "left").lower()
@@ -554,10 +670,12 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         segments.append(f"{medium} medium")
     if anchor in NEGATIVE_SPACE_PHRASES:
         segments.append(NEGATIVE_SPACE_PHRASES[anchor])
-    if light in LIGHT_PHRASES:
-        segments.append(LIGHT_PHRASES[light])
-    if level in ENERGY_PHRASES:
-        segments.append(ENERGY_PHRASES[level])
+    # 光向/能量句式只在「光没有被介质纪律或作者声明接管」时注入（见函数头）。
+    if not (photo_light_override or lighting_declared):
+        if light in LIGHT_PHRASES:
+            segments.append(LIGHT_PHRASES[light])
+        if level in ENERGY_PHRASES:
+            segments.append(ENERGY_PHRASES[level])
     if function in ASSET_FUNCTION_PHRASES:
         segments.append(ASSET_FUNCTION_PHRASES[function])
     segments.append(safe_area_phrase(area, text_color))
@@ -574,13 +692,17 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
 
     prompt = separator.join(_dedup(segments))
 
-    # --- 5. 反向提示词 ----------------------------------------------------
+    # --- 5. 反向提示词（分层组装：核心恒注入，场景层按画面可能有什么注入）---
     negatives = list(NEGATIVE_BASE) + list(UNIVERSAL_CHEAP_REJECTS) \
         + list(_as_list(card.get("negative"))) \
         + list(_as_list(extra_negative))
-    if ink_gate_active(card):
+    if subject_implies_people(card):
+        negatives.extend(HUMAN_SCENE_REJECTS)
+    if not ink:
+        negatives.extend(TECH_STYLE_REJECTS)   # 水墨闸门有自己的反向清单，不叠科技词
+    if ink:
         negatives.extend(INK_CHEAP_REJECTS)
-    if photo_gate_active(card):
+    if photo:
         negatives.extend(PHOTO_CHEAP_REJECTS)
     # 统一成 "no X" 写法，避免同一提示词里混用 "text" 与 "no charts"
     negative = ", ".join(

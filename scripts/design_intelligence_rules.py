@@ -11,24 +11,9 @@
 """
 from __future__ import annotations
 
-# ── 密度带（与 primitives.content_occupancy 判读一致）───────────────────
+# ── 密度带（与 guard._density_class 实测占用率判读一致）──────────────────
 DENSITY_BANDS = {"sparse": (0.0, 0.60), "balanced": (0.65, 0.75),
                  "dense": (0.75, 0.85)}
-
-# ── 图表 accent 面积估算（按 chart_kind 物理形态校准，宁高估不漏报）───
-# 构成图（donut/pie）：高亮扇区是实心大块 —— 环带 ≈62% bbox × 扇区占比
-# 条形族：细轨道 + 圆头端点，实际着色 ≈7% bbox ×（高亮值/最大值）
-# 点缀类（时间轴/步骤/大数字）：小面积强调
-BAR_FAMILY = {"bar", "column", "horizontal_bar", "ranked_bar", "comparison_bar",
-              "stacked_bar", "progress_bar", "waterfall"}
-SMALL_ACCENT_CHART_SHARE = {"line": 0.02, "trend": 0.02,
-                            "single_trend_line": 0.02, "area": 0.05,
-                            "sparkline": 0.02, "timeline": 0.04, "steps": 0.04,
-                            "process_flow": 0.04, "big_number": 0.08, "kpi": 0.08,
-                            "executive_kpi": 0.08, "big_number_row": 0.06,
-                            "matrix": 0.04}
-TEXT_INK_FACTOR = 0.40    # 文本框 → 可见墨迹折算（accent 文字估算用）
-SHAPE_FILL_FACTOR = 0.90  # 实心形状着色率
 
 # ── DNA Schema：判断记忆键 vs 结果记忆键 ────────────────────────────────
 RESULT_MEMORY_KEYS = {"palette", "color", "colors", "font", "fonts",
@@ -63,14 +48,6 @@ FAMILY_ALIASES = {
     "HERO_COVER": "HERO", "SECTION_DIVIDER": "SECTION",
 }
 
-# ── 字阶驻点与视觉重量 ─────────────────────────────────────────────────
-LADDER_RUNGS = (64.0, 44.0, 32.0, 22.0, 17.0, 12.5)  # 驻点字阶
-LADDER_TOL = 2.0          # 驻点吸附容差（34 视作 32，避 ±1px 噪声）
-TYPE_WEIGHTS = {"text": 1.0, "image": 1.2, "chart": 1.1,
-                "native_chart": 1.1, "shape": 0.7}
-# 声明型页面允许刻意偏轴——不对称是它们的语言，不是失衡（比较发生在媒体模型命名空间）
-ASYMMETRIC_OK_FAMILIES = {"HERO", "CLOSING", "STATEMENT", "SECTION"}
-
 # 复杂度家族（deck 级风险用 route 命名空间；必须 ⊆ FAMILY_MOVES，缺项由 selftest 兜住）
 COMPLEX_LAYOUT_FAMILIES = {"FRAMEWORK", "COMPARISON", "TIMELINE",
                            "NARRATIVE", "EXECUTIVE_SUMMARY", "CASE_STUDY"}
@@ -80,8 +57,6 @@ COMPLEX_LAYOUT_FAMILIES = {"FRAMEWORK", "COMPARISON", "TIMELINE",
 # 留白职责 → 免检与锚点判断失效；能量/密度 → 节奏与带位判断失效。
 EMPTY_SPACE_ROLES = ("protect_focus", "hold_emotion", "create_authority", "separate_chapter")
 ENERGY_LEVELS = ("high", "medium", "low")
-
-# ── Page Intent 骨架：家族 → 能量/密度/留白职责 ─────────────────────────
 
 # ── 家族 → 叙事动作（"这页要完成什么"，不是"元素摆哪里"）────────────────
 # 刻意只写任务与判断线索，不给坐标：几何与构图归生成侧的设计判断。
@@ -140,13 +115,9 @@ CALIBRATION_LAWS = {
     "photo_share": (0.18, 0.60),
     "type_edge_density": (0.016, 0.053),
 }
-CALIBRATION_FAMILIES: dict = {}
 
-# ── 自适应色彩：比例目标 / 禁用 / 方向种子（兜底骨架）──────────────────
-COLOR_RATIO_TARGETS = {"foundation": 0.70, "supporting": 0.20,
-                       "information": 0.08, "accent": 0.02}
-COLOR_FORBIDDEN = ("high-saturation gradients", "SaaS blue-purple",
-                   "colorful card walls", "cheap tech glow", "rainbow palette")
+# ── 自适应色彩：方向种子（兜底骨架）。面积律（foundation 70 / supporting 20 /
+# information 8 / accent 2）的槽位语义住在 design_intelligence 的 seed 别名逻辑里。
 COLOR_DIRECTIONS = {
     "luxury_editorial": dict(regime="light", sat="quiet", motion=("spatial",),
         texture=("luxury", "architecture"),
@@ -205,99 +176,4 @@ DIRECTION_ALIAS = {"quiet_minimal": "zen_minimal",
                    "editorial_brand": "luxury_editorial",
                    "product_stage": "precision_minimal",
                    "evidence_first": "data_intelligence"}
-
-# ── 风险目录：pre_critic 可发射的 12 族 18 码（元数据镜像）──────────────
-# 判据逻辑在 pre_critic；本表是「它会说什么」的机器可读目录，供策略层与
-# 自检消费（selftest 断言：实测发射码 ⊆ 本表）。level 标默认档，
-# 个别码（RHYTHM_FLAT_RISK 双重趋平时）可在 high/med 间浮动。
-RISK_CATALOG = {
-    "ACCENT_OVERFLOW": {"family": "accent", "level": "high",
-        "predicted": "accent_budget", "root_cause": "chart_selection/color_discipline",
-        "prevention": "换图表（一图一关系）或 accent 只留一个元素", "confidence": 0.85,
-        "strategy": ("color_policy", "本页 accent 只留 1 处（焦点数字或一个节点），其余回退主/辅色", "accent_area_max 收紧一档，构成类关系改 ranked_bar/大数字")},
-    "ACCENT_TIGHT_RISK": {"family": "accent", "level": "med",
-        "predicted": "accent_budget(临界)", "root_cause": "color_discipline",
-        "prevention": "贴线值留余量：accent 只留一个强调元素", "confidence": 0.6,
-        "strategy": ("color_policy", "贴线页把第二个强调元素改主色，留 20% 预算余量", "accent_area_max 收紧一档")},
-    "NO_MEMORY_ANCHOR": {"family": "memory_anchor", "level": "high",
-        "predicted": "CRITIC_LOW(memorability)", "root_cause": "memory_anchor",
-        "prevention": "焦点文字 ≥40px，或图表声明 highlight/center_value/target", "confidence": 0.9,
-        "strategy": ("focus_anchor", "焦点文字给到 ≥40px（Statement 级）或声明图表 highlight/center_value", "每页至少一个可指认锚点，写进页面骨架")},
-    "CONTRAST_FAIL_RISK": {"family": "contrast", "level": "high",
-        "predicted": "READABILITY_FAIL", "root_cause": "theme_contrast",
-        "prevention": "加深文字 token 或换更浅的底", "confidence": 0.95,
-        "strategy": ("type_color_policy", "把该文字 token 换成 primary/ink，或换更浅的底色", "正文 token 只允许 ≥4.5:1 的组合（工程下限由 QA 兜底）")},
-    "CONTRAST_WARN_RISK": {"family": "contrast", "level": "med",
-        "predicted": "text_contrast(warn)", "root_cause": "theme_contrast",
-        "prevention": "正文级文字用对比 ≥4.5:1 的 token", "confidence": 0.8,
-        "strategy": ("type_color_policy", "小字号正文改用对比 ≥4.5:1 的 token", "淡墨只用于装饰与注释，不承担正文")},
-    "FOCUS_SCALE_RISK": {"family": "focus", "level": "med",
-        "predicted": "CRITIC_LOW(visual_hierarchy)", "root_cause": "focus_anchor",
-        "prevention": "拉开尺度比（焦点 ≥1.25× 第二大字）或降级竞争文字", "confidence": 0.85,
-        "strategy": ("hierarchy_policy", "拉开尺度比：焦点 ≥1.25× 第二大文字，或降级竞争文字", "一页只允许一个层级顶点")},
-    "FOCUS_AREA_RISK": {"family": "focus", "level": "high",
-        "predicted": "CRITIC_LOW(visual_hierarchy)", "root_cause": "focus_anchor",
-        "prevention": "焦点做大或收窄竞争对象", "confidence": 0.9,
-        "strategy": ("hierarchy_policy", "焦点做大或收窄竞争对象面积；焦点改声明真实锚点", "媒体预算 ≤1/页，非焦点对象面积 ≤max(2×焦点,25%画布)")},
-    "TEXT_OVERFLOW_RISK": {"family": "text_overflow", "level": "high",
-        "predicted": "TEXT_OVERFLOW", "root_cause": "layout_collision",
-        "prevention": "padding→行高→字号→重写（或声明 auto_fit）", "confidence": 0.95,
-        "strategy": ("text_policy", "声明 auto_fit:true 让阶梯自动吸附，或先拆句/收窄版心", "text_budget 收紧一档，行长上限 38 字（CJK）")},
-    "MEDIA_MISUSE_RISK": {"family": "media", "level": "high",
-        "predicted": "MEDIA_UNJUSTIFIED", "root_cause": "media_governance",
-        "prevention": "删除图片，或把页面改叙事/情绪定位", "confidence": 0.9,
-        "strategy": ("media_policy", "删除本页图片（数据/表格/流程/结构页不出图），或改叙事/情绪定位", "媒体政策：图片只在 cover/brand/product/closing 生成")},
-    "MEDIA_BUDGET_RISK": {"family": "media", "level": "med",
-        "predicted": "CRITIC_LOW(visual_hierarchy)", "root_cause": "media_governance",
-        "prevention": "一页一锚点：保留功能最强的一张", "confidence": 0.8,
-        "strategy": ("media_policy", "一页一锚点：保留功能最强的一张图", "每页注意力媒体 ≤1")},
-    "DENSITY_MISMATCH_RISK": {"family": "density", "level": "med",
-        "predicted": "rhythm(空转/趋平)", "root_cause": "rhythm_density",
-        "prevention": "按真实占用重新声明，或调整内容量兑现声明", "confidence": 0.6,
-        "strategy": ("rhythm_policy", "按真实占用重新声明 density（标签必须兑现）", "疏密曲线重排：相邻页密度互斥")},
-    "RHYTHM_FLAT_RISK": {"family": "rhythm", "level": "med",
-        "predicted": "RHYTHM_FLAT", "root_cause": "rhythm_density",
-        "prevention": "改动一页的密度/能量恢复呼吸", "confidence": 0.55,
-        "strategy": ("rhythm_policy", "改动其中一页的内容量或留白，恢复呼吸", "疏密曲线重排：相邻页密度互斥")},
-    "RHYTHM_FAKE_RISK": {"family": "rhythm", "level": "high",
-        "predicted": "rhythm(空转)", "root_cause": "rhythm_density",
-        "prevention": "标签变化必须伴随真实占用变化", "confidence": 0.55,
-        "strategy": ("rhythm_policy", "标签变化必须伴随真实墨迹差 ≥0.10", "疏密曲线重排：相邻页密度互斥")},
-    "BALANCE_SKEW_RISK": {"family": "balance", "level": "med",
-        "predicted": "gravity_drift", "root_cause": "balance_composition",
-        "prevention": "配平视觉重量，或声明刻意偏轴的构图理由", "confidence": 0.5,
-        "strategy": ("composition_policy", "配平视觉重量（成组/加锚/镜像留白），或在 design_rationale 写明刻意偏轴", "构图算子：连续页至少换一个")},
-    "TYPE_LADDER_RISK": {"family": "type_system", "level": "med",
-        "predicted": "CRITIC_LOW(typography)", "root_cause": "type_system",
-        "prevention": "并级：同层同字号，层次交给字重/墨色", "confidence": 0.6,
-        "strategy": ("type_policy", "并级：同层信息同字号，层次交给字重/墨色", "字阶锁在驻点 64/44/32/22/17/12.5，页内 ≤4 级")},
-    "LAYOUT_MONOTONE_RISK": {"family": "layout_monotony", "level": "med",
-        "predicted": "RHYTHM_FLAT", "root_cause": "layout_monotony",
-        "prevention": "相邻页至少换一个构图算子", "confidence": 0.5,
-        "strategy": ("composition_policy", "相邻页至少改一个构图算子（切分/轴/尺度对偶）", "同家族连续 ≥3 页必须换构图语法或声明品牌连续性")},
-    "CONTINUITY_BROKEN_RISK": {"family": "continuity", "level": "med",
-        "predicted": "CRITIC_LOW(narrative)", "root_cause": "narrative_continuity",
-        "prevention": "让线索在 ≥2 个关键位置复现，或撤掉声明", "confidence": 0.45,
-        "strategy": ("continuity_policy", "让该记忆线在 ≥2 个关键位置复现（章节转场/收尾呼应），或撤掉声明", "记忆线成线：token 至少出现两次")},
-    "TYPE_SCALE_DRIFT_RISK": {"family": "type_system", "level": "med",
-        "predicted": "CRITIC_LOW(typography)", "root_cause": "type_system",
-        "prevention": "deck 级归并到驻点字阶（64/44/32/22/17/12.5）", "confidence": 0.45,
-        "strategy": ("type_policy", "全 deck 归并到驻点字阶", "字阶锁在驻点，页内 ≤4 级")},
-    "INTENT_UNCLEAR": {"family": "focus", "level": "high",
-        "predicted": "INTENT_UNCLEAR", "root_cause": "intent_clarity",
-        "prevention": "先写一句 object+change+implication，再排版", "confidence": 0.95,
-        "strategy": ("focus_anchor", "先补一句可复述结论（object+change+implication），再排版", "每页 page_intent.insight 必须可脱离页面复述")},
-    "FOCUS_UNBOUND": {"family": "focus", "level": "med",
-        "predicted": "CRITIC_LOW(visual_hierarchy)", "root_cause": "focus_anchor",
-        "prevention": "把 focus 指向真实元素 id；唯一 L4 通常是结论文字", "confidence": 0.9,
-        "strategy": ("focus_anchor", "把 focus 指向真实元素 id（通常结论文字）", "focus 必须对应页面真实元素，否则不落稿")},
-    "CARD_WALL_RISK": {"family": "layout_monotony", "level": "med",
-        "predicted": "CRITIC_LOW(visual_hierarchy)", "root_cause": "container_discipline",
-        "prevention": "删容器，改发丝线+留白+字阶分组；只留数据/KPI 面板", "confidence": 0.7,
-        "strategy": ("hierarchy_policy", "删圆角容器，改发丝线+留白+字阶分组；只留数据/KPI 面板", "圆角容器 ≤4/页，其余用发丝线+留白表达层级")},
-    "TEXT_BUDGET_RISK": {"family": "text_overflow", "level": "med",
-        "predicted": "CRITIC_LOW(visual_hierarchy)", "root_cause": "text_budget",
-        "prevention": "合并重复语句：一个文本框只承担一个语义角色", "confidence": 0.6,
-        "strategy": ("text_policy", "合并重复语句：一个文本框只承担一个语义角色", "阅读文本 ≤4/页（caption/annotation/source/axis 不计）")},
-}
 

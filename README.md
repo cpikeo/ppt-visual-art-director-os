@@ -6,40 +6,39 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
-## 当前本地修复版：5.2.0
+## 当前版本：5.5.0
 
-5.2.0 是**用实战返工换速度**：一次 11 页真实交付暴露的 15 个问题里，4 个是静默失效
-（不报错、结果错、每次都逼人回源码找口径）。这次只修根因 ——
-**`SKILL.md` / `design-craft.md` / `design-intelligence.md` 一个字都没改**，
-不增命令、不增模块、不增规则。
+5.5.0 是第四轮深度审计（跨域验证后的死层切除）：Phase 15 三域盲测（城市研究 /
+品牌融资 / 科技发布，均 release PASS）证明判断发生在**起草时**，spec 级二审层
+零消费——遂整体切除：`pre_critic`(414 行) + `risk_strategy`(140 行) + 9 个仅被
+它们消费的私有 helper + 11 个孤儿常量（`FOCUS_LEAD`/`STATEMENT_SIZE`/`PANEL_*`/
+`RHYTHM_INK_*` 等）+ primitives 的死几何函数群（`filled_panels`/`memory_anchor`/
+`content_occupancy`/第二套 bg 判定）。plan 期 `forecast_risk`（三域生产真实消费）
+与 guard 的 `--advisory` 诊断开关保留。design_intelligence.py 1369→645 行（-53%）。
+生产路径行为零变化（三域 plan 字节级一致，仅删一句陈旧 note）。
+回归 **148/148 PASS**，三域 bench 全链 release 回归 round 1/6 PASS。
 
-修的是这四处：介质判定看错了层（`ink_gate_active` 认方向族名而不是资产声明）、
-13 个色彩族名送不进 `design_direction`、deck 级 `visual_world` 会污染单张图的介质、
-「主体贴边」被拿来判氛围图；另外让 ghost 预览认多序列图表、brief 模板补上
-`material`/`lighting`/`texture`/`asset_color` 这些一直生效却没写出来的旋钮、
-删掉 6 个零消费字段、报错直接给出权威位置。回归 **139/139 PASS**。
-逐条对照见 `CHANGELOG.md`。
+5.4.x 系列叙事（5.4.9 输出 schema 减法、5.4.8 AST 可达性清零、5.4.7 死常量清理与摘要合并、5.4.6 运行时
+契约减法、5.4.5 System 三层切分、5.4.4 Intelligence 减法收敛、5.4.3 Craft 减法
+重构、5.4.2 契约语义收紧、5.4.1 SKILL 决策系统重构、5.4.0 声明优先级语义）
+全文见 `CHANGELOG.md`。
 
-5.1.2 补的是**判断层**：Anti-Design 主动避免清单、统一的减法链
-（`删除 > 重组 > 排版 > 强化 > 装饰`）、以及把 Apple Keynote / Pentagram / FT / Bloomberg /
-Kinfolk / Monocle 这类参照系明确成「校准判断力的标尺，不是可复制的版式」。
-同时修掉两个静默失效缺陷：非 UTF-8 码页 Windows 上 selftest 直接崩溃（回归网根本起不来）、
-M-09 用例因宿主静默降级 symlink 而失效。
+5.3.0 是**轮次与提示词质量版**：出图提示词去矛盾（光照单一来源、静物动势抑制、
+构图语法翻译、色名可读化、负向提示分层）、`run` 一次完成规划+资产契约、
+骨架升级为「完整作业单」（正常流程免读 plan.json）、删除全部零消费镜像字段、
+文档去重（SKILL.md -28%）。
+逐条对照见 `CHANGELOG.md`（5.2.0 及更早的修复叙事也在其中）。
 
-5.1.1 处理了深度审计的 3 个 P1、11 个 P2。变更集中在现有模块：不增加命令、服务或依赖。
-**删除危险的共享图片适配缓存，保留整份 PPT 编译缓存；核验后的图片 bytes 快照同时供编译与预览使用。**
-详细修复编号与迁移要求见 `CHANGELOG.md`。
-
-旧项目需重新建立计划/清单并运行 QC，旧图可登记 reuse；旧 QC 不自动升级。
+提示词与计划字段变更后，旧资产清单指纹自然失效：旧图可登记 reuse 迁移，旧 QC 不自动升级。
 对生成图片有意裁切时，可在对应 brief slide 中写 `asset_allow_crop: true`。
-最低分辨率与透明度检查不会替代人工设计判断。明确的可信 Python 入口仍执行代码，
-但 QC 和发布不再通过清单隐式执行 Python brief；本包不是不可信代码沙箱。
+最低分辨率与透明度检查不会替代人工设计判断。QC 和发布不通过清单隐式执行 Python brief；
+本包不是不可信代码沙箱。
 
-## 标准生产顺序（v5.1.1）
+## 标准生产顺序（`run` 是标准入口；轮次由资产数量、QC 状态与根因修订决定）
 
-**brief → plan → assets → 按清单出图 → asset-qc → PPT 编排 → release**
+**brief → plan+资产契约（一次调用）→ 按清单出图 → asset-qc → 填骨架 → release 收口**
 
-图片提示词通过 `vao.py assets` 调用 `asset_prompt.py` 产生，不是先自由出图后补清单。
+图片提示词由 `vao.py run/assets` 内置的 `asset_prompt.py` 产生，不是先自由出图后补清单。
 外部图片服务并未内置于技能包；执行者仍需调用实际的生成工具。
 
 ```bash
@@ -47,22 +46,17 @@ M-09 用例因宿主静默降级 symlink 而失效。
 python3 -m venv .venv && . .venv/bin/activate
 python3 -m pip install -r requirements.txt
 
-# 1) 完成 brief：页面意图、主体、图片比例与文字留白
-python scripts/vao.py plan brief.yml --out plan.json --skeleton build_deck.py
+# 1) 完成 brief 后，一次调用拿到 plan + 骨架 + 资产清单（无图项目去掉后两个参数，直接跳到 4）
+python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.py \
+    --assets-out asset_manifest.json --assets-dir generated_assets
 
-# 2) 必须引用已保存、与当前 brief 匹配的 plan
-python scripts/vao.py assets brief.yml --plan plan.json --out asset_manifest.json --assets-dir generated_assets
-
-# 3) 用外部图片工具按清单 prompt / negative / ratio / safe_area 生成图片
+# 2) 用外部图片工具按清单 prompt / negative / ratio / safe_area 生成图片
 #    保存到 generated_assets；名称按 expected_filename（也支持同名 JPEG）
 
-# 4) 检查图片；缺文件、待重试或阻断时退出码为 2，不能继续编排
+# 3) 检查图片；缺文件、待重试或阻断时退出码为 2，不能继续编排
 python scripts/vao.py asset-qc asset_manifest.json --phase draft
 
-# 5) QC 成功后填充骨架；图片元素使用 asset_id
-python scripts/vao.py check build_deck.py out.pptx --mode draft --assets-manifest asset_manifest.json
-
-# 6) 发布：核对当前图片、QC、清单与计划，再编译/预览/发布
+# 4) 填完骨架（头注释即完整作业单）直接 release 收口；确需迭代构图才先 --mode draft
 python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```
 
@@ -98,7 +92,7 @@ ppt-visual-art-director-os/
 ├── SKILL.md                  # 技能本体：判断纪律 + 执行协议（Agent 只读这个入口）
 ├── references/
 │   ├── design-intelligence.md  # 内容 → 意义 → 策略 → 页面意图
-│   ├── design-craft.md         # 品味手册：审查坐标系 + 原则 + 案例
+│   ├── design-craft.md         # 品味手册：Director Kernel + 五判断 + 案例（数字住 guard/契约）
 │   ├── design-system.md        # 执行默认值与首轮值 + Spec 字段速查
 │   ├── asset-workflow.md      # 资产链、迁移与跳过契约
 │   └── production-contract.md  # 运行时契约（字段 / 模式 / 门槛 / 报告）
@@ -112,7 +106,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（139 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（148 项，含判断层与反退化检查）
 ```
 
 ## 设计上刻意不做的事
@@ -141,7 +135,7 @@ ppt-visual-art-director-os/
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 139 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
+python scripts/selftest.py        # 148 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

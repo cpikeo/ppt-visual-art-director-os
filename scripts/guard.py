@@ -200,32 +200,6 @@ def _is_rule_shape(e: dict) -> bool:
             and str(e.get("shape", "")).lower() in RULE_SHAPES)
 
 
-def _filled_panel(e: dict, cw: float = 0, ch: float = 0) -> bool:
-    """「卡片」的真正定义：一块**有底色的、够大的**矩形容器。
-
-    原先只数 rounded_rect，等于把判据挂在圆角半径上——直角卡片墙一样是卡片墙，
-    却拿不到任何信号。卡片的成本来自**底色**（它在纸面上切出一块territory，
-    读者要为每一块重新建立一次视觉关系），与圆角无关。
-    发丝线、1px 描边、细长色块不是卡片：它们不圈地，只做分隔。
-    """
-    if not isinstance(e, dict) or e.get("type") != "shape":
-        return False
-    if str(e.get("shape", "rect")).lower() in RULE_SHAPES:
-        return False
-    fill = e.get("fill")
-    if fill is None or str(fill).lower() in ("none", "transparent"):
-        return False          # 只有描边、没有底色 —— 那是框线不是卡片
-    try:
-        w, h = float(e.get("width", 0)), float(e.get("height", 0))
-    except (TypeError, ValueError):
-        return False
-    if min(w, h) <= 8:
-        return False          # 细长条（分隔条、色带、进度轨）不圈地
-    if cw > 0 and ch > 0 and (w * h) / (cw * ch) >= 0.55:
-        return False          # 半幅以上的是背景色块/版面分区，不是卡片
-    return True
-
-
 # 零基长度编码：长度差就是读数的图。差异太小时，读者看到的是「一样长」。
 ZERO_BASED_LENGTH_KINDS = frozenset({"bar", "column", "horizontal_bar",
                                      "comparison_bar", "ranked_bar"})

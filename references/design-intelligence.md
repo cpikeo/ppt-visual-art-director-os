@@ -1,8 +1,41 @@
 # Design Intelligence Core（内容 → 意义 → 视觉策略 → 页面意图）
 
-判断顺序：先回答「观众需要理解、相信或决定什么」，再决定「这件事应该如何被看见」。路由/风险/色彩的机器口径在 `design_intelligence.py` 与 `design_intelligence_rules.py`，本文只留判断；页面得到的是家族与叙事动作，构图归生成侧判断。
+> **反模板原则（本卷第一条）：不要从页面类型推导页面长相。**
+> 因为它是 Statement 不等于必须大字、Data 不等于必须图表、Case 不等于必须摄影、
+> Framework 不等于必须卡片。家族 / 构图 / 母题 / 色彩 /
+> 媒体都只是候选表达，不是内容的默认答案。**先判断内容为什么值得被这样看见，再决定
+> 视觉形式。**
 
-## Strategy（内容意义）
+判断链（01–08 是判断，09–10 是移交）：
+
+```
+01 Strategy   观众需要理解、相信或决定什么
+02 Meaning    这一页的洞察与证据等级
+03 Intent     这一页的唯一视觉主语
+04 Hypothesis 哪些表达能让主语被看见（候选 → 否决 → 最少选择）
+05 Composition 尺度/位置/空间/对比/路径如何让它成立
+06 Reduction  还能删掉、合并、降级什么
+07 Rationale  为什么是这个设计而不是另一个
+08 Continuity 为什么属于这套 deck
+09 Execution  → vao.py（唯一生产入口）
+10 Guard      → 只查工程事实，不判审美
+```
+
+职责边界（同一事实只判断一次）：
+
+| 模块 | 唯一职责 |
+|---|---|
+| Design Brief | 用户知道什么、要求什么（契约，不是 prompt） |
+| Design Intelligence（本文） | 为什么这样设计 |
+| Design Craft | 如何判断好设计 |
+| Design System | 字号/颜色/空间如何落地（数字阶梯全在那里） |
+| Rules / Guard | 机器如何检查（`design_intelligence.py` / `design_intelligence_rules.py` / `guard.py`） |
+| VAO | 如何快速执行（`vao.py`） |
+| DNA | 哪些判断曾经有效（`memory/design_dna.json`） |
+
+本文只留判断；页面得到的是家族与叙事动作，几何与构图由生成侧判断。
+
+## 01·02 Strategy & Meaning（内容意义）
 
 ```yaml
 strategy:
@@ -16,45 +49,7 @@ strategy:
 
 材料先拆 `claim/evidence/implication/action`；每页 `insight = object + 变化/差异 + 含义`。证据等级 C/D 不配大号 KPI、强 Accent 或英雄图。
 
-## Direction（视觉策略）
-
-```yaml
-direction:
-  visual_world: "一句话隐喻：材质 + 光影 + 空间（可展开、可落地）"
-  composition_grammar: "soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence"
-  type_voice: "editorial_serif | neutral_sans | product_display | humanist_sans"
-  color_behavior: "quiet_neutral | single_signal | warm_material | dark_luminous"
-  media_role: "none | context | emotion | proof | hero"
-  background_scene: "solid_world | atmospheric | cinematic"
-  motion_posture: "still | reveal | progressive"
-```
-
-隐喻必须能回答：什么材质 / 光从哪来、什么性格 / 元素并列、层叠还是纵深。内容不需要隐喻时，`solid_world` + 编辑版心即正确选择——诚实比意象重要。色彩派生：品牌色 > 材质/光性判断 > 方向种子（兜底）；图表色走语义角色，不写死色值。
-
-`color_behavior` 是**饱和与明度的人格**，不是品味标签：`quiet_neutral` 不是高级的同义词，
-`single_signal / warm_material / dark_luminous` 与之平权。先问内容的情绪温度、行业语境与
-观看场景，再选人格；选定后把该人格的纪律执行到底——克制 ≠ 低饱和，高饱和只承担单一职责时
-同样克制；低饱和铺满而职责不清，同样廉价。方向种子只是执行起点，饱和人格是内容要回答的洞，
-不是默认答案。
-
-## Content → Visual 映射
-
-| 内容信号 | 感知目标 | 视觉动作 | 反例 |
-|---|---|---|---|
-| 单一关键结论 | 记住 | 大尺度标题、主动留白、唯一重心 | 多 KPI、字段名标题 |
-| 复杂系统 | 可扫描 | 分层、路径、稳定网格 | 图标墙、无方向卡片墙 |
-| 证据与风险 | 相信 | 直接标注、共同基线、来源可见 | 3D、装饰图、藏不确定性 |
-| 人物/案例 | 信任 | 有语境摄影、叙事顺序 | 泛化图库、无关肖像 |
-| 品牌/发布 | 记忆 | 单一 Hero、尺度张力 | 金色铺满、产品堆叠 |
-| 行动建议 | 明确 | 结论式标题、行动动词 | 装饰性标语 |
-
-内容类型 → 页面家族由 `route.py` 查表（13 类内容：cover / brand_story / product / case /
-statement / closing / business / agenda / data / comparison / timeline / architecture / process）；
-数据/表格/流程/结构页不出图。家族名以代码为准（11 个：COVER / HERO / EDITORIAL / NARRATIVE /
-DATA_STORY / COMPARISON / FRAMEWORK / TIMELINE / EXECUTIVE_SUMMARY / CASE_STUDY / MINIMAL_STATEMENT），
-别在文档里另造一套词汇。
-
-## Page Intent（页面合同）
+## 03 Intent — Page Intent（页面合同）
 
 ```yaml
 page_intent:
@@ -69,54 +64,65 @@ page_intent:
   design_rationale: "可选：一句为什么这样摆（选择 × 理由 × 否决项）"
 ```
 
-`design_rationale` 写不出的页面，说明布局是排列，还不是设计。
+核心闭环：Insight → Focus → Reading Order → Visual Strategy → Composition → Rationale；
+`design_rationale` 写不出的页面，布局是排列，还不是设计。每个视觉选择过反向问题：
+**删除它，信息传达会不会变差？不会 → 删除。**
 
-## 字号阶梯（全库唯一真源）
+## 04 Visual Hypothesis（视觉策略：候选，不是答案）
 
-相邻级差 ≥1.25×；每页 ≤4 级、全 deck ≤6 级；取值优先落驻点。
+```yaml
+direction:
+  visual_world: "一句话隐喻：材质 + 光影 + 空间（可展开、可落地）"
+  composition_grammar: "soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence"
+  type_voice: "editorial_serif | neutral_sans | product_display | humanist_sans"
+  color_behavior: "quiet_neutral | single_signal | warm_material | dark_luminous"
+  media_role: "none | context | emotion | proof | hero"
+  background_scene: "solid_world | atmospheric | cinematic"
+  motion_posture: "still | reveal | progressive"
+```
 
-| 级 | 驻点 | 区间 | 角色 |
+隐喻必须能回答：什么材质 / 光从哪来、什么性格 / 元素并列、层叠还是纵深。内容不需要隐喻时，`solid_world` + 编辑版心即正确选择——诚实比意象重要。色彩派生：品牌色 > 材质/光性判断 > 方向种子（兜底）；图表色走语义角色，不写死色值。
+
+`color_behavior` 是**饱和与明度的人格**，不是品味标签：`quiet_neutral` 不是高级的同义词，四种人格平权；先问内容的情绪温度、行业语境与观看场景再选，选定后把纪律执行到底——克制 ≠ 低饱和：高饱和承担单一职责时同样克制，低饱和铺满而职责不清同样廉价。
+
+**内容信号 → 视觉假设（第一候选，不是默认答案）：**
+
+| 内容信号 | 感知目标 | 候选视觉动作（第一假设） | 反例 |
 |---|---|---|---|
-| L4 Statement | 64 | 40–80 | 宣言、封面主张、KPI 主数字 |
-| L3 Display | 44 | 40–56 | 页面主标题、Hero 结论 |
-| L2 Title | 32 | 28–36 | 小节标题、图表标题 |
-| L1 Lead | 22 | 20–24 | 导语、图表直接标注 |
-| L0 Body | 17 | 16–20 | 正文 |
-| L-1 Caption | 12.5 | 11–14 | 来源、注释、图例 |
+| 单一关键结论 | 记住 | 大尺度标题、主动留白、唯一重心 | 多 KPI、字段名标题 |
+| 复杂系统 | 可扫描 | 分层、路径、稳定网格 | 图标墙、无方向卡片墙 |
+| 证据与风险 | 相信 | 直接标注、共同基线、来源可见 | 3D、装饰图、藏不确定性 |
+| 人物/案例 | 信任 | 有语境摄影、叙事顺序 | 泛化图库、无关肖像 |
+| 品牌/发布 | 记忆 | 单一 Hero、尺度张力 | 金色铺满、产品堆叠 |
+| 行动建议 | 明确 | 结论式标题、行动动词 | 装饰性标语 |
 
-行高：L4/L3 取 1.05–1.15，L2 取 1.15–1.25，L1/L0 取 1.3–1.5（中文取上限），Caption 取 1.2–1.3。层级优先用字重/墨色表达，再动字号。中文：避头尾、全角标点、中西混排留 1/8–1/4 em、禁两端对齐拉字距。
+每行只是第一候选：同一个结论可以用大尺度呈现，也可以用极致克制、隐喻、空间关系或数据证据呈现。流程永远是**信号 → 感知目标 → 候选动作 → 否决不成立的 → 选最少且最有效的表达**。方向种子只是执行起点，饱和人格与视觉假设都是内容要回答的洞，不是默认答案。
 
-## 构图（算子优先于原型）
+内容类型 → 页面家族由 `route.py` 查表（13 类内容）；数据/表格/流程/结构页不出图。家族名以代码为准（11 个，见 `page_intent` 枚举），别在文档里另造一套词汇。
 
-先组合算子，再看落哪个原型附近：轴（对称/错位/偏置）/ 切分（不等分优先，等分只用于同坐标系对比）/ 尺度对偶（极大 × 极小）/ 叠压（背景与前景层叠建纵深）/ 动线（水平叙事·垂直庄重·对角张力）。相邻两页至少换一项算子。光学补偿：Latin 与 CJK 同行抬 1–2px、容器内数字略高于数学中心、混排共 baseline。
+## 05 Composition（算子优先于原型）
 
-**构图判断三问**：视觉中心在哪（一句话说清哪个元素承载最重墨量/尺度）？第一眼看到什么
-（第一视线是否落在主语上——落在装饰上即构图失手）？必然关系成立吗（删除任何一个元素，
-表达是否改变；图是文的证据、文是图的观点，两者皆可删则皆应删）。非对称平衡是允许的美，
-但要声明平衡靠什么承担对面（尺度/墨色/材质/留白之一）。
+先组合算子，再看落哪个原型附近：轴（对称/错位/偏置）/ 切分（不等分优先，等分只用于同坐标系对比）/ 尺度对偶（极大 × 极小）/ 叠压（背景与前景层叠建纵深）/ 动线（水平叙事·垂直庄重·对角张力）。光学补偿：Latin 与 CJK 同行抬 1–2px、容器内数字略高于数学中心、混排共 baseline。
 
-留白三型循环（**结构留白** = 元素框并集之外的面积占比，实测刻度）：大 ≥60%（opening/closing/insight）/ 标准 40–60%（context/solution/proof）/ 紧致 25–45%（evidence、数据密集页）。别拿像素空白（文字笔画之间的那些）套这三个数——那是另一个量，两个口径不能换算。方向还会发一条 `whitespace_min` 下限，越界会被点名。留白说不清职责即事故；有职责的大片空白常常是最贵的设计。
+**相邻页不要求机械换算子**：变化要由内容、叙事或情绪的转折产生——重复有理由就保留，变化有理由就变，没理由不动。连续页布局雷同由 plan 期 `forecast_risk.layout_monotony`（同家族连续 ≥3 页）点名，那时再成批换算子——这就是「有理由的变化」。
 
-## Deck Rhythm（九阶段一句话）
+**构图判断三问**：视觉中心在哪（哪个元素承载最重墨量/尺度）？第一眼看到什么（第一视线落在主语上——落在装饰上即构图失手）？必然关系成立吗（删除任一元素表达是否改变；图是文的证据、文是图的观点，两者皆可删则皆应删）。非对称平衡合法，但要声明平衡靠什么承担对面（尺度/墨色/材质/留白之一）。
 
-opening 建世界（HERO，高/sparse）→ context 给背景（EDITORIAL）→ problem 让张力具体（NARRATIVE/COMPARISON）→ insight 给判断（STATEMENT，低/sparse）→ evidence 证明（DATA_STORY，低/dense 不拥挤）→ solution 展结构（FRAMEWORK）→ proof 给案例 → vision 放大意义（HERO）→ closing 定行动与记忆（STATEMENT）。高信息页之后跟留白或低能量页。
+## 06 Reduction（留白职责与减法）
 
-**情绪弧线（四乐章）**：opening 建世界（让观众进入这种材质与光）→ 章节页制造情绪变化
-（密度归零的全幅重置，允许深色沉下去或浅色亮起来）→ 内容页提供证据（浅、稳、可扫读）→
-closing 形成记忆点（回收封面语言，愿景句即落款）。深色章节页、浅色内容页、强弱视觉变化都
-合法——唯一判据是服务叙事段落：深为沉情绪、浅为让证据说话、强为记忆点蓄势；说不出服务
-哪个段落的交替，是效果不是叙事。
+留白是结构，不是残渣：先问为什么留、支撑什么——保护焦点、建立权威、制造情绪还是分隔章节（`empty_space_role` 四职责）；说不清职责即事故，有职责的大片空白常常是最贵的设计。不要先算百分比：结构留白（元素框并集之外的面积占比）由 `whitespace_min` 下限强制，数字口径归 design-system.md §约束。减法链（删除 > 重组 > 排版 > 强化 > 装饰）见 design-craft.md §一。
 
-页型节奏三手法（六套样本验证）：**章节过渡页是重置不是内容**——全幅视觉 + 单 statement、密度归零，负责换脑；**结尾页回收封面语言**——同级 statement、同轴线，愿景句即落款，不放谢谢页与联系方式；**跨页连续性双锚**——caps 眉标固定上缘、页码固定象限。锚不动，正文才可游走。（证据编号 Fig. 01/02 属于论文引用装置，演示场景不用：没有回指就只是噪声。）
-（现在是可执行项：plan 逐页发 `anchor`，guard 的 `deck_anchor` 守「在不在 / 位置是否同一个 / 编号是否连续」。）
+## 07·08 Rationale & Continuity（叙事与整套）
 
-**母题变奏（motif variation）**：一套 deck 只设计一个图形母题（圆/光球/编号方块），用它的变奏承担全部装饰语言——封面注册母题，章节页放大，数据页退成刻度，结尾页收束；母题之外的装饰元素全部删除。**页型标签**全场统一词汇表——直接用 plan 给的 `page_family`（不要另造一套），caps 小标固定页首；标签即节奏的可视化。（第二批六套样本验证）
+**Narrative Reference（九阶段是参考，不是模板）**：opening 建世界（HERO，高/sparse）→ context 给背景（EDITORIAL）→ problem 让张力具体（NARRATIVE/COMPARISON）→ insight 给判断（STATEMENT，低/sparse）→ evidence 证明（DATA_STORY，低/dense 不拥挤）→ solution 展结构（FRAMEWORK）→ proof 给案例 → vision 放大意义（HERO）→ closing 定行动与记忆（STATEMENT）。高信息页之后跟留白或低能量页。**不是每个 deck 都必须完整走过九阶段，也不是每个阶段都独占一页：可合并、可跳过、可重复、可重排——叙事服务内容，而不是内容填入叙事。**
 
-**同一视觉世界（整体统一）**。整套 deck 统一的是世界，不是页面：同一种材质与光的逻辑、
-同一套排版声音（字阶/墨色/字距纪律）、同一组锚点词汇（眉标/页码）、同一种图表性格、
-同一套色彩层级纪律；在此之内，每页可以自由地换构图、换密度、换色重、换图片比例与标题位置——
-深色章节页与浅色内容页、图像主导与文字主导可以共存。统一的判据是「把任何一页换进别的
-deck 会立刻显得不属于」，而不是「每页看起来相同」。
+**情绪与节奏（四乐章 × 三手法，六套样本验证）**：章节过渡页是重置不是内容——全幅视觉 + 单 statement、密度归零，允许深色沉下去或浅色亮起来，负责换脑；内容页提供证据——浅、稳、可扫读；结尾页回收封面语言——同级 statement、同轴线，愿景句即落款，不放谢谢页与联系方式。深浅明暗交替都合法，唯一判据是服务叙事段落：深为沉情绪、浅为让证据说话、强为记忆点蓄势；说不出服务哪个段落的交替，是效果不是叙事。跨页连续性双锚：caps 眉标固定上缘、页码固定象限，锚不动正文才可游走。（Fig. 01/02 证据编号属论文引用装置，演示场景不用；`anchor` 是可执行项：plan 逐页发，guard 的 `deck_anchor` 守在不在 / 位置是否同一个 / 编号是否连续。）
+
+**母题是可选的**：一套 deck 可以有一个图形母题（圆/光球/编号方块）；有则母题承担连续性——封面注册、章节页放大、数据页退成刻度、结尾页收束，母题之外的装饰全部删除；没有则由锚点、排版声音与图表性格承担。母题不是每套 deck 必须产出的项，更不是每页必须出现的装饰。**页型标签**全场统一词汇表：直接用 plan 给的 `page_family`，caps 小标固定页首；标签即节奏的可视化。（第二批六套样本验证）
+
+**同一视觉世界（整体统一）**：统一的是世界，不是页面——同一材质与光的逻辑、排版声音、锚点词汇、图表性格、色彩纪律；在此之内每页可自由换构图、密度、色重、图片比例与标题位置，深色章节页与浅色内容页可以共存。判据是「把任何一页换进别的 deck 会立刻显得不属于」，而不是「每页看起来相同」。
+
+字号阶梯（锚点 64/44/32/22/17/12.5）、行高区间与中西混排规则归 design-system.md §字号阶梯（全库唯一真源）。分工：Intelligence 回答「这个信息是不是页面的视觉主语」，System 与生产合同回答「落到哪个安全值」。
 
 ## Design Judgment（取舍优先级，低层永不为高层让位）
 
@@ -126,4 +132,4 @@ deck 会立刻显得不属于」，而不是「每页看起来相同」。
 4. 情绪 > 秩序（高潮页可主动打破节奏，需在 `empty_space_role` 说明）
 5. 品牌 > 通用审美
 
-打破规则的两个判据：它是主动决定（能一句话说清为什么，且新重心更明确），且一次只打破一条。机器口径（风险目录/密度带/取舍表）见 `design_intelligence_rules.py`。
+打破规则的两个判据：它是主动决定（能一句话说清为什么，且新重心更明确），且一次只打破一条。机器口径（密度带/家族表/构图池）见 `design_intelligence_rules.py`。

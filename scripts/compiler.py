@@ -532,41 +532,6 @@ def _rows(element: dict) -> list[dict]:
     return rows
 
 
-def _safe_index(value, default=0):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _highlight_index(element: dict, rows: list[dict], default: int = -1) -> int:
-    """highlight 的解析：整数索引，或直接写类别名。
-
-    作者更可能说「强调海外」而不是「强调第 1 项」；写名字却拿到静默的
-    默认强调，是最坏的结果——所以两种都认。
-    """
-    raw = element.get("highlight")
-    if raw is None:
-        return default
-    text = str(raw).strip()
-    for row in rows:
-        if str(row.get("label")).strip() == text:
-            return int(row.get("_index", 0))
-    return _safe_index(raw, default)
-
-
-def _series_highlight(element: dict, series_names: list[str], default: int = -1) -> int:
-    """多序列图表的 highlight：整数索引，或写序列名。"""
-    raw = element.get("highlight")
-    if raw is None:
-        return default
-    text = str(raw).strip()
-    for i, name in enumerate(series_names):
-        if str(name).strip() == text:
-            return i
-    return _safe_index(raw, default)
-
-
 def _set_donut_hole_size(plot, pct: int) -> None:
     """写 c:doughnutHoleSize。python-pptx 1.0.2 的 DoughnutPlot 是空类：
     plot.hole_size = N 只是无声的实例属性赋值，序列化时丢失（实测 XML 无此元素，
