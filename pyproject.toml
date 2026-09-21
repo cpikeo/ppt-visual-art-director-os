@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ppt-visual-art-director-os"
-version = "6.4.4"
+version = "7.0.0"
 description = "设计智能优先的 PPT 生产技能包：内容 → 视觉策略 → 原生可编辑 PPTX，单入口执行，最小验证"
 readme = "README.md"
 requires-python = ">=3.10"

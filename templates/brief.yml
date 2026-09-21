@@ -81,7 +81,7 @@ slides:
 # 既有素材跳过生成，不跳过登记 + QC：
 # asset_source: {kind: provided, path: "images/tea.jpg", source: "用户提供；授权待核实"}
 #   kind：provided|licensed|original|reuse。
-#   v6.5：prepare 时字节已存在的规划资产会被自动如实登记为 existing（保留规划身份），
+#   v7.0.0：prepare 时字节已存在的规划资产会被自动如实登记为 existing（保留规划身份），
 #   无须人工补登记。
 
 # ============================================================

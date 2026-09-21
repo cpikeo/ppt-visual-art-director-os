@@ -6,8 +6,8 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
-当前版本 **6.5**（6.5 = 上下文减法：SKILL/brief/四份 references 合计 −34%（124.0KB→82.0KB），
-只删重复叙述与固定答案，不删事实、字段名与阻断码（221 项文档契约钉全过）；既有素材在
+当前版本 **7.0.0**（7.0 = 实战审核后的单生产契约：删掉零消费者计划镜像、收窄 QA、让 make 只做 check 兼容别名，并把设计判断收进 Just-in-Time 核心参考），
+只删重复叙述与固定答案，不删事实、字段名与阻断码（225 项回归契约全过）；既有素材在
 assets 阶段**自动登记**（字节在 = existing 状态如实写，保留规划身份与 prompt，
 `asset_source` 只用于补版权/出处注记）；方向预览页数 ≤24 时自动全量（常规 deck 零采样
 损失）；`plan_sha256` 改为稳定指纹（同输入重跑字节不变，跨进程可缓存）；
@@ -69,10 +69,11 @@ python scripts/vao.py check build_deck.py out.pptx --mode release \
 
 | 命令 | 作用 |
 |---|---|
-| `vao.py plan` | brief → plan.json（家族/页意图/叙事动作/构图语法提案/媒体闸门）+ build 骨架 |
+| `vao.py plan` | brief → plan.json（家族/页意图/媒体闸门/工作契约）+ build 骨架；构图不查表代答 |
 | `vao.py assets` | brief + plan → 去重后的批量资产清单（相同视觉需求只出一次图） |
-| `vao.py check` | 资产核验 → normalize → guard → compile → ghost 预览 → 分组修复包（`spec`/`draft`/`release`） |
+| `vao.py check` | 资产核验 → normalize → guard → compile → 可选 ghost → 分组修复包（`spec`/`draft`/`release`） |
 | `vao.py run` | 规划/清单准备，或检查已有编排稿；不能一次跳过出图与资产核验 |
+| `vao.py make` | 兼容别名：转发到 `check`，不维护第二条生产链 |
 | `vao.py preview` | 只出 ghost 方向预览（PIL，秒级） |
 | `vao.py dna` | 经验记忆：`--check` 体检 / `--add` 写入一条（校验后才入库） |
 
@@ -82,9 +83,10 @@ python scripts/vao.py check build_deck.py out.pptx --mode release \
 ppt-visual-art-director-os/
 ├── SKILL.md                  # 技能本体：判断纪律 + 执行协议（Agent 只读这个入口）
 ├── references/
-│   ├── design-intelligence.md  # 内容 → 意义 → 策略 → 页面意图
-│   ├── design-craft.md         # 品味手册：Director Kernel + 五判断 + 案例（数字住 guard/契约）
-│   ├── design-system.md        # 执行默认值与首轮值 + Spec 字段速查
+│   ├── design-judgment.md      # JIT 设计判断核心：焦点、留白、版式、影像、数据、节奏
+│   ├── design-intelligence.md  # 历史/深度校准（按需，不默认预载）
+│   ├── design-craft.md         # 历史品味案例（按需，不默认预载）
+│   ├── design-system.md        # 精确 spec 字段与约束（只在写元素时读相关节）
 │   ├── asset-workflow.md      # 资产链、迁移与跳过契约
 │   └── production-contract.md  # 运行时契约（字段 / 模式 / 门槛 / 报告）
 ├── templates/brief.yml       # 唯一需求契约（人写的一页纸）
@@ -97,7 +99,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（221 项，含判断层、端到端生产链、反退化与速度档检查）
+    └── selftest.py           # 最小验证网（225 项，含判断层、端到端生产链、反退化与速度档检查）
 ```
 
 ## 设计上刻意不做的事
@@ -137,7 +139,7 @@ ppt-visual-art-director-os/
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 221 项：交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
+python scripts/selftest.py        # 225 项：交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

@@ -2823,6 +2823,78 @@ def check_runtime_reuse(work: pathlib.Path) -> None:
           f" · 二轮 {ghost_hot['pages_drawn']}/{ghost_hot['pages_from_cache']}")
 
 
+def check_audit_7_0(work: pathlib.Path) -> None:
+    """Regression coverage for the 7.0.0 audit cuts.
+
+    These are deliberately small contract probes: they prove the removed fields,
+    the native background exception, the make delegation, and early dependency
+    failure without creating a second production fixture.
+    """
+    import argparse
+    import contextlib
+    import io
+    from unittest.mock import patch
+    import guard
+    import route
+    import vao
+
+    plan = route.plan_deck({
+        "audience": "reviewer", "decision": "approve", "quality_level": "advanced",
+        "slides": [{"id": "s01", "family": "cover", "title": "Audit"}],
+    })
+    check("audit7: plan drops deck intent mirror and unused budget fields",
+          "intent_interpretation" not in plan
+          and set(plan.get("budget", {})) == {"max_asset_calls"},
+          f"keys={sorted(plan.get('budget', {}))}")
+
+    colors = {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+              "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}
+    native_bg = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": colors},
+                 "slides": [{"id": "s01", "page_intent": {"insight": "x", "focus": "t1",
+                              "page_family": "COVER", "density": "sparse", "energy": "low"},
+                    "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
+                    "elements": [
+                        {"type": "shape", "shape": "rect", "id": "paper", "x": 0, "y": 0,
+                         "width": 1280, "height": 720, "fill": "#FFFFFF", "role": "background"},
+                        {"type": "text", "id": "t1", "x": 96, "y": 96, "width": 800,
+                         "height": 72, "text": "结论", "size": 40, "color": "ink",
+                         "role": "title", "max_lines": 1}]}]}
+    report = guard.check_spec(native_bg)
+    issues = report.get("checks", [])
+    source = [c for c in issues if c.get("rule") == "source_zone"]
+    check("audit7: native full-canvas solid background is a space layer",
+          not any(c.get("level") == "error" for c in source),
+          str(source))
+
+    build = work / "audit7-make.py"
+    build.write_text("SPEC = " + repr(native_bg), encoding="utf-8")
+    called = {}
+    def fake_run_check(*args, **kwargs):
+        called.update(args=args, kwargs=kwargs)
+        return {}, 0
+    ns = argparse.Namespace(build=str(build), output="made.pptx", mode="draft",
+                            preview="preview", assets_manifest=None, assets_dir=None,
+                            speed="fast", deadline=None)
+    with patch.object(vao, "run_check", side_effect=fake_run_check):
+        make_code = vao._make(ns)
+    check("audit7: make delegates without a second production chain",
+          make_code == 0 and called.get("args", [None, None])[:2] == (str(build.resolve()),
+                                                                     str((work / "made.pptx").resolve()))
+          and called.get("kwargs", {}).get("mode") == "draft",
+          str(called))
+
+    minimal = work / "audit7-minimal.json"
+    minimal.write_text('{"slides": []}', encoding="utf-8")
+    env = {"PYTHONPATH": str(SCRIPTS), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    proc = subprocess.run([sys.executable, "-S", str(SCRIPTS / "vao.py"), "check",
+                           str(minimal), str(work / "missing-pptx.pptx"), "--mode", "draft"],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          env=env, cwd=str(ROOT))
+    check("audit7: missing pptx fails before asset I/O",
+          proc.returncode == 2 and "missing compiler dependency: pptx" in (proc.stdout + proc.stderr),
+          (proc.stdout + proc.stderr).strip())
+
+
 def check_doc_counts() -> None:
     """文档里的自检项数必须等于实际项数。
 
@@ -2951,6 +3023,7 @@ def main() -> int:
         check_boundary_negatives(work)
         check_speed_profile(work)
         check_runtime_reuse(work)
+        check_audit_7_0(work)
         check_doc_counts()
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -9,7 +9,7 @@ Layer 0.7 · Route（视觉智能决策层 / Visual Intelligence Layer）
 
     plan_page(page_intent, design_direction, quality_level) -> PagePlan
     plan_deck(brief) -> {"path", "pages", "theme", "assets", "budget",
-                         "execution", "intent_interpretation", "warnings"}
+                         "execution", "warnings"}
 
 brief 最小集（plan_deck 的唯一输入，yml / json / 定义 BRIEF 的模块均可）：
 
@@ -526,36 +526,6 @@ def _intent_value(value) -> bool:
 
 
 
-def _deck_intent_interpretation(brief: dict, requested_direction, direction,
-                                quality_input, quality, pages, warnings) -> dict:
-    explicit_keys = ("audience", "decision", "occasion", "subject", "brief",
-                     "design_direction", "quality_level", "slides")
-    explicit = {k: brief.get(k) for k in explicit_keys
-                if k in brief and _intent_value(brief.get(k))}
-    inferred = {
-        "design_direction": {"value": direction,
-                              "basis": "explicit canonicalization" if "design_direction" in explicit
-                                       else "default quiet_minimal"},
-        "quality_level": {"value": quality,
-                           "basis": "explicit alias" if "quality_level" in explicit
-                                    else "occasion trigger / fast default"},
-        "page_count": {"value": len(pages), "basis": "explicit slides list"},
-        "execution_mode": {"value": recommend_mode(brief), "basis": "brief cost and risk signals"},
-    }
-    conflicts = []
-    for w in warnings:
-        if not isinstance(w, dict):
-            continue
-        rule = str(w.get("rule") or "")
-        if rule in {"direction_alias", "direction_fallback"}:
-            conflicts.append({"field": "design_direction", "explicit": requested_direction,
-                              "inferred": direction, "reason": rule})
-        elif rule == "quality_fallback":
-            conflicts.append({"field": "quality_level", "explicit": quality_input,
-                              "inferred": quality, "reason": rule})
-    return {"explicit": explicit, "inferred": inferred, "conflicts": conflicts}
-
-
 def _plan_deck(brief: dict) -> dict:
     occasion = f"{brief.get('occasion','')} {brief.get('subject','')} {brief.get('brief','')}"
     quality_input = brief.get("quality_level")
@@ -620,10 +590,9 @@ def _plan_deck(brief: dict) -> dict:
         page["id"] = (item.get("id") if isinstance(item, dict) and item.get("id")
                       else f"s{i + 1:02d}")
         pages.append(page)
-    # 逐页 intent_interpretation（显式/推断/冲突镜像）在 plan.pages 之外零消费：
-    # 作者覆盖已直接生效在页面字段上（上面 density_explicit 等），冲突留痕
-    # deck 级一份（plan.intent_interpretation）足够——每页再发一份约 500 字节
-    # 的机器镜像只增大计划与骨架，不改变任何决策，已删除。
+    # 不再生成 intent_interpretation 镜像：作者覆盖已经直接生效在页面字段上
+    # （上面 density_explicit 等），设计冲突留给 Agent 判断，不把无消费者的解释
+    # 写进 plan 或 skeleton。
     _alternate_density(pages)
 
     # 预算上限只约束 **Skill 判断产生的**出图；作者逐页显式声明（asset: required /
@@ -687,9 +656,6 @@ def _plan_deck(brief: dict) -> dict:
                          "msg": "content 缺失：证据型页面不能由标题脑补数据/案例——"
                                 "补真实证据，或改成纯排版观点页，或删掉这一页"}
                         for pg in pages if pg.get("content_missing")])
-    intent_interpretation = _deck_intent_interpretation(
-        brief, requested_direction, direction, quality_input, quality, pages,
-        plan_warnings)
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
@@ -703,16 +669,13 @@ def _plan_deck(brief: dict) -> dict:
         "quality_level": quality,
         "quality_input": quality_input,
         "warnings": plan_warnings,
-        "intent_interpretation": intent_interpretation,
         "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可被作者覆盖）
         "direction_execution": _execution_with_brief_overrides(direction, brief),  # 介质/光照/图表手法（deck 级）
         "pages": pages,
         "assets": assets,
-        "budget": {"max_asset_calls": len(assets["generate"]),
-                   # ↑ 预算数字是执行器内部策略（cap 已在上面约束 Skill 判断项），
-                   # 对作者显式声明不设限；契约文档（brief 模板）不出现这些数字。
-                   "max_charts_per_page": 1,
-                   "max_text_objects_per_page": 4},
+        # 只有资产调用上限是执行器消费的预算；图表/文字数量由生成侧的设计判断
+        # 与 Guard 的硬事实检查承担，不在 plan 里重复发一份无人读取的预算镜像。
+        "budget": {"max_asset_calls": len(assets["generate"])},
     }
 
 

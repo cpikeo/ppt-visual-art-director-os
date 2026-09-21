@@ -146,7 +146,7 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 | `brightness_balance` | 相对声明底色：与 `background_color` 亮度差 < 0.18 = 同调，不判过暗/过亮；落差够大才报可见分块。左右/上下失衡照常判。文字可读性归 `contrast_suitability` |
 | `contrast_suitability` | 按声明文字色判定：`#RRGGBB` 或 dark/light 都认（解析唯一实现 `primitives.text_is_dark`）；浅字要求安全区暗（<0.45）、深字要求亮（>0.55）；没声明才退回中间带（阻断级） |
 
-既有素材登记：早于清单存在的字节可在 slide 写 `asset_source` 显式登记；v6.5 起 prepare 时
+既有素材登记：早于清单存在的字节可在 slide 写 `asset_source` 显式登记；v7.0.0 起 prepare 时
 字节已存在的规划资产**自动如实登记为 existing**（保留规划身份与 prompt，见
 `asset-workflow.md` §2）。
 

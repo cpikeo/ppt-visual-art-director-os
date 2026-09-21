@@ -167,7 +167,7 @@ sparkline(12)。未知 kind 在 Guard 阻断；**缺载荷**同样阻断（空 d
 architecture 无 layers、数字展示无 value）——空白页不会出门。
 
 **数字展示**（kpi/executive_kpi/big_number）不读 data，只读元素级 `value`（必填）
-`label value_size label_size align`。v6.5 起主色经 `chart_primary_color` 单源解析：
+`label value_size label_size align`。v7.0.0 起主色经 `chart_primary_color` 单源解析：
 color_role > 逃生口 > 扁平键 > `chart_palette.primary` > accent——预览与产物同一条链。
 
 图表字段五组——**数据**：`data:[{label,value,display}]`，多序列 `series+categories`。

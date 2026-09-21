@@ -379,6 +379,14 @@ def _bg_qualified(e: dict, cw: float, ch: float) -> tuple[bool, str | None]:
     if cover < BG_MIN_COVERAGE:
         return False, (f"仅覆盖画布 {cover:.0%}（<{BG_MIN_COVERAGE:.0%}）："
                        f"这是内容对象，不是空间层")
+    # Native solid grounds are already their own readability protection. Treating
+    # a full-canvas paper/charcoal shape as an unprotected image made authors add
+    # a meaningless overlay and then collide with source_zone. Keep the exemption
+    # narrow: only a large rectangle with a real fill qualifies.
+    if (str(e.get("type", "")).lower() == "shape"
+            and str(e.get("shape", "")).lower() == "rect"
+            and e.get("fill") not in (None, "none", {"type": "none"})):
+        return True, None
     if e.get("readability_exempt"):
         return True, None
     op, why = bg_overlay_opacity(e)

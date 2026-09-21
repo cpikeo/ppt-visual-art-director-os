@@ -1,5 +1,21 @@
 # 变更记录
 
+## 7.0.0 · Practitioner Audit / One Production Contract
+
+以 `PPT_CASE_004｜CIRCA 纪时酒庄` 为真实端到端样本，完成 Intelligence / Context /
+Architecture / Execution / Design / Production / Verification 七层审核。
+
+- 删除 route 里无消费者的 deck-level `intent_interpretation` 镜像；
+- 删除 route 里无人读取的 chart/text budget 镜像，只保留资产调用预算；
+- full-canvas solid background shape 获得窄范围空间层资格，不再与 source zone 冲突；
+- check 在资产 I/O 之前发现缺少 `python-pptx`，避免无效 QC 轮次；
+- `make` 改为 `check` 的兼容别名，消除旁路绑定/Guard/compile/ghost 链；
+- 新增 `references/design-judgment.md`，SKILL 改为更短的 JIT 导航；
+- 新增 `AUDIT_2026-09.md` 记录文件、函数、规则、Context、Command 与交互存废判断；
+- selftest 仍作为 CI 回归，不进入 Agent 默认 Context。
+
+实战证据、职责矩阵与停止条件见 `AUDIT_2026-09.md`。
+
 ## 6.5 · Context Diet + Zero-Loop Assets（上下文减法 34%、既有素材零回路、稳定指纹）
 
 原则仍是 **删 > 合 > 简 > 复用 > 加**；这一版把刀口对准**作者每次都要付的上下文与回路**，

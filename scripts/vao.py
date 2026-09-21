@@ -1071,6 +1071,16 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
         budget["skipped"].append({"stage": stage, "reason": why})
 
     spec, build = load_spec(build_path)
+    # Fail before touching image bytes: a missing compiler dependency is an
+    # environment error, not an asset-QC problem. The case study exposed this
+    # late failure as a wasteful extra turn after the full asset pass.
+    if str(mode).lower() != "spec":
+        import importlib.util
+        missing = next((name for name in ("pptx",) if importlib.util.find_spec(name) is None), None)
+        if missing:
+            exc = ModuleNotFoundError(f"missing compiler dependency: {missing}")
+            exc.name = missing
+            raise exc
     from asset_workflow import verify_chain, blocked_result
     asset_binding = None
     binding_error = None
@@ -1477,10 +1487,11 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--check", action="store_true", help="validate the store (default action)")
     d.add_argument("--json", action="store_true")
 
-    m = sub.add_parser("make", help="One-pass production: build.py → auto-bind → guard → compile → preview")
+    m = sub.add_parser("make", help="Compatibility alias → check (single production contract)")
     m.add_argument("build")
     m.add_argument("output", nargs="?", default="deck.pptx")
-    m.add_argument("--assets-dir", default=None, help="assets directory (default: auto-detect)")
+    m.add_argument("--assets-manifest", default=None, help="asset manifest; default: sibling asset_manifest.json")
+    m.add_argument("--assets-dir", default=None, help="assets directory recorded by the manifest")
     m.add_argument("--preview", default="preview", help="preview output directory")
     m.add_argument("--mode", choices=("draft", "release"), default="release")
     _add_speed_flags(m)
@@ -1531,85 +1542,32 @@ def _dna(args) -> int:
 
 
 def _make(args) -> int:
-    """One-pass production command:
-    Loads spec, auto-binds image assets from --assets-dir or standard sibling directories,
-    runs normalization and guard checks, compiles PPTX, renders ghost preview contact sheet,
-    and returns a clean single-line verdict.
+    """Compatibility alias for the one reliable production path.
+
+    ``make`` used to duplicate binding, guard, compile and ghost logic and could
+    release image decks without the manifest/QC chain. Keep the friendly command,
+    but delegate everything to ``check`` so there is only one execution contract.
     """
     build_file = Path(args.build).expanduser().resolve()
     if not build_file.is_file():
         print(f"VAO make: error · build file not found: {args.build}", file=sys.stderr)
         return 2
-
-    spec, _ = load_spec(str(build_file))
-    base_dir = build_file.parent
-
-    search_dirs = []
-    if getattr(args, "assets_dir", None):
-        search_dirs.append(Path(args.assets_dir).expanduser().resolve())
-    search_dirs.extend([
-        base_dir / "generated_assets",
-        base_dir / "assets",
-        base_dir,
-    ])
-
-    bound = 0
-    slides = spec.get("slides") or []
-    for s in slides:
-        for e in s.get("elements", []):
-            if isinstance(e, dict) and e.get("type") == "image":
-                if not e.get("src"):
-                    aid = e.get("asset_id")
-                    if aid:
-                        for sdir in search_dirs:
-                            if sdir.is_dir():
-                                for ext in (".png", ".jpg", ".jpeg", ".webp"):
-                                    cand = sdir / f"{aid}{ext}"
-                                    if cand.is_file():
-                                        e["src"] = str(cand)
-                                        bound += 1
-                                        break
-                                if e.get("src"):
-                                    break
-                elif e.get("src") and not Path(e["src"]).is_absolute():
-                    e["src"] = str((base_dir / e["src"]).resolve())
-
-    from guard import normalize_spec, check_spec
-    norm_spec, _ = normalize_spec(spec)
-    guard_report = check_spec(norm_spec)
-    blocking = [iss for iss in guard_report.get("issues", []) if iss.get("severity") in ("block", "error", "BLOCK")]
-    if blocking:
-        print(f"VAO make: BLOCKED · {len(blocking)} blocking issue(s):")
-        for b in blocking:
-            print(f"  ✗ [{b.get('slide', '?')}:{b.get('id', '?')}] {b.get('message', b)}")
-        return 2
-
-    from compiler import compile_deck
-    out_path = Path(args.output).expanduser()
-    if not out_path.is_absolute():
-        out_path = base_dir / out_path
-    compile_deck(norm_spec, str(out_path))
-    file_bytes = out_path.stat().st_size
-
-    preview_dir = getattr(args, "preview", "preview")
-    info = _ghost(norm_spec, preview_dir, None, base_path=base_dir, speed=getattr(args, "speed", "fast"))
-
-    manifest_path = out_path.with_suffix(".manifest.json")
-    from primitives import file_digest
-    _json_write(manifest_path, {
-        "output_path": str(out_path),
-        "output_size": file_bytes,
-        "output_sha256": file_digest(out_path),
-        "status": "PASS",
-        "release_eligible": True,
-        "slide_count": len(slides),
-        "bound_images": bound,
-        "contact_sheet": info.get("contact_sheet"),
-    })
-
-    print(f"VAO make: PASS · compiled {len(slides)} slides to {out_path.name} ({file_bytes/1024/1024:.1f} MB) · preview: {info.get('contact_sheet')}")
-    return 0
-
+    output = Path(args.output).expanduser()
+    if not output.is_absolute():
+        output = build_file.parent / output
+    manifest = getattr(args, "assets_manifest", None)
+    if manifest is None:
+        sibling = build_file.parent / "asset_manifest.json"
+        manifest = str(sibling) if sibling.is_file() else None
+    _, code = run_check(
+        str(build_file), str(output), mode=args.mode,
+        preview=getattr(args, "preview", None),
+        assets_manifest=manifest,
+        assets_dir=getattr(args, "assets_dir", None),
+        speed=getattr(args, "speed", "fast"),
+        deadline=getattr(args, "deadline", None),
+    )
+    return code
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
