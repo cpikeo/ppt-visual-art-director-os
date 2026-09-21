@@ -22,12 +22,10 @@ normalize → guard → compile → 分组修复包，全程单进程、零外�
 """
 from __future__ import annotations
 
-import hashlib
 import time
 from pathlib import Path
 
-from guard import check_spec
-from primitives import file_digest as _sha256_file, spec_fingerprint
+from primitives import file_digest, spec_fingerprint
 
 # ── 执行模式（三个已足够：诊断 / 创作 / 交付）─────────────────────────────
 # 简单任务走 draft，复杂任务才需要 release 的全量收口——深度由任务赢得，
@@ -176,139 +174,38 @@ def build_trace_summary(items) -> list:
     return [agg[k] for k in order]
 
 
-def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
-           normalize: bool = True, compile: bool | None = None,
-           guard_rules: dict | None = None,
-           spec_path: str | Path | None = None,
-           cache: bool = True,
-           cache_dir: str | Path | None = None,
-           image_bytes: dict | None = None) -> dict:
-    """一次调用完成 normalize → guard → compile，输出可交付判定与分组修复包。
+def release_guard_rules(mode: str | None, guard_rules: dict | None = None) -> dict:
+    """release 档的 Guard 证据要求（唯一真源）：数值图表出处升为硬门。"""
+    rules = dict(guard_rules or {})
+    if mode == "release" and "require_provenance" not in rules:
+        rules["require_provenance"] = True
+    return rules
 
-    - `mode`：spec（只诊断）/ draft（默认）/ release（交付门）。
-    - `normalize`：入口归一化（网格/色/字体的机械吸附）。生产链在 vao.py 已归一，
-      故传入 False 避免二次深拷贝；重复归一化本身幂等。
-    - `cache`：编译复用。semantic view 与 PPTX 字节戳都对得上才复用，否则重编。
+
+def verdict(spec: dict, output: str | Path, *, mode: str | None = None,
+            guard_report: dict, compile_report: dict,
+            speed: str = "strict",
+            runtime_facts: dict | None = None) -> dict:
+    """判定层：**只消费报告**（guard_report + compile_report），不编译、不读产物字节。
+
+    编排归调用方（vao：normalize → guard → compile → 预览 → 本函数 → 清单）。
+    这条边界是 2026-09 审核定下的：QA 一旦自己触发编译，产物就可能在
+    「判定输入的见证」之外被重建，职责也从「归因」滑向「生产」。
     """
     t0 = time.time()
+    speed = "fast" if str(speed or "").strip().lower() == "fast" else "strict"
     prof = mode_profile(mode)
     mode = prof["mode"]
+    facts = dict(runtime_facts or {})
+    output_path = Path(output)
+    do_compile = bool(prof["compile"])
+    guard = guard_report if isinstance(guard_report, dict) else {}
     if not isinstance(spec, dict):
         # API 边界也要给出可消费的判定，而不是把 AttributeError 泄漏给调用方；
-        # guard 仍是唯一的 schema 真源。
+        # guard 仍是唯一的 schema 真源（它在编排层跑过，报告在这里被消费）。
         spec = {"slides": [], "_input_error": "spec 顶层必须是对象/dict"}
-    output_path = Path(output)
-    cache_root = (Path(cache_dir) if cache_dir
-                  else output_path.with_name(output_path.stem + "_vao"))
-    do_compile = prof["compile"] if compile is None else bool(compile)
-
-    # 0) 归一化（幂等）：机械偏差吸附后才进入判定。
-    norm_report = None
-    if normalize:
-        from guard import normalize_spec
-        spec, norm_report = normalize_spec(spec)
-
-    if do_compile and cache:
-        from compile_cache import compile_reuse, record_compile, spec_view
-
-    # 1) Guard：唯一的静态判定真源。release 档把数值图表出处升为硬门。
-    effective_rules = dict(guard_rules or {})
-    if mode == "release" and "require_provenance" not in effective_rules:
-        effective_rules["require_provenance"] = True
-    provenance_required = bool(effective_rules.get("require_provenance", False))
-    t_guard = time.time()
-    guard = check_spec(spec, rules=effective_rules)
-    t_guard_end = time.time()
     guard_errors = [c for c in guard.get("checks", []) if c.get("level") == "error"]
-
-    # 2) Compile：Guard 通过才编译；命中缓存则连 python-pptx 都不加载。
-    compile_report: dict | None = None
-    semantic_view = None
-    cache_reason = "not_compiled"
-    if not do_compile:
-        compile_report = {"passed": True, "skipped": True, "warnings": [],
-                          "slides": len(spec.get("slides") or []), "file_bytes": None,
-                          "reason": "spec_mode_no_compile", "output_exists": False,
-                          "output_sha256": None}
-    elif guard_errors:
-        cache_reason = "guard_error"
-        compile_report = {"passed": False, "skipped": True, "warnings": [],
-                          "slides": len(spec.get("slides") or []), "file_bytes": None,
-                          "reason": "engineering_gate", "output_exists": False,
-                          "output_sha256": None}
-    if do_compile and not guard_errors:
-        if cache:
-            try:
-                cache_root.mkdir(parents=True, exist_ok=True)
-                semantic_view = spec_view(spec, base_path=output_path.parent,
-                                          spec_path=spec_path, image_bytes=image_bytes)
-                compile_report = compile_reuse(cache_root, output_path, semantic_view)
-                cache_reason = ("view_and_output_attestation_match"
-                                if compile_report is not None else "cache_miss")
-            except Exception:
-                cache_reason = "cache_probe_failed"
-                compile_report = None
-        if compile_report is None:
-            try:
-                from compiler import compile_deck
-                compile_report = compile_deck(spec, output_path, checks=False,
-                                              guard_rules=effective_rules,
-                                              spec_path=str(spec_path) if spec_path else None, image_bytes=image_bytes)
-            except ModuleNotFoundError as exc:
-                if exc.name in {"pptx", "lxml", "PIL", "numpy"}:
-                    compile_report = {
-                        "passed": False, "slides": len(spec.get("slides") or []),
-                        "warnings": [f"[dependency] 缺少编译依赖 {exc.name!r}；请运行 "
-                                     "python -m pip install -r requirements.txt"],
-                        "file_bytes": None, "dependency_missing": exc.name}
-                else:
-                    raise
-
-    # 2.1) 产物凭证：报告必须能对上磁盘上的那一份 PPTX，缓存报告不算证据。
-    t_attest = time.time()
-    if do_compile and not compile_report.get("skipped"):
-        try:
-            actual_bytes = output_path.stat().st_size
-            actual_sha = compile_report.pop("_cache_verified_sha256", None) or _sha256_file(output_path)
-            if compile_report.get("file_bytes") is not None \
-                    and int(compile_report["file_bytes"]) != actual_bytes:
-                compile_report.setdefault("warnings", []).append(
-                    f"[output] 编译报告 file_bytes={compile_report['file_bytes']} "
-                    f"与实际文件 {actual_bytes} 不一致")
-                compile_report["passed"] = False
-            expected_sha = compile_report.get("output_sha256")
-            if expected_sha and actual_sha and expected_sha != actual_sha:
-                compile_report.setdefault("warnings", []).append(
-                    "[output] 编译报告 output_sha256 与实际 PPTX 不一致（文件可能被替换）")
-                compile_report["passed"] = False
-            if not actual_sha:
-                compile_report.setdefault("warnings", []).append(
-                    f"[output] 无法计算 PPTX SHA-256: {output_path}")
-                compile_report["passed"] = False
-            compile_report["file_bytes"] = actual_bytes
-            compile_report["output_sha256"] = actual_sha
-            compile_report["output_path"] = str(output_path.resolve())
-            compile_report["output_exists"] = True
-        except (OSError, TypeError, ValueError):
-            compile_report.setdefault("warnings", []).append(
-                f"[output] 编译输出不存在或不可读取: {output_path}")
-            compile_report["passed"] = False
-            compile_report["output_exists"] = False
-            compile_report["output_sha256"] = None
-    if semantic_view is None and do_compile and not compile_report.get("skipped"):
-        try:
-            from compile_cache import spec_view as _spec_view
-            semantic_view = _spec_view(spec, base_path=output_path.parent,
-                                       spec_path=spec_path, image_bytes=image_bytes)
-        except Exception:
-            semantic_view = None
-    if semantic_view:
-        # 输入投影与产物字节戳是两件事：前者判"要不要重编"，后者判"文件是不是它"。
-        compile_report["semantic_compile_view"] = semantic_view
-    if cache and semantic_view and compile_report.get("output_sha256") \
-            and compile_report.get("output_exists"):
-        record_compile(cache_root, output_path, semantic_view, compile_report)
-    t_attest_end = time.time()
+    provenance_required = bool(facts.get("provenance_required", False))
     compile_warnings = list(compile_report.get("warnings", []))
 
     # 4) 判定：只有阻断项改变状态；分数与警告都不参与。
@@ -374,8 +271,9 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         "qa_version": "5.0",
         # 自证戳：报告属于哪一份 spec（Normalizer 确定性吸附的证明链见 normalization）
         "source_spec_hash": spec_fingerprint(spec),
-        "normalization": norm_report,
+        "normalization": facts.get("normalization"),
         "execution": {"entrypoint": "vao.py", "mode": mode, "profile": prof["label"],
+                      "speed": speed,
                       "compiled": do_compile, "provenance_required": provenance_required,
                       "external_renderer": "disabled",
                       "visual_evidence": "ghost_preview"},
@@ -394,33 +292,34 @@ def run_qa(spec: dict, output: str | Path, *, mode: str | None = None,
         "failure_codes": failure_codes,
         "affected_slides": sorted({str(it.get("id")) for it in blocking_items if it.get("id")}),
         "guard": {"checks": len(guard.get("checks", [])),
-                  "errors": len(guard_errors),
-                  "line_measure": guard.get("line_measure")},
+                  "errors": len(guard_errors)},
         "compile": {"passed": compile_report.get("passed"),
                     "skipped": compile_report.get("skipped"),
                     "reason": compile_report.get("reason"),
+                    "performance": compile_report.get("performance"),
                     "trace": len(compile_warnings),
                     "slides": compile_report.get("slides"),
                     "file_bytes": compile_report.get("file_bytes"),
                     "semantic_compile_view": compile_report.get("semantic_compile_view"),
+                    # 产物只有一个身份：output_sha256（此前还并存一个同值的
+                    # artifact_sha256，同一事实存两遍，没有任何消费者）。
                     "output_sha256": compile_report.get("output_sha256"),
-                    "artifact_sha256": compile_report.get("output_sha256"),
-                    "output_path": compile_report.get("output_path")},
+                    "output_path": compile_report.get("output_path"),
+                    # 见证身份（size+mtime）：清单据此判断要不要重复整包哈希
+                    "output_size": compile_report.get("output_size"),
+                    "output_mtime_ns": compile_report.get("output_mtime_ns"),
+                    "attestation_mode": compile_report.get("attestation_mode")},
         "fix_plan": build_fix_plan(failure_codes, guard.get("checks") or [], compile_report),
         "trace_summary": build_trace_summary(items),
         "next_action": next_action,
         "performance": {
-            "total_ms": int((time.time() - t0) * 1000),
-            "guard_ms": int((t_guard_end - t_guard) * 1000),
-            "compile_ms": int((t_attest - t_guard_end) * 1000),
-            "attestation_ms": int((t_attest_end - t_attest) * 1000),
+            **{k: facts.get(k) for k in ("total_ms", "guard_ms", "compile_ms", "attestation_ms",
+                                         "cache_reason", "cache_enabled", "cache_dir")},
+            "speed_profile": speed,
             "slides": len(spec.get("slides") or []),
             "compile_reused": bool(compile_report.get("reused")),
-            "cache_enabled": bool(cache),
-            "cache_reason": cache_reason,
-            "cache_dir": str(cache_root) if do_compile else None,
         },
-        "elapsed_ms": int((time.time() - t0) * 1000),
+        "elapsed_ms": int(facts.get("total_ms") or int((time.time() - t0) * 1000)),
     }
     result["_effective_spec"] = spec  # consumed by vao before report serialization
     return result
@@ -442,18 +341,34 @@ def fail_result(result: dict, problems: list[str], code: str = "GUARD_FAIL") -> 
 
 
 def preview_issues(ghost: dict | None, page_ids: list[str]) -> list[str]:
-    """Verify actual preview bytes, not only self-reported counts."""
+    """Verify actual preview bytes, not only self-reported counts.
+
+    `scope="sampled"`（v5.9 快速档）：预览按方向采样（封面 / 最复杂页 / 图片页 /
+    收尾），此时要求「声明的采样页 == 实际渲染页 == 文件数」，且每一页都在当前
+    稿件的页集合内。采样是**声明的证据范围**，不是缺失的证据——清单上写清
+    `evidence_scope`，就不允许再冒充全量覆盖。
+    """
     if not isinstance(ghost, dict):
         return ["缺少方向预览证据"]
     pages = ghost.get("pages") or []
-    if (ghost.get("slide_ids") != page_ids or ghost.get("count") != len(page_ids)
+    scope = str(ghost.get("scope") or "full")
+    if scope == "sampled":
+        expected = [str(x) for x in (ghost.get("sampled_ids") or [])]
+        actual = [str(x) for x in (ghost.get("slide_ids") or [])]
+        if (not expected or expected != actual or ghost.get("count") != len(expected)
+                or len(pages) != len(expected) or len(set(pages)) != len(pages)):
+            return ["采样预览的声明页与实际渲染页不一致（采样范围必须可核对）"]
+        outside = [x for x in expected if x not in {str(p) for p in page_ids}]
+        if outside:
+            return ["采样预览引用了当前稿件之外的页面：" + "、".join(outside)]
+    elif (ghost.get("slide_ids") != page_ids or ghost.get("count") != len(page_ids)
             or len(pages) != len(page_ids) or len(set(pages)) != len(pages)):
         return ["预览页 ID/数量没有完整覆盖当前稿件"]
     hashes = ghost.get("file_sha256") or {}
     files = pages + [ghost.get("contact_sheet")]
     issues = []
     for path in files:
-        if not path or not hashes.get(str(path)) or _sha256_file(path) != hashes.get(str(path)):
+        if not path or not hashes.get(str(path)) or file_digest(path) != hashes.get(str(path)):
             issues.append(f"预览文件缺失/被修改或缺少字节凭证: {path}")
     return issues
 
@@ -467,6 +382,12 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
 
     清单是发布边界的最后一道证明：声称 PASS 的报告必须能被追溯到当前 spec，
     且编译产物字节戳与磁盘一致；预览证据引用的页面必须都在当前 spec 里。
+
+    产物核对分两级（v5.9）：
+      * **同进程 stat 守卫**：本轮刚读出的字节戳 + size/mtime 未变化 ⇒ 直接采信
+        （q_report.attestation 已证明过这份字节，再哈希一次不增加任何安全性）；
+      * **重哈希**：stat 与见证不一致、或报告来自别处 ⇒ 老实重读整包再核对。
+    快路径不是漏检路径：任何不一致都会落回慢路径。
     """
     from datetime import datetime, timezone
 
@@ -520,15 +441,24 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
             if not output_path or not output_sha:
                 issues.append("qa_report 的 PPTX 凭证不完整：需要 output_path 与 output_sha256")
             else:
+                witnessed = (int(compile_claim.get("output_size") or -1),
+                             int(compile_claim.get("output_mtime_ns") or -1))
                 try:
-                    h = hashlib.sha256()
-                    with Path(output_path).open("rb") as handle:
-                        for chunk in iter(lambda: handle.read(1 << 16), b""):
-                            h.update(chunk)
-                    if h.hexdigest() != output_sha:
-                        issues.append("qa_report 的 PPTX output_sha256 与文件当前内容不一致")
+                    stat = Path(output_path).stat()
                 except (OSError, TypeError, ValueError):
-                    issues.append(f"qa_report 的 PPTX output_path 不可读取: {output_path}")
+                    stat = None
+                if stat is not None and witnessed == (stat.st_size, stat.st_mtime_ns):
+                    notes.append("产物字节戳由同一轮统计见证（size+mtime 未变），未重复整包哈希")
+                else:
+                    try:
+                        # 凭证已经移动过 ⇒ 必须重算（file_digest 只在同一份字节上复用，
+                        # 这里字节已变，同库唯一实现会真的读一遍）。
+                        if file_digest(output_path) != output_sha:
+                            issues.append("qa_report 的 PPTX output_sha256 与文件当前内容不一致")
+                        else:
+                            notes.append("产物字节戳在读取后发生变化，已重新整包哈希核对")
+                    except (OSError, TypeError, ValueError):
+                        issues.append(f"qa_report 的 PPTX output_path 不可读取: {output_path}")
     if str(qa_report.get("status", "")).upper() == "PASS":
         if not qa_report.get("release_eligible"):
             issues.append("qa_report 声称 PASS 但 release_eligible=false")
@@ -538,8 +468,10 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
             issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")
     ver = {"external_renderer": "disabled",
            "visual_evidence": "ghost_preview" if ghost else "structural_only",
+           "visual_evidence_scope": (ghost or {}).get("scope", "full") if ghost else None,
            "structural_pages": len(page_ids),
            "ghost_pages": (ghost or {}).get("count") if ghost else 0,
+           "speed": (qa_report.get("execution") or {}).get("speed"),
            "release_eligible": bool(qa_report.get("release_eligible"))}
     if isinstance(verification, dict):
         ver.update(verification)

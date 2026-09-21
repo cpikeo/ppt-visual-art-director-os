@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
+# 方向预览是可选证据：剩余预算不足它（含 contact sheet）时宁可不渲染 —— 
+# 一次超时的「交付」比没有预览的交付更糟。
+GHOST_MIN_BUDGET_S = 4.0
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
@@ -142,8 +145,9 @@ def bind_asset_manifest(spec: dict, manifest_path: str | Path,
     prompt text into the spec.  Missing references are reported as one grouped
     binding issue and are left as explicit missing paths for compiler diagnostics.
     """
+    from primitives import json_read_cached
     manifest_file = Path(manifest_path).expanduser().resolve()
-    payload = json.loads(manifest_file.read_text(encoding="utf-8"))
+    payload = json_read_cached(manifest_file)
     from asset_workflow import asset_entries, asset_root, resolve_asset
     by_id = {str(item["asset_id"]): item for item in asset_entries(payload)}
     root = asset_root(payload, manifest_file, assets_dir)
@@ -187,7 +191,7 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
     from intent_compiler import _load_need
 
     need = _load_need(brief_path)
-    bundle = build_plan_bundle(need)       # route/forecast/layout: one in-process pass
+    bundle = build_plan_bundle(need)       # route + page intents: one in-process pass
     if not bundle.get("pages"):
         # 0 页不是「轻量交付」，是死路：没有内容就没有可判断的对象。
         # 早失败并给出一句可执行的修法，胜过交回一个空计划让上层自己猜。
@@ -476,50 +480,164 @@ def _repair_packet(result: dict, mode: str, build: Path, output: Path) -> dict:
         "asset_workflow": result.get("asset_workflow"),
         "release_eligible": result.get("release_eligible", False),
         "next_action": result.get("next_action"),
+        "speed": (result.get("execution") or {}).get("speed"),
+        "budget": result.get("budget"),
+        "preview": ({"scope": result["ghost_preview"].get("scope"),
+                     "pages": result["ghost_preview"].get("count"),
+                     "reused": result["ghost_preview"].get("reused")}
+                    if result.get("ghost_preview") else None),
         "performance": result.get("performance", {}),
     }
     return packet
 
 
 def _ghost(spec: dict, output_dir: str | Path, pages: list[int] | None = None,
-           base_path: str | Path | None = None, image_bytes: dict | None = None) -> dict:
-    from ghost import ghost_deck, make_contact_sheet
+           base_path: str | Path | None = None, image_bytes: dict | None = None,
+           decoded: dict | None = None, *, speed: str = "strict", limit: int = 4) -> dict:
+    """方向预览证据：默认全量，快速档按方向采样（封面/最复杂页/图片页/收尾）。
+
+    采样不是「少看点」——是**把证据范围写清楚**：info 里带 scope 与 sampled_ids，
+    清单按声明核对（采样页必须等于渲染页，且都在当前稿件的页集合内）。
+    """
+    from ghost import PAGE_CACHE_DIR, ghost_deck, make_contact_sheet, sample_pages
+    fast = str(speed).lower() == "fast"
+    slides = spec.get("slides") or []
+    if pages is not None:
+        wanted = [int(n) for n in pages]
+        scope = "full" if len(wanted) >= len(slides) else "explicit_subset"
+    elif fast:
+        wanted = sample_pages(slides, limit=limit)
+        scope = "full" if len(wanted) >= len(slides) else "sampled"
+    else:
+        wanted = list(range(1, len(slides) + 1))
+        scope = "full"
     preview_spec = dict(spec)
     preview_spec["_image_bytes"] = image_bytes or {}
+    # 底图解码复用：核验阶段（QC）已经解过的底图直接交给预览，同一轮里一张图只解一次。
+    preview_spec["_image_decoded"] = decoded or {}
     if base_path:
         preview_spec["_base_path"] = str(Path(base_path).resolve())
-    paths = ghost_deck(preview_spec, output_dir, pages=pages, scale=0.5)
-    contact = make_contact_sheet(paths, Path(output_dir) / "ghost-contact-sheet.png")
+    rendered: list = []
+    page_stats: dict = {}
+    paths = ghost_deck(preview_spec, output_dir, pages=wanted,
+                       scale=0.5, supersample=1 if fast else 2, store=True,
+                       png_compress_level=1 if fast else 6, images_out=rendered,
+                       stats=page_stats)
+    sheet_stats: dict = {}
+    contact = make_contact_sheet(paths, Path(output_dir) / "ghost-contact-sheet.png",
+                                 images=rendered,
+                                 png_compress_level=1 if fast else 6,
+                                 cache_dir=Path(output_dir) / PAGE_CACHE_DIR,
+                                 stats=sheet_stats)
+    drawn_pages = [int(n) for n in (page_stats.get("rendered_pages") or [])]
+    cached_pages = [int(n) for n in (page_stats.get("cached_pages") or [])]
+    sampled_ids = [str(slides[n - 1].get("id")) for n in wanted
+                   if 1 <= n <= len(slides) and isinstance(slides[n - 1], dict)]
     return {"type": "ghost_layout_preview", "dir": str(Path(output_dir)),
             "pages": [str(p) for p in paths], "count": len(paths),
+            "pages_rendered": wanted, "page_count": len(slides),
+            "scope": scope, "sampled_ids": sampled_ids,
             "contact_sheet": str(contact) if contact else None,
-            "renderer": "PIL", "supersampled": True,
+            "renderer": "PIL", "supersampled": not fast,
+            # 这一轮真正画了几页 / 命中上一轮页缓存几页（迭代时改一页只画一页）。
+            # 页号清单是唯一事实来源：当年这里写 `page_stats.get("rendered", len(paths))`，
+            # 全部命中缓存时 rendered 键根本不存在，默认值把「一页没画」记成了「全画了」。
+            "pages_drawn": len(drawn_pages),
+            "pages_from_cache": len(cached_pages),
+            "pages_drawn_numbers": drawn_pages,
+            "pages_reused_numbers": cached_pages,
+            # 联络表是页图的纯函数：页图没变就复制上一轮那张（字节相同）
+            "contact_sheet_cached": bool(sheet_stats.get("sheet_cached")),
             "evidence_scope": "direction_and_structure_not_pixel_proof"}
 
 
 def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
-                     *, phase: str = "draft",
-                     output: str | None = None) -> tuple[dict, int]:
+                     *, phase: str = "draft", speed: str = "strict",
+                     output: str | None = None,
+                     snapshots: dict | None = None,
+                     decoded: dict | None = None,
+                     digests: dict | None = None) -> tuple[dict, int]:
     """资产核验：一次判定，一条修法（draft 最多一次定向重出）。
 
     这是 `check` 内部的一步，不是独立入口——绑定、核验、结论必须在同一次
     执行里发生，否则分步执行会漂移（v5.7：asset-qc 与 check 合并）。
-    """
-    from asset_prompt import ROLE_AUTHORITATIVE_SOURCES, image_qc, qc_retry_decision
 
+    性能纪律（v5.9）：
+      * `speed="fast"` 时像素统计在整数箱降采样后的工作域进行（判据口径不变，
+        每块仍 ≈QC_BLOCK 源像素）；严格档保持原分辨率。
+      * 这里读到的图片字节就是本轮唯一一次读取：写进 `snapshots` 后，
+        资产链核验与编译器直接消费同一份不可变字节（不再读第二遍）。
+      * 每个资产的 size+mtime_ns 一并记入报告，供下游做「字节没变」的快路径判定。
+    """
+    from asset_prompt import (ROLE_AUTHORITATIVE_SOURCES, image_qc, qc_policy,
+                              qc_profile, qc_retry_decision)
+
+    from primitives import (digest_bytes, engine_fingerprint, json_read_cached,
+                            witness_matches)
+    from asset_workflow import QC_REPORT_SCHEMA
     manifest_file = Path(manifest_path).expanduser().resolve()
-    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-    import hashlib
+    manifest = json_read_cached(manifest_file)
     from asset_workflow import (ACCEPTED, asset_entries, digest,
                                 now, resolve_asset, verify_sources)
+    profile = qc_profile(speed)
+    # spec 档只诊断不产出：资产核验照常执行，但 QC 阶段必须是合法值
+    # （此前 spec + --assets-manifest 会在 qc_retry_decision 里抛 unknown phase）。
+    qc_phase = "draft" if str(phase).strip().lower() not in {"draft", "review", "release"} \
+        else str(phase).strip().lower()
+    # ── 上一轮判定的复用前提（缺一即重新测量）─────────────────────────────
+    #   * 同一份清单（manifest_sha256）与同一阶段；
+    #   * 同一像素预算（档位 / max_side）；
+    #   * 同一判定实现（asset_prompt.py 的指纹——阈值或口径一改，旧判定作废）；
+    #   * 每个资产的字节身份（size+mtime_ns，严格档再加 sha256）与判定输入一致。
+    # 「复用」只在全部成立时发生，任一不成立即回到完整测量：快路径不是漏检路径。
+    prev_report: dict = {}
+    reuse_base: str | None = None
+    prev_results: dict = {}
+    try:
+        from asset_workflow import file_digest
+        prev_path = Path(output).expanduser() if output else manifest_file.with_name(
+            manifest_file.stem + ".qc.json")
+        if prev_path.exists():
+            prev_report = json_read_cached(prev_path)
+    except (OSError, ValueError, TypeError):
+        prev_report = {}
+    if prev_report:
+        engine_now = engine_fingerprint("measure")
+        if (prev_report.get("manifest_sha256") == digest(manifest)
+                and prev_report.get("pixel_profile") == profile
+                and prev_report.get("phase") == qc_phase
+                and prev_report.get("qc_engine") == engine_now):
+            reuse_base = "sha256" if profile.get("speed") == "strict" else "size+mtime_ns"
+            prev_results = {str(r.get("asset_id")): r for r in (prev_report.get("results") or [])}
+    reused_assets = 0
     workflow_issues = verify_sources(manifest)
     results = []
     actions: dict[str, list[str]] = {}
     pending: list[str] = []        # 还没生成（先出图再 QC），与「生成不合格」分开报
+    strict_witness = (reuse_base == "sha256")
     for entry in asset_entries(manifest):
         candidate = resolve_asset(entry, manifest, manifest_file, input_dir)
-        blob = candidate.read_bytes() if candidate.is_file() else None
-        image_sha = hashlib.sha256(blob).hexdigest() if blob is not None else None
+        try:
+            stat = candidate.stat()
+            size, mtime_ns = stat.st_size, stat.st_mtime_ns
+        except OSError:
+            size, mtime_ns = None, None
+        # 字节按需读、摘要按需算。快档若上一轮凭证已带 sha256 且字节身份一致，
+        # 本轮**不需要字节**：判定看 size+mtime_ns，编译投影与资产链核验消费凭证里
+        # 的 sha256，预览与编译都在各自缓存里。此前这里无条件读整批字节——热轮里
+        # 50MB 读进来没有任何消费者，那不是证据，是习惯（同一事实只产生一次）。
+        carried = (prev_results or {}).get(str(entry.get("asset_id"))) or {}
+        carried_witness = carried.get("witness") or {}
+        carried_sha = carried_witness.get("sha256")
+        carried_ok = bool(not strict_witness and carried_sha
+                          and witness_matches(carried_witness,
+                                              {"size": size, "mtime_ns": mtime_ns}))
+
+        def _bytes():
+            return candidate.read_bytes() if candidate.is_file() else None
+
+        blob = None if carried_ok else _bytes()
+        image_sha = carried_sha if carried_ok else (digest_bytes(blob) if blob is not None else None)
         if entry["decision"] == "generate" and image_sha and image_sha == entry.get("preexisting_sha256"):
             workflow_issues.append(f"{entry['asset_id']}: 清单前已有同一图片；须显式标记 existing/reuse")
         if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
@@ -531,37 +649,87 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
         safe = entry.get("safe_area") or {}
         text_color = ((entry.get("meta") or {}).get("text_color")
                       or (entry.get("page") or {}).get("text_color"))
-        qc = image_qc(str(candidate), safe_rect=safe,
-                      text_is_dark=(True if text_color == "dark" else
-                                    False if text_color == "light" else None),
-                      image_bytes=blob, expected_ratio=entry.get("ratio"),
-                      allow_crop=entry.get("allow_crop") is True,
-                      background=entry.get("background_color") or "#FFFFFF")
+        qc_inputs = {"safe_rect": safe, "text_color": text_color,
+                     "ratio": entry.get("ratio"),
+                     "allow_crop": entry.get("allow_crop") is True,
+                     "background": entry.get("background_color") or "#FFFFFF",
+                     "max_side": profile["max_side"]}
+        previous = (prev_results or {}).get(str(entry.get("asset_id")))
+        base_ok = bool(previous and reuse_base is not None and witness_matches(
+            previous.get("witness") or {}, {"size": size, "mtime_ns": mtime_ns}))
+        reused_qc = None
+        if previous and reuse_base is not None:
+            # 字节身份：判据只有一处（primitives.witness_matches）；严格档再比 sha256，
+            # 用的是已经算出的那份摘要，不再对同一批字节算第二遍。
+            same_bytes = witness_matches(
+                previous.get("witness") or {},
+                {"size": size, "mtime_ns": mtime_ns, "sha256": image_sha},
+                strict=(reuse_base == "sha256"))
+            if same_bytes and previous.get("qc_inputs") == qc_inputs:
+                reused_qc = dict(previous.get("qc") or {})
+        if reused_qc is None and blob is None:      # 判定要重测：此时像素是必需品
+            blob = _bytes()
+            if image_sha is None:
+                image_sha = digest_bytes(blob) if blob is not None else None
+        if blob is not None and snapshots is not None:
+            # 唯一一次读取：核验与编译共用这份字节（不变量：内容不可变）。
+            snapshots[str(candidate)] = blob
+        if image_sha is not None and digests is not None:
+            # 唯一一次哈希：下游（资产链核验 / 编译缓存投影）复用这份摘要，
+            # 不再对同一批字节各算一遍（实测一轮曾算三遍，208MB）。
+            digests[str(candidate)] = image_sha
+        if reused_qc is not None:
+            # 复用的是「判定」，不是「证据」：判定输入与字节身份都相同，像素级测量
+            # （降采样域统计 + 原生分辨率安全区纹理）结果只会一模一样。省掉的是
+            # 解码与统计——一轮 check 里最贵的两部分，且它每轮都在重复。
+            qc = reused_qc
+            qc["reused"] = True
+            qc["reused_from"] = previous.get("checked_at")
+            reused_assets += 1
+        else:
+            qc = image_qc(str(candidate), safe_rect=safe,
+                          text_is_dark=(True if text_color == "dark" else
+                                        False if text_color == "light" else None),
+                          image_bytes=blob, expected_ratio=entry.get("ratio"),
+                          allow_crop=entry.get("allow_crop") is True,
+                          background=entry.get("background_color") or "#FFFFFF",
+                          max_side=profile["max_side"],
+                          decoded=decoded, decode_key=str(candidate))
         # 角色只有「作者说过的话」才对 QC 有发言权（declared / legacy）；
         # assumed 角色不得悄悄放宽或收紧任何一条判据。
         role_authority = (entry.get("asset_role")
                           if entry.get("asset_role_source") in ROLE_AUTHORITATIVE_SOURCES
                           else None)
         decision = qc_retry_decision(qc, attempt=int(entry.get("attempt", 0) or 0),
-                                     phase=phase, max_retries=entry.get("retry_budget", 1),
+                                     phase=qc_phase, max_retries=entry.get("retry_budget", 1),
                                      asset_function=entry.get("asset_function"),
                                      asset_role=role_authority)
         missing = (qc.get("status") == "error")   # 文件不存在 ≠ 图片不合格：修法不同
         item = {"asset_id": entry.get("asset_id"), "slide_ids": entry.get("slide_ids") or [],
-                "file": str(candidate), "file_sha256": image_sha, "qc": qc, "policy": decision,
-                "missing": missing}
+                "file": str(candidate),
+                "qc_inputs": qc_inputs, "checked_at": now(),
+                # 字节凭证（全库唯一写法）：只读一次也能证明「还是那一份」。
+                # sha256 与整批资产共享同一份摘要（digests），不在这里另存一份。
+                "witness": {"size": size, "mtime_ns": mtime_ns, "sha256": image_sha},
+                "qc": qc, "policy": decision, "missing": missing}
         results.append(item)
         actions.setdefault(decision["action"], []).append(str(entry.get("asset_id")))
         if missing:
             pending.append(str(entry.get("asset_id")))
     report = {
-        "schema": "vao-asset-qc-v3",
+        "schema": QC_REPORT_SCHEMA,         # v4：字节凭证统一为 witness{size,mtime_ns,sha256}
+
         "manifest": str(manifest_file),
+        "qc_engine": engine_fingerprint("measure"),
         "manifest_sha256": digest(manifest), "checked_at": now(),
         "workflow_issues": workflow_issues,
         "status": "PASS" if not workflow_issues and all(
             (r.get("policy") or {}).get("action") in ACCEPTED for r in results) else "BLOCKED",
-        "phase": phase,
+        "phase": qc_phase,
+        "pixel_profile": profile,
+        # 复用范围写进报告：证据不会假装自己刚量过一遍。
+        "reuse": ({"assets": reused_assets, "witness": reuse_base}
+                  if reused_assets else None),
         "results": results,
         "summary": {k: len(v) for k, v in actions.items()},
         "retry_assets": actions.get("retry", []),
@@ -573,20 +741,29 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
     out_path = Path(output).expanduser() if output else manifest_file.with_name(
         manifest_file.stem + ".qc.json")
     report["report_path"] = str(out_path)
-    _json_write(out_path, report)
+    # 全部判定都复用的一轮不重写这份证据：文件上的 checked_at 回答的是「这些像素什么时候
+    # 被量过」，不是「谁什么时候读过它」。重写会把时间戳刷成「刚量过」——一句假话，
+    # 顺带改一次 mtime，逼下游把没变的字节再读一遍。判定内容不变 = 文件不必动。
+    # 只对「引擎自己派生的报告路径」生效：作者显式指定了输出路径（`vao assets --out`）
+    # 就是显式要一份文件，照写不误。
+    if output or not (prev_report and reuse_base is not None and results
+                      and reused_assets == len(results)):
+        _json_write(out_path, report)
     # 静默：一次执行只输出一条结论（check 打印）。0 只代表「每个应生成的资产都被
     # 验证过且无阻断」；未生成 = 无法验证 = 不能当作通过。
     return report, 0 if report["status"] == "PASS" else 2
 
 
-def _ghost_engine_stamp() -> str | None:
-    """渲染器指纹：预览复用必须同时命中产物字节戳与渲染器版本。"""
-    from compile_cache import _file_sha
-    return _file_sha(Path(__file__).resolve().parent / "ghost.py")
+def _ghost_engine_stamp() -> str:
+    """预览器指纹：唯一实现（primitives.engine_fingerprint 的 preview scope）。"""
+    from primitives import engine_fingerprint
+    return engine_fingerprint("preview", short=16)
 
 
 def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
-                  output_sha: str | None = None, image_bytes: dict | None = None) -> dict:
+                  output_sha: str | None = None, image_bytes: dict | None = None,
+                  decoded: dict | None = None,
+                  *, speed: str = "strict", limit: int = 4) -> dict:
     """方向预览证据：同一份 PPTX 只渲染一次（确定性产物 + 字节戳命中即复用）。
 
     复用前提是渲染器没变：ghost.py 的指纹也写进 marker，渲染器一改，
@@ -606,15 +783,19 @@ def _ghost_cached(spec: dict, output_dir: str | Path, base: Path,
         sheet = cached.get("contact_sheet")
         if (cached.get("output_sha256") == output_sha
                 and cached.get("engine") == engine
+                and cached.get("renderer_speed") == str(speed)
                 and sheet and not preview_issues(cached, page_ids)):
             info = dict(cached)
             info["reused"] = True
             return info
-    info = _ghost(spec, output_dir, base_path=base, image_bytes=image_bytes)
-    info["slide_ids"] = [str(s.get("id")) for s in (spec.get("slides") or [])
-                         if isinstance(s, dict) and s.get("id")]
+    info = _ghost(spec, output_dir, base_path=base, image_bytes=image_bytes,
+                  decoded=decoded, speed=speed, limit=limit)
+    # slide_ids = 实际渲染的页 id（证据核对用）；sampled_ids = 声明的采样范围。
+    # 两者在采模式下必须相等——「声明渲染了哪几页」与「渲染了哪几页」不允许不一致。
+    info["slide_ids"] = list(info.get("sampled_ids") or [])
     info["output_sha256"] = output_sha
     info["engine"] = engine
+    info["renderer_speed"] = str(speed)
     info["reused"] = False
     info["file_sha256"] = {str(p): file_digest(p)
                             for p in info["pages"] + [info["contact_sheet"]] if p}
@@ -626,8 +807,16 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
               json_output: bool = False,
               assets_manifest: str | None = None, assets_dir: str | None = None,
-              asset_qc_report: str | None = None) -> tuple[dict, int]:
-    """Fresh run identity and fail-closed reports, including errors before schema checks."""
+              asset_qc_report: str | None = None,
+              speed: str = "fast", deadline: float | None = None,
+              ghost_pages: int = 4) -> tuple[dict, int]:
+    """Fresh run identity and fail-closed reports, including errors before schema checks.
+
+    失败必须落盘（fail-closed），但**成功路径不再先写一份假失败**：
+    此前每次 check 都先构造 BLOCKED 报告、写 repair packet、写 manifest，再覆盖它们。
+    那是两次无效 I/O + 一次误导性的中间态（任何在这之间读文件的观察者都会看到
+    「这一轮已经 BLOCKED」）。现在只在真失败（异常 / 判定为阻断）时写。
+    """
     from uuid import uuid4
     from qa import fail_result
     from asset_workflow import file_digest
@@ -644,20 +833,24 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                 "release_eligible": False, "verification": {"release_eligible": False},
                 "input_sha256": result["input_sha256"], "qa_report": result,
                 "validation": {"issues": [result["next_action"]]}})
-    initial = fail_result({}, ["本轮检查尚未完成；不得复用上一轮 PASS"])
-    publish_failure(initial)
     try:
         result, code = _run_check(build_path, output, mode=mode, packet=packet, preview=preview,
             json_output=json_output,
             assets_manifest=assets_manifest, assets_dir=assets_dir,
-            asset_qc_report=asset_qc_report, run_id=run_id)
+            asset_qc_report=asset_qc_report, run_id=run_id, speed=speed,
+            deadline=deadline, ghost_pages=ghost_pages)
         if mode == "draft":
-            _json_write(manifest_path, {"run_id": run_id, "mode": "draft", "status": result["status"],
-                "release_eligible": False, "verification": {"release_eligible": False},
-                "qa_report": result, "next_action": "成功草稿仍须 --mode release 完成发布检查" if code==0 else result["next_action"]})
+            _json_write(manifest_path, {"run_id": run_id, "mode": "draft",
+                "status": result["status"], "release_eligible": False,
+                "verification": {"release_eligible": False}, "qa_report": result,
+                "next_action": ("成功草稿仍须 --mode release 完成发布检查" if code == 0
+                                else result.get("next_action"))})
         return result, code
     except Exception as exc:
         result = fail_result({}, [f"输入或执行失败: {type(exc).__name__}: {exc}"])
+        # 上一轮的 PASS 不能继承：失败一律留下 BLOCKED 凭证。
+        result["stale_pass_write"] = _stale_manifest_write(manifest_path, run_id, result,
+                                                          build_path, mode)
         publish_failure(result)
         if json_output:
             print(json.dumps(_repair_packet(result, mode, Path(build_path), output_path), ensure_ascii=False))
@@ -666,27 +859,184 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         return result, 2
 
 
+def _stale_manifest_write(manifest_path: Path, run_id: str, result: dict,
+                          build_path: str, mode: str) -> bool:
+    """把失败写进产物清单位（同一份路径），确保「上一轮 PASS」不会留在磁盘上冒充本轮。"""
+    if mode == "spec":
+        return False
+    try:
+        from asset_workflow import file_digest
+        _json_write(manifest_path, {"run_id": run_id, "status": "BLOCKED",
+            "release_eligible": False, "verification": {"release_eligible": False},
+            "input_sha256": file_digest(Path(build_path).expanduser()),
+            "qa_report": result, "validation": {"issues": [result.get("next_action")]}})
+        return True
+    except Exception:
+        return False
+
+
+def _compile_step(spec: dict, output_path: Path, *, mode: str, speed: str,
+                  guard_errors: list, effective_rules: dict,
+                  cache: bool = True, spec_path: str | None = None,
+                  image_bytes: dict | None = None,
+                  digests: dict | None = None,
+                  decode_seed: dict | None = None,
+                  t_guard_start: float | None = None) -> tuple[dict, dict]:
+    """产物生产（编排层职责）：缓存探测 → 编译 → 产物凭证 → 缓存写入。
+
+    2026-09 审核把这段从 qa 移到这里：**编译是执行层的事**，QA 只消费产物报告。
+    原来的形状是「QA 发现没有 compile_report 就自己编译」——判定层因此同时是生产者，
+    产物可能在「判定输入的见证」之外被重建。现在：vao 编译并出报告，QA 只读报告。
+    返回 (compile_report, timing)：timing 是这一段的真实读数（判定层据此写报告）。
+    """
+    from compile_cache import compile_reuse, record_compile, spec_view
+    from primitives import file_digest
+
+    t_guard_end = time.perf_counter()
+    t_guard_start = t_guard_end if t_guard_start is None else t_guard_start
+    compile_report: dict | None = None
+    semantic_view = None
+    cache_reason = "not_compiled"
+    cache_root = output_path.with_name(output_path.stem + "_vao")
+    if cache:
+        try:
+            cache_root.mkdir(parents=True, exist_ok=True)
+            semantic_view = spec_view(spec, base_path=output_path.parent,
+                                      spec_path=spec_path, image_bytes=image_bytes,
+                                      digests=digests)
+            compile_report = compile_reuse(cache_root, output_path, semantic_view,
+                                           fast_probe=(speed == "fast"), speed=speed)
+            cache_reason = ("view_and_output_attestation_match"
+                            if compile_report is not None else "cache_miss")
+        except Exception:
+            cache_reason = "cache_probe_failed"
+            compile_report = None
+    if compile_report is None:
+        try:
+            from compiler import compile_deck
+            compile_report = compile_deck(spec, output_path, checks=False,
+                                          decode_seed=decode_seed,
+                                          guard_rules=effective_rules,
+                                          spec_path=str(spec_path) if spec_path else None,
+                                          image_bytes=image_bytes, speed=speed)
+        except ModuleNotFoundError as exc:
+            if exc.name in {"pptx", "lxml", "PIL", "numpy"}:
+                compile_report = {
+                    "passed": False, "slides": len(spec.get("slides") or []),
+                    "warnings": [f"[dependency] 缺少编译依赖 {exc.name!r}；请运行 "
+                                 "python -m pip install -r requirements.txt"],
+                    "file_bytes": None, "dependency_missing": exc.name}
+            else:
+                raise
+    t_attest = time.perf_counter()
+
+    # 产物凭证：报告必须能对上磁盘上的那一份 PPTX，缓存报告不算证据。
+    if not compile_report.get("skipped"):
+        try:
+            stat = output_path.stat()
+            actual_bytes = stat.st_size
+            actual_sha = compile_report.pop("_cache_verified_sha256", None) or file_digest(output_path)
+            if compile_report.get("file_bytes") is not None \
+                    and int(compile_report["file_bytes"]) != actual_bytes:
+                compile_report.setdefault("warnings", []).append(
+                    f"[output] 编译报告 file_bytes={compile_report['file_bytes']} "
+                    f"与实际文件 {actual_bytes} 不一致")
+                compile_report["passed"] = False
+            expected_sha = compile_report.get("output_sha256")
+            if expected_sha and actual_sha and expected_sha != actual_sha:
+                compile_report.setdefault("warnings", []).append(
+                    "[output] 编译报告 output_sha256 与实际 PPTX 不一致（文件可能被替换）")
+                compile_report["passed"] = False
+            if not actual_sha:
+                compile_report.setdefault("warnings", []).append(
+                    f"[output] 无法计算 PPTX SHA-256: {output_path}")
+                compile_report["passed"] = False
+            compile_report["file_bytes"] = actual_bytes
+            compile_report["output_sha256"] = actual_sha
+            compile_report["output_path"] = str(output_path.resolve())
+            compile_report["output_exists"] = True
+            # 见证信息：本轮读到的到底是哪一份字节。发布清单据此避免重复整包哈希
+            # （stat 不一致时它仍会重新哈希——快路径不得成为漏检路径）。
+            compile_report["output_size"] = actual_bytes
+            compile_report["output_mtime_ns"] = stat.st_mtime_ns
+            compile_report["attestation_mode"] = ("cache_view_match"
+                                                 if compile_report.get("reused") else "content_hash")
+        except (OSError, TypeError, ValueError):
+            compile_report.setdefault("warnings", []).append(
+                f"[output] 编译输出不存在或不可读取: {output_path}")
+            compile_report["passed"] = False
+            compile_report["output_exists"] = False
+            compile_report["output_sha256"] = None
+    if semantic_view is None and not compile_report.get("skipped"):
+        try:
+            from compile_cache import spec_view as _spec_view
+            semantic_view = _spec_view(spec, base_path=output_path.parent,
+                                       spec_path=spec_path, image_bytes=image_bytes)
+        except Exception:
+            semantic_view = None
+    if semantic_view:
+        # 输入投影与产物字节戳是两件事：前者判"要不要重编"，后者判"文件是不是它"。
+        compile_report["semantic_compile_view"] = semantic_view
+    if cache and semantic_view and compile_report.get("output_sha256") \
+            and compile_report.get("output_exists"):
+        record_compile(cache_root, output_path, semantic_view, compile_report)
+    t_attest_end = time.perf_counter()
+    timing = {"guard_ms": int((t_guard_end - t_guard_start) * 1000),
+              "compile_ms": int((t_attest - t_guard_end) * 1000),
+              "attestation_ms": int((t_attest_end - t_attest) * 1000),
+              "cache_reason": cache_reason, "cache_enabled": bool(cache),
+              "cache_dir": str(cache_root)}
+    return compile_report, timing
+
 def _run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
               json_output: bool = False,
               assets_manifest: str | None = None,
               assets_dir: str | None = None,
               asset_qc_report: str | None = None,
-              run_id: str | None = None) -> tuple[dict, int]:
+              run_id: str | None = None,
+              speed: str = "fast",
+              deadline: float | None = None,
+              ghost_pages: int = 4) -> tuple[dict, int]:
     """一次执行完成交付验证：normalize → guard → compile → 预览证据 → 修复包。
 
     零外部渲染器、零 reference 读取、零逐条修复循环：一个进程，一份结论。
     release 档自动产出 ghost 预览作为方向证据（结构判定的可视化凭证）。
+
+    性能纪律（v5.9）：
+      * 图片只读一次：资产核验读到的字节经 `snapshots` 直接进资产链核验、
+        编译器与预览——同一份字节全链复用，不再有「QC 读一遍 / 核验再读一遍」。
+      * `speed` 贯穿 QC / 编译 / 预览 / 缓存探测四层（见各模块 docstring）。
+      * `deadline`（秒）是**本次调用的预算**：核心阶段（核验→guard→编译→收口）
+        永远执行；可选阶段（方向预览采样、contact sheet）在预算不足时被跳过并留痕。
+        这是「有预算的执行」，不是「未完成的交付」——跳过什么、为什么跳过都写进报告。
     """
     from compile_cache import note_round
-    from guard import normalize_spec
-    from qa import release_manifest, run_qa, fail_result
+    from guard import check_spec, normalize_spec
+    from qa import mode_profile, release_guard_rules, release_manifest, verdict
+    from run_evidence import RunEvidence
+
+    started = time.perf_counter()
+    # 这一轮的运行时事实：身份与读数都写进它，报告 / 清单 / 预览证据都从这里取。
+    # 它是「为什么可以复用」的唯一账本，也是 COLD/HOT 契约的执行点。
+    evidence = RunEvidence(run_id=run_id, mode=mode, speed=speed)
+    deadline_at = (started + float(deadline)) if deadline else None
+    budget = {"deadline_s": float(deadline) if deadline else None, "skipped": []}
+
+    def remaining() -> float | None:
+        return None if deadline_at is None else deadline_at - time.perf_counter()
+
+    def defer(stage: str, why: str) -> None:
+        budget["skipped"].append({"stage": stage, "reason": why})
 
     spec, build = load_spec(build_path)
     from asset_workflow import verify_chain, blocked_result
     asset_binding = None
     binding_error = None
     asset_qc_result = None
+    snapshots: dict = {}          # 本轮唯一一次读图：核验 / 编译 / 预览共用这份字节
+    decoded: dict = {}            # 核验解码过的底图：编译期不再重复解码（所有权转移）
+    digests: dict = {}            # 本轮唯一一次哈希：核验 / 编译投影共用这份摘要
     if assets_manifest:
         try:
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
@@ -694,50 +1044,173 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
             binding_error = str(exc)
         # 资产核验在这里发生一次：分步执行会漂移，一次执行只给一条修法。
         if asset_qc_report is None:
-            asset_qc_result, _ = _asset_qc_report(assets_manifest, assets_dir, phase=mode)
+            asset_qc_result, _ = _asset_qc_report(assets_manifest, assets_dir, phase=mode,
+                                                  speed=speed, snapshots=snapshots,
+                                                  decoded=decoded, digests=digests)
             asset_qc_report = (asset_qc_result or {}).get("report_path")
-    snapshots = {}
-    workflow = verify_chain(spec, assets_manifest, asset_qc_report, assets_dir, image_bytes=snapshots)
+    workflow = verify_chain(spec, assets_manifest, asset_qc_report, assets_dir,
+                            image_bytes=snapshots, digests=digests)
     if binding_error:
         workflow.setdefault("issues", []).append(binding_error)
         workflow["status"] = "BLOCKED"
     normalized, norm = normalize_spec(spec)
+    from primitives import byte_witness, identity, spec_fingerprint
+    evidence.identity("input", spec=spec_fingerprint(normalized),
+                      build=str(Path(build_path).expanduser().name),
+                      build_witness=byte_witness(build_path, digest=True))
     output_path = Path(output).expanduser()
     t0 = time.perf_counter()
     if workflow["status"] == "BLOCKED":
         result = blocked_result(normalized, workflow)
+        first = next((i for i in (workflow.get("issues") or []) if str(i).strip()), "")
+        evidence.blocked(str(first)[:120] or "资产链核验未通过")
     else:
-        result = run_qa(normalized, output_path, mode=mode,
-                        normalize=False,
-                        spec_path=str(build), image_bytes=snapshots)
+        # 编排在这里：guard（一次）→ compile（一次，gate 通过才发生）→ 判定（只读报告）。
+        # QA 不编译、不读产物字节：它的输入只有两份报告 + 本轮的运行时事实。
+        prof = mode_profile(mode)
+        effective_rules = release_guard_rules(prof["mode"], None)
+        t_guard_start = time.perf_counter()
+        guard_report = check_spec(normalized, rules=effective_rules)
+        t_guard_end = time.perf_counter()
+        guard_errors = [c for c in guard_report.get("checks", []) if c.get("level") == "error"]
+        do_compile = bool(prof["compile"])
+        cache_enabled = True
+        if not do_compile:
+            compile_report = {"passed": True, "skipped": True, "warnings": [],
+                              "slides": len(normalized.get("slides") or []), "file_bytes": None,
+                              "reason": "spec_mode_no_compile", "output_exists": False,
+                              "output_sha256": None}
+            cache_reason = "not_compiled"
+            timing = {"guard_ms": int((t_guard_end - t_guard_start) * 1000), "compile_ms": 0,
+                      "attestation_ms": 0, "cache_reason": cache_reason,
+                      "cache_enabled": cache_enabled, "cache_dir": None}
+        elif guard_errors:
+            compile_report = {"passed": False, "skipped": True, "warnings": [],
+                              "slides": len(normalized.get("slides") or []), "file_bytes": None,
+                              "reason": "engineering_gate", "output_exists": False,
+                              "output_sha256": None}
+            timing = {"guard_ms": int((t_guard_end - t_guard_start) * 1000), "compile_ms": 0,
+                      "attestation_ms": 0, "cache_reason": "guard_error",
+                      "cache_enabled": cache_enabled, "cache_dir": None}
+        else:
+            compile_report, timing = _compile_step(
+                normalized, output_path, mode=prof["mode"], speed=speed,
+                guard_errors=guard_errors, effective_rules=effective_rules,
+                cache=cache_enabled, spec_path=str(build), image_bytes=snapshots,
+                digests=digests, decode_seed=decoded, t_guard_start=t_guard_start)
+        timing["provenance_required"] = bool(effective_rules.get("require_provenance", False))
+        timing["total_ms"] = int((time.perf_counter() - t_guard_start) * 1000)
+        timing["normalization"] = norm        # 归一化在编排层发生过一次，判定层只记录事实
+        result = verdict(normalized, output_path, mode=mode, guard_report=guard_report,
+                         compile_report=compile_report, speed=speed, runtime_facts=timing)
         normalized = result.pop("_effective_spec", normalized)
     result["run_id"] = run_id
     result["asset_workflow"] = workflow
     if asset_qc_result is not None:
+        reuse_assets = asset_qc_result.get("reuse") or {}
         workflow["qc"] = {"status": asset_qc_result.get("status"),
-                          "summary": asset_qc_result.get("summary")}
+                          "summary": asset_qc_result.get("summary"),
+                          "pixel_profile": asset_qc_result.get("pixel_profile"),
+                          # 判定是这一轮量出来的还是复用的，写在运行报告里（证据文件是
+                          # 「何时量过」的记录，运行报告才是「这一轮做了什么」）。
+                          "reuse": asset_qc_result.get("reuse")}
+        evidence.identity("asset", manifest=asset_qc_result.get("manifest"),
+                          manifest_sha256=asset_qc_result.get("manifest_sha256"),
+                          assets=[{"asset_id": r.get("asset_id"),
+                                   "witness": r.get("witness")}
+                                  for r in (asset_qc_result.get("results") or [])])
+        evidence.identity("qc", engine=asset_qc_result.get("qc_engine"),
+                          phase=asset_qc_result.get("phase"),
+                          schema=asset_qc_result.get("schema"),
+                          pixel_profile=asset_qc_result.get("pixel_profile"))
+        if reuse_assets.get("assets"):
+            evidence.reuse("measure",
+                           f"资产判定复用 {reuse_assets['assets']} 项（清单摘要 + 量像素引擎 + 取样参数 + 逐资产字节凭证一致）",
+                           witness=reuse_assets.get("witness"))
+        else:
+            evidence.downgrade("measure", "资产判定本轮完整测量（无满足前提的复用凭证）")
     if result.get("normalization") is None:
         result["normalization"] = norm
     result.setdefault("execution", {})["reference_context"] = "none"
+    result["execution"]["speed"] = speed
     if asset_binding is not None:
         result["asset_binding"] = asset_binding
         result["execution"]["asset_manifest"] = asset_binding["manifest"]
         result["execution"]["asset_binding"] = asset_binding["status"]
 
+    compile_claim = result.get("compile") or {}
+    if compile_claim.get("output_path"):
+        evidence.identity("digest", pptx=str(compile_claim.get("output_path")),
+                          witness={"size": compile_claim.get("file_bytes"),
+                                   "mtime_ns": compile_claim.get("output_mtime_ns"),
+                                   "sha256": compile_claim.get("output_sha256")})
+        perf = result.get("performance") or {}
+        if perf.get("compile_reused"):
+            evidence.reuse("compile",
+                           f"产物未重编（{perf.get('cache_reason') or 'cache_hit'}）："
+                           "spec 投影 + 引擎指纹 + 产物凭证一致",
+                           witness="spec_view + output_witness")
+        else:
+            evidence.downgrade("compile",
+                               f"产物本轮重编（{perf.get('cache_reason') or '缓存未命中'}）")
+
     # 预览证据：release 自动出（方向与结构凭证），draft 只在显式要求时出。
+    # 预算判断放在这里：核心判定已经完成，剩下的是可选证据。
     ghost = None
     preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
                              if mode == "release" else None)
-    if preview_dir and result.get("passed") and workflow["status"] != "BLOCKED":
-        ghost = _ghost_cached(normalized, preview_dir, build.parent,
-                              output_sha=(result.get("compile") or {}).get("output_sha256"), image_bytes=snapshots)
-        result["ghost_preview"] = ghost
+    ghost_ok = result.get("passed") and workflow["status"] != "BLOCKED"
+    if preview_dir and ghost_ok:
+        left = remaining()
+        if left is not None and left < GHOST_MIN_BUDGET_S:
+            defer("ghost_preview", f"剩余预算 {left:.1f}s < {GHOST_MIN_BUDGET_S:.0f}s")
+            result["ghost_preview"] = None
+        else:
+            t_ghost = time.perf_counter()
+            ghost = _ghost_cached(normalized, preview_dir, build.parent,
+                                  output_sha=(result.get("compile") or {}).get("output_sha256"),
+                                  image_bytes=snapshots, decoded=decoded,
+                                  speed=speed, limit=ghost_pages)
+            budget["ghost_ms"] = round((time.perf_counter() - t_ghost) * 1000, 2)
+            result["ghost_preview"] = ghost
+    elif preview_dir and not ghost_ok:
+        defer("ghost_preview", "本轮判定未通过：不产出预览证据（避免给失败的稿子留视觉背书）")
+
+    if ghost:
+        hot_render = bool(ghost.get("reused"))
+        evidence.identity("render", engine=ghost.get("engine"), renderer=ghost.get("renderer"),
+                          scope=ghost.get("scope"), supersampled=ghost.get("supersampled"),
+                          # 每一页像素的身份就是预览证据里已经记下的那份摘要，不再另算一遍
+                          page_digests={Path(k).name: v
+                                        for k, v in (ghost.get("file_sha256") or {}).items()})
+        drawn, cached = int(ghost.get("pages_drawn") or 0), int(ghost.get("pages_from_cache") or 0)
+        # 逐页出处必须区分「这一轮画的」与「上一轮留下的证据原本是怎么来的」：
+        # 复用整份证据时，本轮一页都没画——把它记成本轮画了 4 页就是假账。
+        page = {"count": ghost.get("count"), "of": ghost.get("page_count"),
+                "drawn_numbers": [] if hot_render else (ghost.get("pages_drawn_numbers") or []),
+                "reused_numbers": (ghost.get("pages_rendered") or []) if hot_render
+                                  else (ghost.get("pages_reused_numbers") or []),
+                "contact_sheet_cached": ghost.get("contact_sheet_cached")}
+        if hot_render:
+            page["produced_by"] = {"drawn": drawn, "from_cache": cached,
+                                   "drawn_numbers": ghost.get("pages_drawn_numbers") or []}
+        evidence.identity("page", **page)
+        if hot_render:
+            evidence.reuse("render", "整份预览证据复用（产物凭证 + 渲染器指纹一致）",
+                           witness="output_sha256 + engine")
+        elif cached and not drawn:
+            evidence.reuse("render",
+                           f"{cached} 页全部命中上一轮像素（页身份 = 画布 + 主题 + 页 + 尺度 + 渲染器指纹）",
+                           witness="content_sha256(page_key)")
+        else:
+            evidence.downgrade("render", f"本轮真画 {drawn} 页（{cached} 页命中页缓存）")
 
     manifest = None
     if mode == "release":
         manifest = release_manifest(normalized, result, ghost_preview=ghost)
         if manifest["status"] == "BLOCKED" and result.get("passed"):
             errors = manifest["validation"]["issues"] or ["发布凭证无效"]
+            from qa import fail_result
             fail_result(result, errors)
             manifest = release_manifest(normalized, result, ghost_preview=ghost)
             manifest["validation"]["issues"] = errors
@@ -755,37 +1228,85 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
         _json_write(manifest_path, manifest)
         result["manifest_path"] = str(manifest_path)
 
-    result.setdefault("performance", {})["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    budget["elapsed_s"] = round(time.perf_counter() - started, 3)
+    budget["vao_total_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    # 读数只在这里汇总一次：耗时与计数都进事实容器（报告读出的是同一份数）。
+    perf_now = dict(result.get("performance") or {})
+    perf_now.update((result.get("compile") or {}).get("performance") or {})
+    evidence.measure("guard_ms", perf_now.get("guard_ms"), stage="stage")
+    evidence.measure("compile_ms", perf_now.get("compile_ms"), stage="stage")
+    evidence.measure("attestation_ms", perf_now.get("attestation_ms"), stage="stage")
+    evidence.measure("render_ms", budget.get("ghost_ms"), stage="stage")
+    evidence.measure("slides", perf_now.get("slides"), stage="count")
+    evidence.measure("speed", speed, stage="count")
+    for key in ("image_transforms", "image_transform_reuses", "image_decode_reuses",
+                "image_transform_ms", "save_ms", "package_ms", "media_entries_stored"):
+        if key in perf_now:
+            evidence.measure(key, perf_now[key], stage="count")
+    evidence.finish()
+    result["evidence"] = evidence.as_dict()
+    if evidence.data["contract"] != "ok" and isinstance(result.get("warnings"), list):
+        # 契约是工程事实：HOT 无凭证 / COLD 无原因都说明账本漏记，必须显式暴露。
+        for issue in evidence.contract_issues():
+            result.setdefault("warnings", []).append(f"[evidence] {issue}")
+    result["budget"] = budget
+    result.setdefault("performance", {})["vao_total_ms"] = budget["vao_total_ms"]
     packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
     packet_value = _repair_packet(result, mode, build, output_path)
     _json_write(packet_path, packet_value)
     if json_output:
         print(json.dumps(packet_value, ensure_ascii=False, indent=2, default=str))
     else:
-        print(f"VAO {mode}: {result.get('verdict', {}).get('verdict')} · {result.get('status')} · "
-              f"{result.get('performance', {}).get('total_ms', 0)}ms · "
-              f"round {ledger.get('n')}/{ledger.get('budget')}")
-        for group in (result.get("fix_plan") or {}).get("groups") or []:
-            ids = "、".join(group.get("ids") or []) or "deck"
-            print(f"  fix[{group.get('root_cause')}] ×{group.get('count', 0)} ({ids}) "
-                  f"→ {group.get('fix', '')}")
-        if asset_binding and (asset_binding.get("missing_asset_ids") or asset_binding.get("missing_files")):
-            ids = asset_binding.get("missing_asset_ids") or []
-            files = asset_binding.get("missing_files") or []
-            print("  fix[asset-binding] ×{} → 补齐 manifest 引用或重新生成资产: {}".format(
-                len(ids) + len(files), "、".join(ids + files)))
-        if not (result.get("fix_plan") or {}).get("groups"):
-            print("  ✓ 无阻断：证据只留痕（warn/hint 不进入对话）")
-        if ghost:
-            suffix = "（同产物复用，未重渲）" if ghost.get("reused") else ""
-            print(f"  preview: {ghost['count']} 页 ghost → "
-                  f"{ghost['contact_sheet'] or ghost['dir']}{suffix}")
-        if manifest_path:
-            print(f"  manifest: {manifest_path}")
-        print(f"  repair packet: {packet_path}")
+        _print_verdict(result, ledger, ghost, manifest_path, packet_path,
+                       asset_binding, speed, budget)
     binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
                                              or asset_binding.get("missing_files")))
     return result, (0 if result.get("passed") and not binding_block else 2)
+
+
+def _print_verdict(result, ledger, ghost, manifest_path, packet_path,
+                   asset_binding, speed, budget) -> None:
+    """一次执行一条结论（含速度档与预览范围）：不让作者在读输出时猜发生了什么。"""
+    print(f"VAO {result.get('execution', {}).get('mode')}: "
+          f"{result.get('verdict', {}).get('verdict')} · {result.get('status')} · "
+          f"{result.get('performance', {}).get('total_ms', 0)}ms · "
+          f"speed={speed} · round {ledger.get('n')}/{ledger.get('budget')}")
+    # 复用路径写在人类读的这一行上：这一轮是 HOT（没重做测量/编译/渲染）还是 COLD、
+    # 为什么必须重做——不必去翻证据字典才知道「为什么可以复用」。
+    evidence = result.get("evidence") or {}
+    path_kind = str(evidence.get("path") or "").upper()
+    if path_kind == "NONE":
+        # 第三種結局：这一轮没有产物，复用无从谈起——不拿性能语言掩盖失败。
+        print(f"  复用路径: 未成立 · 本轮 BLOCKED（{evidence.get('blocked_reason') or '未通过核验'}）")
+    elif path_kind == "HOT":
+        print(f"  复用路径: HOT · measure/compile/render 全部复用"
+              f"（{len(evidence.get('reuse') or [])} 条凭证，contract {evidence.get('contract')}）")
+    elif path_kind:
+        why = "；".join(f"{c.get('step')} {c.get('reason')}"
+                        for c in evidence.get("cold_reasons") or [])
+        print(f"  复用路径: COLD · {why or '本轮重新建立事实'}")
+    for group in (result.get("fix_plan") or {}).get("groups") or []:
+        ids = "、".join(group.get("ids") or []) or "deck"
+        print(f"  fix[{group.get('root_cause')}] ×{group.get('count', 0)} ({ids}) "
+              f"→ {group.get('fix', '')}")
+    if asset_binding and (asset_binding.get("missing_asset_ids") or asset_binding.get("missing_files")):
+        ids = asset_binding.get("missing_asset_ids") or []
+        files = asset_binding.get("missing_files") or []
+        print("  fix[asset-binding] ×{} → 补齐 manifest 引用或重新生成资产: {}".format(
+            len(ids) + len(files), "、".join(ids + files)))
+    if not (result.get("fix_plan") or {}).get("groups"):
+        print("  ✓ 无阻断：证据只留痕（warn/hint 不进入对话）")
+    if ghost:
+        suffix = "（同产物复用，未重渲）" if ghost.get("reused") else ""
+        scope = ghost.get("scope")
+        label = (f"{ghost['count']} 页 ghost" if scope == "full"
+                 else f"{ghost['count']}/{ghost.get('page_count', '?')} 页方向采样")
+        print(f"  preview: {label} → {ghost['contact_sheet'] or ghost['dir']}{suffix}")
+    for item in budget.get("skipped") or []:
+        print(f"  defer[{item['stage']}]: {item['reason']}")
+    if manifest_path:
+        print(f"  manifest: {manifest_path}")
+    print(f"  repair packet: {packet_path}")
 
 
 def run_once(args: argparse.Namespace) -> int:
@@ -823,8 +1344,30 @@ def run_once(args: argparse.Namespace) -> int:
                         json_output=args.json, assets_manifest=manifest_for_check,
                         assets_dir=getattr(args, "assets_dir", None),
                         asset_qc_report=getattr(args, "asset_qc_report", None),
+                        speed=getattr(args, "speed", DEFAULT_SPEED),
+                        deadline=getattr(args, "deadline", DEFAULT_DEADLINE),
+                        ghost_pages=getattr(args, "ghost_pages", DEFAULT_GHOST_PAGES),
                         )
     return code
+
+
+SPEED_PROFILES = {
+    "fast": ("两分钟交付档：像素统计降采样、图片只读一次、同图只变换一次、"
+             "预览按方向采样、缓存快探、单次产物哈希"),
+    "strict": ("严格档：全分辨率 QC、整包缓存核对、全 deck 逐页预览、逐张图片独立变换"),
+}
+DEFAULT_SPEED = "fast"
+DEFAULT_DEADLINE = 120.0          # 本次调用可用的墙钟预算（秒）；0 / None 表示不设上限
+DEFAULT_GHOST_PAGES = 4           # 快速档方向采样页数上限
+
+
+def _add_speed_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--speed", choices=tuple(SPEED_PROFILES), default=DEFAULT_SPEED,
+                        help="fast（默认）= 两分钟交付档；strict = 全量证据档")
+    parser.add_argument("--deadline", type=float, default=DEFAULT_DEADLINE,
+                        help="本次调用墙钟预算（秒，默认 120）；预算不足时跳过可选证据阶段并留痕")
+    parser.add_argument("--ghost-pages", type=int, default=DEFAULT_GHOST_PAGES,
+                        help="方向预览采样页数上限（fast 档；页数不超过它时自动全量）")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -858,6 +1401,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--assets-dir", help="directory containing generated manifest filenames")
     c.add_argument("--asset-qc-report", help="QC报告；默认资产清单同目录的 <stem>.qc.json")
     c.add_argument("--json", action="store_true")
+    _add_speed_flags(c)
 
     r = sub.add_parser("run", help="prepare plan/assets OR check an existing build after QC")
     r.add_argument("brief")
@@ -874,11 +1418,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--packet")
     r.add_argument("--preview")
     r.add_argument("--json", action="store_true")
+    _add_speed_flags(r)
 
     v = sub.add_parser("preview", help="spec/build → ghost contact sheet (PIL only)")
     v.add_argument("build")
     v.add_argument("--out", default="vao_preview")
-    v.add_argument("--pages", help="1-based pages, e.g. 1,3,8")
+    v.add_argument("--pages", help="1-based pages, e.g. 1,3,8（默认：全部页）")
+    v.add_argument("--speed", choices=("fast", "strict"), default="fast",
+                   help="fast 用低压缩编码与单倍采样（更快出图，判断力不变）")
     v.add_argument("--assets-manifest", help="bind image elements carrying asset_id")
     v.add_argument("--assets-dir", help="directory containing generated manifest filenames")
 
@@ -985,6 +1532,8 @@ def main(argv: list[str] | None = None) -> int:
                                 assets_manifest=args.assets_manifest,
                                 assets_dir=args.assets_dir,
                                 asset_qc_report=args.asset_qc_report,
+                                speed=args.speed, deadline=args.deadline,
+                                ghost_pages=args.ghost_pages,
                                 )
             return code
         if args.command == "run":
@@ -996,7 +1545,8 @@ def main(argv: list[str] | None = None) -> int:
                 spec, binding = bind_asset_manifest(spec, args.assets_manifest, args.assets_dir)
             pages = ([int(x) for x in args.pages.split(",") if x.strip()]
                      if args.pages else None)
-            info = _ghost(spec, args.out, pages, base_path=Path(args.build).expanduser().resolve().parent)
+            info = _ghost(spec, args.out, pages, base_path=Path(args.build).expanduser().resolve().parent,
+                          speed=args.speed)
             if binding:
                 info["asset_binding"] = binding
             print(json.dumps(info, ensure_ascii=False, indent=2))

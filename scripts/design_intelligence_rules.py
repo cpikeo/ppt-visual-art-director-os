@@ -48,61 +48,24 @@ FAMILY_ALIASES = {
     "HERO_COVER": "HERO", "SECTION_DIVIDER": "SECTION",
 }
 
-# 复杂度家族（deck 级风险用 route 命名空间；必须 ⊆ FAMILY_MOVES，缺项由 selftest 兜住）
+# 复杂度家族（deck 级风险用 route 命名空间；必须 ⊆ FAMILY_TOKENS，缺项由 selftest 兜住）
 COMPLEX_LAYOUT_FAMILIES = {"FRAMEWORK", "COMPARISON", "TIMELINE",
                            "NARRATIVE", "EXECUTIVE_SUMMARY", "CASE_STUDY"}
+
+# ── 家族词汇表（唯一真源）─────────────────────────────────────────────
+# 引擎认得的所有家族写法：媒体模型的规范名 ∪ route 家族名 ∪ 别名键。
+# 此前这份并集在三处各拼一遍（guard 校验 / di 解析 / route 提示），
+# 于是「同一个家族名在这里认、在那里不认」只能靠人肉比对。
+FAMILY_TOKENS = frozenset(MEDIA_MODEL) | frozenset(FAMILY_ALIASES) | COMPLEX_LAYOUT_FAMILIES
+
 
 # ── 作者可写的枚举字段与合法值（写错必须被点名，不能被静默忽略）────────
 # 任何一处取值非法，对应判断都会静默失效：家族 → 媒体/动作/构图全回落；
 # 留白职责 → 免检与锚点判断失效；能量/密度 → 节奏与带位判断失效。
-EMPTY_SPACE_ROLES = ("protect_focus", "hold_emotion", "create_authority", "separate_chapter")
 ENERGY_LEVELS = ("high", "medium", "low")
 
-# ── 家族 → 叙事动作（"这页要完成什么"，不是"元素摆哪里"）────────────────
-# 刻意只写任务与判断线索，不给坐标：几何与构图归生成侧的设计判断。
-FAMILY_MOVES = {
-    "HERO": "一个尺度压倒性的事实或形象；除它之外全部降级或删除",
-    "COVER": "建立世界观：一句主张 + 一次材质/光线暗示，不放第二主题",
-    "DATA_STORY": "结论在上，证据在中，口径与来源在下；一图一个论点",
-    "EXECUTIVE_SUMMARY": "决策者只读这页也能行动：结论 → 依据 → 代价",
-    "COMPARISON": "共同基线下的取舍：先给判断标准，再给两侧差异",
-    "TIMELINE": "方向与节奏：起点、拐点、当前位；不罗列全部时点",
-    "FRAMEWORK": "系统关系：层次与依存，用最小结构表达最多信息",
-    "NARRATIVE": "路径与状态：谁在何时做什么，清晰到可执行",
-    "EDITORIAL": "主张 + 证据并置；文字决定版心，图只服务这句话",
-    "CASE_STUDY": "可信度来自细节：约束、取舍、结果与代价",
-    "MINIMAL_STATEMENT": "只留一句能被复述的话；留白替这句话工作",
-}
 # 键集必须与 route.ROUTES[*]["family"] 一一对应：曾经用 STRUCTURE / PROCESS 命名，
 # 全 deck 的架构页与流程页因此永远拿不到专属动作，只能吃兜底句。判断线索错位是最贵的错。
-
-# 构图语法池：**描述视线如何被组织**，不给坐标、不给栅格、不给装饰。
-# 生成侧可自由改写；这里的价值是给每个家族一个不同的起点，而不是一套固定版式。
-COMPOSITION_POOL = {
-    "scale_contrast": "一个尺度压倒性的主语（数字/形象/一句话），其余全部降级成注脚",
-    "single_column": "单栏顺序阅读，行宽本身构成节奏；不做并置，避免多重第一落点",
-    "split_field": "两个并列的场，用共同基线上的差异说话；不平均、不镜像",
-    "grid_evidence": "网格化证据面：把多个事实放在同一视线高度上比较",
-    "stacked_bands": "横向分层，每层收在一个结论上；层数由内容定，不由模板定",
-    "axis_sequence": "一条轴线承载序列与阶段：位置即时间，间隔即权重",
-    "edge_anchor": "元素贴边成锚，留白放在中间当主角；靠不对称取得张力",
-    "quiet_center": "极小元素居于安静中心，留白承担全部表达",
-    "figure_ground": "图与文互为底与图：文字成为画面的一部分，而不是压在图上",
-    "radial_focus": "中心聚焦、四周退成背景；只在必要处使用，一次一副即可",
-}
-COMPOSITION_BY_FAMILY = {
-    "COVER": ("scale_contrast", "figure_ground"),
-    "HERO": ("scale_contrast", "edge_anchor"),
-    "EDITORIAL": ("figure_ground", "single_column"),
-    "DATA_STORY": ("grid_evidence", "quiet_center"),
-    "EXECUTIVE_SUMMARY": ("stacked_bands", "single_column"),
-    "COMPARISON": ("split_field", "grid_evidence"),
-    "TIMELINE": ("axis_sequence", "stacked_bands"),
-    "FRAMEWORK": ("grid_evidence", "radial_focus"),
-    "NARRATIVE": ("stacked_bands", "edge_anchor"),
-    "CASE_STUDY": ("split_field", "figure_ground"),
-    "MINIMAL_STATEMENT": ("quiet_center", "scale_contrast"),
-}
 
 # ── 参考空间实测律（全局；内联唯一真源，无外部覆盖）─────
 # ── 自适应色彩：方向种子（兜底骨架）。面积律（foundation 70 / supporting 20 /

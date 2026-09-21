@@ -9,7 +9,7 @@
 ### Canvas
 
 1280×720、16:9、12 列逻辑网格 + 8 单位基线。每页声明 `page_intent` 的
-`insight / focus / page_family / density / energy / empty_space_role`（可选 `reading_order`）。
+`insight / focus / page_family / density / energy`。
 黄金比例/三分/对称只是候选工具：内容关系说不通就放弃。
 **System 不要求相邻页面必须变化**：叙事与节奏的决定在 Intelligence（route.py 的默认密度
 节奏只是兜底，作者声明优先）；Intelligence 决定要变化之后，System 只负责把这个变化
@@ -215,7 +215,7 @@ primary/secondary/neutral/accent/negative，逃生口 `primary_color`/`secondary
 `hole_size`(默认 62) `center_value` `center_label`；折线另有 `smooth` `end_labels` `number_format`；
 `big_number_row`/`stacked_bar` 另有 `items` `legend` `ramp` `multi_color` `max`。
 
-`role` 决定三件事——行长豁免、注释类最小字号、能否进来源区。常用值：`title` `lead` `body` `caption`
+`role` 决定两件事——注释类最小字号、能否进来源区。常用值：`title` `lead` `body` `caption`
 `annotation` `label` `metadata` `source` `method` `axis` `data_label` `legend` `decoration`
 `eyebrow`（眉标）`page_number`（页码）。
 

@@ -9,13 +9,15 @@ remain clean at contact-sheet size.  It never invents decorative content.
 """
 from __future__ import annotations
 
+
 import math
+import shutil
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT,
+from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
                         highlight_index)
 
 
@@ -36,8 +38,7 @@ _FONT_CANDIDATES = {
 }
 
 
-def _is_cjk(ch: str) -> bool:
-    return bool(ch and ("\u2e80" <= ch <= "\u9fff" or "\u3040" <= ch <= "\u30ff"))
+from primitives import is_cjk as _is_cjk   # 单一实现（范围与 guard 曾经不一致）
 
 
 def _has_cjk(text: str) -> bool:
@@ -316,22 +317,49 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
     path = Path(str(source)) if blob is not None else _resolve_image(source, roots)
     if path:
         try:
-            with Image.open(io.BytesIO(blob) if blob is not None else path) as opened:
-                image = ImageOps.exif_transpose(opened).convert("RGBA")
-                fit = str(e.get("fit", "cover")).lower()
+            fit = str(e.get("fit", "cover")).lower()
+            radius = int(round(min(w, h) * 0.03)) if e.get("rounded") else 0
+            # 同一张图在整副预览里只解码/适配一次（重复页/重复使用是常态）。
+            # 键含源身份 + 落位尺寸 + 适配方式：不同盒子各自成立，同盒子直接命中。
+            cache = getattr(ctx, "preview_image_cache", None)
+            key = (str(path), w, h, fit, radius)
+            fitted = cache.get(key) if cache is not None else None
+            held = (getattr(ctx, "image_decoded", None) or {}).get(str(path))
+            if held is not None:
+                # 复用前确认这张底图不需要方向转置（核验阶段按原样解码，绘制要尊重 EXIF）。
+                # JPEG/TIFF/WebP 的方向元数据在文件头部，读它不解码；PNG 的 eXIf 排在
+                # IDAT 之后，问一次就等于把整幅图解一遍（4K 实测 210ms）——而复用的意义
+                # 正是不解码。本管线交付的位图是 PNG，且编译器本来就不做 EXIF 转置，
+                # 预览按原样贴与产物一致；其它格式一律走原路径，像素与今天完全相同。
+                try:
+                    with Image.open(io.BytesIO(blob) if blob is not None else path) as probe:
+                        if str(probe.format or "").upper() != "PNG" and probe.getexif():
+                            held = None
+                except (OSError, ValueError):
+                    held = None
+            if fitted is None:
+                if held is not None:
+                    image = held if held.mode == "RGBA" else held.convert("RGBA")
+                else:
+                    with Image.open(io.BytesIO(blob) if blob is not None else path) as opened:
+                        # exif_transpose 在无 EXIF 时是纯拷贝：先判空再转，省一次全图复制。
+                        image = (ImageOps.exif_transpose(opened)
+                                 if opened.getexif() else opened).convert("RGBA")
                 if fit == "contain":
                     fitted = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     image.thumbnail((w, h), Image.Resampling.LANCZOS)
-                    fitted.alpha_composite(image, ((w - image.width) // 2, (h - image.height) // 2))
+                    fitted.alpha_composite(image, ((w - image.width) // 2,
+                                                   (h - image.height) // 2))
                 else:
                     fitted = ImageOps.fit(image, (w, h), method=Image.Resampling.LANCZOS,
                                           centering=(0.5, 0.5))
-                radius = int(round(min(w, h) * 0.03)) if e.get("rounded") else 0
                 if radius:
                     mask = Image.new("L", (w, h), 0)
                     ImageDraw.Draw(mask).rounded_rectangle((0, 0, w, h), radius, fill=255)
                     fitted.putalpha(mask)
-                img.alpha_composite(fitted, (x, y))
+                if cache is not None:
+                    cache[key] = fitted
+            img.alpha_composite(fitted, (x, y))
         except (OSError, ValueError):
             path = None
     if not path:
@@ -415,9 +443,9 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     if kind in ("kpi", "executive_kpi", "big_number"):
         value = str(e.get("value") or "").strip()
         label = str(e.get("label") or "").strip()
-        big = _font(min(120.0, float(e.get("value_size", 56))) * scale * 0.75,
+        big = _font(px_to_pt(min(120.0, float(e.get("value_size", 56))) * scale),
                     cjk=_has_cjk(value), bold=True)
-        small = _font(float(e.get("label_size", 16)) * scale * 0.75, cjk=_has_cjk(label))
+        small = _font(px_to_pt(float(e.get("label_size", 16)) * scale), cjk=_has_cjk(label))
         cy = (top + bottom) // 2
         if value:
             d.text((left, cy), value, font=big, fill=accent, anchor="lm")
@@ -521,7 +549,8 @@ def _draw_background(img: Image.Image, bg: Any, ctx: RenderContext) -> None:
         img.paste((*color, 255), (0, 0, img.width, img.height))
 
 
-def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int = 2) -> Image.Image:
+def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int = 2,
+               image_cache: dict | None = None) -> Image.Image:
     """Render one polished direction preview; no external renderer or invented copy."""
     canvas = spec.get("canvas") or {}
     cw = float(canvas.get("width", DEFAULT_WIDTH))
@@ -532,6 +561,10 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     img = Image.new("RGBA", (max(1, int(cw * render_scale)), max(1, int(ch * render_scale))), (255, 255, 255, 255))
     ctx = RenderContext(spec.get("theme"), canvas)
     ctx.image_bytes = spec.get("_image_bytes") or {}
+    # 核验阶段已经为一整批底图付过解码（同一份字节 + 同一个路径身份），预览直接用，
+    # 不必为了往 640×360 的页面上贴一张 4K 图再解一遍。键与 _image_bytes 完全一致。
+    ctx.image_decoded = spec.get("_image_decoded") or {}
+    ctx.preview_image_cache = image_cache if image_cache is not None else {}
     _draw_background(img, slide.get("background"), ctx)
     roots = [Path.cwd(), Path(str(spec.get("_base_path") or ".")).expanduser()]
     elements = list(slide.get("elements") or [])
@@ -555,33 +588,205 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     return img.convert("RGB")
 
 
+def sample_pages(slides: list, limit: int = 4) -> list[int]:
+    """方向采样的页序（1-based，确定性）：封面 · 最复杂页 · 图片页 · 收尾。
+
+    全 deck 逐页 raster 是「像素证明」，而预览要的是「方向证据」——封面看世界观，
+    最复杂页看容量与层级，图片页看画心与文字的关系，收尾看落点。
+    页数不超过 limit 时返回全部页（此时是全量证据，不是采样）。
+    """
+    total = len(slides)
+    if total == 0:
+        return []
+    if total <= max(1, int(limit)):
+        return list(range(1, total + 1))
+
+    def weight(slide) -> tuple:
+        elements = slide.get("elements") if isinstance(slide, dict) else []
+        elements = elements if isinstance(elements, list) else []
+        images = sum(1 for e in elements if isinstance(e, dict) and e.get("type") == "image")
+        return (len(elements), images)
+
+    order = sorted(range(total), key=lambda i: (-weight(slides[i])[0], -weight(slides[i])[1], i))
+    picks = [1, total]
+    img_page = next((i + 1 for i in order
+                     if weight(slides[i])[1] > 0 and (i + 1) not in picks), None)
+    if img_page:
+        picks.append(img_page)
+    for i in order:                      # 补足：按复杂度降序
+        if len(picks) >= max(1, int(limit)):
+            break
+        if (i + 1) not in picks:
+            picks.append(i + 1)
+    return sorted(picks[:max(1, int(limit))])
+
+
+PAGE_CACHE_DIR = "pages"          # 逐页渲染缓存（只缓存被渲染过的页）
+PAGE_CACHE_MAX = 96               # 上限：迭代几轮之后自动淘汰最旧的
+
+
+
+
+def _engine_stamp() -> str:
+    """渲染器指纹：唯一实现在 primitives.engine_fingerprint（scope="preview"）。
+
+    页面缓存必须随渲染器一起失效（缓存的是像素，像素由它决定）；进程内算一次。
+    """
+    from primitives import engine_fingerprint
+    return engine_fingerprint("preview", short=16)
+
+
+def _page_key(slide: dict, spec: dict, scale: float, supersample: int,
+              compress_level: int) -> str:
+    """一页预览的身份：这一页的内容 + 画布 + 主题 + 渲染口径 + 渲染器指纹。
+
+    页面没变就不该重画——迭代一轮只改一页时，其余页的像素与上一轮完全一致。
+    """
+    from primitives import identity
+    return identity({
+        "canvas": spec.get("canvas"), "theme": spec.get("theme"), "page": slide,
+        "scale": round(float(scale), 4), "supersample": int(supersample),
+        "compress": int(compress_level), "engine": _engine_stamp(),
+    }, schema="vao-preview-page-v1", short=20)
+
+
 def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
-               scale: float = 0.5) -> list[Path]:
-    """Save polished per-page PNGs.  Return only page paths for API compatibility."""
+               scale: float = 0.5, *, supersample: int = 2,
+               store: bool = True, png_compress_level: int = 6,
+               images_out: list | None = None, page_cache: bool = True,
+               stats: dict | None = None) -> list[Path]:
+    """Save per-page PNGs.  Return only page paths for API compatibility.
+
+    `supersample=1` + `png_compress_level=1`（快速档）：预览是给人看一眼的方向证据，
+    先用 2× 内部尺寸绘制再缩回、再用最优压缩找最小 PNG，都买不到「方向对不对」的
+    判断力，只是在给 CPU 找活干。`images_out` 让调用方拿到内存里的页图，
+    拼 contact sheet 时不必再把 PNG 从磁盘读回来。
+
+    逐页缓存（v6.1）：页面的身份 = 内容 + 画布 + 主题 + 渲染口径 + 渲染器指纹。
+    命中即直接读回上一轮的页图，不再绘制——迭代时改一页只重画一页。
+    缓存只影响「画不画」，不影响「画什么」：键里没有的东西不会改变像素。
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    cache_dir = out / PAGE_CACHE_DIR
+    if page_cache:
+        # 目录必须先存在：否则 save 会抛 OSError，被下面的兜底吞掉，缓存静默失效
+        # （实测就是这样：计数显示「画了 15 页、命中 0 页」，磁盘上一个文件都没有）。
+        cache_dir.mkdir(parents=True, exist_ok=True)
     slides = spec.get("slides") or []
     wanted = [int(n) for n in pages] if pages is not None else list(range(1, len(slides) + 1))
     paths: list[Path] = []
+    image_cache: dict = {}
     for n in wanted:
         if not (1 <= n <= len(slides)):
             continue
-        image = ghost_page(slides[n - 1], spec, scale=scale, supersample=2)
-        path = out / f"ghost-{n:02d}.png"
-        image.save(path, "PNG", optimize=True)
-        paths.append(path)
+        slide = slides[n - 1]
+        key = _page_key(slide, spec, scale, supersample, png_compress_level) if page_cache else None
+        cached_file = (cache_dir / f"{key}.png") if key else None
+        image = None
+        drawn = False
+        if cached_file is not None and cached_file.exists():
+            try:
+                with Image.open(cached_file) as handle:
+                    image = handle.convert("RGB")
+                image.load()
+            except (OSError, ValueError):
+                image = None                    # 坏缓存文件 = 没缓存，重画
+        if image is None:
+            image = ghost_page(slide, spec, scale=scale, supersample=supersample,
+                               image_cache=image_cache)
+            drawn = True
+            if cached_file is not None and store:
+                try:
+                    image.save(cached_file, "PNG", compress_level=int(png_compress_level))
+                except OSError:
+                    # 写不进去只影响下一次命中，不影响这一轮的像素；但必须可见——
+                    # 「缓存静默失效」会让所有人以为它在工作（这个坑已经踩过一次）。
+                    if stats is not None:
+                        stats["cache_write_failed"] = stats.get("cache_write_failed", 0) + 1
+        if images_out is not None:
+            images_out.append(image)
+        if stats is not None:
+            stats["rendered" if drawn else "cached"] = stats.get(
+                "rendered" if drawn else "cached", 0) + 1
+            # 逐页明细：复用要能按页核对（哪几页是这一轮真画的），不能只有一个总数
+            stats.setdefault("rendered_pages" if drawn else "cached_pages", []).append(n)
+        if store:
+            path = out / f"ghost-{n:02d}.png"
+            image.save(path, "PNG", compress_level=int(png_compress_level))
+            paths.append(path)
+    if page_cache:
+        _prune_page_cache(cache_dir)
     return paths
 
 
+def _prune_page_cache(cache_dir: Path, keep: int = PAGE_CACHE_MAX) -> None:
+    """淘汰最旧的页缓存：缓存是加速器，不该变成磁盘上的无形资产。"""
+    try:
+        files = sorted(cache_dir.glob("*.png"), key=lambda f: f.stat().st_mtime_ns, reverse=True)
+    except OSError:
+        return
+    for stale in files[keep:]:
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
+def _sheet_cache_key(valid: list[Path], columns: int, gap: int, label_height: int,
+                     compress_level: int) -> str:
+    """整张联络表的身份：页图字节（顺序）、页名（图上印的 PAGE 标签）、版式与压缩口径、
+    渲染器指纹。键里没有的东西不会改变像素——所以键相同就不必重贴一遍。"""
+    from primitives import file_digest, identity
+    pages = [[p.name, file_digest(p)] for p in valid]
+    return identity([pages, int(columns), int(gap), int(label_height),
+                     int(compress_level), _engine_stamp()],
+                    schema="vao-contact-sheet-v1", short=20)
+
+
 def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int = 2,
-                       gap: int = 24, label_height: int = 34) -> Path | None:
-    """Create a clean, presentation-ready overview without adding decoration to pages."""
+                       gap: int = 24, label_height: int = 34,
+                       images: list | None = None,
+                       png_compress_level: int = 6,
+                       cache_dir: str | Path | None = None,
+                       stats: dict | None = None) -> Path | None:
+    """Create a clean, presentation-ready overview without adding decoration to pages.
+
+    `images`（可选）：调用方手里已经有页图时直接用，避免「写 PNG → 再读回 PNG」
+    这一趟纯 I/O 往返（每页一次解码 + 一次编码）。
+
+    `cache_dir`（可选）：页图逐页缓存所在的目录。联络表是页图的纯函数——页图没变时
+    它的像素也不会变，直接把上一轮那张复制过来（严格档 15 页重贴实测 ~1.1s）。
+    复制而非重存，是为了让交付出来的字节与上一轮完全相同。
+    """
     valid = [Path(p) for p in paths if Path(p).exists()]
     if not valid:
         return None
-    with Image.open(valid[0]) as opened:
-        first = opened.convert("RGB")
-    cell_w, cell_h = first.size
+    target = Path(out_path)
+    cached = None
+    if cache_dir is not None:
+        cached = Path(cache_dir) / ("sheet-"
+                                    + _sheet_cache_key(valid, columns, gap,
+                                                       label_height, png_compress_level)
+                                    + ".png")
+        if cached.is_file():
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(cached, target)
+                if stats is not None:
+                    stats["sheet_cached"] = True
+                return target
+            except OSError:
+                cached = None          # 复制不成 = 没缓存，照旧重建
+    in_memory = list(images or [])
+    if len(in_memory) != len(valid):
+        in_memory = []
+    if in_memory:
+        cell_w, cell_h = in_memory[0].size
+    else:
+        with Image.open(valid[0]) as opened:
+            first = opened.convert("RGB")
+        cell_w, cell_h = first.size
     rows = math.ceil(len(valid) / max(1, columns))
     sheet = Image.new("RGB", (columns * cell_w + (columns + 1) * gap,
                                rows * (cell_h + label_height) + (rows + 1) * gap), (245, 244, 241))
@@ -591,16 +796,25 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
         row, col = divmod(i, max(1, columns))
         x = gap + col * (cell_w + gap)
         y = gap + row * (cell_h + label_height)
-        with Image.open(path) as opened:
-            image = opened.convert("RGB")
+        if in_memory:
+            image = in_memory[i].convert("RGB")
+        else:
+            with Image.open(path) as opened:
+                image = opened.convert("RGB")
         sheet.paste(image, (x, y))
         draw.text((x, y + cell_h + 8), f"PAGE {path.stem.split('-')[-1]}",
                   fill=(50, 48, 44), font=label_font)
-    target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(target, "PNG", optimize=True)
+    sheet.save(target, "PNG", compress_level=int(png_compress_level))
+    if stats is not None:
+        stats["sheet_cached"] = False
+    if cached is not None:
+        try:
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            sheet.save(cached, "PNG", compress_level=int(png_compress_level))
+        except OSError:
+            # 写不进缓存只影响下一次命中，不影响这一轮的像素；但要看得见。
+            if stats is not None:
+                stats["sheet_cache_write_failed"] = stats.get(
+                    "sheet_cache_write_failed", 0) + 1
     return target
-
-
-
-

@@ -26,14 +26,14 @@ import copy
 import re
 from typing import Any
 
-from primitives import (AUX_TEXT_ROLES, DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT,
+from primitives import (AUX_TEXT_ROLES, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
+                        DEFAULT_WIDTH, DEFAULT_HEIGHT, GRID_UNIT,
                         ELEMENT_TYPES, CHART_KINDS,
                         BG_MIN_COVERAGE, BG_MIN_PROTECT_OPACITY,
-                        LINE_MEASURE_CJK_MAX, LINE_MEASURE_LATIN_MAX, LINE_MEASURE_FAIL_FACTOR,
                         contrast, bg_coverage, bg_overlay_opacity, is_background_declared,
-                        spec_fingerprint)
-from design_intelligence_rules import (FAMILY_MOVES, FAMILY_ALIASES, MEDIA_MODEL, DENSITY_BANDS,
-                                       EMPTY_SPACE_ROLES, ENERGY_LEVELS)
+                        text_units, spec_fingerprint)
+from design_intelligence_rules import (FAMILY_TOKENS, DENSITY_BANDS,
+                                       ENERGY_LEVELS)
 
 # 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
 
@@ -54,16 +54,6 @@ NUMERIC_CHART_KINDS = {
     "big_number_row", "sparkline",
 }
 
-CHART_LIMITS = {
-
-    "kpi": 1, "executive_kpi": 1, "big_number": 1, "big_number_row": 5,
-    "bar": 8, "horizontal_bar": 8, "column": 8, "comparison_bar": 8,
-    "line": 8, "trend": 8, "single_trend_line": 8,
-    "area": 8, "donut": 8, "donut_composition": 8, "pie": 8,
-    "process_flow": 7, "timeline": 7, "steps": 6,
-    "matrix": 12, "waterfall": 12, "architecture": 3, "bubble": 12,
-    "ranked_bar": 8, "progress_bar": 6, "stacked_bar": 8, "sparkline": 12,
-}
 # 与 compiler 的原生/形状图表分发保持同一 schema 边界；未知 kind
 # 先在 Guard 阻断，避免编译器只警告后留下半成品 PPTX。
 SUPPORTED_CHART_KINDS = CHART_KINDS
@@ -81,47 +71,12 @@ ELEMENT_METRIC_KINDS = ("kpi", "executive_kpi", "big_number")
 
 
 
-def _is_cjk(ch: str) -> bool:
-    o = ord(ch)
-    return (0x2E80 <= o <= 0x9FFF or 0xF900 <= o <= 0xFAFF
-            or 0xFF00 <= o <= 0xFF60 or 0x3000 <= o <= 0x303F)
+from primitives import is_cjk as _is_cjk   # 单一实现（曾经 guard/ghost 各存一份，范围不一致）
 
 
 # 物理阈值住 primitives（单一口径），这里直连读取——不为 5 个常量搭缓存层。
-MEASURE_EXEMPT_ROLES = frozenset(AUX_TEXT_ROLES)   # 真源在 primitives（见其注释）
-LINE_LIMITS = {"LINE_MEASURE_CJK_MAX": LINE_MEASURE_CJK_MAX,
-               "LINE_MEASURE_LATIN_MAX": LINE_MEASURE_LATIN_MAX,
-               "LINE_MEASURE_FAIL_FACTOR": LINE_MEASURE_FAIL_FACTOR}
 
 
-def line_measure(e: dict, limits: dict) -> dict | None:
-    """声明排版 → 每行字数与上限。返回 None 表示不适用（非文字/太小/来源级角色）。
-
-    行长用「盒宽可容纳的字数」与「声明换行的最长一行」取小：前者是潜在行长，
-    后者是实际行数，两者都短才安全——这仍是纯静态判定，不依赖渲染。
-    """
-    if str(e.get("type", "text")) != "text" or str(e.get("role", "")) in MEASURE_EXEMPT_ROLES:
-        return None
-    try:
-        fs, bw = float(e.get("size") or 0), float(e.get("width") or 0)
-    except (TypeError, ValueError):
-        return None
-    if fs < 8 or bw < 32:
-        return None
-    txt = str(e.get("text") or "")
-    if not txt.strip():
-        return None
-    cjk = sum(1 for c in txt if _is_cjk(c))
-    latin = len(txt) - cjk
-    is_cjk_led = cjk >= max(4, latin // 2)
-    # CJK 等宽：1 字 ≈ 1 em；拉丁按 0.5 em 估（混合文本偏保守）
-    cap = bw / fs * (1.0 if is_cjk_led else 2.0)
-    longest = max((len(ln.strip()) for ln in txt.split("\n")), default=0)
-    per_line = min(longest, cap) if longest else 0.0
-    limit = limits["LINE_MEASURE_CJK_MAX"] if is_cjk_led else limits["LINE_MEASURE_LATIN_MAX"]
-    return {"per_line": round(per_line, 1), "capacity": round(cap, 1), "limit": limit,
-            "cjk_led": is_cjk_led,
-            "over": per_line > limit, "fatal": per_line > limit * limits["LINE_MEASURE_FAIL_FACTOR"]}
 
 
 def _text_box_capacity(e: dict) -> dict | None:
@@ -308,6 +263,19 @@ def _overlap_allowed(a: dict, b: dict) -> bool:
     return not ({str(a.get("role", "")), str(b.get("role", ""))} & protected)
 
 
+def _family_token_known(token: str) -> bool:
+    """引擎是否能解析这个家族写法：canonical ∪ 媒体模型 ∪ 别名键 ∪ brief 内容类型。"""
+    if not token:
+        return True
+    if token in FAMILY_TOKENS:
+        return True
+    try:
+        from route import _canonical_content_type      # brief 词汇表（唯一真源在 route）
+        return bool(_canonical_content_type(token))
+    except Exception:
+        return True        # 解析器不可用时不做判断（宁可沉默，也不冤枉合法写法）
+
+
 def _check_page_contract(slide: dict, sid: str, add,
                          canvas_width: float = DEFAULT_WIDTH,
                          canvas_height: float = DEFAULT_HEIGHT) -> None:
@@ -324,10 +292,12 @@ def _check_page_contract(slide: dict, sid: str, add,
     # 值校验：字段写了但值不存在 = 该页判断静默失效（家族 → 媒体/叙事动作/构图全回落；
     # 留白职责 → 免检与锚点判断失效；能量/密度 → 节奏判断失效）。点名到合法值，但不阻断——
     # 工程事实是「这个值引擎不认识」，不是「这页不合格」。
-    known_families = set(FAMILY_MOVES) | set(MEDIA_MODEL) | set(FAMILY_ALIASES)
+    # 家族词表：**引擎认识的所有写法都算数**——route 家族（COVER…）、媒体模型命名
+    # 空间（HERO/DATA…）、别名键，以及 brief 里写的内容类型（cover / statement / data…，
+    # 经 route 的别名表解析）。曾经只认前两类，于是照 templates/brief.yml 写 `family: cover`
+    # 的作者会在首页面上被逐页警告 15 次：引擎在用自己的第二套命名给作者的合法写法判卷。
+    # 只剩「谁也解析不出来」才是事实错误（拼错），且按值去重——同一个错不刷 15 行。
     for key, legal, shown in (
-            ("page_family", known_families, " / ".join(sorted(FAMILY_MOVES))),
-            ("empty_space_role", set(EMPTY_SPACE_ROLES), " / ".join(EMPTY_SPACE_ROLES)),
             ("energy", set(ENERGY_LEVELS), " / ".join(ENERGY_LEVELS)),
             ("density", set(DENSITY_BANDS), " / ".join(DENSITY_BANDS))):
         value = field(key)
@@ -338,13 +308,15 @@ def _check_page_contract(slide: dict, sid: str, add,
             add("page_contract", sid, "warn",
                 f"{key}={value!r} 不在合法取值内（{shown}）——本页会静默退回默认判断，"
                 f"写入判断的值才会生效")
-        elif key == "page_family" and value not in FAMILY_MOVES \
-                and FAMILY_ALIASES.get(value, value) not in FAMILY_MOVES:
-            # 媒体模型命名空间（DATA / STORY / CLOSING …）只供媒体与质量预算使用，
-            # 没有叙事动作与构图起点——用它等于丢掉半个家族判断，必须点名而不是静默兜底。
-            add("page_contract", sid, "warn",
-                f"page_family={value!r} 只有媒体/预算判断，叙事动作与构图起点会退回兜底；"
-                f"route 家族才有完整判断：{' / '.join(sorted(FAMILY_MOVES))}")
+    family_value = field("page_family")
+    if family_value:
+        family_value = str(family_value).strip()
+        token = family_value.upper()
+        if not _family_token_known(token):
+            add("page_contract", f"{sid}:FAMILY_UNKNOWN:{token}", "warn",
+                f"page_family={family_value!r} 引擎不认识（可写："
+                f"{' / '.join(sorted(FAMILY_TOKENS))}，或 brief 的内容类型 cover / data / case…）"
+                f"——本页会静默退回默认判断")
     source_zone = slide.get("source_zone")
     if source_zone is not None:
         if not isinstance(source_zone, dict):
@@ -641,15 +613,16 @@ def _rule_num(rules: dict, key: str, default, cast=float):
 def _check_deck_anchor(slides: list, ch: float, add) -> None:
     """跨页锚（眉标 / 页码 / 证据编号）：锚不动，正文才可游走。
 
-    每页 anchor 由 plan 发下来（家族标签 / 页码），生成侧落成元素。查三件事：
-    声明了有没有落、落的位置是不是同一个、编号是否成套。这是工程事实
-    （存在性与位置），不是审美判断——所以它常开，默认就查。
+    每页 anchor 由 plan 发下来（家族标签 / 页码），生成侧落成元素。只查一件事：
+    **声明了有没有落**（编号成套同理）——这是工程事实（存在性）。位置纪律
+    （眉标固定上缘、页码固定象限）是设计判断，住在 references，不由引擎执法：
+    引擎点名「位置不统一」时，作者学到的是每页挪回去，而不是判断为什么挪。
+    词本身不查：眉标写什么字是设计判断——引擎给的是一套建议词汇，作者可以换成
+    自己的说法（自定词汇反而是更贴内容的导航）。此前按字面比对，等于用引擎的
+    占位词给作者判卷：每一页都报一次，把真正的信号淹掉。
     """
 
-    _anc_decl: list[tuple[str, dict]] = []
     _missing: list[str] = []
-    _eb_pos: list[tuple[float, float]] = []
-    _pn_pos: list[tuple[float, float]] = []
     _figures: list[tuple[str, str]] = []
     for s in slides:
         if not isinstance(s, dict):
@@ -658,40 +631,12 @@ def _check_deck_anchor(slides: list, ch: float, add) -> None:
         anc = s.get("anchor")
         if not isinstance(anc, dict) or not anc:
             continue
-        _anc_decl.append((sid, anc))
         elems = [e for e in (s.get("elements") or []) if isinstance(e, dict)]
         role_elems = lambda r: [e for e in elems if str(e.get("role", "")) == r]  # noqa: E731
-        if anc.get("eyebrow"):
-            cand = role_elems("eyebrow")
-            if not cand:
-                _missing.append(f"{sid} 眉标")
-            else:
-                for e in cand:
-                    try:
-                        _eb_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
-                    except (TypeError, ValueError):
-                        pass
-                want = str(anc["eyebrow"]).strip().upper()
-                if not any(str(e.get("text", "")).strip().upper() == want for e in cand):
-                    add("deck_anchor", sid, "warn",
-                        f"眉标与声明不一致：声明「{anc['eyebrow']}」，实际 "
-                        f"{[str(e.get('text', ''))[:24] for e in cand]}——眉标是导航，"
-                        f"必须用 plan 给的词汇表原文")
-        if anc.get("page_number") is not None:
-            cand = role_elems("page_number")
-            if not cand:
-                _missing.append(f"{sid} 页码")
-            else:
-                for e in cand:
-                    try:
-                        _pn_pos.append((float(e.get("x", 0)), float(e.get("y", 0))))
-                    except (TypeError, ValueError):
-                        pass
-                want = str(anc["page_number"]).strip()
-                if not any(str(e.get("text", "")).strip() == want for e in cand):
-                    add("deck_anchor", sid, "warn",
-                        f"页码与声明不一致：声明 {want}，实际 "
-                        f"{[str(e.get('text', ''))[:12] for e in cand]}")
+        if anc.get("eyebrow") and not role_elems("eyebrow"):
+            _missing.append(f"{sid} 眉标")
+        if anc.get("page_number") is not None and not role_elems("page_number"):
+            _missing.append(f"{sid} 页码")
         # 证据编号（Fig. 01…）不再由 plan 发放，也不再要求落成元素：
         # 它是论文的交叉引用装置，演示文稿里没有「见 Fig. 02」这种回指，
         # 编号就只是来源行前面一串没人读的字符。
@@ -705,19 +650,6 @@ def _check_deck_anchor(slides: list, ch: float, add) -> None:
             f"声明了锚但没有落到页面上：{'、'.join(_missing[:6])}"
             + ("…" if len(_missing) > 6 else "")
             + "——锚不是装饰，缺一页就断链")
-    if len({(round(x, 3), round(y, 3)) for x, y in _eb_pos}) > 1:
-        add("deck_anchor", "deck", "warn",
-            f"眉标落在 {len({(round(x, 3), round(y, 3)) for x, y in _eb_pos})} 个不同位置"
-            f"（{sorted({(round(x), round(y)) for x, y in _eb_pos})}）：眉标要固定上缘，"
-            f"位置一动，读者就得每页重新找它")
-    if _eb_pos and min(y for _, y in _eb_pos) > 0.12 * ch:
-        add("deck_anchor", "deck", "hint",
-            f"眉标最低一处在 y={min(y for _, y in _eb_pos):.0f}（> 12% 页高）："
-            f"眉标属于页面家具，习惯在上缘")
-    if len({(round(x, 3), round(y, 3)) for x, y in _pn_pos}) > 1:
-        add("deck_anchor", "deck", "warn",
-            f"页码落在 {len({(round(x, 3), round(y, 3)) for x, y in _pn_pos})} 个不同位置"
-            f"（{sorted({(round(x), round(y)) for x, y in _pn_pos})}）：页码要固定象限")
     if len(_figures) >= 2:
         nums = []
         for _sid, label in _figures:
@@ -734,8 +666,7 @@ def _invalid_spec_result(message: str) -> dict:
     check = {"rule": "spec_schema", "id": "spec", "level": "error", "msg": message}
     return {"passed": False, "checks": [check],
             "warnings": [f"[spec_schema] {message}"],
-            "grid": {"checked": 0, "aligned": 0, "adherence": None},
-            "line_measure": {"checked": 0, "over": 0, "worst": 0.0, "worst_id": None}}
+            "grid": {"checked": 0, "aligned": 0, "adherence": None}}
 
 
 def _weak_text_roles(theme: dict, slides: list) -> set[str]:
@@ -785,21 +716,17 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
       animation_types_max : 全套动画/切换类型上限（默认 2）
       font_levels_max     : 每页字号等级上限（默认 4，hint；可经 theme.constraints 传入）
       font_families_max   : 每页字体家族引用上限（默认 2，hint）
-      min_font_size       : 注释/来源/标签类文字最小字号（默认 10，warn）
+      min_font_size       : 注释/来源/标签类文字最小字号（默认 10；违反记在 typography）
       require_provenance  : 数值图表必须声明来源/单位/期间/比较口径（默认 False=warn，True=error）
 
     事实/口径治理（本版本新增，业务级）：
       data_provenance  : 数值图表缺 来源/单位/期间/比较口径 声明 → warn（require_provenance=True 时 error）
-      metric_consistency: 同一 metric（metric/series_name 键）跨页单位/期间/口径不一致 → error/warn/hint
+      metric_consistency: 同一 metric 跨页单位/期间/比较口径不一致 → 一条（单位不一致为 error）
       title_semantics  : insight 退化成「字段名标题」→ hint（提示改写为可复述结论）
-
-    行长（typography）不走 rules：阈值住 primitives
-    LINE_MEASURE_CJK_MAX / LINE_MEASURE_LATIN_MAX / LINE_MEASURE_FAIL_FACTOR，
-    并用 MEASURE_EXEMPT_ROLES 豁免注记级角色；超限记 warn，超上限 2× 记 error。
 
     returns: {
       "passed": bool, "checks": [...], "warnings": [...],
-      "grid": {checked, aligned, adherence}, "line_measure": {checked, over, worst, worst_id}
+      "grid": {checked, aligned, adherence}
     }
     """
     if not isinstance(spec, dict):
@@ -988,8 +915,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         return None if raw in _known_tokens else raw
 
     # ---- 每页 ----
-    lm_limits = LINE_LIMITS
-    measure_stats = {"checked": 0, "over": 0, "worst": 0.0, "worst_id": None}
     deck_hues: set[int] = set()
     chart_styles: dict[str, dict] = {}
     chart_meta: list[dict] = []   # 事实/口径治理：收集每张数值图表的来源/单位/期间/口径
@@ -1023,7 +948,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                             "legend", "metadata", "method", "eyebrow", "page_number"}:
                     try:
                         if e.get("size") is not None and float(e["size"]) < min_font_size:
-                            add("min_font", eid, "warn",
+                            add("typography", eid, "warn",
                                 f"{role} 文字 {float(e['size']):g}px < 可读下限 "
                                 f"{min_font_size:g}px；提高字号或改由更高层级角色承担")
                     except (TypeError, ValueError):
@@ -1114,27 +1039,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                         f"估算 {cap['lines']} 行 > 声明 max_lines {cap['max_lines']}"
                         "：文本会被截断或挤出框；删句、改写或放宽 max_lines")
 
-            # §03.2 行长：超长行是「排版不专业」最常见的硬伤，此前只被 grid 顺带扫到
-            lm = line_measure(e, lm_limits)
-            if lm:
-                measure_stats["checked"] += 1
-                if lm["per_line"] > measure_stats["worst"]:
-                    measure_stats["worst"] = lm["per_line"]
-                    measure_stats["worst_id"] = eid
-                if lm["fatal"]:
-                    measure_stats["over"] += 1      # 超限含被阻断的那些：比率要能对上
-                    # 行长的「建议值」是编辑观点（typography，advisory）；但超出 3× 意味着
-                    # 文本被切断——那是内容完整性事实，归 text_capacity，可以阻断。
-                    add("text_capacity", eid, "error",
-                        f"每行约 {lm['per_line']:.0f} 字 > 上限 {lm['limit']} 的 "
-                        f"{lm_limits['LINE_MEASURE_FAIL_FACTOR']:.1f}×"
-                        f"（{'CJK' if lm['cjk_led'] else '拉丁'}行长失控，眼跳回失准 → 拆句或加宽盒）")
-                elif lm["over"]:
-                    measure_stats["over"] += 1
-                    add("typography", eid, "warn",
-                        f"每行约 {lm['per_line']:.0f} 字 > {lm['limit']}"
-                        f"（编辑式排版建议 ≤{lm['limit']}），行尾扫读吃力")
-
+            # 行长不再由引擎执法（2026-09 审核）：这一判定的两个出口都只是编辑观点——
+            # 「每行 40 字以内」不是物理事实，而「超过上限 2×」在实测里也对**装得下**
+            # 的文本框开火（探针：12px/1200px 盒，165 字单行宽度 1089px 仍在框内）。
+            # 排版是否可读由设计判断与 design-craft 的取舍链负责；引擎只留物理事实：
+            # 折行后装不装得下（_text_box_capacity 的 over_height / over_width / max_lines）。
             # 安全区 / 越界：通栏只豁免对应轴，不能因为 width==cw 就跳过 y，
             # 也不能因为 height==ch 就放过 x。旧逻辑用 OR 整体豁免，错误的 full-bleed
             # 盒子会越出画布却不报错。
@@ -1202,8 +1111,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                             add("chart_argument", eid, "warn",
                                 f"最大 {max(vals):g} 与最小 {min(vals):g} 只差 "
                                 f"{(ratio - 1) * 100:.0f}%（{ratio:.2f}×），从 0 起算的条长读起来"
-                                f"几乎一样——这页的「差多少」观众看不见。改用 waterfall / "
-                                f"big_number 直接写差值，或把二者放到共同基线（索引化）再比长度")
+                                f"几乎一样——同一长度尺度上看不出主张要传达的差。"
+                                f"换何种编码由设计判断决定（差值绝对值、共同基线、索引化…）")
                 elif kind == "matrix":
                     points = e.get("points")
                     if not (isinstance(points, list) and points):
@@ -1253,10 +1162,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 categories = e.get("categories") or []
                 n_cat = len(categories) if isinstance(categories, list) else 0
                 n_series = len(series_list) if multi else 0
-                limit = CHART_LIMITS.get(kind)
-                if limit is not None and (n_cat if multi else n) > limit:
-                    add("chart_capacity", eid, "warn",
-                        f"{kind} 类别 {(n_cat if multi else n)} > 上限 {limit}（OS §19.4）")
                 if kind in NUMERIC_CHART_KINDS:
                     if multi:
                         if n_cat == 0 or n_series == 0:
@@ -1355,13 +1260,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                     eh = float(e.get("height", 0))
                     label_gap = float(e.get("label_gap", 8))
                     label_margin = float(e.get("label_safe_margin", 12))
-                    if show_values and n >= 6 and eh < 190:
+                    if (show_values and n >= CHART_LABEL_MIN_COUNT
+                            and eh < CHART_LABEL_MIN_H):
                         level = "error" if label_policy == "fail" else "warn"
                         add("chart_label_collision", eid, level,
                             f"{kind} 含 {n} 个标签但高度 {eh:.0f}px 不足；应拆图/减少类别，不能缩小字体")
-                    if label_gap < 6 or label_margin < 8:
-                        add("chart_label_collision", eid, "warn",
-                            "图表 label_gap / label_safe_margin 过小，可能造成标签贴线或贴边")
                 except (TypeError, ValueError):
                     add("chart_label_collision", eid, "error",
                         "图表标签安全参数必须是数字")
@@ -1503,21 +1406,21 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         # ---- 主题字体键（deck 级，逐页重复没意义，但每页都被它影响）----
         if si == 0:
             fonts = theme.get("fonts") if isinstance(theme.get("fonts"), dict) else None
+            problems: list[str] = []
             if not fonts:
-                add("theme_fonts", "deck", "warn",
-                    "theme.fonts 未声明：产物会回落 Arial / Microsoft YaHei（字体判断在产物里消失）")
+                problems.append("theme.fonts 未声明：产物会回落 Arial / Microsoft YaHei"
+                                "（字体判断在产物里消失）")
             else:
-                unknown = sorted(str(k) for k in fonts if str(k) not in ("cn", "latin", "display", "body"))
+                unknown = sorted(str(k) for k in fonts
+                                 if str(k) not in ("cn", "latin", "display", "body"))
                 if unknown:
-                    add("theme_fonts", "deck", "warn",
-                        f"theme.fonts 里的 {unknown} 不是被读取的键（规范键 cn / latin，"
-                        f"display / body 是别名）——写了等于没写")
+                    problems.append(f"{unknown} 不是被读取的键（规范键 cn / latin）——写了等于没写")
                 if not str(fonts.get("cn") or fonts.get("body") or "").strip():
-                    add("theme_fonts", "deck", "warn",
-                        "theme.fonts 没有中文字族（cn/body）：中文会回落 Microsoft YaHei")
+                    problems.append("没有中文字族（cn/body）：中文会回落 Microsoft YaHei")
                 if not str(fonts.get("latin") or fonts.get("display") or "").strip():
-                    add("theme_fonts", "deck", "warn",
-                        "theme.fonts 没有拉丁字族（latin/display）：拉丁与数字会回落 Arial")
+                    problems.append("没有拉丁字族（latin/display）：拉丁与数字会回落 Arial")
+            if problems:
+                add("theme_fonts", "deck", "warn", "；".join(problems))
 
         # ---- 主题约束键：写错的名字要点名（同 theme_fonts 的做法）----
         if si == 0:
@@ -1663,9 +1566,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                     f"{kind} 出现在 {len(rec['pages'])} 页但标签字号 "
                     f"{lo:g}–{hi:g}px（>{chart_label_scale_tol:g}×）：同一图表类型应共用"
                     f"一套标签规格，差异只会读成没对齐")
-        if len(rec["legend"]) > 1:
-            add("chart_style_drift", kind, "hint",
-                f"{kind} 的图例开关在不同页不一致（{sorted(rec['legend'])}）：统一为全开或全关")
 
 
     # ---- 事实/口径跨页一致性（业务级，deck 级）：同一指标的单位/期间/口径必须全 deck 一致 ----
@@ -1681,17 +1581,19 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         units = {u for u in rec["units"] if u}
         periods = {p for p in rec["periods"] if p}
         basis = {b for b in rec["basis"] if b}
-        if len(units) > 1:
-            add("metric_consistency", f"metric:{metric}", "error",
-                f"指标「{metric}」跨页单位不一致 {sorted(units)}："
-                f"同一指标必须同一单位，否则读成两套数字")
-        if len(periods) > 1:
-            add("metric_consistency", f"metric:{metric}", "warn",
-                f"指标「{metric}」跨页期间口径不一致 {sorted(periods)}："
-                f"确认是否确实要对比不同期间（若是，应在 basis 中声明比较口径）")
-        if len(basis) > 1:
-            add("metric_consistency", f"metric:{metric}", "hint",
-                f"指标「{metric}」跨页比较口径不一致 {sorted(basis)}，建议统一或显式声明差异")
+        # 同一指标的跨页口径差异一次说完（单位=硬错；期间/比较口径=留痕）：
+        # 拆成 error/warn/hint 三条时，读者要先在三条里找哪条是同一件事。
+        if len(units) > 1 or len(periods) > 1 or len(basis) > 1:
+            bits = []
+            if len(units) > 1:
+                bits.append(f"单位 {sorted(units)}（同一指标必须同一单位，否则读成两套数字）")
+            if len(periods) > 1:
+                bits.append(f"期间 {sorted(periods)}（若确实要对比不同期间，在 basis 里声明）")
+            if len(basis) > 1:
+                bits.append(f"比较口径 {sorted(basis)}（建议统一或显式声明差异）")
+            add("metric_consistency", f"metric:{metric}",
+                "error" if len(units) > 1 else "warn",
+                f"指标「{metric}」跨页口径不一致：" + "；".join(bits))
 
     # ---- 可读性底线：弱化文字（muted / secondary）对背景的对比度 ----
     # 刻度、注释、来源通常由 muted 承担；对比不足时整页"隐性不可读"，
@@ -1716,17 +1618,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 add("contrast", f"theme.{_role}", "warn",
                     f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 1.8:1，"
                     f"刻度/注释将不可读（建议加深至 ≥3:1）")
-            elif _k < 3.0:
-                add("contrast", f"theme.{_role}", "hint",
-                    f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 3:1：做装饰位没问题，"
-                    f"做文字（刻度/注释/小字）会消失，换 ink/primary 或加深该 token")
 
     return {
         "passed": not any(c["level"] == "error" for c in checks),
         "checks": checks,
         "warnings": warnings,
-        # 可报告的对齐/行长事实：比率本身不扣分（新提示族不得计分），供人复核
-        "line_measure": dict(measure_stats),
     }
 
 

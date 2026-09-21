@@ -84,10 +84,15 @@ jobs:
           build.write_text(spec, encoding="utf-8")
           code = (
               "import sys; sys.path.insert(0, 'scripts')\n"
-              "import importlib.util as iu, qa\n"
+              "import importlib.util as iu, guard, qa\n"
               f"m = iu.spec_from_file_location('b', r'{build}')\n"
               "mod = iu.module_from_spec(m); m.loader.exec_module(mod)\n"
-              "r = qa.run_qa(mod.SPEC, r'%s', mode='spec', render_dir=r'%s')\n"
+              "r = qa.verdict(mod.SPEC, r'%s', mode='spec',\n"
+              "              guard_report=guard.check_spec(mod.SPEC),\n"
+              "              compile_report={'passed': True, 'skipped': True, 'warnings': [],\n"
+              "                              'slides': 1, 'file_bytes': None,\n"
+              "                              'reason': 'spec_mode_no_compile',\n"
+              "                              'output_exists': False, 'output_sha256': None})\n"
               "bad = sorted({n for n in sys.modules if n.split('.')[0] in "
               "{'pptx','lxml','compiler','render_check','numpy'}})\n"
               "print('RESULT', bad, r['status'])\n"

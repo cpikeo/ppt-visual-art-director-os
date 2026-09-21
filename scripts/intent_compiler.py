@@ -16,7 +16,6 @@ Brief 之后只消费 Brief + Page Intent，不再回读原始需求。
 """
 from __future__ import annotations
 
-import hashlib
 import json
 
 UNKNOWN = "unknown"
@@ -75,7 +74,6 @@ def compile_brief(need: dict | str, route_plan: dict | None = None) -> dict:
     slides_seed = [{"id": p.get("id") or f"s{i + 1:02d}",
                     "family": p.get("page_family") or p.get("family"),
                     "density": p.get("density"), "energy": p.get("energy"),
-                    "empty_space_role": p.get("empty_space_role"),
                     "density_explicit": bool(p.get("density_explicit"))}
                    for i, p in enumerate(plan.get("pages", []))]
 
@@ -129,9 +127,8 @@ def compile_brief(need: dict | str, route_plan: dict | None = None) -> dict:
                   "warnings": plan.get("warnings") or [],
                   "execution": (plan.get("execution") or {}).get("recommended")},
     }
-    brief["source_hash"] = hashlib.sha256(
-        json.dumps(need, ensure_ascii=False, sort_keys=True,
-                   default=str).encode()).hexdigest()[:12]
+    from primitives import identity
+    brief["source_hash"] = identity(need, schema="vao-brief-source-v1", short=12)
     return brief
 
 

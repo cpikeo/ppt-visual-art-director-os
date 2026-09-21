@@ -18,8 +18,6 @@ asset_prompt.py · 视觉资产提示词组装器（纯函数层）
 """
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -99,11 +97,12 @@ PERSON_SUBJECT_TERMS: tuple[str, ...] = (
 
 
 def _term_hit(text: str, term: str) -> bool:
-    """CJK 用子串；ASCII 用词边界（避免 handmade 命中 hand、user 命中 userland）。"""
-    import re
-    if all(ord(c) < 128 for c in term):
-        return re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", text) is not None
-    return term in text
+    """CJK 用子串；拉丁整词（避免 handmade 命中 hand、user 命中 userland）。
+
+    实现归 primitives.latin_word_match —— 与 route 的关键词判定同一份口径。
+    """
+    from primitives import latin_word_match
+    return latin_word_match(text, term)
 
 
 def subject_implies_people(card: dict) -> bool:
@@ -905,8 +904,8 @@ def asset_fingerprint(card: dict, page: dict | None = None) -> str:
     payload["energy"] = page.get("energy") or "low"
     payload["ratio"] = page.get("ratio") or "16:9"
     payload["text_color"] = page.get("text_color")
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
-    return "asset-" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    from primitives import identity
+    return "asset-" + identity(payload, schema="vao-asset-fingerprint-v1", short=12)
 
 
 # --------------------------------------------------------------------------
@@ -935,6 +934,19 @@ ASSET_QC_BLOCKING_CHECKS = frozenset({
 ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance", "negative_space_ratio"})
 
 
+# 快速档工作域上限（长边，单位：像素）。整数箱式 reduce 后仍以 ≈QC_BLOCK 源像素为块，
+# 于是判据的物理口径不变，只是不再对 4K 原图逐像素扫。
+QC_FAST_MAX_SIDE = 1024
+
+
+def qc_profile(speed: str = "strict") -> dict:
+    """QC 像素预算的唯一出口：谁改档位，报告里的 qc_scale 一起改。"""
+    fast = str(speed or "").strip().lower() == "fast"
+    return {"speed": "fast" if fast else "strict",
+            "max_side": QC_FAST_MAX_SIDE if fast else None,
+            "block_px": QC_BLOCK}
+
+
 def qc_policy() -> dict:
     """asset manifest 的 qc_policy 唯一真源。
 
@@ -957,7 +969,7 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
                       phase: str = "draft", max_retries: int = ASSET_QC_MAX_RETRIES,
                       asset_function: str | None = None,
                       asset_role: str | None = None) -> dict:
-    """把 image_qc 结果翻译成有界动作，不改变 run_qa 的 review/release 档位。
+    """把 image_qc 结果翻译成有界动作，不改变 verdict 的 review/release 档位。
 
     ``attempt`` 从 0 开始。draft 只对影响文字安全区/构图可用性的检查自动
     允许一次定向重出；brightness_balance 仅建议。review/release 不自动重出，
@@ -1062,6 +1074,55 @@ def _hard_seam_check(arr, alpha):
             "或改由光向 / 构图承担明暗过渡后重出")
 
 
+QC_DECODE_HOLD_MAX_PX = 48_000_000     # 已解码底图持有上限（≈144MB RGB）
+QC_DECODE_HOLD_MAX_IMAGES = 8
+
+
+def _decode_hold_room(decoded: dict, px: int) -> bool:
+    """还能不能再持有一张已解码底图：确定性上限，不做淘汰（按清单顺序先到先得）。
+
+    超过上限就不再交底图——下游会照旧从字节快照解码。快路径只许更快，
+    不许把内存变成新的失败模式。
+    """
+    if len(decoded) >= QC_DECODE_HOLD_MAX_IMAGES:
+        return False
+    used = sum(getattr(img, "width", 0) * getattr(img, "height", 0) for img in decoded.values())
+    return used + px <= QC_DECODE_HOLD_MAX_PX
+
+
+def _settle(native, handed: bool) -> None:
+    """判据用完释放解码句柄；已交给下游的底图不在此列（所有权转移）。"""
+    if not handed and native is not None:
+        native.close()
+
+
+def _native_safe_area_texture(opened, w: int, h: int, normalized: dict) -> float | None:
+    """安全区纹理密度（原生分辨率，QC_BLOCK 方块口径与严格档逐字一致）。
+
+    快速档的全局统计在降采样域进行，但「文字压在什么纹理上」这件事必须按原始
+    像素量：箱式平均会把细密颗粒抹平，而它正是压字可读性最直接的风险。
+    只裁安全区（通常 ≤1/3 画面）→ 代价有界，判据不失真。
+    """
+    try:
+        import numpy as np
+        x0, y0 = int(normalized["x"] * w), int(normalized["y"] * h)
+        x1 = int((normalized["x"] + normalized["width"]) * w)
+        y1 = int((normalized["y"] + normalized["height"]) * h)
+        x1, y1 = max(x1, x0 + QC_BLOCK), max(y1, y0 + QC_BLOCK)
+        # 先裁后转：只在安全区（≤1/3 画面）上做 L 转换，不复制整幅 4K。
+        box = opened.crop((x0, y0, min(x1, w), min(y1, h))).convert("L")
+        arr = np.asarray(box, dtype=np.float32) / 255.0
+        bh, bw = arr.shape[0] // QC_BLOCK, arr.shape[1] // QC_BLOCK
+        if bh < 1 or bw < 1:
+            return None
+        blocks = arr[: bh * QC_BLOCK, : bw * QC_BLOCK].reshape(
+            bh, QC_BLOCK, bw, QC_BLOCK)
+        std = blocks.std(axis=(1, 3))
+        return float((std > QC_TEXTURE_STD).mean())
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _balance_check(arr):
     """整体明暗 + 左右/上下失衡（只记录，不阻断）。"""
     mean = float(arr.mean())
@@ -1080,8 +1141,19 @@ def _balance_check(arr):
 def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None,
              safe_rect: dict | None = None, *, image_bytes: bytes | None = None,
              expected_ratio: str | None = None, allow_crop: bool = False,
-             background: str = "#FFFFFF") -> dict:
-    """对一张出图结果做定性体检（Issue + Suggestion，不打分）。"""
+             background: str = "#FFFFFF", max_side: int | None = None,
+             decoded: dict | None = None, decode_key: str | None = None) -> dict:
+    """对一张出图结果做定性体检（Issue + Suggestion，不打分）。
+
+    `max_side`（v5.9 快速档）：像素统计在**整数箱式降采样**后的工作图上进行
+    （PIL `reduce(f)`，块均值精确）；尺寸、可见性、比例、返回的 dimensions
+    仍取自原图，块边长按 f 同步缩小，所以「每块 ≈64 源像素」这一物理口径不变。
+    判据全部是「成块的亮度/纹理/阶跃」，在 4px 级箱平均下依然成立——像素级噪声
+    本来就不构成可读性风险，而 4K 图上逐像素扫描是纯浪费。
+
+    严格档（max_side=None）不降采样；报告里的 `qc_scale` 写明这次统计发生在哪个
+    像素域，证据不会假装自己量的是原图。
+    """
     from PIL import Image  # 懒加载：纯组装路径不引入像素依赖
     import numpy as np
 
@@ -1090,24 +1162,61 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     p = Path(path)
     try:
         blob = image_bytes if image_bytes is not None else p.read_bytes()
-        with Image.open(io.BytesIO(blob)) as opened:
-            rgba = opened.convert("RGBA")
-            w, h = rgba.size
-            visible = rgba.getchannel("A").getextrema()[1] > 0
-            alpha = np.asarray(rgba.getchannel("A"))
-            bg = Image.new("RGBA", rgba.size, (*ImageColor.getrgb(background), 255))
-            arr = np.asarray(Image.alpha_composite(bg, rgba).convert("L"), dtype=np.float32) / 255.0
+        opened = Image.open(io.BytesIO(blob))
+        w, h = opened.size
+        # 快路径：不透明图直接以 L 通道工作——RGB→RGBA 转换、alpha 通道抽取、
+        # alpha_composite 三步在整幅 4K 图上都是纯开销（判据只用亮度与是否可见）。
+        transparent = opened.mode in ("RGBA", "LA", "PA", "P") or "transparency" in opened.info
     except (OSError, ValueError) as exc:
         return {"file": str(p), "status": "error", "issue": str(exc), "checks": []}
+
+    # 整幅只解码一次（v5.9）：解码是 4K 源图上最贵的一步，而它被三个消费者需要——
+    # 降采样工作域、原生分辨率安全区纹理、以及下游编译器要用的解码底图。
+    # 此前会为了「原生分辨率安全区」把同一个 blob 解开第二遍，等于白付一次解码。
+    native = opened
+    native.load()
+    native.fp = None                  # 像素已在内存：流句柄可放（底图可能被下游持有）
+    handed = False
+    scale = 1
+    if max_side and max(w, h) > int(max_side):
+        scale = max(1, -(-max(w, h) // int(max_side)))   # ceil 除法 → 整数箱
+    if transparent:
+        rgba = native.convert("RGBA")
+        if scale > 1:
+            rgba = rgba.reduce(scale)
+        visible = rgba.getchannel("A").getextrema()[1] > 0
+        ww, wh = rgba.size
+        alpha = np.asarray(rgba.getchannel("A"))
+        bg = Image.new("RGBA", (ww, wh), (*ImageColor.getrgb(background), 255))
+        arr = np.asarray(Image.alpha_composite(bg, rgba).convert("L"),
+                         dtype=np.float32) / 255.0
+    else:
+        visible = True
+        grey = native.convert("L")
+        if scale > 1:
+            grey = grey.reduce(scale)
+        ww, wh = grey.size
+        alpha = None
+        arr = np.asarray(grey, dtype=np.float32) / 255.0
+        # 交底图：不透明图的 RGB 底图正是编译器 _fit_image_bytes 需要的形态，
+        # 交给它就不必在编译期把同一张 4K 图再解一遍（透明图要先合背景，不在此列）。
+        if decoded is not None and decode_key:
+            room = _decode_hold_room(decoded, w * h)
+            if room:
+                decoded[decode_key] = native if native.mode == "RGB" else native.convert("RGB")
+                handed = True
     if min(w, h) < 32:
+        _settle(native, handed)
         return {"file": str(p), "status": "issue", "dimensions": [w, h], "checks": [
             {"check": "image_dimensions", "status": "issue", "issue": "图片短边小于32px",
              "suggestion": "使用足够分辨率的图片；色块请用原生形状"}]}
 
-    # 自适应块：目标 ~QC_BLOCK px/块，但以实际尺寸为准（<64px 的图不再越界）
-    bh = max(1, h // QC_BLOCK)          # 行块数
-    bw = max(1, w // QC_BLOCK)          # 列块数
-    bhs, bws = h // bh, w // bw         # 每块像素高/宽
+    # 自适应块：目标 ~QC_BLOCK px/块（在工作域里随 reduce 同步缩小），
+    # 但以实际尺寸为准（<64px 的图不再越界）
+    block = max(1, QC_BLOCK // max(1, scale))
+    bh = max(1, wh // block)            # 行块数
+    bw = max(1, ww // block)            # 列块数
+    bhs, bws = wh // bh, ww // bw       # 每块像素高/宽
     crop = arr[: bh * bhs, : bw * bws]
     blk = crop.reshape(bh, bhs, bw, bws)
     blk_mean = blk.mean(axis=(1, 3))    # (bh, bw) 块均值
@@ -1121,7 +1230,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
                        "suggestion": None if ok else suggestion})
 
     _add("image_dimensions", True, None, None)
-    _add("visibility", visible, "图片完全透明，无可见内容", "更换可见素材；透明Logo允许保留有效alpha")
+    _add("visibility", bool(visible), "图片完全透明，无可见内容", "更换可见素材；透明Logo允许保留有效alpha")
     if expected_ratio:
         try:
             rw, rh = (float(v) for v in str(expected_ratio).split(":"))
@@ -1142,7 +1251,9 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         _add("contrast_suitability", True, None, None)
         _add("hard_seam", *_hard_seam_check(arr, alpha))
         _add("brightness_balance", *_balance_check(arr))
+        _settle(native, handed)
         return {"file": str(p), "status": "ok", "dimensions": [w, h], "checks": checks,
+                "qc_scale": scale, "qc_domain": [int(ww), int(wh)],
                 "safe_area": None, "note": "无文字压图：安全区检查不适用"}
     x0 = normalized["x"]
     y0 = normalized["y"]
@@ -1154,6 +1265,13 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
 
     # 1. 文字安全区：纹理是否过密（会吃掉文字）
     busy = float((safe_std > QC_TEXTURE_STD).mean()) if safe_std.size else 0.0
+    # 文字安全区的纹理判据必须在**原生分辨率**上量：像素级细密纹理在箱式降采样后
+    # 会被平均掉，而它恰是压字可读性最直接的杀手。只裁安全区一块（约占画面 1/3），
+    # 成本与全图扫描不在一个量级——所以这一条快速档也不省。
+    if scale > 1:
+        native_busy = _native_safe_area_texture(native, w, h, normalized)
+        if native_busy is not None:
+            busy = native_busy            # 原生分辨率口径优先（与严格档同一判据）
     _add("text_safe_area", busy < 0.15,
          f"文字安全区（{safe_area}）内 {busy:.0%} 的块纹理过密",
          "主体/细节避开安全区，或局部压暗/压平该区域，保证文字落在均匀底上")
@@ -1205,8 +1323,10 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     _add("hard_seam", *_hard_seam_check(arr, alpha))
 
     issue_count = sum(1 for c in checks if c["status"] == "issue")
+    _settle(native, handed)
     return {"file": str(p), "status": "issue" if issue_count else "ok", "dimensions": [w, h],
-            "issue_count": issue_count, "checks": checks}
+            "issue_count": issue_count, "checks": checks,
+            "qc_scale": scale, "qc_domain": [int(ww), int(wh)]}
 
 
 # --------------------------------------------------------------------------

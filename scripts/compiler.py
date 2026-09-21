@@ -4,7 +4,7 @@
 分层文件带来 import 往返而无独立边界。对外契约不变：compile_deck / COMPILER_VERSION。
 """
 from __future__ import annotations
-import tempfile
+import time
 from pathlib import Path
 import math
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
@@ -14,7 +14,8 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSITION, XL_MARKER_STYLE
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
-    RenderContext, emu, pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
+    RenderContext, emu, pt, px_to_pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
+    CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT,
     highlight_index, series_highlight_index,
     split_runs, is_cjk,
     insert_script_gaps,
@@ -157,7 +158,7 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
     wrap = bool(element.get("wrap", True))
     lh = float(element.get("line_height", 1.35))
     size = float(element.get("size", 18))
-    size_pt = size * 0.75
+    size_pt = px_to_pt(size)
     bold = bool(element.get("bold", False))
     italic = bool(element.get("italic", False))
     spacing = float(element.get("char_spacing", 0) or 0)
@@ -219,7 +220,7 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     p.line_spacing = pt(size * float(element.get("text_line_height", 1.25)))
     for run in p.runs:
         set_run_font(run, cn if is_cjk(run.text[:1] or " ") else latin, cn,
-                     size * 0.75, color, bool(element.get("text_bold", False)),
+                     px_to_pt(size), color, bool(element.get("text_bold", False)),
                      False, spacing,
                      float(alpha) if alpha is not None else None,
                      bool(element.get("uppercase", False)))
@@ -293,41 +294,142 @@ def _resolve_src(element: dict, base_path: str | None,
     return (roots[0] / src).resolve()
 
 
-# Image transformations are per-compile only: a shared writable PNG cache cannot
-# attest its output. Full-deck compilation reuse remains in compile_cache.py.
-def _fit_image(src: Path, w: float, h: float, fit: str, crop=None,
-               bg: tuple | None = None) -> Path:
+# 图片落位管线（无临时文件、无重复变换）。
+#
+# 性能纪律（v5.9）：一张图进入 PPTX 的真实成本是「解码 + 变换 + 编码 + 写盘 +
+# 再读回」，而磁盘上的临时 PNG 只是中间产物——它既不是交付物，也不能被凭证化。
+# 因此变换结果直接以 bytes 交给 python-pptx（它按流头识别格式），落盘这一步整段消失。
+#
+# 两条硬规则：
+#   1) 同一张图在同一盒子里只用变换一次（per-compile cache，键含全部变换参数）；
+#   2) 不需要变换时不碰像素：源图与落位盒比例一致且未超采样到无意义倍数时直接透传。
+#      渲染器会自己缩放；额外的解码/重采样/重编码买不到任何可见质量。
+# 媒体超采样上限：1.0 = 落位尺寸即最终尺寸（与历史产物逐像素同规格）。
+# 调大（如 2.0）会得到更耐放大的嵌入位图，代价是文件体积成倍增长；
+# 交付规格是设计决定，速度优化不擅自改它。
+MEDIA_MAX_OVERSAMPLE = 1.0
+
+
+def _needs_alpha(img) -> bool:
+    return img.mode in ("RGBA", "LA", "PA", "P") or "transparency" in img.info
+
+
+def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
+                     bg: tuple | None = None, *, speed: str = "strict",
+                     decode_cache: dict | None = None,
+                     cache_key: str | None = None) -> bytes:
+    """源图 → 落位尺寸的 PNG bytes（无临时文件）。source 可为路径或 bytes。"""
+    import io
     from PIL import Image
 
-    with Image.open(src) as opened:
-        rgba = opened.convert("RGBA")
-        background = Image.new("RGBA", rgba.size, (*(bg or (255, 255, 255)), 255))
-        img = Image.alpha_composite(background, rgba).convert("RGB")
-    iw, ih = img.size
-    if crop:
-        l, t, r, b = crop
-        img = img.crop((int(iw * l), int(ih * t), int(iw * (1 - r)), int(ih * (1 - b))))
+    # 先把源读成 bytes：per-compile 缓存与流式读取都需要「可重复消费」的输入，
+    # 直接对活流调用 Image.open 会让流位置前进，后续透传就会拿到半截字节。
+    blob = _as_bytes(source)
+    # 解码缓存：同一张源图落在多个盒子里时（全幅背景 + 局部插图 + 复用页），
+    # 解码与「RGBA 合成 / 裁切」只做一次；后续的 crop/resize 都是纯函数式操作，
+    # 共享同一张已解码底图不会互相污染。
+    base = decode_cache.get(cache_key) if (decode_cache is not None and cache_key) else None
+    if base is not None:
+        img = base
         iw, ih = img.size
-    sw, sh = (max(int(round(w)), 1), max(int(round(h)), 1))
-    # 使用主题背景色填充 contain 留白，避免在暗色主题下出现白边。
-    bg_fill = bg if bg is not None else (255, 255, 255)
+        crop = (lambda c: tuple(c) if c and any(c) else None)(crop)
+        if crop is not None:
+            cx0, cy0 = int(iw * crop[0]), int(ih * crop[1])
+            cx1, cy1 = int(iw * (1 - crop[2])), int(ih * (1 - crop[3]))
+            img = img.crop((cx0, cy0, cx1, cy1))
+        return _encode_png(img, w, h, fit, bg, speed)
+    with Image.open(io.BytesIO(blob)) as opened:
+        iw, ih = opened.size
+        l, t, r, b = (crop or (0, 0, 0, 0))
+        crop = (l, t, r, b) if any((l, t, r, b)) else None
+        sw, sh = (max(int(round(w)), 1), max(int(round(h)), 1))
+        # 透传（不做任何像素工作）：无裁切、无透明混合、比例与盒子一致（±1%）、
+        # 且源图既不需要放大也不超过 MEDIA_MAX_OVERSAMPLE 时，原字节就是正确的
+        # 落位素材——渲染器自己会缩放到盒子，额外的解码/重采样/重编码买不到任何
+        # 可见质量。比例不一致时必须做 cover/contain 变换（几何是设计决定）。
+        aspect_ok = abs((iw / max(ih, 1)) / (sw / max(sh, 1)) - 1) <= 0.01
+        fits = (sw * MEDIA_MAX_OVERSAMPLE >= iw and sh * MEDIA_MAX_OVERSAMPLE >= ih)
+        if crop is None and not _needs_alpha(opened) and aspect_ok and fits:
+            return blob                 # 原字节即正确素材：不解码、不重编码
+        # JPEG 源：先 draft 到目标尺寸再解码（DCT 缩放解码，省掉整幅 4K 解码）。
+        # PNG 源 draft 是空操作，因此这一步对任何格式都正确。
+        if not _needs_alpha(opened):
+            try:
+                opened.draft("RGB", (sw, sh))
+                iw, ih = opened.size
+            except Exception:
+                pass
+        if crop is not None or _needs_alpha(opened):
+            if _needs_alpha(opened):
+                rgba = opened.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, (*(bg or (255, 255, 255)), 255))
+                img = Image.alpha_composite(background, rgba).convert("RGB")
+            else:
+                img = opened.convert("RGB")
+            if crop is not None:
+                cx0, cy0 = int(iw * l), int(ih * t)
+                cx1, cy1 = int(iw * (1 - r)), int(ih * (1 - b))
+                img = img.crop((cx0, cy0, cx1, cy1))
+        else:
+            img = opened.convert("RGB")
+    if decode_cache is not None and cache_key:
+        decode_cache[cache_key] = img
+    return _encode_png(img, w, h, fit, bg, speed)
+
+
+def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None,
+                speed: str) -> bytes:
+    """已解码底图 → 落位尺寸的 PNG bytes（cover / contain）。"""
+    import io
+    from PIL import Image
+    iw, ih = img.size
+    target_w = max(1, min(iw, int(round(w * MEDIA_MAX_OVERSAMPLE))))
+    target_h = max(1, min(ih, int(round(h * MEDIA_MAX_OVERSAMPLE))))
     if fit == "contain":
-        scale = min(sw / iw, sh / ih)
+        scale = min(target_w / iw, target_h / ih)
         nw, nh = max(int(round(iw * scale)), 1), max(int(round(ih * scale)), 1)
-        img = img.resize((nw, nh), Image.LANCZOS)
-        canvas = Image.new("RGB", (sw, sh), bg_fill)
-        canvas.paste(img, ((sw - nw) // 2, (sh - nh) // 2))
+        if (nw, nh) != (iw, ih):
+            img = _resize_quality(img, (nw, nh))
+        canvas = Image.new("RGB", (target_w, target_h), bg if bg is not None else (255, 255, 255))
+        canvas.paste(img, ((target_w - nw) // 2, (target_h - nh) // 2))
         img = canvas
     else:  # cover
-        scale = max(sw / iw, sh / ih)
+        scale = max(target_w / iw, target_h / ih)
         nw, nh = max(int(round(iw * scale)), 1), max(int(round(ih * scale)), 1)
-        img = img.resize((nw, nh), Image.LANCZOS)
-        img = img.crop(((nw - sw) // 2, (nh - sh) // 2,
-                        (nw - sw) // 2 + sw, (nh - sh) // 2 + sh))
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-        name = tmp.name
-    img.save(name, "PNG")
-    return Path(name)
+        if (nw, nh) != (iw, ih):
+            img = _resize_quality(img, (nw, nh))
+        left, top = (nw - target_w) // 2, (nh - target_h) // 2
+        img = img.crop((left, top, left + target_w, top + target_h))
+    buf = io.BytesIO()
+    # 快速档用低压缩级别换编码时间：预览/交付质量不受影响（无损），
+    # 只是文件略大——PNG 的无损性不随 compress_level 改变。
+    img.save(buf, "PNG", compress_level=1 if speed == "fast" else 6)
+    return buf.getvalue()
+
+
+def _resize_quality(img, size):
+    """高质量缩放：缩小时先用 BOX 预降采样再 LANCZOS 收尾（PIL reducing_gap），
+    与纯 LANCZOS 的结果在肉眼与指标上都几乎不可分辨，但省掉大量重采样工作。
+    放大时直接用 LANCZOS（reducing_gap 对放大无意义）。"""
+    from PIL import Image
+    if size[0] < img.width and size[1] < img.height:
+        return img.resize(size, Image.LANCZOS, reducing_gap=2.0)
+    return img.resize(size, Image.LANCZOS)
+
+
+def _as_bytes(value) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if hasattr(value, "read"):
+        position = value.tell() if hasattr(value, "tell") else None
+        blob = value.read()
+        if position is not None and hasattr(value, "seek"):
+            try:
+                value.seek(position)
+            except Exception:
+                pass
+        return blob
+    return Path(value).read_bytes()
 
 
 def _content_protection_overlay(element: dict) -> dict | None:
@@ -355,41 +457,61 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
 
     fit = element.get("fit", "cover")
     crop = element.get("crop")
-    temp_path = None
-    path_to_use = io.BytesIO(snapshot) if snapshot is not None else src
+    blob = None
     if fit in ("cover", "contain") or crop:
         try:
             # contain 留白填充主题背景色，保证暗色主题下无白边。
             bg_rgb = ctx.color("background")
             bg_tuple = tuple(bg_rgb) if bg_rgb is not None else None
-            temp_path = _fit_image(path_to_use, w, h, fit, crop, bg=bg_tuple)
-            path_to_use = temp_path
+            crop_key = tuple(crop) if crop else ()
+            cache = getattr(ctx, "image_transform_cache", None)
+            key = (str(src), round(float(w), 2), round(float(h), 2), str(fit), crop_key, bg_tuple)
+            blob = cache.get(key) if cache is not None else None
+            if blob is None:
+                source = io.BytesIO(snapshot) if snapshot is not None else src
+                t0 = time.perf_counter()
+                decode_cache = getattr(ctx, "image_decode_cache", None)
+                if decode_cache is not None and str(src) in decode_cache:
+                    ctx.timings["image_decode_reuses"] = ctx.timings.get("image_decode_reuses", 0) + 1
+                blob = _fit_image_bytes(source, w, h, fit, crop, bg=bg_tuple,
+                                        speed=getattr(ctx, "speed", "strict"),
+                                        decode_cache=decode_cache,
+                                        cache_key=str(src))
+                ctx.timings["image_transform_ms"] = ctx.timings.get("image_transform_ms", 0.0) \
+                    + (time.perf_counter() - t0) * 1000
+                ctx.timings["image_transforms"] = ctx.timings.get("image_transforms", 0) + 1
+                if cache is not None:
+                    cache[key] = blob
+            else:
+                ctx.timings["image_transform_reuses"] = ctx.timings.get("image_transform_reuses", 0) + 1
         except Exception as exc:
             ctx.warn(f"image '{element.get('id')}': 裁切失败，按原图嵌入（{exc}）", element.get("id"))
+            blob = None
 
-    try:
-        pic = slide.shapes.add_picture(path_to_use if hasattr(path_to_use, "read") else str(path_to_use), Emu(emu(x)), Emu(emu(y)),
+    # 嵌入：blob 为本进程变换出的字节；无变换时直接给流/路径。
+    # 异常不在这里吞掉——compile_deck 的元素级兜底负责记账（错误信息带 slide 与元素 id）。
+    if blob is not None:
+        pic = slide.shapes.add_picture(io.BytesIO(blob), Emu(emu(x)), Emu(emu(y)),
                                        Emu(emu(w)), Emu(emu(h)))
-        pic.name = str(element.get("id", "image"))
-        # Content Protection 层：紧随图片、覆盖同一盒，使文字可直接叠加而不牺牲可读性
-        overlay = _content_protection_overlay(element)
-        if overlay:
-            shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(emu(x)), Emu(emu(y)),
-                                        Emu(emu(w)), Emu(emu(h)))
-            shp.name = f"{element.get('id', 'image')}__protection"
-            try:
-                shp.shadow.inherit = False
-            except Exception:
-                pass
-            apply_fill(shp, overlay, ctx)
-            shp.line.fill.background()
-    finally:
-        # Only this compile's private temporary file is removed.
-        if temp_path is not None:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+    else:
+        stream = io.BytesIO(snapshot) if snapshot is not None else str(src)
+        if isinstance(stream, io.BytesIO):
+            stream.seek(0)
+        pic = slide.shapes.add_picture(stream, Emu(emu(x)), Emu(emu(y)),
+                                       Emu(emu(w)), Emu(emu(h)))
+    pic.name = str(element.get("id", "image"))
+    # Content Protection 层：紧随图片、覆盖同一盒，使文字可直接叠加而不牺牲可读性
+    overlay = _content_protection_overlay(element)
+    if overlay:
+        shp = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(emu(x)), Emu(emu(y)),
+                                    Emu(emu(w)), Emu(emu(h)))
+        shp.name = f"{element.get('id', 'image')}__protection"
+        try:
+            shp.shadow.inherit = False
+        except Exception:
+            pass
+        apply_fill(shp, overlay, ctx)
+        shp.line.fill.background()
 
 
 # ══════════════════ Layer 2 · Charts（图表层）══════════════════
@@ -434,7 +556,7 @@ def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
     text = "" if text is None else str(text)
     if text.strip():
         p.text = text
-        set_para_font(p, latin, cn, size * 0.75, color, bold)
+        set_para_font(p, latin, cn, px_to_pt(size), color, bold)
     return tb
 
 
@@ -562,7 +684,7 @@ def _label(shape, text, element, ctx, color, default_size=14):
         p.text = text
         cn, latin = ctx.families(element)
         size = float(element.get("label_size", default_size))
-        set_para_font(p, latin, cn, size * 0.75, color, False)
+        set_para_font(p, latin, cn, px_to_pt(size), color, False)
 
 
 # --------------------------------------------------------------------------
@@ -757,7 +879,8 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
         # Do not squeeze labels into a dense plot. The policy is explicit so the
         # caller can choose between removing redundant labels and failing QA.
         label_policy = str(element.get("label_collision_policy", "fail"))
-        if show_values and len(rows) >= 6 and h < 190:
+        if (show_values and len(rows) >= CHART_LABEL_MIN_COUNT
+                and h < CHART_LABEL_MIN_H):
             if label_policy == "hide_redundant":
                 show_values = False
                 ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值", element.get("id"))
@@ -901,7 +1024,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             p = lb.text_frame.paragraphs[0]
             p.text = row["label"]
             p.alignment = PP_ALIGN.CENTER
-            set_para_font(p, latin, cn, float(element.get("label_size", 13)) * 0.75, ink, False)
+            set_para_font(p, latin, cn, px_to_pt(element.get("label_size", 13)), ink, False)
         return
 
     if kind == "steps":
@@ -915,13 +1038,13 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             p = nb.text_frame.paragraphs[0]
             p.text = str(i + 1)
             p.alignment = PP_ALIGN.LEFT
-            set_para_font(p, latin, cn, float(element.get("num_size", 30)) * 0.75, secondary, True)
+            set_para_font(p, latin, cn, px_to_pt(element.get("num_size", 30)), secondary, True)
             tb = slide.shapes.add_textbox(
                 Emu(emu(cx)), Emu(emu(y + 48)), Emu(emu(col_w * 0.9)), Emu(emu(h * 0.36)))
             tb.name = f"{eid}__t_{i}"
             p = tb.text_frame.paragraphs[0]
             p.text = row["label"]
-            set_para_font(p, latin, cn, float(element.get("title_size", 18)) * 0.75, ink, True)
+            set_para_font(p, latin, cn, px_to_pt(element.get("title_size", 18)), ink, True)
             desc = str(row.get("desc", "") or "").strip()
             if desc:
                 db = slide.shapes.add_textbox(
@@ -931,7 +1054,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                 p = db.text_frame.paragraphs[0]
                 p.text = desc
                 p.line_spacing = pt(float(element.get("desc_size", 14)) * 1.3)
-                set_para_font(p, latin, cn, float(element.get("desc_size", 14)) * 0.75,
+                set_para_font(p, latin, cn, px_to_pt(element.get("desc_size", 14)),
                               muted, False)
             if i < n - 1:
                 c = slide.shapes.add_connector(
@@ -971,7 +1094,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             lb.name = f"{eid}__l_{i}"
             p = lb.text_frame.paragraphs[0]
             p.text = str(p0.get("label", ""))
-            set_para_font(p, latin, cn, 11 * 0.75, ink, False)
+            set_para_font(p, latin, cn, px_to_pt(11), ink, False)
         return
 
     if kind == "waterfall":
@@ -1047,7 +1170,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             p = lb.text_frame.paragraphs[0]
             p.text = r["label"]
             p.alignment = PP_ALIGN.CENTER
-            set_para_font(p, latin, cn, 11 * 0.75, ink if is_total[i] else muted,
+            set_para_font(p, latin, cn, px_to_pt(11), ink if is_total[i] else muted,
                           bool(is_total[i]))
         return
 
@@ -1392,7 +1515,7 @@ def add_kpi(slide, element: dict, ctx: RenderContext) -> None:
     p.alignment = align_of(align, PP_ALIGN.LEFT)
     if value_text:
         p.text = value_text
-        set_para_font(p, latin, cn, float(element.get("value_size", 56)) * 0.75, primary, True)
+        set_para_font(p, latin, cn, px_to_pt(element.get("value_size", 56)), primary, True)
 
     lb = slide.shapes.add_textbox(
         Emu(emu(x)), Emu(emu(y + h * 0.66)), Emu(emu(w)), Emu(emu(h * 0.30)))
@@ -1401,7 +1524,7 @@ def add_kpi(slide, element: dict, ctx: RenderContext) -> None:
     p2.alignment = align_of(align, PP_ALIGN.LEFT)
     if label_text:
         p2.text = label_text
-        set_para_font(p2, latin, cn, float(element.get("label_size", 16)) * 0.75, muted, False)
+        set_para_font(p2, latin, cn, px_to_pt(element.get("label_size", 16)), muted, False)
 
 
 # ══════════════════ Layer 3 · Compiler（编排层）══════════════════
@@ -1459,7 +1582,7 @@ def _normalize_embedded_ooxml(blob: bytes) -> bytes:
         return blob
 
 
-def _postprocess_package(output_path) -> None:
+def _postprocess_package(output_path, *, media_stored: bool = True) -> dict:
     """包级后处理（一次解包，一次写回）：
 
     1. 主题投影：默认 Office 主题的 effectStyleLst 携带 outerShdw，部分阅读器
@@ -1470,19 +1593,33 @@ def _postprocess_package(output_path) -> None:
        更是把 `dcterms:created/modified` 写成当前时间。同一份 spec 隔一秒编译就得到
        不同字节——产物戳失去意义，编译缓存与预览缓存的无变化复用随机失效。
        外层与内嵌包一并压到固定时间，产物字节只由内容决定。
+
+    `media_stored`（v5.9 起默认开）：图片/字体等**已经压缩过**的二进制条目按
+    STORED 直存。此前整包一律 DEFLATED，于是 5–40MB 的 PNG/JPEG 被完整解压再
+    重新压缩一遍，纯属浪费——它们几乎不可再压缩，只是把交付链拖慢。
+    XML 仍走 DEFLATE（体积敏感，且本来就是小文本）。
     """
     import re as _re
+    import time as _time
     import zipfile as _zip
     import shutil as _shutil
     path = Path(output_path)
     tmp = path.with_suffix(path.suffix + ".tmp")
     empty_run = _re.compile(r"<a:r>(?:(?!</a:r>).)*?<a:t(?:\s[^>]*)?>\s*</a:t>"
                             r"(?:(?!</a:r>).)*?</a:r>", _re.S)
-    with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w", _zip.ZIP_DEFLATED) as zout:
+    t0 = _time.perf_counter()
+    media_written = media_passthrough = 0
+    with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w") as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
+            compression = _zip.ZIP_DEFLATED
             if item.filename.endswith(_EMBEDDED_OOXML):
                 data = _normalize_embedded_ooxml(data)
+            if media_stored and not item.filename.endswith((".xml", ".rels")) \
+                    and not item.filename.endswith(_EMBEDDED_OOXML):
+                # 媒体/字体：直存。字节完全相同，只是不再做无收益的二次压缩。
+                compression = _zip.ZIP_STORED
+                media_passthrough += 1
             if item.filename.endswith(".xml") and item.filename.startswith("ppt/"):
                 text = data.decode("utf-8")
                 stripped = text
@@ -1494,13 +1631,17 @@ def _postprocess_package(output_path) -> None:
                 if stripped != text:
                     data = stripped.encode("utf-8")
             item.date_time = _FIXED_ZIP_STAMP
+            item.compress_type = compression
             zout.writestr(item, data)
     _shutil.move(str(tmp), str(path))
+    return {"package_ms": round((_time.perf_counter() - t0) * 1000, 2),
+            "media_entries_stored": media_passthrough}
 
 
 def compile_deck(spec: dict, output_path, checks: bool = True,
                  guard_rules: dict | None = None, spec_path: str | None = None,
-                 image_bytes: dict | None = None) -> dict:
+                 image_bytes: dict | None = None, speed: str = "strict",
+                 decode_seed: dict | None = None) -> dict:
     """
     把设计 spec 编译为原生可编辑 PPTX。
 
@@ -1513,6 +1654,10 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
     静态问题以 [guard] 前缀并入 warnings；guard_rules 可配置治理阈值。
     返回契约不变：{"passed","slides","warnings","file_bytes"}；
     启用 checks 时追加 "guard"（治理明细），旧调用不受影响。
+
+    speed="fast"（v5.9）时：图片变换用低压缩级别编码，包级后处理仍做
+    （时间戳与 XML 规格不变，产物仍确定性），只是不再为媒体条目重复压缩。
+    speed="strict" 保留原压缩级别。两条路径的**可见结果一致**，差异只在耗时与字节。
     """
     output_path = Path(output_path)
     _spec_warning = None
@@ -1537,7 +1682,18 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
 
     ctx = RenderContext(theme, canvas)
     ctx.image_bytes = image_bytes or {}
-    ctx.require_snapshot = image_bytes is not None
+    # 「核验字节快照」是**给了就必须够用**：调用方声明「这些字节已经读过一遍」时，
+    # 缺一份就说明读取与使用不是同一批事实（不许悄悄再读一遍掩盖不一致）。
+    # 但「一次也没给」是合法情形——判定被复用时本来就没有读字节，此时编译器
+    # 自己读文件（一次读，不是重复读）。空 dict 与「没给」在这一点上等价。
+    ctx.require_snapshot = bool(image_bytes)
+    # 速度档与 per-compile 图片变换缓存：同一张图在同一盒子里只变换一次。
+    ctx.speed = "fast" if str(speed).lower() == "fast" else "strict"
+    ctx.image_transform_cache = {}
+    # 解码底图：资产核验阶段已经为核验解码过一次（`decode_seed`，键为解析后的源路径），
+    # 同一张 4K 图在这里就不必再解一遍——这是全链最后一块重复解码。
+    ctx.image_decode_cache = dict(decode_seed) if decode_seed else {}
+    ctx.timings = {}
     if _spec_warning:
         ctx.warn(_spec_warning)
     for _warning in canvas_warnings:
@@ -1621,8 +1777,10 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
                 pass
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    t_save = time.perf_counter()
     prs.save(str(output_path))
-    _postprocess_package(output_path)
+    save_ms = (time.perf_counter() - t_save) * 1000
+    package = _postprocess_package(output_path)
     report = {
         "passed": len(ctx.warnings) == 0,
         "slides": len(slides),
@@ -1637,6 +1795,17 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
     if guard is not None:
         report["guard"] = {"checks": guard["checks"],
                            "passed": guard["passed"]}
+    # 编译内部计时：让「慢在哪里」是数出来的，不是猜出来的（进 repair packet.performance）。
+    report["performance"] = {
+        "speed": ctx.speed,
+        "image_transform_ms": round(ctx.timings.get("image_transform_ms", 0.0), 2),
+        "image_transforms": ctx.timings.get("image_transforms", 0),
+        "image_transform_reuses": ctx.timings.get("image_transform_reuses", 0),
+        "image_decode_reuses": ctx.timings.get("image_decode_reuses", 0),
+        "save_ms": round(save_ms, 2),
+        "package_ms": package["package_ms"],
+        "media_entries_stored": package["media_entries_stored"],
+    }
     return report
 
 

@@ -60,20 +60,14 @@ Quality > Complexity  Reduction > Addition   One Strong Decision > Many Weak Dec
 Content → Intent → Priority → Hierarchy → Form → Reduction → Expression
 ```
 
-这页真正表达什么？观众应该理解什么？什么最重要？先看什么、再看什么？
-什么视觉形式最适合？什么可以删除？需要多少视觉表达才足够？——然后才执行。
+这页真正表达什么？观众应该理解什么？什么最重要？先看什么？什么视觉形式最适合？
+什么可以删除？—— 然后才执行。每页必须拥有**一个明确的视觉主语**：一个结论 / 一个数字 /
+一个关系 / 一张图 / 一种空间关系 / 一种情绪。不要让标题、数据、图片、卡片、装饰
+拥有相同注意力。高级的页面不是"信息很多但都漂亮"，而是**观众第一眼就知道该看什么**。
 
 禁止：`Template → Components → Fill Content`。
 
-## 03 · One Slide, One Dominant Idea
-
-每页必须拥有一个明确的视觉主语：一个结论 / 一个数字 / 一个关系 / 一张图 /
-一种空间关系 / 一种情绪。
-
-不要让 `标题 = 数据 = 图片 = 卡片 = 装饰` 拥有相同注意力。
-真正高级的页面不是"信息很多但都漂亮"，而是：**观众第一眼就知道应该看什么。**
-
-## 04 · Reduction First
+## 03 · Reduction First
 
 页面不够高级时，禁止第一反应是增加元素。唯一的减法链：
 
@@ -93,7 +87,7 @@ Content → Intent → Priority → Hierarchy → Form → Reduction → Express
 不用装饰弥补结构问题；不用颜色弥补层级问题；不用卡片弥补信息组织问题；
 不用复杂视觉弥补内容贫乏。
 
-## 05 · Grouping
+## 04 · Grouping
 
 信息分组遵循 **场 > 线 > 型 > 盒**：优先用空间、留白、对齐、发丝线、字体层级、
 轻量色差，最后才使用容器。
@@ -102,14 +96,14 @@ Card 不是默认组件。只有需要明确容器语义、需要隔离复杂背
 时才用卡片；否则退回场/线/型/空间。避免 Card Wall（一页多张同面积卡片 =
 不敢决定哪个最重要）。全文 → `references/design-system.md` §Grouping。
 
-## 06 · Data Is Visual Argument
+## 05 · Data Is Visual Argument
 
 不要 `Data → Automatic Chart`。先问：**这组数据真正需要观众看到什么？**
 最终形式可能是一个数字、一个比例、一条趋势、一个比较、一个关系、一个空间结构，
 或一张极简图表。**Chart ≠ Component；Chart = Visual Argument**——
 图表服务于结论，而不是证明"这里有数据"。
 
-## 07 · Visual World
+## 06 · Visual World
 
 视觉世界由内容决定，不由模板决定。推导顺序：
 
@@ -121,7 +115,7 @@ Brand → Context → Emotion → Material → Light → Color → Image → Com
 高级感不是"低饱和 + 米白 + 黑色"，也不是"极简 + 大留白"——那些只是可能的视觉语言。
 真正固定的是：**视觉判断质量。**
 
-## 08 · Native-First
+## 07 · Native-First
 
 优先使用原生可编辑元素：Typography、Native Shapes、Native Charts、Tables、Lines、
 Simple diagrams。图片是表达工具，不是页面填充物。
@@ -129,7 +123,7 @@ Simple diagrams。图片是表达工具，不是页面填充物。
 典型 15 页 deck 的 Hero 图通常控制在 1–2 张以内——但这不是硬规则：
 内容要求更多图像时可以增加；内容不需要图片时，**一张都不要生成**。
 
-## 09 · Brief → Plan → Execute
+## 08 · Brief → Plan → Execute
 
 ```
 Brief → Plan → Asset Contract → Generate / Reuse → Composition → Release Check
@@ -144,30 +138,30 @@ brief 是唯一需求契约（`templates/brief.yml`）：人负责声明意图�
 不为凑轮次增加无意义调用（命令详情 → `references/asset-workflow.md` §2）：
 
 ```
-R1  python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.py \
-        --assets-out asset_manifest.json --assets-dir generated_assets
+R1  规划 + 资产契约（一次调用：plan + 骨架 + 资产清单）
 R2  外部图片工具按清单 prompt / negative / ratio / safe_area 批量出图（无图稿跳过 R2）
-R3  填完骨架 → python scripts/vao.py check build_deck.py out.pptx --mode release \
-        --assets-manifest asset_manifest.json
-    （check 内部完成资产核验；缺图/待重试/阻断都退出 2，不编译）
+R3  填完骨架 → 一轮收口（check 内部完成资产核验；不通过时不编译）
 ```
 
-## 10 · Context Economy
+命令原文（唯一事实源）→ `references/asset-workflow.md` §2；退出码语义 → 同卷 §5。
+R1/R3 各一次、一次收口；`--speed fast` 是默认档，预算与轮次纪律见 §16。
 
-| Reference | 什么时候读 |
+## 09 · Context & Artifacts（按需加载）
+
+**Reference 是外部记忆，不是上下文负担。** 只读当前任务真正需要的那一份，永不预载：
+
+| 什么时候 | 读哪一节（不是读整卷） |
 |---|---|
-| `references/design-intelligence.md` | 内容 → 意义 → 策略 → 页面意图的判断框架 |
-| `references/design-craft.md` | 五个导演级判断、减法链与真实案例（数字住 guard/契约） |
-| `references/design-system.md` | 写 elements 前：字段速查 + **首轮设对表** + constraints 数字 |
-| `references/production-contract.md` | 运行时契约、模式、门槛与报告字段 |
-| `memory/design_dna.json` | 历史设计经验与判断线索（写入走 `vao.py dna --add`） |
+| 内容 → 意义 → 策略 → 页面意图 | `references/design-intelligence.md` §01·02 / §03 / §04 |
+| 构图、留白职责、叙事连续 | `references/design-intelligence.md` §05 / §06 / §07·08 |
+| 判断拿不准 / 页面「不够高级」 | `references/design-craft.md` §一（减法链）§二（五个判断）§三（信号与权衡） |
+| 图片与字体层面的判断 | `references/design-craft.md` §四（摄影）§五（Typography）§六（案例） |
+| 写 elements 前（字段、首轮设对表） | `references/design-system.md` §Spec 字段速查 / §首轮设对 / §方向 |
+| 运行时契约、门槛、报告字段 | `references/production-contract.md` §Failure codes / §Release Manifest / §Cold-Hot |
+| 资产链、证据边界、什么时候重跑 | `references/asset-workflow.md` §2（标准入口）§6（证据失效）§7（证据边界） |
+| 历史设计经验与判断线索 | `memory/design_dna.json`（写入走 `vao.py dna --add`） |
 
-只读当前任务真正需要的那一份，永不"为了保险"预载全部。
-**Reference 是外部记忆，不是上下文负担。**
-
-## 11 · Skeleton Is the Working Brief
-
-三份产物，三种职责，各读一次：
+三份产物，各读一次：
 
 | 产物 | 职责 | 什么时候读 |
 |---|---|---|
@@ -175,16 +169,15 @@ R3  填完骨架 → python scripts/vao.py check build_deck.py out.pptx --mode r
 | `asset_manifest.json` | 出图契约 + QC 凭证 | R2 出图与 R3 质检时 |
 | `plan.json` | 链路凭证（`plan_sha256` 指纹） | 正常流程**不读** |
 
-骨架头注释已包含：设计方向、材质、光线、图表手法、统一契约、待判断槽位、
-容量公式、DNA 命中与避讳；每页注释带叙事动作（这页该干什么）与构图意图
-（视线怎么走，可推翻）。**几何归你判断**——plan 不给坐标，写着「可推翻」的地方
-就是让你做判断的地方。
+骨架头注释已含：方向、材质、光线、图表手法、统一契约、待判断槽位、容量纪律、
+DNA 命中与避讳；每页注释带家族、密度/能量、媒体判断、构图判断项与内容参考。
+**引擎不替你写设计答案**：家族 → 构图语法这类查表答案（叙事动作 / 构图提案 / 质量预算）
+已整层删除——写死的第一候选会被照抄，不再被判断；构图只在作者显式声明时随骨架传下去。
+**几何归你判断**——写着「可推翻」的地方就是让你做判断的地方。留痕的事实来源是
+`plan.warnings`（如 `unresolved_content`）；骨架里的 ⚠ 注释是它的作业面拷贝，
+同一事实只处理一次。
 
-留痕的事实来源是 `plan.warnings`（如 `unresolved_content`）；骨架里的 ⚠ 注释是它的
-作业面拷贝——同一事实只处理一次，不要重复消化。`brief.unresolved` 只记 deck 级
-未声明字段，与逐页留痕不重叠。
-
-## 12 · Asset Discipline
+## 10 · Asset Discipline
 
 **Asset Decision ≠ Image Filling.** 每页遇到图像需求时只执行四步，不跳步、不倒着走：
 
@@ -217,15 +210,11 @@ asset           asset_role: background/illustration/hybrid
 凭证纪律：图片元素必须写清单内的 `asset_id`（不得用 `src` 绕过）；改 brief/plan 后
 重建清单；改提示词或图片后重跑 QC；已有图片显式 `reuse`，不补造生成历史。
 
-## 13 · Execution Economy
+## 11 · Execution Economy
 
 目标不是更多检查，而是**更少轮次得到更高质量**：一次设计判断 + 一次必要验证。
-复杂任务增加的是**判断深度**，不是执行轮次。
-
-生产阶段严禁调用离线自检 `scripts/selftest.py`（那是开发技能包引擎用的回归网）；
-生产只跑 `vao.py check`。首轮就按骨架头的容量公式估好行长与折行余量，争取 0 阻断。
-
-## 14 · Batch Diagnosis
+复杂任务增加的是**判断深度**，不是执行轮次。首轮就按骨架的容量纪律估好文本容量与折行余量，
+争取 0 阻断。
 
 Warning 不成为对话。不要 `Warning 1 → 修 → Warning 2 → 修 → …`，而是：
 
@@ -233,44 +222,59 @@ Warning 不成为对话。不要 `Warning 1 → 修 → Warning 2 → 修 → �
 Detect → Group by Root Cause → Batch Correction → Single Re-run
 ```
 
-修根因，不修症状。例如 20 个 `TEXT_OVERFLOW`：先找字体、容量、层级或布局策略的
-共同原因，而不是逐页修 20 次。
+修根因，不修症状：20 个 `TEXT_OVERFLOW` 先找字体、容量、层级或布局策略的共同原因，
+而不是逐页修 20 次。**warning 是留痕，不是任务**——除非它构成实际交付风险，
+否则不要为它再开一轮设计循环。
 
-## 15 · Validation Is Not Design
+生产阶段严禁调用离线自检 `scripts/selftest.py`（那是开发技能包引擎用的回归网）；
+生产只跑 `vao.py check`。
 
-验证只回答一个问题：**这份 PPT 能不能交付？**
+**冷 / 热契约**：一轮执行只有两种身份——COLD（这一轮重新建立事实）/ HOT（这一轮只取已有事实），
+报告里会写明是哪一种；阶段序列与判据 → `references/production-contract.md` §Cold / Hot。
 
-检查：文件完整性、页数、对象存在、文本溢出与裁切、几何冲突、数据完整性、
-来源完整性、资产链完整性、编译完整性。
+* HOT 意味着**没有重做任何测量、编译、渲染**；能这样做的前提是每一步都有凭证
+  （`reuse` 里逐条记着「为什么可以复用」），凭证不足就自动落回 COLD，并写下原因。
+* 判定（guard / QA 结论）**永远当场执行**——判断必须新鲜，这不是可以复用的证据。
+* 任何新增步骤都要先回答：**它属于 COLD 还是 HOT；为什么 HOT 需要重做。**
+  答不出「为什么必须重做」，说明它是 COLD 的活，不许放进热路径。
 
-验证**不重新决定**风格、配色、创意、构图、审美与页面方向——
-Design Judgment 已经在前面完成。不打分、不渲染、不调用外部渲染器。
+## 12 · Validation Is Not Design（也是停止规则）
 
-## 16 · Engineering Hard Boundaries
+验证只回答一个问题：**这份 PPT 能不能交付？** 检查文件完整性、页数、对象存在、
+文本溢出与裁切、几何冲突、数据完整性、来源完整性、资产链完整性、编译完整性。
+验证**不重新决定**风格、配色、创意、构图、审美与页面方向——Design Judgment 已经在
+前面完成。不打分、不渲染、不调用外部渲染器。
 
-以下属于工程事实，不属于审美模板：
+改稿前先过一遍导演级停止问题：
+
+```
+沟通清楚吗？        看起来是有意为之吗？   层级成立吗？      排版够好吗？
+构图受控吗？        信息容易理解吗？       视觉表达得当吗？  有东西多余吗？
+还能删什么吗？      可以交付了吗？
+```
+
+都成立就 **STOP**。不要为了理论上的完美继续增加模块、规则、图片、QA、执行轮次、
+对话、代码或 reference。
+
+## 13 · Engineering Hard Boundaries & Failure Codes
+
+工程事实，不属于审美模板：
 
 ```
 16:9 · 1280×720 · 原生可编辑 PPTX · 数据不得篡改 · 来源不得丢失
 文本不得溢出 · 对象不得非法重叠 · 资产必须可追溯
 ```
 
-具体字段、阈值与门槛不堆在主 Skill：写 elements 前查 `references/design-system.md`
-（先过**首轮设对**表，再查字段速查与 constraints 数字），运行时门槛查
-`references/production-contract.md`。主 Skill 只负责告诉你：**什么时候判断、
-判断什么、为什么判断。**
-
-## 17 · Failure Codes
-
 ```
 OVERLAP · SOURCE_COLLISION · CHART_LABEL_COLLISION · TEXT_OVERFLOW · READABILITY_FAIL
 DATA_INTEGRITY_FAIL · CHART_TYPE_FAIL · COMPILE_FAIL · GUARD_FAIL · ASSET_WORKFLOW_FAIL
 ```
 
-阻断：必须修（按 §14 批量修根因后单次复跑）。Warning：留痕即可——
-除非构成实际交付风险，否则不进入额外设计循环。
+阻断：必须修（按 §11 批量修根因后单次复跑）。具体字段、阈值与门槛不堆在主 Skill：
+写 elements 前查 `references/design-system.md`（先过**首轮设对**表），运行时门槛查
+`references/production-contract.md`。主 Skill 只回答：**什么时候判断、判断什么、为什么判断。**
 
-## 18 · Adaptive Execution
+## 14 · Adaptive Execution
 
 执行深度由任务赢得。**Simple**（文字 / 简单叙事 / 少量数据）：快速判断 → 编排 →
 Release。**Complex**（数据密集 / 多层叙事 / 大量资产）：深度判断 → 资产策略 →
@@ -281,7 +285,7 @@ Release。**Complex**（数据密集 / 多层叙事 / 大量资产）：深度�
 `fast / advanced` 是判断与证据预算，不是审美等级；适合纯排版的页在 advanced 下
 仍然是纯排版。
 
-## 19 · Craft Baselines（Typography · Color · Consistency · Output）
+## 15 · Craft Baselines（Typography · Color · Consistency · Output）
 
 - **Typography = 阅读路径 + 信息层级 + 页面节奏**，不是摆文字。少字体、少字号、少字重，
   靠大小/重量/位置/间距/留白/比例建立层级。特别禁止：标题过长压迫、正文过密、字号过小、
@@ -295,18 +299,31 @@ Release。**Complex**（数据密集 / 多层叙事 / 大量资产）：深度�
 - **Output Discipline**：默认静默执行。只在该输出说明时输出：存在真正的设计决策、关键风险、
   无法自动解决的问题、需要用户选择、影响最终交付。不重复已知信息、已确认原则、已执行步骤。
 
-## 20 · Director-Level Stop Rule
+## 16 · Two-Minute Production Protocol（快速档 · 默认）
 
-```
-Does it communicate?          Does it look intentional?
-Does the hierarchy work?      Is the typography excellent?
-Is the composition controlled? Is the information easy to understand?
-Is the visual expression appropriate? Is anything unnecessary?
-Can anything be removed?      Is it deliverable?
-```
+目标：**完整 PPT 在 120 秒内收口**（不含外部出图等待）。速度来自执行预算，不是删设计能力。
 
-如果已经满足：**STOP.** 不要为了理论上的完美继续增加模块、规则、图片、QA、
-Critic、执行轮次、对话、代码或 reference。
+R1 与 R3 各一次调用：命令原文 → `references/asset-workflow.md` §2；档位与预算 → 同卷 §5 与
+`references/production-contract.md` §执行模式。R2 外部出图不占用 120s（并发调用，唯一图 ≤3 张，
+缓存/复用优先）。
+
+| 阶段 | 预算 | 纪律 |
+|---|---|---|
+| R1 规划 + 资产清单 | ≤10s | 一次 `run`；不读 plan.json、不预载 references、不读全部 scripts |
+| R2 出图 | 不计入 | 并发、复用优先、唯一图 ≤3 张；不逐张讨论 |
+| R3 编排 → 收口 | ≤100s | **一轮写完整个 deck**；禁止逐页 check、禁止 draft→release 双轮 |
+| 缓冲 | ≥10s | 落盘与清单 |
+
+`--speed fast`（默认）与 `--speed strict` 只差**证据预算**，不差判定口径
+（同一 guard、同一阈值、同一阻断码）；逐项差异与报告字段 →
+`references/production-contract.md §速度档`。
+
+**轮次纪律 > 任何 Python 优化**：一次规划 + 一次收口；首轮就按骨架头容量公式给足框高，
+争取 0 阻断；warning 按根因批量改一轮（`Detect → Group → Batch → Single Re-run`）；
+不运行 `selftest.py`、不预载全部 reference、不逐页重排。
+
+超预算不重试：`--deadline` 到点即跳过可选证据并留痕（`budget.skipped`）；
+release 档缺预览证据会如实记为不可交付（fail-closed），而不是靠超时赌通过。
 
 ## Core Philosophy
 

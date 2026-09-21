@@ -70,7 +70,7 @@ SPEC = {{
     "slides": [
         {{"id": "s01",
           "page_intent": {{"insight": "结论句", "focus": "t1", "density": "sparse",
-                           "energy": "high", "empty_space_role": "create_authority"}},
+                           "energy": "high"}},
           "source_zone": {{"x": 48, "y": 672, "width": 1184, "height": 32}},
           "elements": [
 {overlap_extra}              {{"type": "text", "id": "t1", "x": 96, "y": 240, "width": 800,
@@ -85,10 +85,13 @@ SPEC = {{
 
 # ── A. 交付链 ──────────────────────────────────────────────────────────────
 def check_readability_seam() -> None:
-    """可读性缝：文档写 3:1、执法曾从 2.5 起——2.5–3.0 是静默带（盲测 muted 2.57:1 就这么漏的）。
+    """可读性缝（2026-09 审核后）：只剩两条硬事实，软档一律不执法。
 
-    另两条同源：① 面/影不该被当字判（深底主题的 secondary 是深面）；
-    ② `chart_muted` 指到哪个 token，刻度就用哪个——它也算弱字，得一起管。
+    ① **读不出来的字**（<1.8:1）点名 warn——这不是品味，是「等于没有字」；
+    ② 面/影不该被当字判（深底主题的 secondary 是深面），只有真拿去写字才点名。
+    曾经还有一条 <3:1 的 hint（含 chart_muted 指到的 token）：已撤——
+    「刻度色够不够深」是设计判断（muted 做装饰/刻度是正当选择），
+    阈值写在 references 的取舍链里，引擎不再对作者的选择发第二意见。
     """
     import guard as _guard
     import route as _route
@@ -104,18 +107,17 @@ def check_readability_seam() -> None:
         spec = {"canvas": {"width": 1280, "height": 720}, "theme": theme,
                 "slides": [{"id": "s01",
                             "page_intent": {"insight": "x", "focus": "t1", "page_family": "COVER",
-                                            "density": "sparse", "energy": "high",
-                                            "empty_space_role": "hold_emotion"},
+                                            "density": "sparse", "energy": "high"},
                             "elements": [{"type": "text", "id": "t1", "x": 96, "y": 240,
                                           "width": 600, "height": 80, "text": "结论", "size": 44,
                                           "color": text_color, "role": "title", "max_lines": 1}]}]}
         res = _guard.check_spec(spec)
         return ([c for c in res["checks"] if c["rule"] == "contrast"], res["passed"])
 
-    # ① 静默带（2.57:1）：以前一声不吭，现在至少 hint；且仍然不阻断
+    # ① 软档不再发声（2.57:1）：不点名、也不阻断——「muted 做刻度还是做装饰」归设计判断
     silent_zone, ok_zone = probe(light)
-    check("readability: 2.5–3.0 的灰不再静默（2.57:1 → hint，且不阻断 release）",
-          len(silent_zone) == 1 and silent_zone[0]["level"] == "hint" and ok_zone is True,
+    check("readability: 2.5–3.0 的灰不再由引擎点名（软档撤销；仍不阻断 release）",
+          not silent_zone and ok_zone is True,
           f"{len(silent_zone)} 条 / passed={ok_zone}")
 
     # ② 真读不出来还是 warn
@@ -132,10 +134,10 @@ def check_readability_seam() -> None:
           not none_used and bool(used_as_text) and used_as_text[0]["id"] == "theme.secondary",
           f"面={len(none_used)} 条 · 字={len(used_as_text)} 条")
 
-    # ④ chart_muted 指向谁，谁就吃这条线（刻度颜色别指到面上）
-    # 这里把 secondary 也做成 2.57:1、且没有任何元素拿它写字——只有 chart_muted 指到它，
-    # 它才该被点名（刻度就是它画的）。
-    cm, _ = probe(dict(light, muted="#5A5A5A", secondary="#9A9A96"),
+    # ④ chart_muted 指向谁，谁就被当字判（刻度就是它画的）：指到读不出来的灰要点名。
+    # 这里把 secondary 做成 1.4:1、且没有任何元素拿它写字——只有 chart_muted 指到它，
+    # 它才该被点名。
+    cm, _ = probe(dict(light, muted="#5A5A5A", secondary="#D2D0CA"),
                  chart_muted="secondary", text_color="ink")
     check("readability: chart_muted 指向的 token 也算弱字（刻度色被管住）",
           len(cm) == 1 and cm[0]["id"] == "theme.secondary", f"{len(cm)} 条")
@@ -169,9 +171,10 @@ def check_pipeline(work: pathlib.Path) -> None:
         return
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     pages = (plan.get("plan") or {}).get("pages") or []
-    check("plan: 每页都有家族与叙事动作",
+    check("plan: 每页都有家族与媒体判断（表驱动叙事动作已删，不得回来）",
           len(pages) == 2 and all((p.get("page_family")) for p in pages)
-          and all((p.get("move") or {}).get("move") for p in plan["pages"]))
+          and all(p.get("asset", {}).get("decision") for p in pages)
+          and not any("move" in p for p in pages))
     text = skeleton.read_text(encoding="utf-8")
     check("skeleton: 不为空且不含预置元素坐标",
           text.count('"id":') >= 2 and '"elements": []' not in text and "TODO" in text)
@@ -254,7 +257,7 @@ SPEC = {"canvas": {"width": 1280, "height": 720},
         "direction": {"color_intent": ["hierarchy", "emotion", "brand"]},
         "slides": [{"id": "s01",
                     "page_intent": {"insight": "增长", "focus": "c1", "density": "balanced",
-                                    "energy": "low", "empty_space_role": "protect_focus"},
+                                    "energy": "low"},
                     "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
                     "elements": [{"type": "text", "id": "t", "x": 96, "y": 96, "width": 800,
                                   "height": 72, "text": "增长结论", "size": 40, "color": "ink",
@@ -286,7 +289,7 @@ SPEC = {"canvas": {"width": 1280, "height": 720},
                    "fonts": {"display": "A", "body": "A"}},
          "slides": [{"id": "s01",
                      "page_intent": {"insight": "空载荷", "focus": "t", "density": "balanced",
-                                     "energy": "low", "empty_space_role": "protect_focus"},
+                                     "energy": "low"},
                      "elements": els}]}, ensure_ascii=False), encoding="utf-8")
     out = work / "payload.pptx"
     proc = run_vao("check", str(src), str(out), "--mode", "draft")
@@ -319,7 +322,7 @@ SPEC = {"canvas": {"width": 1280, "height": 720},
                    "fonts": {"display": "A", "body": "A"}},
          "slides": [{"id": "s01",
                      "page_intent": {"insight": "矩阵与分层", "focus": "t", "density": "balanced",
-                                     "energy": "low", "empty_space_role": "protect_focus"},
+                                     "energy": "low"},
                      "elements": solid}]}, ensure_ascii=False), encoding="utf-8")
     out = work / "element_payload.pptx"
     proc = run_vao("check", str(src), str(out), "--mode", "draft")
@@ -346,7 +349,7 @@ SPEC = {"canvas": {"width": 1280, "height": 720},
                    "fonts": {"display": "A", "body": "A"}},
                    "slides": [{"id": "s01",
                                "page_intent": {"insight": "i", "focus": "c", "density": "balanced",
-                                               "energy": "low", "empty_space_role": "protect_focus"},
+                                               "energy": "low"},
                                "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
                                "elements": [
                                    {"type": "text", "id": "t", "x": 96, "y": 96, "width": 800,
@@ -412,7 +415,7 @@ def check_font_channel(work: pathlib.Path) -> None:
                 "slides": [{"id": "s01",
                             "page_intent": {"insight": "字体通道", "focus": "t1",
                                             "page_family": "COVER", "density": "sparse",
-                                            "energy": "high", "empty_space_role": "hold_emotion"},
+                                            "energy": "high"},
                             "elements": [{"type": "text", "id": "t1", "x": 96, "y": 240, "width": 800,
                                           "height": 120, "text": "字体通道 Font",
                                           "size": 44, "color": "ink", "role": "title",
@@ -455,7 +458,7 @@ def check_font_channel(work: pathlib.Path) -> None:
                        "fonts": {"cn": "Songti SC", "title_font": "Georgia"}},
              "slides": [{"id": "s01", "page_intent": {"insight": "x", "focus": "t1",
                                                       "page_family": "COVER", "density": "sparse",
-                                                      "energy": "high", "empty_space_role": "hold_emotion"},
+                                                      "energy": "high"},
                          "elements": [{"type": "text", "id": "t1", "x": 96, "y": 240, "width": 800,
                                        "height": 120, "text": "字", "size": 44, "color": "ink",
                                        "role": "title", "max_lines": 1}]}]}
@@ -483,7 +486,7 @@ def check_direction_seed(work: pathlib.Path) -> None:
                 "slides": [{"id": "s01",
                             "page_intent": {"insight": "x", "focus": elements[0]["id"],
                                             "page_family": "COVER", "density": "sparse",
-                                            "energy": "high", "empty_space_role": "hold_emotion"},
+                                            "energy": "high"},
                             "elements": elements}]}
         return [c for c in _guard.check_spec(spec)["checks"] if c["rule"] == "direction_seed"]
 
@@ -514,8 +517,7 @@ def check_direction_seed(work: pathlib.Path) -> None:
                  "theme": {"colors": colors, "constraints": {"accent_max": 0.05, "white_space": 0.5}},
                  "slides": [{"id": "s01",
                              "page_intent": {"insight": "x", "focus": "t1", "page_family": "COVER",
-                                             "density": "sparse", "energy": "high",
-                                             "empty_space_role": "hold_emotion"},
+                                             "density": "sparse", "energy": "high"},
                              "elements": [txt("t1")]}]}
     typo = [c for c in _guard.check_spec(spec_typo)["checks"] if c["rule"] == "theme_constraint"]
     check("seed: min_whitespace 别名仍生效、写错的约束键被 theme_constraint 点名",
@@ -556,7 +558,7 @@ def check_chart_argument(work: pathlib.Path) -> None:
                 "slides": [{"id": "s01",
                             "page_intent": {"insight": "净留存高出 14 个百分点", "focus": "c1",
                                             "page_family": "DATA_STORY", "density": "balanced",
-                                            "energy": "low", "empty_space_role": "protect_focus"},
+                                            "energy": "low"},
                             "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
                             "elements": [dict({"type": "chart", "id": "c1", "chart_kind": kind,
                                                "x": 96, "y": 240, "width": 1088, "height": 320,
@@ -577,7 +579,11 @@ def check_chart_argument(work: pathlib.Path) -> None:
 
 
 def check_deck_anchor(work: pathlib.Path) -> None:
-    """跨页锚：plan 发锚 → 生成侧落元素 → guard 查「在不在 / 位置是否同一个 / 编号是否连续」。"""
+    """跨页锚：plan 发锚 → 生成侧落元素 → guard 只查「在不在 / 编号是否连续」。
+
+    位置纪律（眉标固定上缘、页码固定象限）已从引擎撤出（2026-09 审核）：它是设计判断，
+    写在 references；引擎点名只会让作者每页把眉标挪回坐标，而不是判断为什么挪。
+    """
     import guard as _guard
 
     colors = {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
@@ -603,7 +609,7 @@ def check_deck_anchor(work: pathlib.Path) -> None:
                         "basis": "同口径", "source": "系统",
                         "data": [{"label": "A", "value": 10}, {"label": "B", "value": 30}]})
         return {"id": sid, "page_intent": {"insight": "x", "focus": "eb", "page_family": "COVER",
-                "density": "sparse", "energy": "high", "empty_space_role": "hold_emotion"},
+                "density": "sparse", "energy": "high"},
                 "anchor": anchors, "elements": els}
 
     def hits(slides):
@@ -613,12 +619,12 @@ def check_deck_anchor(work: pathlib.Path) -> None:
 
     A = {"eyebrow": "DATA STORY", "page_number": 2, "figure": "Fig. 01"}
     B = {"eyebrow": "COMPARISON", "page_number": 3, "figure": "Fig. 02"}
-    check("anchor: 齐整的锚不吵；缺元素 / 眉标漂移 / 页码换象限 / 编号断链 各被点名一次",
+    check("anchor: 齐整的锚不吵；缺元素 / 编号断链各点名一次；位置漂移不再执法",
           not hits([page("s01", A), page("s02", B)])
           and bool(hits([page("s01", A, eyebrow=False), page("s02", B)]))
-          and bool(hits([page("s01", A), page("s02", B, eyebrow_y=64)]))
-          and bool(hits([page("s01", A), page("s02", B, pn_xy=(1100, 640))]))
-          and bool(hits([page("s01", A), page("s02", {"eyebrow": "X", "figure": "Fig. 05"})])),
+          and bool(hits([page("s01", A), page("s02", {"eyebrow": "X", "figure": "Fig. 05"})]))
+          and not hits([page("s01", A), page("s02", B, eyebrow_y=64)])
+          and not hits([page("s01", A), page("s02", B, pn_xy=(1100, 640))]),
           "五组探针")
 
     # plan → 骨架：≥4 页才发锚，且每页锚是「事实」不是开关
@@ -789,10 +795,23 @@ def check_silent_failure_seams() -> None:
                       if not (ROOT / p).exists()})
     import inspect as _inspect
     import qa as _qa
-    qa_params = set(_inspect.signature(_qa.run_qa).parameters)
-    bad_kwargs = sorted({k for k in re.findall(r"run_qa\([^)]*?(\w+)=", ci)
+    qa_params = set(_inspect.signature(_qa.verdict).parameters)
+
+    def _call_kwargs(text: str, fn: str) -> set[str]:
+        """取 `fn(...)` 整个调用里的关键字（按括号配平，别在第一个 ) 处停）——
+        正则 `[^)]*` 会在嵌套调用前截断，漏掉的形参就是「假门」的来源。"""
+        out: set[str] = set()
+        for m in re.finditer(rf"\b{fn}\(", text):
+            i, depth = m.end(), 1
+            while i < len(text) and depth:
+                depth += (text[i] == "(") - (text[i] == ")")
+                i += 1
+            out |= set(re.findall(r"(\w+)=", text[m.end():i]))
+        return out
+
+    bad_kwargs = sorted({k for k in _call_kwargs(ci, "verdict") | _call_kwargs(ci, "run_qa")
                          if k not in qa_params})
-    check("ci: 工作流只引用存在的模板与真实存在的 run_qa 形参（假门比没门更贵）",
+    check("ci: 工作流只引用存在的模板与真实存在的 verdict 形参（假门比没门更贵）",
           not missing and not bad_kwargs, f"missing={missing} bad_kwargs={bad_kwargs}")
     check("ci: 规划步骤走单入口 vao.py（pipeline.py 没有 CLI，旧写法恒退 0）",
           "scripts/pipeline.py" not in ci)
@@ -942,6 +961,33 @@ def check_anti_regression() -> None:
             missing.add(ref)
     check("docs: 文档不引用不存在的文件", not missing, str(sorted(missing)))
 
+    # SKILL 是**导航层**：命令行与阈值只允许住在 references（唯一事实源）。
+    # 双源事实会漂移——命令行改一处忘一处，作者照 SKILL 抄到的是过期命令；
+    # 这条钉子守的是「SKILL 只告诉去哪里，不复制事实」。
+    _skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    _cmd = [l for l in _skill.split("\n") if re.search(r"python\s+scripts/vao\.py", l)]
+    _thr = sorted(set(re.findall(r"\d(?:\.\d+)?:1|\b\d+px\b", _skill)))
+    check("docs: SKILL 只做导航（不复制命令行与阈值字面量，事实源在 references）",
+          not _cmd and not _thr, f"命令行 {len(_cmd)} 行 · 阈值 {_thr}")
+
+    # 归属：QA 是纯消费层——不编译、不读产物字节、不导入执行/缓存层。
+    # （2026-09 审核：`run_qa` 曾在缺 compile_report 时自己编译，判定层因此也是生产者。）
+    import ast as _ast
+    _qa_src = (ROOT / "scripts" / "qa.py").read_text(encoding="utf-8")
+    _qa_tree = _ast.parse(_qa_src)
+    _imports = {n.module for n in _ast.walk(_qa_tree)
+                if isinstance(n, _ast.ImportFrom) and n.module}
+    _banned_imports = sorted(_imports & {"compiler", "compile_cache", "guard"})
+    _verdict_fn = next(n for n in _qa_tree.body
+                       if isinstance(n, _ast.FunctionDef) and n.name == "verdict")
+    _verdict_calls = {c.func.attr if isinstance(c.func, _ast.Attribute) else
+                      (c.func.id if isinstance(c.func, _ast.Name) else "")
+                      for c in _ast.walk(_verdict_fn) if isinstance(c, _ast.Call)}
+    _reads_artifact = sorted(_verdict_calls & {"stat", "read_bytes", "file_digest", "open"})
+    check("ownership: QA 只消费报告（不编译、不读产物字节、不导入执行/缓存/校验层）",
+          not _banned_imports and not _reads_artifact,
+          f"imports={_banned_imports} verdict 里的产物读={_reads_artifact}")
+
     types = pathlib.Path(ROOT / "templates" / "brief.yml")
     check("templates: 单一 brief 契约存在", types.exists())
 
@@ -978,18 +1024,29 @@ def check_judgment_layer(work: pathlib.Path) -> None:
     import qa
     import route
 
-    # D1 每个家族都必须拿到专属叙事动作与构图语法：表里错一个键，
-    #    整类页面会静默退回兜底句——判断看起来发生了，其实没有。
-    generic = "先决定这页唯一的主语"
-    moves = {fam: di.page_move(fam).get("move") or "" for fam in
-             {r["family"] for r in route.ROUTES.values()}}
-    weak_moves = sorted(f for f, m in moves.items() if not m or m.startswith(generic))
-    grammars = {fam: di.composition_move(fam, "balanced", "medium").get("grammar")
-                for fam in {r["family"] for r in route.ROUTES.values()}}
-    weak_comp = sorted(f for f, g in grammars.items()
-                       if g not in di.COMPOSITION_POOL)
-    check("families: 每个家族都有专属叙事动作与构图语法",
-          not weak_moves and not weak_comp, f"moves={weak_moves} composition={weak_comp}")
+    # D1 每个家族都必须被媒体判断解析：解析不到 = 静默退回默认，
+    #    判断看起来发生了，其实没有。（叙事动作/构图语法不再由家族查表给出——
+    #    那是把设计判断写成先验答案；D1b 反过来守住「不许预置答案」。）
+    unresolved = sorted(fam for fam in {r["family"] for r in route.ROUTES.values()}
+                        if "未知家族" in str(di.media_decision(
+                            {"page_intent": {"page_family": fam}}).get("reason")))
+    check("families: 每个 route 家族都能被媒体判断解析（无静默回落）",
+          not unresolved, str(unresolved))
+
+    # D1b 骨架只给事实与判断项，不给设计答案：叙事动作不再由表生成；
+    #     构图只有作者显式声明时才出现，否则是待判断项。
+    probe_plan = route.one_pass_plan(
+        {"subject": "s", "slides": [{"id": "s01", "family": "data", "title": "t"}]})
+    probe_intel = (probe_plan.get("pages") or [{}])[0]
+    authored = route.one_pass_plan(
+        {"subject": "s", "slides": [{"id": "s01", "family": "data", "title": "t",
+                                     "composition": "single_column"}]})
+    authored_comp = ((authored.get("pages") or [{}])[0].get("composition") or {})
+    check("judgment: 意图层不产出表驱动叙事动作/构图答案（声明优先，未声明留白）",
+          "move" not in probe_intel and "budget" not in probe_intel
+          and not (probe_intel.get("composition") or {}).get("grammar")
+          and authored_comp.get("grammar") == "single_column",
+          f"默认={sorted(probe_intel)} 声明={authored_comp}")
 
     # D2 显式声明优先：family / type / 中文 / 整串写法都要落到同一条路由
     cases = {"cover": "cover", "DATA_STORY": "data", "数据": "data",
@@ -1018,21 +1075,28 @@ def check_judgment_layer(work: pathlib.Path) -> None:
                     for (sid, _f, d, e), pg in zip(header, route_pages)))
     check("skeleton: 页数与 plan 一致，density/energy 同源",
           same and body.count('"id":') == 4, f"pages={len(route_pages)} header={len(header)}")
-    check("plan: 每页带 composition（构图语法提案，零坐标）",
-          all((pg.get("composition") or {}).get("grammar") for pg in plan.get("pages") or []))
+    check("plan: composition 只在作者显式声明时出现（不预置构图答案，零坐标）",
+          all(not (pg.get("composition") or {}).get("grammar")
+              for pg in plan.get("pages") or [])
+          and all(not (pg.get("composition") or {}).get("x") for pg in plan.get("pages") or []))
 
-    # D3b 骨架自足（v5.3）：叙事动作 / 统一契约 / 容量公式 / 方向事实必须在骨架里。
-    #     缺任何一样，AI 就得回读 41KB 的 plan.json 去取 2KB 信号——多一轮、多一万 token。
-    check("skeleton: 骨架即完整作业单（统一契约/容量公式/叙事动作/构图意图都在场）",
-          all(s in body for s in ("统一契约", "行宽容量", "叙事动作:", "构图意图:",
-                                  "本文件即完整作业单")),
-          [s for s in ("统一契约", "行宽容量", "叙事动作:", "构图意图:") if s not in body])
+    # D3b 骨架自足：统一契约 / 方向事实 / 构图判断项必须在骨架里。
+    #     缺任何一样，AI 就得回读 plan.json 去取信号——多一轮、多一万 token。
+    # 自足的定义是「不用回读 plan.json / 不用读源码」；字段与阈值的查表指向
+    # design-system.md（JIT：公式不再内联进骨架），设计判断留白而不是替作者写完。
+    need = ("统一契约", "构图: 待判断", "design-system.md", "本文件即完整作业单")
+    forbid = ("叙事动作:", "构图意图:", "备选")   # 表生成的答案不得回到骨架
+    check("skeleton: 骨架即完整作业单（统一契约/构图判断项/字段查表在场，且不含预置答案）",
+          all(s in body for s in need) and not any(s in body for s in forbid),
+          [s for s in need if s not in body] + [s for s in forbid if s in body])
 
     # D3c 零消费镜像字段清退：intent_interpretation / media_confidence / media_reason /
-    #     quality_budget / type_scale 全库没有消费者，只会膨胀 plan 与上下文体积。
+    #     quality_budget / type_scale / move / budget 全库没有消费者，只会膨胀 plan 与
+    #     上下文体积。表驱动判词（move / composition 答案 / quality_budget）已整层删除——
+    #     这条检查保证它们不会以「镜像字段」的形式回来。
     dead = sorted({k for pg in route_pages
                    for k in ("intent_interpretation", "media_confidence", "media_reason",
-                             "quality_budget", "type_scale") if k in pg})
+                             "quality_budget", "type_scale", "move", "budget") if k in pg})
     check("plan: pages 不再携带零消费镜像字段（type_scale/intent_interpretation/media_*）",
           not dead, str(dead))
 
@@ -1094,48 +1158,54 @@ def check_judgment_layer(work: pathlib.Path) -> None:
                       "fonts": {"display": "A", "body": "A"}},
             "slides": [{"id": "s01", "elements": []}]}
     guard_result = guard.check_spec(spec)
-    qa_result = qa.run_qa(spec, work / "score_probe.pptx", mode="spec")
+    # QA 现在是纯消费层：判定吃两份报告，不再自己 guard / compile。
+    qa_result = qa.verdict(spec, work / "score_probe.pptx", mode="spec",
+                           guard_report=guard_result,
+                           compile_report={"passed": True, "skipped": True, "warnings": [],
+                                           "slides": 1, "file_bytes": None,
+                                           "reason": "spec_mode_no_compile",
+                                           "output_exists": False, "output_sha256": None})
     scored = [k for k in ("score", "grade", "rating") if k in guard_result or k in qa_result]
     check("no-score: 验证层不产出分数/评级（只回答能不能交付）", not scored, str(scored))
 
     # D5 家族链路三处判断必须齐全：媒体判断（含别名）、质量预算、构图起点。
     #    任何一处少一条，那一类页面就会静默退回默认——判断看起来发生了，其实没有。
-    from design_intelligence_rules import (FAMILY_MOVES, FAMILY_ALIASES, MEDIA_MODEL,
+    from design_intelligence_rules import (FAMILY_TOKENS, FAMILY_ALIASES, MEDIA_MODEL,
                                            COMPLEX_LAYOUT_FAMILIES)
-    unnamed = sorted(fam for fam in FAMILY_MOVES
+    unnamed = sorted(fam for fam in MEDIA_MODEL
                      if "未知家族" in str(di.media_decision(
                          {"page_intent": {"page_family": fam}}).get("reason")))
-    no_budget = sorted(fam for fam in FAMILY_MOVES
-                       if di.normalize_family(fam) not in di.QUALITY_BUDGETS)
     bad_alias = sorted(t for t in FAMILY_ALIASES.values() if t not in MEDIA_MODEL)
-    drift = sorted(COMPLEX_LAYOUT_FAMILIES - set(FAMILY_MOVES))
-    check("families: 媒体判断/质量预算/别名目标三处齐全（无静默回落）",
-          not unnamed and not no_budget and not bad_alias,
-          f"无名={unnamed} 无预算={no_budget} 坏别名={bad_alias}")
-    check("families: 复杂集在家族真源命名空间内", not drift, str(drift))
-    check("composition: 构图起点表与家族真源同集（两处各写一份必分叉）",
-          set(di.COMPOSITION_BY_FAMILY) == set(FAMILY_MOVES),
-          str(sorted(set(di.COMPOSITION_BY_FAMILY) ^ set(FAMILY_MOVES))))
+    outside = sorted((set(FAMILY_ALIASES) | COMPLEX_LAYOUT_FAMILIES) - set(FAMILY_TOKENS))
+    missing = sorted(set(MEDIA_MODEL) - set(FAMILY_TOKENS))
+    check("families: 媒体判断覆盖每个家族名（无静默回落），别名目标必须落在媒体模型内",
+          not unnamed and not bad_alias, f"无名={unnamed} 坏别名={bad_alias}")
+    check("families: FAMILY_TOKENS 即全部家族写法（别名/复杂集不出词汇表）",
+          not outside and not missing, f"越界={outside} 缺少={missing}")
 
     # D6 枚举值写错必须点名：家族（含只被媒体模型认识的命名空间）/留白职责/能量/密度。
     #    同时确认它是 warn 而非 error——「值不认识」是工程事实，不是「这页不合格」。
     probe = {"id": "s01",
-             "page_intent": {"insight": "结论句", "focus": "t1", "page_family": "CLOSING",
-                             "empty_space_role": "quiet_center", "energy": "mediumish",
-                             "density": "airy"},
+             "page_intent": {"insight": "结论句", "focus": "t1", "page_family": "closing",
+                             "energy": "mediumish", "density": "airy"},
              "elements": [{"type": "text", "id": "t1", "x": 96, "y": 240, "width": 800,
                            "height": 120, "text": "一句话结论", "size": 64, "color": "ink",
                            "role": "title", "line_height": 1.1, "max_lines": 1}]}
     probe_spec = {"canvas": spec["canvas"], "theme": spec["theme"], "slides": [probe]}
     checks = guard.check_spec(probe_spec).get("checks") or []
     named = " ｜ ".join(c.get("msg", "") for c in checks if c.get("rule") == "page_contract")
-    fields = [f for f in ("page_family", "empty_space_role", "energy", "density")
-              if f"{f}=" in named]
+    fields = [f for f in ("energy", "density") if f"{f}=" in named]
     levels = {c.get("level") for c in checks
               if c.get("rule") == "page_contract" and "不在合法取值内" in str(c.get("msg"))}
-    check("enums: 非法家族/留白职责/能量/密度会被点名（warn，不阻断交付）",
-          len(fields) == 4 and levels == {"warn"} and guard.check_spec(probe_spec).get("passed"),
-          f"fields={fields} levels={levels}")
+    # 家族写 brief 的词（closing / cover / data…）是合法写法，不得被当成错值；
+    # 只有引擎解析不出来的词才是事实错误。这条反向断言是防「引擎拿第二套命名给作者判卷」回潮。
+    unknown_family = dict(probe)
+    unknown_family["page_intent"] = {**probe["page_intent"], "page_family": "not_a_family"}
+    unknown_checks = guard.check_spec({**probe_spec, "slides": [unknown_family]}).get("checks") or []
+    unknown_named = any(c.get("rule") == "page_contract" for c in unknown_checks)
+    check("enums: 能量/密度写错被点名；brief 家族写法（closing/cover…）不再被误报",
+          len(fields) == 2 and levels == {"warn"} and guard.check_spec(probe_spec).get("passed")
+          and unknown_named, f"fields={fields} levels={levels} unknown={unknown_named}")
 
     # D7 经验库结构自检：坏条目要能被点名，而不是永远静默命不中
     report = di.validate_dna_store()
@@ -1279,7 +1349,7 @@ def check_asset_workflow(work: pathlib.Path) -> None:
     qc = read_json(qcpath)
     check("assets: real image QC binds inspected bytes to manifest",
           success_code == 0 and qc["manifest_sha256"] == digest(manifest)
-          and bool(qc["results"][0]["file_sha256"]))
+          and bool((qc["results"][0].get("witness") or {}).get("sha256")))
     released = run_vao("check", str(mod), str(d / "deck.pptx"), "--mode", "release",
                        "--assets-manifest", str(manifest_path))
     rm = read_json(d / "deck.manifest.json")
@@ -1377,10 +1447,11 @@ def check_audit_fixes(work: pathlib.Path) -> None:
         path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
     def read(path):
         return json.loads(path.read_text(encoding="utf-8"))
-    def invoke(spec_path, output, manifest=None):
+    def invoke(spec_path, output, manifest=None, speed="fast"):
         with contextlib.redirect_stdout(io.StringIO()):
             return vao.run_check(str(spec_path), str(output), mode="release",
-                                 assets_manifest=str(manifest) if manifest else None)
+                                 assets_manifest=str(manifest) if manifest else None,
+                                 speed=speed)
     def native(name):
         folder = d / name
         folder.mkdir()
@@ -1436,6 +1507,10 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     repeat, code = invoke(sp,folder/"deck.pptx",mp)
     check("control: legitimate full-deck compilation cache still reuses output",
           code == 0 and repeat["performance"]["compile_reused"])
+    crossed, code = invoke(sp,folder/"deck.pptx",mp,speed="strict")
+    check("cache: 跨档位不复用产物（清单里的 speed 必须与产物出身一致）",
+          code == 0 and not crossed["performance"]["compile_reused"],
+          str(crossed["performance"].get("compile_reused")))
 
     # H-02: a data manifest never executes its nested brief, even before hash failure.
     marker = d/"EXECUTED.txt"
@@ -1450,11 +1525,14 @@ def check_audit_fixes(work: pathlib.Path) -> None:
 
     # H-03: simultaneous source overwrite cannot change the verified bytes consumed by PPT or preview.
     folder, sp, spec, mp, pic = asset_case("snapshot")
-    original = qa.run_qa
+    # 编译编排已从 qa 移到 vao（2026-09 审核）：覆盖窗口就在这里——编译进行中
+    # 源图被换掉，产物与预览仍必须用核验过的内存快照。
+    import vao as _vao
+    original = _vao._compile_step
     def mutate(*a, **kw):
         Image.new("RGB",(640,400),(0,0,255)).save(pic)
         return original(*a,**kw)
-    with patch.object(qa,"run_qa",side_effect=mutate):
+    with patch.object(_vao,"_compile_step",side_effect=mutate):
         result, code = invoke(sp,folder/"deck.pptx",mp)
     check("H-03: compile consumes immutable verified snapshot under source overwrite",
           code == 0 and pixels(folder/"deck.pptx") == [(242,240,230)]
@@ -1855,6 +1933,503 @@ def check_asset_role_separation() -> None:
           and "asset_role" in workflow_doc)
 
 
+def check_speed_profile(work: pathlib.Path) -> None:
+    """速度档（v5.9）：两分钟交付档的每条机制都必须可测，否则它会悄悄退化。
+
+    这里锁行为不锁实现：预算被不被尊重、同图变换了几次、预览声明了什么范围、
+    图片被读了几遍——都能从报告与产物上读出来，而不是靠读源码相信。
+    """
+    import copy
+    import hashlib
+    import json
+    from PIL import Image
+    import numpy as np
+    import ghost as _ghost
+    import qa as _qa
+    import vao as _vao
+    import asset_prompt as _ap
+    from asset_prompt import QC_FAST_MAX_SIDE, image_qc
+    from compiler import compile_deck
+    from asset_workflow import digest, read_json
+
+    d = work / "speed"
+    d.mkdir()
+
+    # ── 1) 档位与默认值 ──────────────────────────────────────────────────
+    help_txt = run_vao("check", "--help").stdout
+    check("speed: check 暴露 fast/strict 两档且默认 fast",
+          "--speed {fast,strict}" in help_txt and _vao.DEFAULT_SPEED == "fast"
+          and _vao.DEFAULT_DEADLINE == 120.0,
+          _vao.DEFAULT_SPEED)
+
+    # ── 2) QC 像素预算：降采样但留痕；安全区仍按原生分辨率判 ────────────────
+    w_px, h_px = 2048, 1152      # 大于 QC_FAST_MAX_SIDE，才能验证「降采样档」的行为
+    xs = np.linspace(0, 1, w_px)[None, :]
+    lum = 0.16 + 0.05 * xs + np.random.default_rng(3).normal(0, 0.02, size=(h_px, w_px))
+    noisy = np.repeat(np.clip(lum, 0, 1)[..., None], 3, axis=2)
+    noisy[:, :int(w_px * 0.34)] = np.clip(
+        noisy[:, :int(w_px * 0.34)] + np.random.default_rng(4).normal(
+            0, 0.16, size=(h_px, int(w_px * 0.34), 1)), 0, 1)
+    probe = d / "busy.png"
+    Image.fromarray((noisy * 255).astype("uint8"), "RGB").save(probe)
+    fast_qc = image_qc(str(probe), safe_area="left", expected_ratio="16:9",
+                       max_side=QC_FAST_MAX_SIDE)
+    strict_qc = image_qc(str(probe), safe_area="left", expected_ratio="16:9", max_side=None)
+    check("speed: 快速档在降采样域统计并写明像素域（qc_scale / qc_domain）",
+          fast_qc["qc_scale"] > 1 and fast_qc["qc_domain"][0] < w_px
+          and strict_qc["qc_scale"] == 1 and fast_qc["dimensions"] == [w_px, h_px],
+          f"fast={fast_qc.get('qc_scale')} strict={strict_qc.get('qc_scale')}")
+    fast_bad = {c["check"] for c in fast_qc["checks"] if c["status"] == "issue"}
+    strict_bad = {c["check"] for c in strict_qc["checks"] if c["status"] == "issue"}
+    check("speed: 文字安全区纹理仍按原生分辨率判（细密噪点照样阻断）",
+          "text_safe_area" in fast_bad and "text_safe_area" in strict_bad,
+          f"fast={sorted(fast_bad)} strict={sorted(strict_bad)}")
+    check("speed: 快速档不把均匀像素噪点误判成主体（唯一有意差异）",
+          "subject_position" in strict_bad and "subject_position" not in fast_bad,
+          f"fast={sorted(fast_bad)} strict={sorted(strict_bad)}")
+
+    # ── 3) 编译：无临时文件 · 同图同盒只变换一次 · 产物确定性 ──────────────
+    builds = d / "builds"
+    builds.mkdir()
+    picture = builds / "photo.png"
+    Image.fromarray((np.clip(np.repeat(
+        (0.2 + 0.5 * np.linspace(0, 1, 1600)[None, :] + np.random.default_rng(5).normal(
+            0, 0.05, size=(900, 1600)))[..., None], 3, axis=2), 0, 1) * 255).astype("uint8"),
+        "RGB").save(picture)
+    blob = picture.read_bytes()
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#0D0F12", "ink": "#FFFFFF"}},
+            "slides": [{"id": "s01", "elements": [
+                {"type": "image", "id": "hero", "src": str(picture), "x": 0, "y": 0,
+                 "width": 512, "height": 288, "fit": "cover"},
+                {"type": "image", "id": "hero-again", "src": str(picture), "x": 0, "y": 0,
+                 "width": 512, "height": 288, "fit": "cover"},
+                {"type": "image", "id": "hero-other-box", "src": str(picture), "x": 0, "y": 320,
+                 "width": 256, "height": 288, "fit": "cover"},
+            ]}]}
+    snapshots = {str(picture): blob}
+    out_a = builds / "a.pptx"
+    report_a = compile_deck(spec, out_a, checks=False, image_bytes=snapshots, speed="fast")
+    perf = report_a.get("performance") or {}
+    check("compile: 同图同盒只变换一次（换盒子才另算一次、解码底图仍复用）",
+          perf.get("image_transforms") == 2 and perf.get("image_transform_reuses") == 1
+          and perf.get("image_decode_reuses") == 1, str(perf))
+    out_b = builds / "b.pptx"
+    compile_deck(spec, out_b, checks=False, image_bytes=snapshots, speed="fast")
+    check("compile: 同 spec 同档位两遍编译字节一致（确定性未因提速而丢）",
+          hashlib.sha256(out_a.read_bytes()).hexdigest()
+          == hashlib.sha256(out_b.read_bytes()).hexdigest())
+    leftovers = sorted(p.name for p in builds.iterdir()
+                       if p.suffix in {".tmp", ".png"} and p.name != picture.name)
+    check("compile: 图片变换不留中间文件（进程内字节直传）",
+          not leftovers and "tempfile" not in (SCRIPTS / "compiler.py").read_text(encoding="utf-8"),
+          str(leftovers))
+    # 解码一次：核验把底图交给编译，编译期不再解第二遍——产物必须一个字节都不差
+    decoded = {}
+    handoff_qc = image_qc(str(picture), safe_rect={"x": 0.0, "y": 0.0,
+                                                   "width": 0.4, "height": 1.0},
+                          max_side=QC_FAST_MAX_SIDE, decoded=decoded,
+                          decode_key=str(picture))
+    held = decoded.get(str(picture))
+    check("assets: 核验交出已解码底图（原生分辨率 · RGB · 流句柄已放）",
+          held is not None and held.mode == "RGB" and held.size == (1600, 900)
+          and held.fp is None and handoff_qc.get("qc_scale") == 2,
+          f"held={bool(held)} scale={handoff_qc.get('qc_scale')}")
+    capped = {f"k{i}": held for i in range(_ap.QC_DECODE_HOLD_MAX_IMAGES)}
+    image_qc(str(picture), max_side=QC_FAST_MAX_SIDE, decoded=capped, decode_key="overflow")
+    check("assets: 已解码底图有内存上限（快路径不把内存变成新的失败模式）",
+          "overflow" not in capped, str(sorted(capped)))
+    out_d = builds / "d.pptx"
+    seeded = compile_deck(spec, out_d, checks=False, image_bytes=snapshots,
+                          decode_seed=decoded, speed="fast")
+    seeded_perf = seeded.get("performance") or {}
+    check("compile: 复用核验底图不改产物字节（同一份像素，少解一遍）",
+          hashlib.sha256(out_d.read_bytes()).hexdigest()
+          == hashlib.sha256(out_a.read_bytes()).hexdigest()
+          and seeded_perf.get("image_decode_reuses", 0) >= 1,
+          f"reuses={seeded_perf.get('image_decode_reuses')}")
+
+    out_c = builds / "c.pptx"
+    strict_report = compile_deck(spec, out_c, checks=False, image_bytes=snapshots, speed="strict")
+    import zipfile
+    with zipfile.ZipFile(out_a) as za, zipfile.ZipFile(out_c) as zc:
+        check("compile: fast/strict 产物结构一致（条目与页数相同，只是压缩口径不同）",
+              sorted(za.namelist()) == sorted(zc.namelist())
+              and report_a["slides"] == strict_report["slides"] == 1)
+
+    # ── 4) 方向预览：确定性采样 + 范围可核对 ──────────────────────────────
+    dense = [{"id": f"s{i:02d}", "elements": [{"type": "text", "id": f"t{i}"}] * (i % 5 + 1)}
+             for i in range(1, 16)]
+    dense[6]["elements"] = [{"type": "image", "id": "img"}] + dense[6]["elements"]
+    picks = _ghost.sample_pages(dense, limit=4)
+    check("ghost: 采样确定性、含封面与收尾、且不超上限",
+          picks == _ghost.sample_pages(dense, limit=4) and len(picks) == 4
+          and picks[0] == 1 and picks[-1] == 15, str(picks))
+    check("ghost: 页数不超过上限时是全量证据（不是采样）",
+          _ghost.sample_pages(dense[:3], limit=4) == [1, 2, 3])
+    mismatched = {"pages": ["g1.png", "g2.png"], "count": 2, "scope": "sampled",
+                  "sampled_ids": ["s01"], "slide_ids": ["s01", "s02"]}
+    check("ghost: 采样范围可核对（声明页 ≠ 渲染页即报问题）",
+          bool(_qa.preview_issues(mismatched, ["s01", "s02", "s03"])))
+
+    # ── 5) 预算纪律：核心阶段照跑，可选证据在预算不足时留痕跳过 ─────────────
+    brief = d / "brief.yml"
+    brief.write_text(json.dumps({
+        "audience": "investor", "decision": "approve",
+        "slides": [{"id": "s01", "family": "cover", "title": "Speed",
+                    "asset_subject": "ceramic bowl", "medium": "photography",
+                    "asset_ratio": "16:10", "text_color": "dark"}]}), encoding="utf-8")
+    plan = d / "plan.json"
+    skeleton = d / "build_deck.py"
+    manifest_path = d / "asset_manifest.json"
+    pictures = d / "pictures"
+    run_vao("plan", str(brief), "--out", str(plan), "--skeleton", str(skeleton))
+    run_vao("assets", str(brief), "--plan", str(plan), "--out", str(manifest_path),
+            "--assets-dir", str(pictures))
+    manifest = read_json(manifest_path)
+    entry = next(e for e in manifest["assets"] if e.get("decision") == "generate")
+    pictures.mkdir(exist_ok=True)
+    Image.new("RGB", (640, 400), (242, 240, 230)).save(
+        pictures / pathlib.Path(entry["expected_filename"]).with_suffix(".jpg"))
+    spec_mod, _ = _vao.load_spec(spec_module(d / "base.py"))
+    spec_mod["asset_workflow"] = {"plan_sha256": digest(read_json(plan))}
+    spec_mod["slides"][0]["elements"].append(
+        {"type": "image", "id": "photo", "asset_id": entry["asset_id"],
+         "x": 760, "y": 280, "width": 384, "height": 240})
+    filled = d / "filled.json"
+    filled.write_text(json.dumps(spec_mod), encoding="utf-8")
+
+    tight = run_vao("check", str(filled), str(d / "tight.pptx"), "--mode", "release",
+                    "--assets-manifest", str(manifest_path), "--deadline", "0.001")
+    packet = read_json(d / "tight.repair.json")
+    skipped = [s.get("stage") for s in (packet.get("budget") or {}).get("skipped") or []]
+    check("budget: 预算不足时跳过可选证据并留痕（不超时、不静默通过）",
+          tight.returncode == 2 and "ghost_preview" in skipped
+          and not read_json(d / "tight.manifest.json")["release_eligible"], str(skipped))
+
+    # ── 6) 有图链在快速档跑通：预览范围 + 单次哈希见证 + 字节身份 ───────────
+    released = run_vao("check", str(filled), str(d / "deck.pptx"), "--mode", "release",
+                       "--assets-manifest", str(manifest_path))
+    rm = read_json(d / "deck.manifest.json")
+    ver = rm.get("verification") or {}
+    check("release: 快速档跑通并在清单里标注证据范围与档位",
+          released.returncode == 0 and rm["release_eligible"]
+          and ver.get("visual_evidence_scope") in {"full", "sampled"}
+          and ver.get("speed") == "fast", released.stdout[-300:])
+    check("release: 产物字节戳由同一轮见证，不重复整包哈希",
+          any("未重复整包哈希" in n for n in (rm["validation"].get("notes") or [])),
+          str(rm["validation"].get("notes"))[:200])
+    qc = read_json(d / "asset_manifest.qc.json")
+    check("assets: QC 记录字节凭证（witness{size,mtime_ns,sha256}）供快路径守卫",
+          all(isinstance((r.get("witness") or {}).get("size"), int)
+              and isinstance((r.get("witness") or {}).get("mtime_ns"), int)
+              for r in qc["results"])
+          and (qc.get("pixel_profile") or {}).get("speed") == "fast")
+
+    # ── 7) 文档：速度档与预算纪律必须写进主 Skill ──────────────────────────
+    skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    check("docs: SKILL 写明两档速度、预算纪律与单次收口",
+          "--speed fast" in skill and "strict" in skill and "--deadline" in skill)
+
+
+def check_runtime_reuse(work: pathlib.Path) -> None:
+    """运行时减法（v6.1）：每份字节只读一次、每张图只解一次、每个判定只做一次。
+
+    这里锁的是「复用的前提」而不是「复用的实现」：什么时候可以省、什么时候必须重做，
+    全部从报告与产物上读出来。少做一次测量是优化，该做却漏做是缺陷——两类都要拦住。
+    """
+    import contextlib
+    import io
+    import json as _json
+    
+    import asset_workflow as _aw
+    import compile_cache as _cc
+    import ghost as _ghost
+    import primitives as _pr
+    import vao as _vao
+
+    d = work / "runtime"
+    d.mkdir()
+    assets = d / "assets"
+    assets.mkdir()
+
+    # ── 1) 读一次：同一份 JSON 在同一个进程里只解析一遍，改了必须重读 ──────────
+    # 两次写盘必须可区分：文件系统时间戳粒度可能粗到毫秒级（本机实测 4ms），
+    # 若同一刻度内的两次写盘拿到同一个 mtime，「变了吗」的凭证就失效了。
+    # 这里连续写两遍（不 sleep），逼出最坏情况：写入者必须保证凭证前进。
+    doc = d / "doc.json"
+    _pr.json_write(doc, {"v": 1}, indent=0, trailing_newline=False)
+    first = _pr.json_read_cached(doc)
+    again = _pr.json_read_cached(doc)
+    stamp_1 = doc.stat().st_mtime_ns
+    _pr.json_write(doc, {"v": 2}, indent=0, trailing_newline=False)
+    stamp_2 = doc.stat().st_mtime_ns
+    after = _pr.json_read_cached(doc)
+    check("runtime: 同一份 JSON 读一次即复用（同刻度内重写也立即重读）",
+          first is again and first["v"] == 1 and after["v"] == 2 and after is not first
+          and stamp_2 > stamp_1, f"mtime {stamp_1} → {stamp_2}")
+
+    # ── 1b) 底图解码交接：预览复用核验阶段解过的像素，且像素与原路径逐字节一致 ──
+    # 「省一次解码」只有在像素不变时才算省——所以这里同时钉住两件事：
+    # 交接命中时不再解码，且渲染出的页图与原路径（从字节解码）逐字节相同。
+    from PIL import Image as _PILImage
+    import hashlib as _hashlib2
+    import io as _io
+    import pathlib as _pathlib
+
+    picture2 = assets / "photo2.png"
+    _PILImage.new("RGB", (320, 200), (60, 90, 120)).save(picture2)
+    held: dict = {}
+    with _PILImage.open(picture2) as opened:
+        held[str(picture2)] = opened.convert("RGB")
+    blobs = {str(picture2): picture2.read_bytes()}
+    one_page = {"canvas": {"width": 640, "height": 360}, "theme": {},
+                "slides": [{"id": "p1", "elements": [
+                    {"type": "image", "id": "im", "x": 40, "y": 40, "width": 400, "height": 240,
+                     "src": str(picture2), "fit": "cover"}]}]}
+
+    def _render_preview(use_handoff: bool, tag: str):
+        spec = dict(one_page)
+        spec["_image_bytes"] = blobs
+        if use_handoff:
+            spec["_image_decoded"] = held
+        counter = {"decodes": 0}
+        real_load = _ghost.Image.Image.load
+
+        def counted_load(self):
+            # 与审计同一口径：只有真的从字节解出像素才计一次（load 幂等）。
+            if self.__dict__.get("_im") is None:
+                counter["decodes"] += 1
+            return real_load(self)
+
+        _ghost.Image.Image.load = counted_load
+        try:
+            page = _ghost.ghost_page(spec["slides"][0], spec, scale=0.5, supersample=1)
+        finally:
+            _ghost.Image.Image.load = real_load
+        buffer = _io.BytesIO()
+        page.save(buffer, "PNG", compress_level=1)
+        return _hashlib2.sha256(buffer.getvalue()).hexdigest(), counter["decodes"]
+
+    px_hold, decodes_hold = _render_preview(True, "hold")
+    px_plain, decodes_plain = _render_preview(False, "plain")
+    check("runtime: 预览复用已解码底图（命中不再解码，像素逐字节一致）",
+          decodes_hold == 0 and decodes_plain >= 1 and px_hold == px_plain,
+          f"交接解码 {decodes_hold} 次 / 原路径 {decodes_plain} 次 · 页图 {px_hold[:12]}…")
+
+    # ── 2) 字节一次、摘要一次：共享摘要不改变缓存身份（决定要不要重编的投影）───
+    from PIL import Image
+    picture = assets / "photo.png"
+    Image.new("RGB", (640, 360), (240, 238, 232)).save(picture)
+    blob = picture.read_bytes()
+    import hashlib
+    specs = {"canvas": {"width": 1280, "height": 720},
+             "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+             "slides": [{"id": "s01", "elements": [
+                 {"type": "image", "id": "im", "src": str(picture), "x": 0, "y": 0,
+                  "width": 640, "height": 360}]}]}
+    plain = _cc.spec_view(specs, base_path=d, image_bytes={str(picture): blob})
+    shared = _cc.spec_view(specs, base_path=d, image_bytes={str(picture): blob},
+                           digests={str(picture): hashlib.sha256(blob).hexdigest()})
+    check("runtime: 共享摘要不改缓存身份（同一份字节 → 同一个语义投影）", plain == shared)
+
+    # ── 3) 资产 QC：判定复用 / 四类失效条件 ────────────────────────────────
+    brief = d / "brief.yml"
+    brief.write_text(_json.dumps({
+        "audience": "investor", "decision": "approve",
+        "slides": [{"id": "s01", "family": "cover", "title": "Runtime",
+                    "asset_subject": "ceramic bowl"}]}), encoding="utf-8")
+    plan, manifest = d / "plan.json", d / "asset_manifest.json"
+    run_vao("plan", str(brief), "--out", str(plan), "--skeleton", str(d / "build.py"))
+    run_vao("assets", str(brief), "--plan", str(plan), "--out", str(manifest),
+            "--assets-dir", str(assets))
+    entry = next(e for e in _aw.read_json(manifest)["assets"] if e.get("decision") == "generate")
+    image = assets / pathlib.Path(entry["expected_filename"]).with_suffix(".jpg")
+    Image.new("RGB", (1280, 800), (242, 240, 230)).save(image)
+
+    qc_path = manifest.with_name(manifest.stem + ".qc.json")
+    calls = {"n": 0}
+    real_qc = _vao.image_qc if hasattr(_vao, "image_qc") else None
+    import asset_prompt as _ap
+    real_image_qc = _ap.image_qc
+
+    def counted(*a, **k):
+        calls["n"] += 1
+        return real_image_qc(*a, **k)
+
+    _ap.image_qc = counted
+    try:
+        first_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                                speed="fast")
+        first_calls = calls["n"]
+        second_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                                 speed="fast")
+    finally:
+        _ap.image_qc = real_image_qc
+    check("runtime: 资产 QC 判定可复用（第二轮不再做像素测量）",
+          first_calls >= 1 and calls["n"] == first_calls
+          and (second_report.get("reuse") or {}).get("assets") == len(second_report["results"]),
+          f"calls={calls['n']} reuse={second_report.get('reuse')}")
+
+    # ── 3b) 字节按需读：热轮（判定复用 + 凭证带 sha256）一个字节都不读 ──────
+    #      此前无条件读整批资产：热轮里 50MB 读进来没有任何消费者——
+    #      判定看 size+mtime_ns，编译与核验消费凭证里的 sha256。
+    reads = {"n": 0, "bytes": 0}
+    real_read_bytes = _pathlib.Path.read_bytes
+
+    def counted_read(self):
+        data = real_read_bytes(self)
+        if self.name == image.name:
+            reads["n"] += 1
+            reads["bytes"] += len(data)
+        return data
+
+    _pathlib.Path.read_bytes = counted_read
+    try:
+        hot_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                              speed="fast")
+    finally:
+        _pathlib.Path.read_bytes = real_read_bytes
+    hot_item = (hot_report.get("results") or [{}])[0]
+    check("runtime: 热轮不读资产字节（判定复用 + 凭证带 sha256 → 无消费者）",
+          reads["n"] == 0 and bool((hot_item.get("witness") or {}).get("sha256"))
+          and bool((hot_report.get("reuse") or {}).get("assets")),
+          f"读 {reads['n']} 次 / {reads['bytes']} B")
+
+    # ── 3c) 严格档相反：判据本身就是「现算的 sha256」→ 每次逐字节读数 ──────
+    strict_reads = {"n": 0}
+
+    def counted_strict(self):
+        data = real_read_bytes(self)
+        if self.name == image.name:
+            strict_reads["n"] += 1
+        return data
+
+    _pathlib.Path.read_bytes = counted_strict
+    try:
+        strict_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                                 speed="strict")
+    finally:
+        _pathlib.Path.read_bytes = real_read_bytes
+    check("runtime: 严格档仍逐字节读数（判据是现算 sha256，不靠凭证转抄）",
+          strict_reads["n"] >= 1, f"读 {strict_reads['n']} 次")
+
+    # 失效 1：图片字节变了 → 必须重测
+    image.write_bytes(image.read_bytes() + b"\x00")
+    calls["n"] = 0
+    _ap.image_qc = counted
+    try:
+        third_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                                speed="fast")
+    finally:
+        _ap.image_qc = real_image_qc
+    check("runtime: 图片字节变了 → 判定不复用（重新测量）",
+          calls["n"] >= 1 and (third_report.get("reuse") or {}).get("assets", 0) == 0,
+          f"calls={calls['n']} reuse={third_report.get('reuse')}")
+
+    # 失效 2：判定输入变了 → 必须重测
+    changed = _aw.read_json(manifest)
+    for e in changed["assets"]:
+        if e.get("decision") == "generate":
+            e["safe_area"] = {"x": 0.55, "y": 0.1, "width": 0.35, "height": 0.8}
+    manifest.write_text(_json.dumps(changed, ensure_ascii=False), encoding="utf-8")
+    calls["n"] = 0
+    _ap.image_qc = counted
+    try:
+        fourth_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                                 speed="fast")
+    finally:
+        _ap.image_qc = real_image_qc
+    check("runtime: 判定输入变了（safe_area）→ 判定不复用",
+          calls["n"] >= 1 and (fourth_report.get("reuse") or {}).get("assets", 0) == 0,
+          f"calls={calls['n']}")
+
+    # 失效 3：档位不同 → 各档保留自己的判定（严格档还要整文件核对）
+    strict_report, _ = _vao._asset_qc_report(str(manifest), str(assets), phase="release",
+                                             speed="strict")
+    check("runtime: 跨档位不复用判定（fast/strict 各留自己的像素口径）",
+          (strict_report.get("reuse") or {}).get("assets", 0) == 0
+          and (strict_report.get("pixel_profile") or {}).get("speed") == "strict")
+
+    # ── 4) 预览：页面没变就不重画 ──────────────────────────────────────────
+    page = {"id": "p1", "elements": [{"type": "text", "id": "t", "x": 80, "y": 80,
+                                      "width": 600, "height": 80, "text": "Runtime",
+                                      "size": 40, "color": "ink", "role": "title"}]}
+    spec_one = {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+                "slides": [page]}
+    preview_dir = d / "prev"
+    stats_a: dict = {}
+    within_a: list = []
+    _ghost.ghost_deck(spec_one, preview_dir, supersample=1, png_compress_level=1,
+                      images_out=within_a, stats=stats_a)
+    stats_b: dict = {}
+    within_b: list = []
+    _ghost.ghost_deck(spec_one, preview_dir, supersample=1, png_compress_level=1,
+                      images_out=within_b, stats=stats_b)
+    cache_files = sorted((preview_dir / _ghost.PAGE_CACHE_DIR).glob("*.png"))
+    check("runtime: 页面没变不重画（逐页缓存命中，且像素与首轮一致）",
+          stats_a.get("rendered") == 1 and stats_b.get("cached") == 1
+          and len(cache_files) == 1 and within_a[0].tobytes() == within_b[0].tobytes(),
+          f"a={stats_a} b={stats_b} files={len(cache_files)}")
+
+    # 三页稿件：改中间一页 → 只应重画那一页
+    def _page(pid, text):
+        return {**page, "id": pid,
+                "elements": [{**page["elements"][0], "text": text}]}
+
+    spec_three = {"canvas": spec_one["canvas"], "theme": spec_one["theme"],
+                  "slides": [_page("p1", "A"), _page("p2", "B"), _page("p3", "C")]}
+    _ghost.ghost_deck(spec_three, preview_dir, supersample=1, png_compress_level=1)
+    spec_changed = _json.loads(_json.dumps(spec_three))
+    spec_changed["slides"][1]["elements"][0]["text"] = "B 改过了"
+    stats_c: dict = {}
+    _ghost.ghost_deck(spec_changed, preview_dir, supersample=1, png_compress_level=1, stats=stats_c)
+    check("runtime: 改一页只重画那一页（同一轮里其余页命中缓存）",
+          stats_c.get("rendered") == 1 and stats_c.get("cached") == 2, str(stats_c))
+
+    # 联络表：页图的纯函数——页图没变就复制上一轮那张（不是重贴一遍）
+    sheet_dir = d / "sheet"
+    (sheet_dir / "pages").mkdir(parents=True, exist_ok=True)
+    for stale in (sheet_dir / "pages").glob("*.png"):
+        stale.unlink()
+    sheet_a: dict = {}
+    info_a = _vao._ghost(spec_three, sheet_dir, base_path=d, speed="strict")
+    sheet_a["sha"] = _hashlib2.sha256(_pathlib.Path(info_a["contact_sheet"]).read_bytes()).hexdigest()
+    sheet_a["cached"] = info_a.get("contact_sheet_cached")
+    info_b = _vao._ghost(spec_three, sheet_dir, base_path=d, speed="strict")
+    sheet_b = _hashlib2.sha256(_pathlib.Path(info_b["contact_sheet"]).read_bytes()).hexdigest()
+    check("runtime: 联络表是页图的纯函数（页图没变 → 复制上一轮，字节一致）",
+          sheet_a["cached"] is False and info_b.get("contact_sheet_cached") is True
+          and sheet_a["sha"] == sheet_b,
+          f"首轮 重贴={sheet_a['cached']} · 二轮 复制={info_b.get('contact_sheet_cached')}"
+          f" · {sheet_b[:12]}…")
+
+    # 失效：渲染口径变了（超采样档）→ 缓存不得冒充另一种像素
+    stats_d: dict = {}
+    _ghost.ghost_deck(spec_changed, preview_dir, supersample=2, png_compress_level=6, stats=stats_d)
+    check("runtime: 渲染口径变了（超采样/压缩）→ 不复用旧页图",
+          stats_d.get("cached", 0) == 0 and stats_d.get("rendered") == 3, str(stats_d))
+
+    # ── 5) 证据里看得到「省了什么」─────────────────────────────────────────
+    hot_spec = {"canvas": spec_one["canvas"], "theme": spec_one["theme"],
+                "slides": spec_changed["slides"]}
+    ghost_info = _vao._ghost(hot_spec, d / "prev2", base_path=d, speed="fast", limit=4)
+    # 同一份稿子再跑一次：这一轮一页都没画（全部命中页缓存）。以前这里报成「画了 3 页」——
+    # `stats.get("rendered", len(paths))` 在全命中时拿默认值，把「没画」记成了「全画」。
+    ghost_hot = _vao._ghost(hot_spec, d / "prev2", base_path=d, speed="fast", limit=4)
+    check("runtime: 预览证据写明这一轮画了几页 / 命中几页"
+          "（全部命中时不许报成「都画了」）",
+          isinstance(ghost_info.get("pages_drawn"), int)
+          and isinstance(ghost_info.get("pages_from_cache"), int)
+          and ghost_info["pages_drawn"] + ghost_info["pages_from_cache"] == ghost_info["count"]
+          and ghost_hot["pages_drawn"] == 0
+          and ghost_hot["pages_from_cache"] == ghost_hot["count"]
+          and ghost_hot["pages_drawn_numbers"] == [],
+          f"首轮 {ghost_info['pages_drawn']}/{ghost_info['pages_from_cache']}"
+          f" · 二轮 {ghost_hot['pages_drawn']}/{ghost_hot['pages_from_cache']}")
+
+
 def check_doc_counts() -> None:
     """文档里的自检项数必须等于实际项数。
 
@@ -1887,7 +2462,7 @@ def check_boundary_negatives(work: pathlib.Path) -> None:
                 "slides": [dict({"id": "s01",
                                  "page_intent": {"insight": "x", "focus": "t1",
                                                  "page_family": "EDITORIAL", "density": "balanced",
-                                                 "energy": "medium", "empty_space_role": "rest_eye"},
+                                                 "energy": "medium"},
                                  "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
                                  "elements": elements}, **(slides_extra or {}))]}
 
@@ -1979,6 +2554,8 @@ def main() -> int:
         check_asset_role_separation()
         check_anti_regression()
         check_boundary_negatives(work)
+        check_speed_profile(work)
+        check_runtime_reuse(work)
         check_doc_counts()
     finally:
         shutil.rmtree(work, ignore_errors=True)

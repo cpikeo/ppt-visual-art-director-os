@@ -6,7 +6,16 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
-当前版本 **5.8.0**；逐版变更（做了什么、为什么、删了什么）见 `CHANGELOG.md`。
+当前版本 **6.4.2**（6.4.2 = 真实语料验证：五份真实稿 + 两组修订对照给出触发率/阻断率/修复后是否消失；QA 归属收口、px→pt 单源化，规则一条未删；
+6.4.1 = 职责单源与触发率仪表：同一事实只留一个 owner；
+6.4 = 执法面减法：引擎只在「事实」或「作者声明的刻度」时发声；
+6.3 = 结构化减法：删掉写死的设计判断（家族 → 构图/叙事答案表）、
+零消费者的计划字段与热路径上没人用的字节读取；同轮保持产物字节不变。
+6.2 = 同一事实只产生一次：身份只有一个入口、凭证只有一种写法、一次运行只产出一份事实账本。
+6.1 = 运行时减法：同一份事实只读一次、只量一次、只画一次、只写一次。6.0 = 结构化减法：
+删掉无人消费的字段与层次、把用词与构图交还设计判断）。默认 `--speed fast`（两分钟交付档）：完整 PPT 收口
+≤120s（不含外部出图），判定口径与 `--speed strict` 完全一致，差异只在证据预算
+（QC 像素域、预览采样范围、缓存探测与压缩口径），并逐项写进报告。逐版变更见 `CHANGELOG.md`。
 
 ## 标准生产顺序（`run` 是标准入口；轮次由资产数量、QC 状态与根因修订决定）
 
@@ -29,8 +38,12 @@ python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.p
 
 # 3) 填完骨架（头注释即完整作业单）直接 release 收口；确需迭代构图才先 --mode draft
 #    check 内部完成资产核验：缺图、待重试或阻断都退出 2，不编译
-python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
+python scripts/vao.py check build_deck.py out.pptx --mode release \
+    --assets-manifest asset_manifest.json --speed fast --deadline 120
 ```
+
+`--speed fast`（默认）= 两分钟交付档；`--speed strict` = 全分辨率 QC + 全 deck 逐页预览的
+全量证据档。`--deadline` 是本次调用的墙钟预算：到点即跳过可选证据并留痕，不无限重试。
 
 - **无图片**：不必走资产步骤；`check` 显式记录跳过原因。
 - **用户提供/授权/自制/复用的图片**：在 brief 的 slide 中填写
@@ -76,13 +89,18 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（166 项，含判断层与反退化检查）
+    └── selftest.py           # 最小验证网（202 项，含判断层、反退化与速度档检查）
 ```
 
 ## 设计上刻意不做的事
 
 - **不调用 LibreOffice / soffice / poppler**：没有 PPTX→PDF→图像 的高成本链路；
   方向证据由 `ghost.py` 的确定性结构预览给出，产物是原生可编辑 PPTX。
+- **不给作者判卷**：引擎只判工程事实（声明了有没有落、位置稳不稳、数据成立不成立）。
+  用词、构图、家族写法是设计判断——`family: cover` 与 `page_family: COVER` 同样合法，
+  眉标写引擎给的说法或你自己的说法都成立。规则不替作者决定内容怎么写。
+- **不为架构完整而保留代码**：无人消费的字段与层次（`forecast_risk` / `empty_space_role` /
+  `rhythm_stage` / `reading_order`）一律删除；判定层永不因此放松。
 - **不提供布局引擎**：plan 只给家族、页意图、叙事动作、构图语法提案与预算；
   几何与构图由生成侧判断，提案可整体推翻。
 - **不打审美分**：验证只回答"能不能交付"；有没有设计价值由 `design-craft.md` 的判断坐标回答。
@@ -111,7 +129,7 @@ ppt-visual-art-director-os/
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 166 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝
+python scripts/selftest.py        # 202 项：交付链 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

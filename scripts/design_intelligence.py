@@ -15,7 +15,7 @@ Layer -1 · Design Intelligence（设计智能层——所有流程的大脑）
   ③ Page Quality Budget  页面质量预算：不同页面家族追求不同的好——Hero 页允许
                           高复杂度换情绪，数据页把清晰与准确放第一位。
   ④ Risk Prediction Engine 风险预测（**不是独立审查环节，是本层内部的预测子模块**）：
-                          `forecast_risk(brief, plan)` 在**还没有 spec** 时按内容路由
+                          `media_decision` 在**还没有 spec** 时按家族路由媒体需要
                           预判该 deck 会在哪里出问题，并把结论直接翻译成生成政策
                           （文本预算 / 媒体预算 / 复杂度约束），在起草之前消费。
                           （历史：曾有 spec 级 pre_critic + risk_strategy 二审层——
@@ -36,16 +36,13 @@ from pathlib import Path
 
 # 机器口径真源见 design_intelligence_rules（判断归文档，查表归代码）。
 from design_intelligence_rules import (
-    COMPOSITION_BY_FAMILY, COMPOSITION_POOL,
     MEDIA_MODEL as _MEDIA_MODEL, FAMILY_ALIASES as _FAMILY_ALIASES,
-    DIRECTION_ALIAS as _DIRECTION_ALIAS,
-    FAMILY_MOVES, COMPLEX_LAYOUT_FAMILIES,
+    DIRECTION_ALIAS as _DIRECTION_ALIAS, FAMILY_TOKENS,
     JUDGMENT_KEYS, RESULT_MEMORY_KEYS, COLOR_DIRECTIONS)
 
 DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json"
 
 # 密度带与 accent 估算因子 → design_intelligence_rules（真源），经 import 复用。
-
 
 # ════════════════════════════════════════════════════════════════════════
 # ① Design DNA Memory
@@ -72,7 +69,6 @@ def _load_store(path=None, strict: bool = False) -> dict:
         # 「经验库读取失败」伪装成「没有经验」，否则判断链不可审计。
         return {"version": 1, "entries": [],
                 "_load_error": f"{type(exc).__name__}: {exc}"}
-
 
 def recall_dna(brief: dict) -> dict:
     """brief → 最匹配的设计经验（确定性关键词打分）。
@@ -134,7 +130,6 @@ def recall_dna(brief: dict) -> dict:
             "note": (("DNA 是起点不是模板：按当前内容与受众重组，禁止照抄" if conf < 0.6
                       else "高置信命中：以该经验为基线，只做内容级调整") + broken_note)}
 
-
 # ── 经验写入路径 ───────────────────────────────────────────────────────
 # 记忆是判断的沉淀，不是参数表：judgment 只写「可迁移的行为判断」，色值/字号/版式结果
 # 属于证据，放 proven.measurements。写错的记忆不会报错，只会永远命不中——所以写入时挡。
@@ -145,7 +140,6 @@ DNA_SCHEMA_NOTE = ("经验库（非参数库）：每条 = pattern（模式名�
                    "结果是证据，放 proven.measurements。")
 
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
-
 
 def validate_dna_entry(entry) -> tuple[list, list]:
     """一条经验 → (errors, warnings)。errors 拒绝写入，warnings 只提醒。"""
@@ -186,7 +180,6 @@ def validate_dna_entry(entry) -> tuple[list, list]:
         warnings.append("建议补 proven（project / qa / measurements）——没有证据的经验只是主张")
     return errors, warnings
 
-
 def validate_dna_store(path=None) -> dict:
     """经验库体检：结构问题点名到条目，返回 {ok, entries, errors, warnings}。"""
     store = _load_store(path)
@@ -206,7 +199,6 @@ def validate_dna_store(path=None) -> dict:
         warnings += [{"id": label, "reason": m} for m in e_warns]
     return {"ok": not errors, "entries": len(store.get("entries") or []),
             "errors": errors, "warnings": warnings}
-
 
 def record_dna(entry, path=None, replace: bool = False) -> dict:
     """写入一条经验：校验 → 去重 → 原子替换。返回 {added, id, errors, warnings, …}。
@@ -247,7 +239,6 @@ def record_dna(entry, path=None, replace: bool = False) -> dict:
             "warnings": warnings,
             "note": f"{action} {eid} · 经验库现有 {len(entries)} 条"}
 
-
 def _leaf_strings(v):
     """递归产出 judgment 值内全部叶子字符串（嵌套 dict/list 藏不了色值）。"""
     if isinstance(v, str):
@@ -259,22 +250,19 @@ def _leaf_strings(v):
         for x in v:
             yield from _leaf_strings(x)
 
-
 # ════════════════════════════════════════════════════════════════════════
 # ② Media Decision Model
 # ════════════════════════════════════════════════════════════════════════
 # 媒体模型与家族别名表 → design_intelligence_rules（MEDIA_MODEL/FAMILY_ALIASES）。
 
-
 def normalize_family(raw) -> str:
     """家族名归一（内容家族 COVER/DATA_STORY… → route/媒体家族 HERO/DATA…）。
 
-    两套命名的单一映射源：media_decision / page_move
+    两套命名的单一映射源：media_decision / normalize_family
     都经此归一，禁止各自维护别名表（漂移的别名表 = 判断不一致）。
     """
     up = str(raw or "").strip().upper()
     return _FAMILY_ALIASES.get(up, up)
-
 
 def media_decision(page: dict) -> dict:
     """页面 → 媒体决策（置信度 + 理由，而非布尔闸门）。
@@ -300,65 +288,10 @@ def media_decision(page: dict) -> dict:
     return {"family": family or "UNKNOWN", "route_family": raw or None,
             "need_media": need, "confidence": conf, "reason": reason}
 
-
-# ════════════════════════════════════════════════════════════════════════
-# ③ Page Quality Budget
-# ════════════════════════════════════════════════════════════════════════
-QUALITY_BUDGETS = {
-    "HERO": {"primary": ["emotional_impact", "memorability"],
-             "complexity": "high", "media": "hero 画心允许",
-             "aim": "第一印象与情绪定调——允许用复杂度换冲击力"},
-    "CLOSING": {"primary": ["memorability", "emotional_impact"],
-                "complexity": "low", "media": "情绪画心允许",
-                "aim": "留一句可复述的话——越安静越有力"},
-    "STATEMENT": {"primary": ["memorability", "visual_hierarchy"],
-                  "complexity": "low", "media": "一般不需要",
-                  "aim": "单一结论 + 尺度优势"},
-    "DATA": {"primary": ["contrast", "alignment", "professional_quality"],
-             "complexity": "medium", "media": "禁止",
-             "aim": "清晰与准确优先——图表一个强调点，标签零碰撞"},
-    "EVIDENCE": {"primary": ["professional_quality", "consistency"],
-                 "complexity": "medium", "media": "禁止",
-                 "aim": "证据链可信：来源/单位/口径齐全"},
-    "CASE_STUDY": {"primary": ["evidence", "professional_quality"],
-                   "complexity": "medium", "media": "仅 proof 功能",
-                   "aim": "图像只证明现场/人物/结果，不承担装饰"},
-    "STRUCTURE": {"primary": ["alignment", "visual_hierarchy"],
-                  "complexity": "low", "media": "禁止",
-                  "aim": "结构关系一眼可读"},
-    "STORY": {"primary": ["emotional_impact", "consistency"],
-              "complexity": "medium", "media": "叙事画心",
-              "aim": "图像承担叙事，文字克制"},
-    "SECTION": {"primary": ["rhythm", "balance"],
-                "complexity": "low", "media": "不需要",
-                "aim": "呼吸与转场——留白是功能"},
-    "PROCESS": {"primary": ["alignment", "visual_hierarchy"],
-                "complexity": "medium", "media": "禁止",
-                "aim": "顺序与依赖清晰"},
-    "COMPARISON": {"primary": ["balance", "contrast"],
-                   "complexity": "medium", "media": "禁止",
-                   "aim": "对比张力来自内容排布"},
-}
-
-
-def quality_budget(page: dict) -> dict:
-    page = page if isinstance(page, dict) else {}
-    raw_intent = page.get("page_intent") if isinstance(page.get("page_intent"), dict) else {}
-    raw = str(raw_intent.get("page_family") or "").upper()
-    family = _FAMILY_ALIASES.get(raw, raw)
-    b = dict(QUALITY_BUDGETS.get(family, {"primary": ["professional_quality"],
-                                          "complexity": "medium", "media": "按需",
-                                          "aim": "未声明家族：按通用标准"}))
-    b["family"] = family or "UNKNOWN"
-    b["route_family"] = raw or None
-    return b
-
-
 # ── Page Intent Skeleton（标准家族的意图骨架，AI 只填洞 ──────────
 # 生成速度的大头不是渲染（毫秒级），是每页重新推理。骨架把「家族决定得了的」
 # （能量/密度/负空间职责/阅读序）确定性给出，AI 只填「内容决定得了的」
 # （insight / focus）；显式覆盖永远赢。deck 级判断见 route.deck_decision。
-
 
 def resolve_family(family: str) -> str:
     """家族名解析：route 家族名（COVER / DATA_STORY …）优先，其次 di 归一名（HERO / DATA …）。
@@ -367,131 +300,31 @@ def resolve_family(family: str) -> str:
     那是最贵的错：判断看起来发生了，其实没有。
     """
     raw = str(family or "").strip().upper()
-    if raw in FAMILY_MOVES or raw in COMPOSITION_BY_FAMILY:
+    if raw in FAMILY_TOKENS:
         return raw
     fam = normalize_family(family)
-    if fam in FAMILY_MOVES or fam in COMPOSITION_BY_FAMILY:
+    if fam in FAMILY_TOKENS:
         return fam
     return raw
 
-
-def page_move(family: str) -> dict:
-    """页面家族 → 叙事动作（判断线索，零几何）。生成侧据此自己构图。"""
-    key = resolve_family(family)
-    return {"family": key,
-            "move": FAMILY_MOVES.get(key, "先决定这页唯一的主语，再决定它如何被看见")}
-
-
-def composition_move(family: str = "", density: str = "", energy: str = "",
-                     content_type: str = "") -> dict:
-    """家族 × 疏密 × 能量 → 构图语法提案（描述视线如何被组织，零坐标）。
-
-    这是**起点**不是版式：生成侧可以整体推翻。它存在的理由只有一个——
-    避免每一页都从「元素该放哪」开始想，而先从「视线该怎样走」开始想。
-    """
-    key = resolve_family(family)
-    options = COMPOSITION_BY_FAMILY.get(key) or ("single_column", "quiet_center")
-    grammar = options[0]
-    if density == "sparse" and energy == "high":
-        grammar = "scale_contrast"
-    elif (density == "dense" or energy == "low") and key in (
-            "DATA_STORY", "COMPARISON", "FRAMEWORK", "EXECUTIVE_SUMMARY"):
-        grammar = options[1]
-    return {"family": key, "grammar": grammar,
-            "intent": COMPOSITION_POOL.get(grammar, ""),
-            "alternatives": [g for g in options if g != grammar]}
-
-
-def page_intent_skeleton(family: str, rhythm_stage: str = "body",
-                         insight: str = "", focus: str | None = None,
+def page_intent_skeleton(family: str, insight: str = "", focus: str | None = None,
                          **overrides) -> dict:
     """家族 + 已决策的密度/能量 → 页面意图骨架（确定性；不给的值就不写）。
 
-    density / energy / empty_space_role 由 route 的路由表决定，这里**不再自持第二张表**：
-    两处各写一份，迟早会给出互相矛盾的两页（曾经 s02 的注释说 low、骨架说 high）。
+    density / energy 由 route 的路由表决定，这里**不再自持第二张表**：两处各写一份，
+    迟早会给出互相矛盾的两页（曾经 s02 的注释说 low、骨架说 high）。
     insight / focus 由生成侧按内容填；显式覆盖永远赢。
+
+    刻意只有两个待填槽：**这页的唯一结论**（insight）与**视线第一落点**（focus）。
+    曾经还有 rhythm_stage / empty_space_role / reading_order 三个字段——引擎自己
+    发明、没人读取（reading_order 就是 focus 的复述）。写的人要在三个空字段里做
+    三个假决定，读的人多读三行：删掉它们，判断反而更集中在真正重要的那句上。
     """
     base = {"insight": insight, "focus": focus,
-            "page_family": str(family or "").strip().upper(),
-            "rhythm_stage": rhythm_stage}
+            "page_family": str(family or "").strip().upper()}
     base.update({k: v for k, v in overrides.items() if v not in (None, "")})
-    if focus:
-        base["reading_order"] = [focus]
     return base
 
-
-def forecast_risk(brief: dict, plan: dict | None = None) -> dict:
-    """起草之前：brief → 风险预测（0–1 向量）→ 生成政策。
-
-    这是「Risk Prediction 在 Design Intelligence 内部」的落点——不是生成前审核
-    一次 spec，而是在**还没有 spec** 时就按内容路由预判该 deck 会在哪里出问题，
-    并把结论变成预算：文本密度风险高 → 收紧 text_budget 与行长；
-    图片不足风险高 → 提高 generate 预算；布局复杂风险高 → 降低并行构图算子。
-
-    传入已计算的 plan 可复用 route 结果。纯函数、零渲染、~0.1ms（复用 route 的决策缓存）。
-    任何异常都返回「零风险 + 空政策」，绝不阻断生成（预测是加速器，不是门槛）。
-    """
-    out = {"risks": {}, "policies": {}, "notes": []}
-    if plan is None:
-        try:
-            import route as _route
-            plan = _route.plan_deck(brief if isinstance(brief, dict) else {})
-        except Exception as exc:                   # 预测失败不阻断主链
-            out["error"] = str(exc)
-            out["notes"].append("route 不可用：跳过预测，按默认骨架起草")
-            return out
-    pages = plan.get("pages") or []
-    n = max(1, len(pages))
-    text_dense = sum(1 for p in pages
-                     if str(p.get("density")) == "dense"
-                     or int(p.get("text_budget") or 0) >= 4) / n
-    media_short = sum(1 for p in pages
-                      if str((p.get("asset") or {}).get("decision")) == "none") / n
-    def _page_family(page: dict) -> str:
-        return str(page.get("family") or page.get("page_family") or "").upper()
-
-    complex_layout = sum(1 for p in pages
-                         if _page_family(p) in COMPLEX_LAYOUT_FAMILIES) / n
-    mono = 0.0
-    fams = [_page_family(p) for p in pages]
-    streak = 1
-    for i in range(1, len(fams)):
-        streak = streak + 1 if fams[i] == fams[i - 1] else 1
-        mono = max(mono, 1.0 if streak >= 3 else 0.0)
-    flat = 0.0
-    dens = [str(p.get("density")) for p in pages]
-    for i in range(1, len(dens)):
-        flat = max(flat, 0.8 if dens[i] == dens[i - 1] else 0.0)
-    out["risks"] = {"hero_visual": round(min(1.0, media_short * 0.6 + 0.15), 3),
-                    "text_density": round(min(1.0, text_dense), 3),
-                    "media_shortage": round(min(1.0, media_short), 3),
-                    "layout_complexity": round(min(1.0, complex_layout), 3),
-                    "rhythm_flat": round(min(1.0, flat), 3),
-                    "layout_monotony": round(mono, 3)}
-    pol: dict[str, list[str]] = {}
-
-    def _on(key, thr, *actions):
-        if out["risks"][key] >= thr:
-            pol.setdefault(key, []).extend(a for a in actions if a)
-
-    _on("text_density", 0.34, "逐页 text_budget -1，行长上限收到 32 字（CJK），超出即拆句")
-    _on("media_shortage", 0.5, "媒体政策：只在 cover/brand/product/closing 生成图片",
-        "数据/结构页明确 zero-image，并把省下的预算换成锚点尺度")
-    _on("hero_visual", 0.4, "含图页 ≤1 张且必须声明功能（context/emotion/proof/hero）")
-    _on("layout_complexity", 0.4, "复杂家族一页只承担一个关系：优先分层/路径，放弃并列卡片",
-        "构图算子先定（切分/轴/尺度对偶）再填内容")
-    _on("rhythm_flat", 0.5, "疏密曲线重排：相邻页 density 互斥，能量至少一处随之变化")
-    _on("layout_monotony", 0.99, "同家族连续 ≥3 页换构图语法，或在 design_rationale 声明品牌连续性")
-    out["policies"] = pol
-    out["notes"].append(f"{n} 页 · 预测来自内容路由（无渲染）")
-    return out
-
-
-# ════════════════════════════════════════════════════════════════════════
-# ════════════════════════════════════════════════════════════════════════
-# Parallel Intelligence：一次调用汇合三条智能线
-# ════════════════════════════════════════════════════════════════════════
-# ════════════════════════════════════════════════════════════════════
 def color_plan(direction, brief: dict | None = None) -> dict:
     """自适应色彩智能：内容 × DNA × 情绪 → 比例目标 + 约束 + 种子骨架。
 

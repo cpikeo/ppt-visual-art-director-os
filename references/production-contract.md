@@ -5,7 +5,7 @@
 | 层 | 核心问题 | 是否阻断 |
 |---|---|---|
 | **Contract / Guard** | 文件正确、数据正确、结构正确、可编译、无溢出、无碰撞、资产链完整 | **是**（10 个阻断码） |
-| **留痕 / Risk** | 可读性风险、节奏风险、图表论点风险（仅留痕 + plan 期 forecast 预测） | 否（只进 `trace_summary`） |
+| **留痕 / Risk** | 可读性风险、节奏风险、图表论点风险（仅留痕） | 否（只进 `trace_summary`） |
 | **Intelligence / Craft** | 高级感、审美、构图、节奏、视觉价值、应不应该这么设计 | 不属于 Contract |
 
 **验证层不评分**：`guard.check_spec` 没有 score，不排序、不评级。它只查**工程事实**
@@ -39,14 +39,34 @@
 | 图表论点 | 差异主张 + 零基长度编码 + 声明 `highlight`/`target` + max/min <1.25× = 差异不可见 | `chart_argument`（warn） |
 | 可读性 | 声明色弱化字 <3:1 提示、<1.8:1 警示；正文级 <4.5:1 是 `READABILITY_FAIL` 硬门 | `contrast`（hint/warn）；error 级才是 `READABILITY_FAIL` |
 | 背景保护 | 全幅背景图免检资格：`layer:background` + `overlay` ≥0.20 + 覆盖 ≥60%（`BG_MIN_*`） | `BG_UNPROTECTED`（warn/hint） |
-| 媒体策略 | 数据/表格/流程/结构页不出图 | route 媒体政策（plan 侧不派图）+ forecast `media_shortage`（plan 期预测） |
-| 网格 | 8 单位自动吸附（任一维 ≤2px 或通栏豁免）；`grid_exempt:true` 豁免 | 对齐事实进 `grid`/`line_measure`，比率不计分 |
+| 媒体策略 | 数据/表格/流程/结构页不出图 | route 媒体政策（plan 侧不派图） |
+| 网格 | 8 单位自动吸附（任一维 ≤2px 或通栏豁免）；`grid_exempt:true` 豁免 | 对齐事实进 `grid`，比率不计分 |
 
 构图：plan 每页给一条 `composition.grammar`（视线如何被组织）；这是**提案**——不给坐标、
 不给版式，生成侧可整体推翻。
 修订：照 `fix_plan` 根因组**一轮批量改完**（内嵌契约行，零回读），一次改完再复跑同档——
 不逐条「修一个、回读一个」。
-风险预测：`forecast_risk` 在 plan 期输出政策（起草前消费）；默认 QA 不运行建议。
+
+### 速度档（v5.9）
+
+| 项 | `--speed fast`（默认） | `--speed strict` |
+|---|---|---|
+| 资产 QC 像素域 | 长边 ≤1024 整数箱降采样；**文字安全区纹理按原分辨率** | 全分辨率 |
+| 图片读取 / 解码 | 每张各一次：QC 的字节经 `snapshots`、QC 的**已解码底图**经 `decode_seed` 供核验/编译/预览复用（size+mtime 守卫；持图有内存上限） | 同 |
+| 图片变换 | 同图同盒一次；无变换透传原字节；解码底图跨盒子复用 | 同 |
+| 编译缓存探测 | `pptx_size` + `pptx_mtime_ns`（快探针只判「要不要重编」）；两档各自分域，不跨档复用 | 整包 SHA-256 |
+| 方向预览 | `sample_pages` 采样 ≤4 页；单倍采样 + 低压缩 PNG | 全 deck 逐页；2× 超采样 |
+| 包级后处理 | 媒体条目 STORED（不再二次压缩），XML 仍 DEFLATE | 同 |
+| 产物哈希 | 同轮 stat 见证一次；不一致才重算 | 同 |
+
+判定口径两档完全相同（同一 `check_spec`、同一阈值、同一阻断码）。差异只进证据字段：
+`asset_manifest.qc.json → pixel_profile`（资产 QC 像素域）、`packet.preview.scope`（预览证据范围）、
+`qa_report.compile.attestation_mode`、`manifest.verification.{speed,visual_evidence_scope}`。
+
+`--deadline`（秒，默认 120，0/None = 不设上限）：核心阶段（资产核验 → guard → 编译 →
+收口）永远执行；可选证据（方向预览 / contact sheet）在剩余预算不足 `GHOST_MIN_BUDGET_S`
+时被跳过并记入 `budget.skipped`。release 档缺预览证据即 `BLOCKED`（fail-closed）——
+超预算只会得到一条诚实的结论，不会得到一次超时的交付。
 
 ## Calls（最小 API）
 
@@ -55,13 +75,13 @@
 （写 elements 前查它，不必回读 `compiler.py`）。
 
 - `vao.py plan` → `pipeline.build_plan_bundle`：骨架只序列化**已决策字段**（canvas / theme 种子 /
-  page_intent / source_zone，注释里附该页家族、叙事动作、构图语法提案），`elements` 留空——
+  page_intent / source_zone，注释里附该页家族、密度/能量、媒体判断与构图判断项），`elements` 留空——
   几何归生成侧判断，零预设；页数与 brief 的 slides 一一对应。deck 级事实（theme 种子、
   `direction_execution` 的介质/光照/图表手法）只在顶层出现一次，不逐页复制。
 - `vao.py dna` → 经验记忆：`--check` 体检 / `--add <条目>.json`（校验后原子写入）。
   `judgment` 只写行为判断，色值/字号/版式结果放 `proven.measurements`——写坏的记忆不报错，
   只会永远命不中。
-- `vao.py check` → `qa.run_qa`（normalize → guard → compile → 判定）+ ghost 预览 + 分组修复包；
+- `vao.py check` → normalize → guard → compile → `qa.verdict`（只读两份报告）+ ghost 预览 + 分组修复包；
   全程单进程，不串行跑单脚本，不启动任何外部渲染器。
 
 报告自足：`fix_plan.groups[]` 按根因码分组阻断项（`count/ids/samples/fix`，fix 内嵌本表契约行）；
@@ -94,7 +114,7 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 `theme.constraints` 是方向的数字种子（accent 面积 / 留白下限 / 字号级差 / 装饰面积 / 背景层 / 粗体占比）：
 plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样被点名。
-每页 `page_intent` 含 insight/focus/reading_order/energy/density/empty_space_role/page_family；
+每页 `page_intent` 含 insight / focus / page_family / density / energy；
 几何：所有可见对象数值 `x/y/width/height`。光源以外的字段（如幻灯级 `background`）不存在——写了也会被静默忽略，别写。
 
 来源区内文字 `role` 只允许 `{source, method, metadata}`（页码/编号等挂 `metadata`/`label`）；
@@ -108,6 +128,24 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 图表色走语义角色（`color_role`，详见 design-system.md §图表字段五组；柱状负值自动染 negative）。
 背景画心声明 `layer:background` + 自带 `overlay` 内容保护，不计媒体预算；资格不足按普通对象判。
 
+## Cold / Hot 与运行时事实（v6.2）
+
+一次 `check` 只产出一份运行时事实账本（`result.evidence`）：身份（输入 / 资产 / 产物 /
+判定 / 像素 / 页）、读数（各阶段耗时与解码 / 变换计数）、复用与降级原因。报告、发布清单、
+预览证据都从这份账本取数，不再各自拼装。
+
+| 路径 | 步骤 | 含义 |
+| --- | --- | --- |
+| COLD | identity → measure → evidence → compile → render | 这一轮重新建立事实 |
+| HOT | identity → evidence → release | 这一轮只取已有事实（不测量 / 不编译 / 不渲染） |
+
+* 复用必须带凭证：资产判定（清单摘要 + 量像素引擎 + 取样参数 + 逐资产字节凭证）、
+  产物（spec 投影 + 引擎指纹 + 产物凭证）、预览（产物凭证 + 渲染器指纹）。
+* 凭证不足时该步落回 COLD，并在 `evidence.cold_reasons` 写明原因——不允许静默重做。
+* 同一个事实只有一个身份：值摘要、文件字节、字节凭证、引擎指纹各只有一处实现，
+  全部由 `primitives.py` 的身份层产出（`run_evidence.py` 只负责收集与陈述）。
+* 新增步骤的准入问题：**属于 COLD 还是 HOT；为什么 HOT 需要重做。**
+
 ## Failure codes
 
 | 代码 | 状态 | 处理 |
@@ -115,7 +153,7 @@ plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样�
 | `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_WORKFLOW_FAIL` | BLOCKED | 必修：按 `fix_plan` 根因组一次改完 |
 | 其他 warn/hint（`BG_UNPROTECTED`、图表论点、对齐与网格提示等） | PASS | 只进 `trace_summary`，不解释、不询问、不逐条修复 |
 
-`guard.check_spec` 的返回只有 `passed / checks / warnings / grid / line_measure`——
+`guard.check_spec` 的返回只有 `passed / checks / warnings / grid`——
 **没有 score，也不恢复 score**：一旦出现总分，系统会退化成规则 → 指标 → 分数 → 排名 →
 模板化优化，反过来削弱设计智能。
 

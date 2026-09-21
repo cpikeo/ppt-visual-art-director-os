@@ -8,19 +8,18 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
-from primitives import file_digest
+from primitives import (digest_bytes, engine_fingerprint, file_digest, identity,
+                        stat_witness, witness_matches)
 
 CACHE_NAME = "compile_cache.json"
 # 编译器/底层 primitives 改变时，即使 spec 投影不变，旧 PPTX 也不能继续冒充当前
 # 引擎产物。把实现指纹放进 view，而不是依赖手工清缓存。
 # ghost.py 也在内：预览是「交付证据」的一部分，渲染器改了还复用旧预览，
 # 等于让作者看着上一版的证据做这一版的判断。
-CACHE_ENGINE_FILES = ("compiler.py", "primitives.py", "ghost.py")
-CACHE_VIEW_VERSION = 6
+CACHE_VIEW_VERSION = 8        # v8：引擎指纹改由 primitives.engine_fingerprint 产出
 NON_GEOMETRIC_SLIDE_KEYS = (
     "page_intent", "source_zone", "notes", "speaker_notes", "comment",
     "comments", "annotations", "id", "label",
@@ -31,17 +30,13 @@ NON_GEOMETRIC_THEME_KEYS = (
 )
 
 
-def _file_sha(path: Path) -> str | None:
-    """短指纹：缓存键用（截全文件 SHA-256 前 16 位，口径与完整指纹同源）。"""
-    d = file_digest(path)
-    return d[:16] if d else None
-
-
-_file_sha_full = file_digest   # 完整 SHA-256：产物凭证不使用短缓存指纹
+# 文件摘要只有一处实现（primitives.file_digest）：需要短指纹就显式切片，
+# 需要完整凭证就用全值——不再维护 _file_sha / _file_sha_full 两套别名。
 
 
 def _media_stamp(slide: dict | None, base_path: str | Path | None,
-                 spec_path: str | Path | None = None, image_bytes: dict | None = None) -> list:
+                 spec_path: str | Path | None = None, image_bytes: dict | None = None,
+                 digests: dict | None = None) -> list:
     """图片指纹与 compiler 的相对路径解析保持同口径。
 
     build 模块常把素材放在自身目录，而输出 PPTX 写到另一个目录；只以
@@ -68,17 +63,39 @@ def _media_stamp(slide: dict | None, base_path: str | Path | None,
             candidates = [(root / path).resolve() for root in roots]
             path = next((candidate for candidate in candidates if candidate.exists()),
                         candidates[0])
+        # 摘要优先：本轮 QC/核验已经算过的就不要再算（同一张图在 6 处落位会重复
+        # 出现，此前每次出现都重哈希一遍 50MB 源图）。身份仍由同一个 sha256 决定。
+        known = (digests or {}).get(str(path))
+        if known is None and digests is not None:
+            try:
+                known = digests.get(str(path.resolve()))
+            except OSError:
+                known = None
         blob = (image_bytes or {}).get(str(path))
+        if known is not None:
+            size = len(blob) if blob is not None else None
+            if size is None:
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    stamps.append([str(path), "missing"])
+                    continue
+            stamps.append([str(path), size, known])
+            continue
         if blob is not None:
-            stamps.append([str(path), len(blob), hashlib.sha256(blob).hexdigest()])
+            stamp = digest_bytes(blob)
+            if digests is not None:
+                digests[str(path)] = stamp
+            stamps.append([str(path), len(blob), stamp])
             continue
         try:
             stat = path.stat()
             # Path + stat alone still collides when a media file is replaced with
             # same-size content while preserving mtime. The short content digest
             # closes that correctness hole; the path prevents cross-directory aliasing.
+            # 兜底路径才自己读字节；能拿到共享摘要的调用点在上面就返回了。
             stamps.append([str(path.resolve()), stat.st_size, stat.st_mtime_ns,
-                           _file_sha(path) or "unreadable"])
+                           (file_digest(path) or "unreadable")[:16]])
         except (OSError, ValueError):
             stamps.append([str(path.resolve()), "missing"])
     return stamps
@@ -90,9 +107,12 @@ def _projection(obj: dict | None, drop: tuple) -> dict:
 
 
 def _load_meta(work: Path) -> dict:
+    """读缓存元数据（一轮里同一份只解析一次；写盘会改 mtime，缓存自然失效）。"""
+    from primitives import json_read_cached
     try:
-        value = json.loads((work / CACHE_NAME).read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
+        # 返回浅拷贝：_patch_meta 会就地改这份 dict，共享对象不能被就地改写。
+        value = json_read_cached(work / CACHE_NAME)
+        return dict(value) if isinstance(value, dict) else {}
     except (OSError, ValueError, TypeError):
         # 损坏/半写入的 metadata 只使缓存失效，不应让 QA 或编译链崩溃。
         return {}
@@ -114,22 +134,18 @@ def _patch_meta(work: Path, **fields) -> None:
         pass
 
 
-def _engine_stamp() -> list:
-    """编译实现指纹（不导入 compiler，保持 spec/draft 的轻量边界）。"""
-    result = []
-    root = Path(__file__).resolve().parent
-    for name in CACHE_ENGINE_FILES:
-        path = root / name
-        try:
-            stat = path.stat()
-            result.append([name, stat.st_size, stat.st_mtime_ns, _file_sha(path) or "unreadable"])
-        except OSError:
-            result.append([name, "missing"])
-    return result
+def _engine_stamp() -> str:
+    """编译实现指纹：唯一实现在 primitives.engine_fingerprint（scope="compile"）。
+
+    此前这里有第二份（列文件 + 逐文件 stat/sha），与预览器、度量器各算一套；
+    现在「产出这段字节的代码是谁」只有一个答案。
+    """
+    return engine_fingerprint("compile")
 
 
 def spec_view(spec: dict | None, base_path: str | Path | None = None,
-              spec_path: str | Path | None = None, image_bytes: dict | None = None) -> str:
+              spec_path: str | Path | None = None, image_bytes: dict | None = None,
+              digests: dict | None = None) -> str:
     """spec → 确定性编译投影（决定"要不要重编"的唯一身份）。"""
     spec = spec if isinstance(spec, dict) else {}
     raw_canvas = spec.get("canvas")
@@ -146,53 +162,88 @@ def spec_view(spec: dict | None, base_path: str | Path | None = None,
             "background": _projection(slide, NON_GEOMETRIC_SLIDE_KEYS).get("background"),
             "elements": elements,
             "id": slide.get("id"),
-            "media": _media_stamp(slide, base_path, spec_path, image_bytes),
+            "media": _media_stamp(slide, base_path, spec_path, image_bytes, digests),
         })
-    payload = json.dumps(
-        {"canvas": canvas, "theme": theme, "slides": views,
-         "engine": _engine_stamp(), "v": CACHE_VIEW_VERSION},
-        ensure_ascii=False, sort_keys=True, default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+    # 视图身份只由一个入口产出（身份层）：引擎指纹 + 版本 + 语义投影。
+    return identity({"canvas": canvas, "theme": theme, "slides": views,
+                     "engine": _engine_stamp(), "v": CACHE_VIEW_VERSION},
+                    schema="vao-compile-view-v8", short=24)
 
 
-def compile_reuse(work: Path, pptx: Path, view: str) -> dict | None:
+def compile_reuse(work: Path, pptx: Path, view: str, *, fast_probe: bool = False,
+                  speed: str | None = None) -> dict | None:
+    """编译复用探测：语义投影一致 + 产物还是那一份，才允许跳过重编。
+
+    `fast_probe=True`（v5.9 快速档）用 size+mtime_ns 取代整包哈希。这不是放宽正确性
+    要求，而是把成本放对位置：探测的职责是「这一份还要不要重编」，不是「证明交付
+    字节」——后者由 attestation 一次完成。任何写盘动作都会改变 mtime_ns（纳秒级，
+    同尺寸替换也躲不过），因此快探测只会在「文件真的没被动过」时命中。
+    strict 档保留整包内容核对，用于发布链的终极证明。
+    """
     rec = _load_meta(work).get("compile") or {}
     if not isinstance(rec, dict) or not isinstance(rec.get("report"), dict):
         return None
     semantic_view = rec.get("semantic_view")
     if semantic_view != view or not rec.get("report"):
         return None
+    # 档位也是产物口径的一部分：fast 与 strict 编出的 PPTX 字节不同（PNG 编码级别），
+    # 跨档位复用会让清单里的 speed 与产物的真实出身对不上。同档位才复用，
+    # 旧记录没有 performance.speed 时按 strict 记，宁可重编一次。
+    if speed is not None:
+        recorded = str(((rec.get("report") or {}).get("performance") or {}).get("speed")
+                       or "strict")
+        if recorded != str(speed):
+            return None
+    # 产物凭证：全库唯一写法 output_witness{size, mtime_ns, sha256}。记录里只存一份
+    # （报告副本不再重复存 output_sha256），命中时再回填给报告。
+    witness = rec.get("output_witness") or {}
+    stored_sha = str(witness.get("sha256") or "")
     # 旧记录没有完整产物凭证，不能让它冒充当前 compiler 的产物；
     # 宁可重编一次，也不把同大小的被替换 PPTX 认作命中。
-    if not rec["report"].get("output_sha256"):
-        return None
-    stored_sha = str(rec.get("pptx_sha") or "")
-    if len(stored_sha) >= 64:
-        current_sha = _file_sha_full(pptx)
-    else:
-        # 旧 metadata 只存短指纹：仍可命中，但下一次 record_compile 会升级为完整戳。
-        current_sha = _file_sha(pptx)
-    if current_sha != stored_sha:
+    if len(stored_sha) < 64:
         return None
     if not Path(pptx).exists():
         return None
+    if fast_probe:
+        size, mtime_ns = stat_witness(pptx)
+        if not witness_matches(witness, {"size": size, "mtime_ns": mtime_ns}):
+            return None
+        report = dict(rec["report"])
+        report["reused"] = True
+        report["_cache_probe"] = "size+mtime_ns"
+        # 见证即已存记录：报告里那份 SHA 对应的是同一 size/mtime 的字节。
+        report["_cache_verified_sha256"] = stored_sha
+        report["output_sha256"] = stored_sha
+        return report
+    if len(stored_sha) >= 64:
+        current_sha = file_digest(pptx)
+    else:
+        # 旧 metadata 只存短指纹：仍可命中，但下一次 record_compile 会升级为完整戳。
+        current_sha = (file_digest(pptx) or "")[:16]
+    if current_sha != stored_sha:
+        return None
     report = dict(rec["report"])
     report["reused"] = True
-    # 命中路径不再读整份 PPTX：完整戳优先复用报告中的 SHA，旧记录至少已过短戳核对。
-    report["_cache_verified_sha256"] = (report.get("output_sha256")
-                                        if len(stored_sha) < 64 else current_sha)
+    report["_cache_probe"] = "content_sha256"
+    report["_cache_verified_sha256"] = current_sha
+    report["output_sha256"] = current_sha
     return report
 
 
 def record_compile(work: Path, pptx: Path, view: str, report: dict) -> None:
     output_sha = str((report or {}).get("output_sha256") or "")
     if len(output_sha) != 64:
-        output_sha = _file_sha_full(pptx) or ""
+        output_sha = file_digest(pptx) or ""
+    size, mtime_ns = stat_witness(pptx)
     _patch_meta(work, compile={
         "semantic_view": view,
-        "pptx_sha": output_sha,
+        "compile_speed": str(((report or {}).get("performance") or {}).get("speed") or "strict"),
+        # 产物凭证只存这一份：size+mtime_ns 是快探针的见证，sha256 是严格档的见证。
+        "output_witness": {"size": size, "mtime_ns": mtime_ns, "sha256": output_sha},
         "pptx_name": Path(pptx).name,
-        "report": {k: v for k, v in (report or {}).items() if k != "guard"},
+        # 报告副本里不再重复存 output_sha256 —— 同一事实只保存一次，命中时回填。
+        "report": {k: v for k, v in (report or {}).items()
+                   if k not in ("guard", "output_sha256")},
     })
 
 

@@ -301,13 +301,15 @@ def _canonical_direction(value) -> tuple[str, dict | None]:
 
 
 def _keyword_hit(text: str, keyword: str) -> bool:
-    """CJK 用子串；ASCII 用词边界，避免 history→story 等误路由。"""
+    """CJK 用子串；拉丁整词，避免 history→story 等误路由。
+
+    实现归 primitives.latin_word_match —— 与 asset_prompt 的术语判定同一份口径。
+    """
     tok = str(keyword or "").strip().lower()
     if not tok:
         return False
-    if all(ord(c) < 128 for c in tok):
-        return re.search(rf"(?<![a-z0-9_]){re.escape(tok)}(?![a-z0-9_])", text) is not None
-    return tok in text
+    from primitives import latin_word_match
+    return latin_word_match(text, tok)
 
 
 def detect_type(text: str) -> str:
@@ -360,14 +362,13 @@ def plan_page(content_type: str, design_direction: str = "quiet_minimal",
         asset = "reuse"          # 快速路径：复用已有画心，不再新出图
 
     return {
+        # 无消费者字段一律不产出（media_budget / text_budget / mode / index /
+        # declared_type 曾经逐页写进 plan.json）：deck 级已有 mode，媒体预算由
+        # 逐页 asset.decision 承担，页序由数组顺序承担——同一事实不写两遍。
         "content_type": content_type,
-        "mode": MODE_LABEL[quality],
         "page_family": r["family"],
         "density": r["density"],
         "energy": r["energy"],
-        "empty_space_role": r["empty_space"],
-        "media_budget": r["media"],
-        "text_budget": r["texts"],
         "asset": {"decision": asset, "function": r["asset_function"],
                   "why": _asset_reason(content_type, asset)},
         # 焦点恒为结论句（statement 级）；元素 id 由生成侧决定，
@@ -388,7 +389,7 @@ _DECK_CACHE: dict[str, dict] = {}
 MAX_DECK_CACHE = 32   # 只缓存整副 deck 的规划结果；有界，不演化成配置系统
 
 # 方向的构图语法词表（与 design-intelligence.md §04 direction 的键一致）。
-# 注意：它和页面级的 `design_intelligence.COMPOSITION_POOL`
+# 注意：它和页面级的构图词汇各自表述
 # （scale_contrast / split_field / grid_evidence …）**不是同一套词**——
 # 前者说「这副 deck 的轴线性格」（软偏轴还是硬网格），后者说「这一页怎么摆」。
 # 两者同名不同义，brief 的 composition_grammar 指的是前者。
@@ -581,7 +582,7 @@ def _plan_deck(brief: dict) -> dict:
         page = plan_page(declared_type or text, direction, quality)
         if isinstance(item, dict):
             # 显式声明赢过推断：密度/能量/留白职责以作者为准，冲突只留痕不改写。
-            for field in ("density", "energy", "empty_space_role"):
+            for field in ("density", "energy"):
                 value = item.get(field)
                 if _intent_value(value):
                     page[field] = str(value).strip()
@@ -616,10 +617,8 @@ def _plan_deck(brief: dict) -> dict:
                 page["content_missing"] = True
             if _intent_value(item.get("composition")):
                 page["composition_explicit"] = str(item["composition"]).strip()
-        page["index"] = i + 1
         page["id"] = (item.get("id") if isinstance(item, dict) and item.get("id")
                       else f"s{i + 1:02d}")
-        page["declared_type"] = declared_type
         pages.append(page)
     # 逐页 intent_interpretation（显式/推断/冲突镜像）在 plan.pages 之外零消费：
     # 作者覆盖已直接生效在页面字段上（上面 density_explicit 等），冲突留痕
@@ -839,7 +838,7 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
     """Fast Visual Intelligence Pipeline · Stage 1+2 一次调用固化。
 
     plan 可由统一入口预先计算；传入后本函数不会再次调用 plan_deck，避免
-    intent_compiler / route / forecast 在同一轮重复推导。
+    intent_compiler / route 在同一轮重复推导。
 
     返回 {plan, deck_decision, color_plan, pages:[{family, skeleton, move,
     media, budget}]}。生成侧拿到的是**判断线索**（家族、意图骨架、叙事动作、
@@ -858,33 +857,24 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
         # 两者都来自 route，避免骨架自己再推一遍值。
         stage = ("opening" if idx == 0 else
                  "closing" if idx == len(plan_pages) - 1 else "body")
+        # 构图语法由作者判断（本层只把作者显式声明的原样带过去）。
+        # 此前这里按 family → 语法的表给出「答案 + 备选」，那是把设计判断写成了查表：
+        # 页面拿到的是一个先验结论，不是内容推出来的选择。
         composition = ({"family": fam, "grammar": pg["composition_explicit"],
                         "intent": "作者显式声明的构图语法", "alternatives": []}
-                       if pg.get("composition_explicit")
-                       else di.composition_move(fam, str(pg.get("density") or ""),
-                                                str(pg.get("energy") or ""),
-                                                str(pg.get("content_type") or "")))
+                       if pg.get("composition_explicit") else {})
         pages.append({
             # 身份随事实一起传下去：顶层意图页与 plan.pages 用同一个 id 配对，
             # 消费侧（骨架合并 / 资产生成）靠它对齐，不靠位置。
             "id": pg.get("id"),
             "family": fam,
             "skeleton": di.page_intent_skeleton(
-                fam or "", stage, density=pg.get("density"),
-                energy=pg.get("energy"),
-                empty_space_role=pg.get("empty_space_role")),
-            "move": di.page_move(fam or ""),
+                fam or "", density=pg.get("density"), energy=pg.get("energy")),
             "composition": composition,
             "media": di.media_decision(intent),
-            "budget": di.quality_budget(intent),
         })
-    forecast = None
-    try:
-        forecast = di.forecast_risk(brief, plan=plan)
-    except Exception as exc:
-        forecast = {"error": str(exc), "policies": {}}
     return {"plan": plan, "deck_decision": card, "color_plan": color,
-            "forecast": forecast, "pages": pages}
+            "pages": pages}
 
 
 def align_pages(plan_pages: list[dict], other_pages: list[dict]) -> dict:

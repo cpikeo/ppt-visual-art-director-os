@@ -27,7 +27,7 @@ from route import align_pages, explicit_content_type, one_pass_plan, plan_deck
 
 
 def build_plan_bundle(need: dict) -> dict:
-    """Build brief, deck route, layouts and forecast with one route computation."""
+    """Build brief, deck route and page intents with one route computation."""
     t0 = time.perf_counter()
     need = dict(need or {})
     plan = plan_deck(need)
@@ -54,7 +54,6 @@ def build_plan_bundle(need: dict) -> dict:
         "plan": plan,
         "deck_decision": intelligence.get("deck_decision"),
         "color_plan": intelligence.get("color_plan"),
-        "forecast": intelligence.get("forecast"),
         "pages": intelligence.get("pages") or [],
         "performance": {
             "planning_ms": round((time.perf_counter() - t0) * 1000, 2),
@@ -134,9 +133,9 @@ def build_skeleton_module(bundle: dict) -> str:
     # 「墨色与纸面分得开」：正文级 4.5:1 达不到时，把 ink/primary 翻到
     # 同色相的可读端（白或近黑），并把原色降级为 accent 之外的次级信号。
     try:
-        from primitives import contrast, luminance
+        from primitives import contrast, is_light
         if contrast(colors["background"], colors["ink"]) < 4.5:
-            readable = "#FFFFFF" if luminance(colors["background"]) < 0.5 else "#141414"
+            readable = "#141414" if is_light(colors["background"]) else "#FFFFFF"
             colors["ink"] = readable
             if contrast(colors["background"], colors["primary"]) < 4.5:
                 colors["primary"] = readable
@@ -198,17 +197,13 @@ def build_skeleton_module(bundle: dict) -> str:
     L += ['',
          '落笔清单（一次做完，不要回来补第二遍）：',
          '  1) 每页 page_intent.insight（本页唯一结论）与 focus（视线第一落点元素 id）',
-         '  2) elements 平铺写：x/y/width/height 数值（8 的倍数）+ text + size/color/',
-         '     bold/align/max_lines/line_height/padding；框高 ≥ 字号 × 行高(默认1.35) × 行数；',
-         '     行宽容量 ≈ 盒宽/字号（CJK 每字 1.0，拉丁 ~0.55，中西边界自动加 0.2 细空格），',
-         '     标题按 +20% 余量给宽；wrap=False 的单行文本盒宽 ≥ 1.5× 估算宽度',
-         '  3) theme.fonts 写 {cn, latin}（家族 ≤2）；direction.color_intent: [brand, emotion, hierarchy]\n'
-         '     theme.constraints 是方向发下来的数字下限/上限，照抄别改——guard 会照着它执法',
-         '  4) 图表页齐 source/unit/period/basis；source_zone 内只放 role∈{source,method,metadata}',
-         '  5) 文本/图表/图片/来源区墨迹不相交；内容过多时先删句、再改写，不要缩字号',
-         '  6) 每页 anchor（眉标/页码）要落成元素：眉标 role=eyebrow（家族词汇原文）、'
-         '页码 role=page_number；位置全 deck 一致。论文式证据编号已弃用——'
-         '出处信息只进 source_zone 框（role=source/method/metadata）',
+         '  2) elements 平铺写：x/y/width/height（8 的倍数）+ text + 样式平铺顶层。',
+         '     会被当场抓住的量只有三个：框高 ≥ 字号 × 行高(默认1.35) × 行数；',
+         '     标题按 +20% 余量给宽；内容过多先删句改写，不缩字号。',
+         '  3) theme.fonts 写 {cn, latin}；图表页齐 source/unit/period/basis；',
+         '     每页 anchor 落成元素：眉标 role=eyebrow（写你自己的说法也行）+ role=page_number，',
+         '     位置全 deck 一致；出处只进 source_zone 框（role=source/method/metadata）。',
+         '  字段与阈值速查 → references/design-system.md（写 elements 前读一次，别回读代码）',
          '',
          '有图页先执行 assets → 出图；图片元素必须写 asset_id（核验在 check 内部完成）。',
          '填完后一次收口（release 含 Manifest 证据链）：',
@@ -223,7 +218,6 @@ def build_skeleton_module(bundle: dict) -> str:
          '        "fonts": {"cn": "TODO", "latin": "TODO"},   # 家族 ≤2；display/body 是等价别名',
          f'        "constraints": {seed_cons!r},   # 方向种子（数字约束）：写进 spec 才会被执法',
          '    },',
-         '    "strategy": {},                      # TODO：P2 Strategy（受众/决策/张力/证据）',
          '    "direction": {"color_intent": []},  # TODO：[brand, emotion, hierarchy]',
          f'    "asset_workflow": {{"plan_sha256": {digest(bundle)!r}, "plan_path": {(bundle.get("workflow") or {}).get("plan_path")!r}}},',
          '    "slides": [']
@@ -246,8 +240,7 @@ def build_skeleton_module(bundle: dict) -> str:
         media = ((intel.get("media") or {}).get("decision")
                  or (pg.get("asset") or {}).get("decision") or "none")
         family = skel.get("page_family") or pg.get("page_family") or "TODO"
-        comp = intel.get("composition") or {}
-        move = str((intel.get("move") or {}).get("move") or "").strip()
+        comp = intel.get("composition") or {}   # 只有作者显式声明时才有值
         # 作者声明了资产角色就写在作业面上：填空的人据此决定这张图是整幅承载
         # （layer=background + overlay）还是立在栏内的独立视觉对象。
         role = (pg.get("asset") or {}).get("role")
@@ -255,12 +248,15 @@ def build_skeleton_module(bundle: dict) -> str:
         L.append(f'        # ── {sid} · family={family}'
                  f' · density={pg.get("density")} · energy={pg.get("energy")}'
                  f' · media={media}{role_txt}')
-        if move:
-            L.append(f'        #    叙事动作: {move}')
-        if comp.get("intent") or comp.get("grammar"):
-            grammar = comp.get("grammar") or "自由"
-            intent_txt = str(comp.get("intent") or "").strip() or "（按家族惯例构图）"
-            L.append(f'        #    构图意图: {intent_txt}（语法={grammar}，可推翻）')
+        # 构图语法：作者显式声明时原样带过去；没声明就留成**判断项**。
+        # 这里刻意不给「家族 → 语法」的候选清单——那是把设计判断写成查表，
+        # 页面拿到的会是一个先验结论，而不是从内容推出来的选择。
+        if comp.get("grammar"):
+            L.append(f'        #    构图（作者声明）: 语法={comp["grammar"]}'
+                     f'{str(comp.get("intent") or "").strip() and " · " + str(comp["intent"]).strip()}')
+        else:
+            L.append('        #    构图: 待判断——先定这页唯一主语，再定它如何被看见'
+                     '（语法查询见 references/design-intelligence.md）')
         if ref:
             L.append(f'        #    内容参考: {ref[:90]}')
         if pg.get("content_missing"):

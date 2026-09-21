@@ -5,8 +5,6 @@ These are local provenance checks, not signatures or proof of an external model 
 """
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,15 +19,23 @@ def now() -> str:
 
 
 def digest(value) -> str:
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
-                                     separators=(",", ":"), default=str).encode()).hexdigest()
+    """记录级摘要（清单 / 计划 / 协议值）：唯一实现在 primitives.identity。
+
+    传 schema=None 保持与历史值逐字节一致——既有清单里存着的摘要不会因为这次
+    统一而失效。缓存键请改用带 schema 的身份，别复用记录摘要的键空间。
+    """
+    from primitives import identity
+    return identity(value)
 
 
 def read_json(path) -> dict:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError(f"JSON 顶层必须为对象: {path}")
-    return value
+    """读 JSON：同一份文件在一轮执行里只解析一次（size+mtime_ns 守卫）。
+
+    plan.json（50KB）与 manifest 在一轮 check 里各被三层读；缓存只改变读取次数，
+    不改变可见性——文件一变，stamp 就不匹配，照旧重读。
+    """
+    from primitives import json_read_cached
+    return json_read_cached(path)
 
 
 def asset_entries(manifest: dict) -> list[dict]:
@@ -148,8 +154,27 @@ def plan_issues(spec: dict, plan: dict) -> list[str]:
             [f"交付页 ID/顺序未覆盖当前计划：planned={expected}, actual={actual}；须更新计划而非静默缺页"])
 
 
+# 资产 QC 报告的 schema：核对方声明契约，写入方（vao）引用同一个常量。
+# v4：每个资产的字节凭证统一为 witness{size, mtime_ns, sha256}（此前是三个平铺字段）。
+QC_REPORT_SCHEMA = "vao-asset-qc-v4"
+
+
+def _inspected_bytes_current(path: Path, inspected: dict) -> bool:
+    """QC 记录里的字节凭证是否仍与磁盘一致（判据只有一处：primitives.witness_matches）。
+
+    缺凭证（旧 QC 报告）一律返回 False → 重读图片。快路径只在能被证明时生效。
+    """
+    from primitives import stat_witness, witness_matches
+    record = inspected.get("witness")
+    if not isinstance(record, dict):
+        return False
+    size, mtime_ns = stat_witness(path)
+    return witness_matches(record, {"size": size, "mtime_ns": mtime_ns})
+
+
 def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
-                 image_bytes: dict | None = None) -> dict:
+                 image_bytes: dict | None = None, digests: dict | None = None) -> dict:
+    """资产链核验。`digests` 是本轮已算过的图片摘要（QC 算过的），命中即不再重算。"""
     images = list(image_elements(spec))
     if not images:
         contract = spec.get("asset_workflow") or {}
@@ -203,7 +228,7 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
                       qc_report=str(qpath), qc_sha256=digest(qc),
                       plan_sha256=(manifest.get("workflow") or {}).get("plan_sha256"),
                       brief_sha256=(manifest.get("workflow") or {}).get("brief_sha256"))
-        if qc.get("schema") != "vao-asset-qc-v3" or qc.get("manifest_sha256") != digest(manifest):
+        if qc.get("schema") != QC_REPORT_SCHEMA or qc.get("manifest_sha256") != digest(manifest):
             issues.append("QC 缺少指纹或来自旧资产清单；重新 asset-qc")
         if qc.get("status") != "PASS" or any(qc.get(k) for k in
                 ("blocking_assets", "pending_assets", "retry_assets", "workflow_issues")):
@@ -214,12 +239,33 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
         for aid, entry in entries.items():
             actual = resolve_asset(entry, manifest, path, assets_dir)
             inspected = results.get(aid, {})
-            blob = actual.read_bytes() if actual.is_file() else None
-            sha = hashlib.sha256(blob).hexdigest() if blob is not None else None
-            if image_bytes is not None and blob is not None and inspected.get("file_sha256") == sha:
+            # 快路径（v5.9）：QC 刚读过的字节直接复用，不再读第二遍；但必须确认
+            # 磁盘上还是同一份（size+mtime_ns 与 QC 记录一致）——「QC 之后被替换」
+            # 必须落回重读，快路径不允许成为漏检路径。
+            preloaded = (image_bytes or {}).get(str(actual))
+            if preloaded is not None and not _inspected_bytes_current(actual, inspected):
+                preloaded = None
+            # 摘要复用：QC 已经对同一份字节算过一次 sha256（50MB 图片＝每次跑都要
+            # 再付一遍的纯重复劳动）。命中缓存即不再重算——但**字节没变**这条前提
+            # 仍由 `_inspected_bytes_current`（size+mtime_ns）证明，且必须与 QC 记录
+            # 的 witness.sha256 相等（下面照旧比对）；任何不一致都会落回重读重算。
+            from primitives import digest_bytes
+            recorded = (inspected.get("witness") or {}).get("sha256")
+            known = (digests or {}).get(str(actual))
+            if known is not None and _inspected_bytes_current(actual, inspected) \
+                    and recorded == known:
+                sha = known
+                blob = preloaded
+            else:
+                blob = preloaded if preloaded is not None else (
+                    actual.read_bytes() if actual.is_file() else None)
+                sha = digest_bytes(blob) if blob is not None else None
+                if sha is not None and digests is not None:
+                    digests[str(actual)] = sha
+            if image_bytes is not None and blob is not None and recorded == sha:
                 image_bytes[str(actual)] = blob  # immutable, compiler and preview consume these exact bytes
             report["verified_images"].append({"asset_id": aid, "source": str(actual), "sha256": sha})
-            if not sha or inspected.get("file_sha256") != sha:
+            if not sha or recorded != sha:
                 issues.append(f"{aid}: 图片缺失、损坏或在 QC 后被替换；重新 asset-qc")
             if (inspected.get("policy") or {}).get("action") not in ACCEPTED:
                 issues.append(f"{aid}: 无接受该图片的 QC 结果")

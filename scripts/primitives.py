@@ -27,8 +27,13 @@ def json_write(path, value, *, indent: int = 2, trailing_newline: bool = True,
     import json
     import os
     import tempfile
-    target = Path(path).expanduser()
+    target = Path(path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
+    before_ns = None
+    try:
+        before_ns = target.stat().st_mtime_ns
+    except OSError:
+        pass
     fd, tmp = tempfile.mkstemp(prefix="." + target.name, dir=str(target.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -42,20 +47,171 @@ def json_write(path, value, *, indent: int = 2, trailing_newline: bool = True,
         os.replace(tmp, target)
     finally:
         Path(tmp).unlink(missing_ok=True)
+    _stamp_after_write(target, before_ns)
     return target
+
+
+def _stamp_after_write(target: Path, before_ns: int | None) -> None:
+    """写入后保证 mtime_ns 严格前进（本库的「字节变了吗」凭证是 size+mtime_ns）。
+
+    文件系统的时间戳粒度可能粗到几毫秒（容器/网络盘实测 4ms），同一刻度内的两次写盘
+    会拿到同一个 mtime——此时「读一次」的缓存与编译缓存探测都会误判成「没变」。
+    写入者在这里把凭证往前推 1ns：不是伪造时间，而是让两次真实写盘可区分。
+    """
+    import os
+    try:
+        after_ns = target.stat().st_mtime_ns
+        if before_ns is not None and after_ns <= before_ns:
+            os.utime(target, ns=(before_ns + 1, before_ns + 1))
+    except OSError:
+        # 时间戳只服务缓存判定；推不动就退化为「按内容重算」，绝不因此让写盘失败。
+        pass
+
+
+_DIGEST_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
+DIGEST_CACHE_MAX = 512
 
 
 def file_digest(path) -> str | None:
     """全文件字节 SHA-256（全库唯一实现，qa/asset_workflow/compile_cache 共用）。
-    缺失/不可读返回 None——证据链把 None 当「文件不存在」处理，不当空串。"""
+    缺失/不可读返回 None——证据链把 None 当「文件不存在」处理，不当空串。
+
+    同一进程内同一份字节只算一次（凭证 = size + mtime_ns，与读一次/缓存探测同一套口径）：
+    发布证据链要在多处核对同一批产物（预览页、QC 引擎、锁定的产物），它们在一个进程里
+    不会变——重算只是把同样的字节再读一遍。字节变了凭证立刻变，重算照旧。
+    """
     try:
-        h = hashlib.sha256()
-        with Path(path).open("rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        target = Path(path).expanduser().resolve()
+        stat = target.stat()
     except (OSError, TypeError, ValueError):
         return None
+    key = str(target)
+    stamp = (stat.st_size, stat.st_mtime_ns)
+    hit = _DIGEST_CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    try:
+        h = hashlib.sha256()
+        with target.open("rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        value = h.hexdigest()
+    except (OSError, TypeError, ValueError):
+        return None
+    if len(_DIGEST_CACHE) >= DIGEST_CACHE_MAX:
+        _DIGEST_CACHE.clear()
+    _DIGEST_CACHE[key] = (stamp, value)
+    return value
+
+# ══════════════════════════════════════════════════════════════════════════
+# 身份（Identity）：全库唯一的「同一事实 → 同一个值」入口
+#
+# 运行时只承认三类事实，每一类都只有一个 canonical 表达，别处不许再各写一遍
+# json.dumps / hashlib.sha256（此前同一件事有 4–5 份独立实现，这正是重复劳动的源头）：
+#
+#   1) 值 / 内容的身份      identity(value, schema=...)     规范 JSON → sha256
+#      记录级摘要（清单、计划、spec）传 schema=None，字节与历史一致；
+#      缓存键传 schema 字符串，多一层键空间包裹，格式变更时改 schema 即可作废旧键。
+#   2) 字节的身份           digest_bytes(blob) / file_digest(path)
+#   3) 「还是那一份」的凭证  stat_witness(path) + witness_matches(a, b, strict=)
+#      size + mtime_ns 是快档凭证，strict 时再比 sha256——**同一套口径**，
+#      报告里也只允许一种写法：witness = {size, mtime_ns, sha256?}
+#
+# 还有第四类：**产出这些证据的代码**的身份 → engine_fingerprint(scope)。
+# ══════════════════════════════════════════════════════════════════════════
+
+IDENTITY_SCHEMA = "vao-identity-v1"
+
+
+def identity(value, *, schema: str | None = None, short: int | None = None) -> str:
+    """规范 JSON → sha256（全库唯一实现）。
+
+    `schema=None`：记录级摘要，字节与历史 `asset_workflow.digest` 完全一致——
+    既有清单 / 计划里存的值不会因为这次统一而失效。
+    `schema="..."`：缓存键空间，值被 {schema, value} 包裹——键的语义变更只需改 schema，
+    不必去猜旧值当年是怎么算的。
+    """
+    import json
+    payload = {"schema": schema, "value": value} if schema else value
+    try:
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":"), default=str)
+    except Exception:                       # 循环引用 / 不可序列化：退化到 repr，仍可辨版
+        raw = repr(payload)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return digest if not short else digest[:int(short)]
+
+
+def digest_bytes(blob: bytes | bytearray | memoryview) -> str:
+    """内存字节的 sha256。字节在手上时用这个，不要各自 `hashlib.sha256(...)`。"""
+    return hashlib.sha256(bytes(blob)).hexdigest()
+
+
+def stat_witness(path) -> tuple[int | None, int | None]:
+    """(size, mtime_ns)——「还是那一份」的快档凭证；读不到返回 (None, None)。"""
+    try:
+        stat = Path(path).stat()
+    except (OSError, TypeError, ValueError):
+        return (None, None)
+    return (stat.st_size, stat.st_mtime_ns)
+
+
+def byte_witness(path, *, digest: bool = False) -> dict:
+    """规范化字节凭证 {size, mtime_ns, sha256?}：证据 / 缓存记录里只允许这一种写法。"""
+    size, mtime_ns = stat_witness(path)
+    witness: dict = {"size": size, "mtime_ns": mtime_ns}
+    if digest:
+        witness["sha256"] = file_digest(path)
+    return witness
+
+
+def witness_matches(a, b, *, strict: bool = False) -> bool:
+    """两份凭证是不是同一份字节。
+
+    快档只看 size + mtime_ns；`strict=True` 再比 sha256（缺任一侧的 sha256 即不算匹配）。
+    判据只住在这里：调用点各自写 `a.get("file_size") == b.get(...)` 的那种事不再发生。
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    if (a.get("size") is None or b.get("size") is None
+            or a.get("size") != b.get("size") or a.get("mtime_ns") != b.get("mtime_ns")):
+        return False
+    if strict:
+        sha_a, sha_b = a.get("sha256"), b.get("sha256")
+        return bool(sha_a) and bool(sha_b) and sha_a == sha_b
+    return True
+
+
+# ── 引擎身份：产出证据的代码 ───────────────────────────────────────────────
+# 一个 scope → 一份文件集合。指纹随实现一起变：文件字节变了，指纹就变。
+# 缓存 / 证据只允许问「哪个 scope」，不允许自己列文件再各算一遍摘要。
+ENGINE_SCOPES: dict[str, tuple[str, ...]] = {
+    "compile": ("compiler.py", "primitives.py", "ghost.py"),   # 出 PPTX 的代码
+    "preview": ("ghost.py",),                                  # 出预览像素的代码
+    "measure": ("asset_prompt.py",),                           # 量像素的代码
+}
+_ENGINE_CACHE: dict[tuple[str, int | None], str] = {}
+
+
+def engine_witness(scope: str) -> dict:
+    """逐文件凭证：{文件: sha256}——报告里给人看「引擎由哪几份字节构成」。"""
+    files = ENGINE_SCOPES.get(scope)
+    if files is None:
+        raise KeyError(f"未知引擎 scope: {scope}（合法值 {sorted(ENGINE_SCOPES)}）")
+    root = Path(__file__).resolve().parent
+    return {name: file_digest(root / name) for name in files}
+
+
+def engine_fingerprint(scope: str, *, short: int | None = None) -> str:
+    """引擎指纹（进程内一次）：同一份实现只有一个值。"""
+    key = (scope, short)
+    hit = _ENGINE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    value = identity(engine_witness(scope), schema=f"vao-engine-{scope}-v1", short=short)
+    _ENGINE_CACHE[key] = value
+    return value
+
 
 # ── python-pptx 延迟加载（契约，别改回顶层 import）────────────────────
 # 本层被 guard / normalizer / qa 复用，而它们**只处理 spec 数据**：draft 一轮
@@ -195,9 +351,39 @@ def emu(px) -> int:
     return int(round(float(px) * PX_TO_EMU))
 
 
+# ── 单事实单源（Convergence 2026-09）：以下三个量曾经在别的模块里被重写一遍 ──
+LIGHT_BG_LUMINANCE = 0.5     # 背景偏浅的判据（浅底推导 muted_soft / 种子可读性兜底共用）
+CHART_LABEL_MIN_H = 190      # 图表标签空间的物理下限（guard 判「装不下」、compiler 判「要不要按政策隐藏」）
+CHART_LABEL_MIN_COUNT = 6    # 触发上一条所需的标签数（少于这个数标签本来就放得下）
+
+
+def is_light(hex_color: str) -> bool:
+    """背景是否偏浅：唯一判据，浅底/深底的分支都走这里。"""
+    return luminance(hex_color) > LIGHT_BG_LUMINANCE
+
+
+def latin_word_match(text: str, term: str) -> bool:
+    """拉丁词的整词匹配（CJK 用子串）。asset_prompt 的术语判定与 route 的 token 判定共用。"""
+    import re
+    if all(ord(c) < 128 for c in term):
+        return re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", text) is not None
+    return term in text
+
+
+# design px → pt：96 DPI 下 1 design px = 0.75 pt。**唯一真源**。
+# 需要浮点 pt 的地方（字号写入 set_para_font 等）用 px_to_pt()；
+# 需要 Pt 长度对象的地方（直接塞给 python-pptx 属性）用 pt()。
+PT_PER_PX = 0.75
+
+
+def px_to_pt(px) -> float:
+    """design px → pt 的纯数值换算（不构造 Pt 对象）。"""
+    return float(px) * PT_PER_PX
+
+
 def pt(px):
-    # design px -> points（1 design px = 0.75 pt）
-    return _p()["Pt"](float(px) * 0.75)
+    """design px → Pt 长度对象（内部走 px_to_pt，换算只有一处）。"""
+    return _p()["Pt"](px_to_pt(px))
 
 
 # --------------------------------------------------------------------------
@@ -296,7 +482,7 @@ def contrast(a: str, b: str) -> float:
 
 
 # 辅助文字角色：语义上是注记/来源/轴标签/页面家具（眉标·页码），可读性门槛按「非正文」处理
-# （3:1），不参与正文级 4.5:1 判定。**这是唯一真源**：guard 的 MEASURE_EXEMPT_ROLES 直接
+# （3:1），不参与正文级 4.5:1 判定。**这是唯一真源**：
 # 从这里导入（此前两处各写一份，值相同但注释宣称的同源关系并不存在）。
 AUX_TEXT_ROLES = frozenset({"source", "method", "metadata", "caption", "legend", "axis",
                             "data_label", "annotation", "page_number", "eyebrow"})
@@ -308,15 +494,14 @@ def spec_fingerprint(spec: dict) -> str:
     报告用它自证来源：QA 盖章，Release Manifest 核对后才会承认
     其中的 PASS。没有一致指纹的「合格」不能进入发布判定。
     """
-    import hashlib
-    import json
     try:
-        canonical = json.dumps(spec, ensure_ascii=False, sort_keys=True, default=str)
+        return identity(spec, schema="vao-spec-content-v1", short=16)
     except Exception:                       # 循环引用/不可序列化：退化到键集合，仍可辨版
         keys = sorted(str(k) for k in (spec or {}).keys())
         slides = (spec or {}).get("slides") or []
-        canonical = repr((keys, len(slides), [str(s.get("id")) for s in slides if isinstance(s, dict)]))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+        return identity((keys, len(slides),
+                         [str(s.get("id")) for s in slides if isinstance(s, dict)]),
+                        schema="vao-spec-shape-v1", short=16)
 
 
 # --------------------------------------------------------------------------
@@ -598,6 +783,46 @@ def stroke_color(line, color, alpha=None, width=None) -> None:
         line.width = _p()["Emu"](emu(width))
 
 
+
+
+# --------------------------------------------------------------------------
+# 读一次（单进程内的读缓存）
+# --------------------------------------------------------------------------
+# 一轮 check 里同一份 JSON 会被多个层读（绑定、核验、缓存投影各一次）：plan.json
+# 50KB 读三遍、manifest 读三遍。文件不大，但这种「同一份事实读三遍」正是运行时
+# 重复劳动的来源，而且三处各解析一次 JSON 迟早会有一处读到半写入的状态。
+# 判据是身份而不是时间：size + mtime_ns 变了就失效（写入方全是原子写 + fsync）。
+# 进程级、上限 64 条：只服务一轮执行，不跨运行做新鲜度假设。
+_READ_CACHE: dict[str, tuple[tuple[int, int], object]] = {}
+READ_CACHE_MAX = 64
+
+
+def json_read_cached(path) -> dict:
+    """读 JSON 一次，随后复用（size+mtime_ns 守卫）。失败一律重读，不吞异常。"""
+    import json
+    # 键必须归一化：同一个文件被不同层用相对/绝对路径指向时，缓存要认出它们是同一份，
+    # 否则「读一次」退化成一个调用点一份缓存（实测就是这样，manifest 被读了两遍）。
+    try:
+        target = Path(path).expanduser().resolve()
+    except OSError:
+        target = Path(path)
+    key = str(target)
+    try:
+        stat = target.stat()
+        stamp = (stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        _READ_CACHE.pop(key, None)
+        raise
+    hit = _READ_CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    value = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"JSON 顶层必须为对象: {path}")
+    if len(_READ_CACHE) >= READ_CACHE_MAX:
+        _READ_CACHE.clear()
+    _READ_CACHE[key] = (stamp, value)
+    return value
 
 
 # --------------------------------------------------------------------------
@@ -904,8 +1129,5 @@ class RenderContext:
 #   卡片墙/节奏墨差等常量与几何函数。spec 级二审层删除后全部零消费，已清。）
 BG_MIN_COVERAGE = 0.60           # 背景层免检：至少覆盖 60% 画布面积
 BG_MIN_PROTECT_OPACITY = 0.20    # 内容保护层最低不透明度
-LINE_MEASURE_CJK_MAX = 38        # 每行 CJK 字数上限（编辑式排版经验值 22–38）
-LINE_MEASURE_LATIN_MAX = 75      # 每行拉丁字符上限
-LINE_MEASURE_FAIL_FACTOR = 2.0   # 超过上限 2× 视为不可读
 
 
