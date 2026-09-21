@@ -1872,6 +1872,47 @@ def _ghost_palette_hit(element: dict, colors: dict, count: int, highlight: int,
     return hit
 
 
+def _ghost_line_colors(element: dict, theme: dict, expected: list[str], tol: int = 10) -> int:
+    """多序列折线预览里，预期的几种线色各出现了没有（出现 = 那条序列被画出来了）。
+
+    锁行为不锁实现：像素里找得到某条线的颜色，就说明那条线存在。曾经三条序列
+    被摊成一维条画成**一条折线**——预览看着像一个单一趋势，产物里却是三条线。
+    颜色也按产物同一条链取（series_roles → 角色色，否则按系列色阶），
+    不透明度按 ghost 的合成规则先算好再加容差。
+    """
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext
+    ctx = RenderContext(theme, {"width": 1280, "height": 720})
+    bg = tuple(int(theme["colors"]["background"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    img = Image.new("RGBA", (1280, 720), (*bg, 255))
+    el = dict(element, x=96, y=280, width=1088, height=312)
+    _ghost._draw_chart(img, el, ctx, 1.0)
+    px = set(img.convert("RGB").crop((96, 280, 1184, 592)).getdata())
+    hit = 0
+    for hx in expected:
+        c3 = [int(hx.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+        # ghost 以不透明度合成到背景上：非高亮 0.75 / 高亮 0.95，两种都算命中
+        wants = [tuple(round(al * v + (1 - al) * b) for v, b in zip(c3, bg))
+                 for al in (0.75, 0.95)]
+        if any(all(abs(q[k] - w[k]) <= tol for k in range(3)) for q in px for w in wants):
+            hit += 1
+    return hit
+
+
+def _ghost_ink_chart_area(element: dict, colors: dict) -> int:
+    """面积图预览里被填充的像素数。折线只有一条线的量级（几千），填面是几万。"""
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext
+    ctx = RenderContext({"colors": colors}, {"width": 1280, "height": 720})
+    bg = tuple(int(colors["background"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    img = Image.new("RGBA", (1280, 720), (*bg, 255))
+    _ghost._draw_chart(img, dict(element, x=96, y=272, width=1088, height=320), ctx, 1.0)
+    data = img.convert("RGB").crop((96, 272, 1184, 592)).get_flattened_data()
+    return sum(1 for q in data if q != bg)
+
+
 def _chart_xml(path: pathlib.Path) -> list[str]:
     import zipfile
     with zipfile.ZipFile(path) as z:
@@ -1969,6 +2010,17 @@ def check_editorial_chart_defaults(work: pathlib.Path) -> None:
                            d / "line.pptx")
     strokes = sorted(set(re.findall(r"<c:ser>.*?<a:solidFill><a:srgbClr val=\"([0-9A-F]{6})\"",
                                     line_xml, re.S)))
+    bar_xml = compile_one({"chart_kind": "bar", "show_values": True, "highlight": "乙",
+                           "data": [{"label": "甲", "value": 12}, {"label": "乙", "value": 30}]},
+                          d / "bar.pptx")
+    bar_hexes = set(re.findall(r'<a:srgbClr val="([0-9A-F]{6})"', bar_xml))
+    bar_dpt = re.findall(r'<c:idx val="(\d+)"/><c:spPr><a:solidFill><a:srgbClr val="([0-9A-F]{6})"',
+                         bar_xml)
+    bar_ser = re.search(r"<c:ser>.*?<a:solidFill><a:srgbClr val=\"([0-9A-F]{6})\"", bar_xml, re.S)
+    check("editorial: 单序列图里高亮项与其余项不同色（此前基础色就是 accent，高亮看不见）",
+          bool(bar_dpt) and bool(bar_ser) and bar_dpt[0][1] != bar_ser.group(1),
+          f"基础 {bar_ser.group(1) if bar_ser else '?'} / 高亮 {bar_dpt[0][1] if bar_dpt else '?'}")
+
     check("editorial: 产物里 3 序列折线 = 3 个不同序列色（此前第 1/2 条同色）",
           len(strokes) == 3, " ".join(strokes))
 
@@ -1979,8 +2031,34 @@ def check_editorial_chart_defaults(work: pathlib.Path) -> None:
     abstract = dict(box, type="chart", id="c2", chart_kind="process_flow",
                     data=[{"label": "甲", "value": 1}, {"label": "乙", "value": 2}])
     empty = dict(box, type="chart", id="c3", chart_kind="bar", data=[])
+    area_el = {"type": "chart", "id": "c7", "chart_kind": "area",
+               "data": [{"label": f"{i}月", "value": v} for i, v in
+                        enumerate([1240, 1480, 1690, 1980, 2210, 2470, 2690, 2900], 1)]}
+    check("editorial: 面积图预览是「面」不是「线」（产物里它是填充系列）",
+          _ghost_ink_chart_area(area_el, themes["dark"]) > 20000,
+          str(_ghost_ink_chart_area(area_el, themes["dark"])))
+
     check("editorial: 预览不替产物发明外框（镜像图形外框线 0 着色像素）",
           _ghost_border_ink_chart(mirrored) == 0, str(_ghost_border_ink_chart(mirrored)))
+    # 多序列折线：三条序列 = 三条线，颜色按 series_roles 走（不是被摊成一条）
+    line_el = {"type": "chart", "id": "c6", "chart_kind": "line",
+               "categories": ["Q1", "Q2", "Q3", "Q4"],
+               "series": [{"name": "收入", "values": [8.2, 9.6, 11.2, 13.0]},
+                          {"name": "成本", "values": [6.1, 6.9, 7.6, 8.4]},
+                          {"name": "经营现金流", "values": [1.2, 1.8, 2.6, 3.9]}],
+               "series_roles": ["primary", "neutral", "accent"]}
+    # 角色色按主题的 chart_palette 解析（与编译器同一条链）：primary→ink、
+    # neutral→muted、accent→accent。不给 chart_palette 时 neutral 会沿回退链
+    # 落到 secondary——断言必须用真实的解析结果，不能用猜测的色值。
+    role_theme = {"colors": themes["dark"],
+                  "chart_palette": {"primary": "ink", "secondary": "secondary",
+                                    "neutral": "muted", "accent": "accent"}}
+    line_hit = _ghost_line_colors(line_el, role_theme,
+                                  [themes["dark"]["primary"], themes["dark"]["muted"],
+                                   themes["dark"]["accent"]])
+    check("editorial: 多序列折线预览按序列分画（三条线三条，不摊成一条）",
+          line_hit >= 3, f"命中 {line_hit}/3 条线色")
+
     donut_el = {"type": "chart", "id": "c4", "chart_kind": "donut",
                 "data": [{"label": f"类{i}", "value": 20 + i} for i in range(4)]}
     painted = _ghost_palette_hit(donut_el, themes["dark"], 4, 0)

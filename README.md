@@ -91,7 +91,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（217 项，含判断层、端到端生产链、反退化与速度档检查）
+    └── selftest.py           # 最小验证网（220 项，含判断层、端到端生产链、反退化与速度档检查）
 ```
 
 ## 设计上刻意不做的事
@@ -131,7 +131,7 @@ ppt-visual-art-director-os/
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 217 项：交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
+python scripts/selftest.py        # 220 项：交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

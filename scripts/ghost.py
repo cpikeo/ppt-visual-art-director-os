@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
-                        highlight_index, color_to_hex)
+                        highlight_index, series_highlight_index, color_to_hex)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -102,6 +102,39 @@ def _rgba_color(color, opacity: float) -> tuple[int, int, int, int]:
     h = color_to_hex(color) or "888888"
     return (*(int(h[i:i + 2], 16) for i in (0, 2, 4)),
             max(0, min(255, int(float(opacity) * 255))))
+
+
+def _series_groups(e: dict) -> list[tuple[str, list[float]]]:
+    """多序列载荷 → 每序列一组 (name, values)；单序列载荷返回空。
+
+    存在的理由：`_rows` 把「类别 × 序列」摊成一维条，这对分组柱是对的（产物里
+    确实是按类别分组的柱），但对折线是错的——**三条序列会被画成一条折线**，
+    预览看起来像「单一趋势」，而产物里是三条线（实测 s04 财务三线）。多序列的
+    几何必须按序列分开画，与产物 `<c:ser>` 数量一一对应。
+    """
+    cats, series = e.get("categories"), e.get("series")
+    if not (isinstance(cats, list) and cats and isinstance(series, list) and series
+            and isinstance(series[0], dict)):
+        return []
+    out = []
+    for s in series:
+        if not isinstance(s, dict) or not isinstance(s.get("values"), list):
+            continue
+        vals = []
+        for v in s["values"]:
+            try:
+                f = float(v)
+                vals.append(f if math.isfinite(f) else 0.0)
+            except (TypeError, ValueError):
+                vals.append(0.0)
+        out.append((str(s.get("name") or ""), vals))
+    return out
+
+
+def _series_plot_box(left: int, top: int, right: int, bottom: int, scale: float):
+    """多序列折线的绘图区：让出类目标签的宽度（与产物一致，首末点不贴边）。"""
+    gap = max(8, int(24 * scale))
+    return left + gap, top + gap, right - gap, bottom - gap
 
 
 def _scale_box(e: dict, scale: float) -> tuple[int, int, int, int]:
@@ -545,15 +578,79 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     values = [_value(r) for r in rows]
     lo, hi = min(0.0, min(values)), max(1.0, max(values))
     span = max(1e-9, hi - lo)
+    groups = _series_groups(e)
+    if len(groups) > 1 and kind in {"line", "area", "trend", "single_trend_line"}:
+        # 与产物同形：每条序列一条线（产物里 <c:ser> = 序列数）。
+        # 颜色也按产物同一条链取：series_roles 声明的用角色色，否则用系列色阶；
+        # 高亮的那条（highlight = 序列索引/名字）走 accent + 加粗 + 末点圆点。
+        names = [n for n, _v in groups]
+        hl = series_highlight_index(e, names, -1)
+        roles = e.get("series_roles") or []
+        palette = ctx.series_palette(len(groups), hl)
+        pl, pt, pr, pb = _series_plot_box(left, top, right, bottom, scale)
+        lo2 = min([0.0] + [v for _n, vs in groups for v in vs])
+        hi2 = max([1.0] + [v for _n, vs in groups for v in vs])
+        span2 = max(1e-9, hi2 - lo2)
+        for gi, (_name, vals) in enumerate(groups):
+            if not vals:
+                continue
+            role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
+            col = _rgba_color(role if role is not None else palette[gi],
+                              0.95 if gi == hl else 0.75)
+            pts = []
+            for i, val in enumerate(vals):
+                px = pl + (pr - pl) * (i / max(1, len(vals) - 1))
+                py = pb - (val - lo2) / span2 * (pb - pt)
+                pts.append((int(px), int(py)))
+            if kind == "area":
+                # 面积图在产物里是**填充**系列：预览同样填面，不用折线冒充。
+                base = int(pb - (0.0 - lo2) / span2 * (pb - pt))
+                d.polygon(pts + [(pts[-1][0], base), (pts[0][0], base)],
+                          fill=(*col[:3], 70 if gi != hl else 110))
+                d.line(pts, fill=col, width=max(1, int((3 if gi == hl else 1.75) * scale)),
+                       joint="curve")
+            else:
+                d.line(pts, fill=col, width=max(2, int((3 if gi == hl else 1.75) * scale)),
+                       joint="curve")
+            ex, ey = pts[-1]
+            rr = max(2, int((4 if gi == hl else 3) * scale))
+            d.ellipse((ex - rr, ey - rr, ex + rr, ey + rr), fill=col)
+        img.alpha_composite(overlay)
+        return
     if kind in {"line", "area", "trend", "single_trend_line", "sparkline"}:
         pts = []
         for i, val in enumerate(values):
             px = left + (right - left) * (i / max(1, len(values) - 1))
             py = bottom - (val - lo) / span * (bottom - top)
             pts.append((int(px), int(py)))
+        # 基础色与编译器同一条规则：图表的 primary 若就是 accent 而本图又有强调点，
+        # 基础让位到 primary 角色，accent 只留给强调（见 compiler 的 hl0/base）。
+        hlm0 = highlight_index(e, rows, -1)
+        base = accent
+        if 0 <= hlm0 < len(pts):
+            prim_role = (ctx.chart_role(e["color_role"]) if e.get("color_role") else None)
+            prim = prim_role or ctx.color(e.get("primary_color")
+                                          or ctx.theme.get("chart_primary", "accent"))
+            if prim is not None and tuple(prim) == tuple(ctx.color("accent") or ()):
+                alt = ctx.chart_role("primary") or ctx.color("primary") or ctx.color("accent")
+                base = _rgba_color(alt, 0.92) if alt is not None else accent
+        # 面积图在产物里是**填充**系列（fill + 无描边）：预览用折线冒充它，
+        # 等于把「一块面」说成「一条线」——同形镜像的第一条就是不换几何。
+        if kind == "area" and len(pts) > 1:
+            d.polygon(pts + [(pts[-1][0], bottom), (pts[0][0], bottom)], fill=accent)
+            img.alpha_composite(overlay)
+            return
         if len(pts) > 1:
-            d.line(pts, fill=accent, width=max(2, int(3 * scale)), joint="curve")
-        for px, py in pts:
+            d.line(pts, fill=base, width=max(2, int(3 * scale)), joint="curve")
+        # 落点只在产物也落点的地方：产物给 line/trend 的高亮点（或无）、给
+        # sparkline 的两端。曾经每个顶点都画点——产物身上没有那些点。
+        if kind == "sparkline":
+            marks = {0, len(pts) - 1}
+        else:
+            hlm = highlight_index(e, rows, -1)
+            marks = {int(hlm)} if 0 <= hlm < len(pts) else set()
+        for mi in marks:
+            px, py = pts[mi]
             d.ellipse((px - 3 * scale, py - 3 * scale, px + 3 * scale, py + 3 * scale), fill=accent)
     elif kind in {"donut", "pie", "donut_composition"}:
         vals = [max(0, v) for v in values]

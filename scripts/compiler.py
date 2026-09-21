@@ -835,26 +835,37 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
         pass
 
     series = chart.series[0]
+    hl0 = highlight_index(element, rows, -1)
+    # 「accent 只占一个位置」（同一处方已用于构成图与多序列）：单序列图的默认
+    # 基础色往往**就是** accent（主题没写 chart_primary 时 primary 落到 accent），
+    # 此时高亮项与其余项同色——实测四根柱全是 #C0A062，「高亮 Q4」什么也没说。
+    # 有高亮且基础色 == accent 时，基础色退到图表 primary 角色，把 accent 让给强调。
+    base = primary
+    if 0 <= hl0 < len(rows) and primary == ctx.color("accent"):
+        base = ctx.chart_role("primary") or ctx.color("primary") or primary
     try:
         if kind in ("line", "trend", "single_trend_line"):
-            series.format.line.color.rgb = primary
+            series.format.line.color.rgb = base
             series.format.line.width = Pt(2.25)
             series.smooth = bool(element.get("smooth", False))
             # 折线图的唯一强调点：无标记则 highlight 形同虚设
             hl = highlight_index(element, rows, -1)
             if 0 <= hl < len(rows):
+                # 强调点与全库同一语义 = accent：基础线已经退到 primary 时，
+                # 标记若还用 secondary（更浅的灰），「唯一强调」就落空了。
+                hl_accent = ctx.color("accent") or secondary
                 try:
                     mk = series.points[hl].marker
                     mk.style = XL_MARKER_STYLE.CIRCLE
                     mk.size = 7
                     mk.format.fill.solid()
-                    mk.format.fill.fore_color.rgb = secondary
-                    mk.format.line.color.rgb = secondary
+                    mk.format.fill.fore_color.rgb = hl_accent
+                    mk.format.line.color.rgb = hl_accent
                 except Exception:
                     pass
         else:
             series.format.fill.solid()
-            series.format.fill.fore_color.rgb = primary
+            series.format.fill.fore_color.rgb = base
             series.format.line.fill.background()
             _paint_negative_points(series, ctx, element)
             try:
