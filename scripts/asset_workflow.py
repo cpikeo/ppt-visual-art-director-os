@@ -57,6 +57,14 @@ def asset_root(manifest: dict, manifest_path, override=None) -> Path:
     return (root.resolve() if override or root.is_absolute() else (parent / root).resolve())
 
 
+VOLATILE_PLAN_KEYS = ("workflow", "performance")  # 时间戳 / 本轮耗时：入指纹 = 每次重跑都失效
+
+def stable_plan_sha(plan: dict) -> str:
+    """plan 指纹只含内容、不含运行态。workflow（planned_at/plan_path）与 performance
+    （planning_ms）入指纹的实测代价：仅重跑 R1 就让骨架指纹失效，作者被迫手动同步 sha。"""
+    return digest({k: v for k, v in (plan or {}).items() if k not in VOLATILE_PLAN_KEYS})
+
+
 def resolve_asset(entry: dict, manifest: dict, manifest_path, override=None) -> Path:
     root = asset_root(manifest, manifest_path, override)
     if entry.get("decision") == "existing":
@@ -101,13 +109,22 @@ def prepare_manifest(manifest: dict, need: dict, bundle: dict, brief_path,
         "schema": "vao-asset-chain-v1", "prepared_at": now(),
         "brief_path": str(Path(brief_path).expanduser().resolve()), "brief_sha256": digest(need),
         "brief_file_sha256": wf.get("brief_file_sha256"),
-        "plan_path": str(Path(plan_path).resolve()), "plan_sha256": digest(bundle),
+        "plan_path": str(Path(plan_path).resolve()), "plan_sha256": stable_plan_sha(bundle),
         "prompt_builder": "asset_prompt.build_asset_prompt",
     }
     for entry in asset_entries(manifest):
-        if entry["decision"] == "generate":
-            # Existing bytes cannot silently be relabelled as newly generated work.
-            entry["preexisting_sha256"] = file_digest(resolve_asset(entry, manifest, manifest_path))
+        if entry["decision"] != "generate":
+            continue
+        path = resolve_asset(entry, manifest, manifest_path)
+        if file_digest(path) is None:
+            continue  # 尚未出图：保持 generate，等外部工具按清单出图
+        # prepare 时字节已存在：如实登记为 existing（不补造生成历史），
+        # 保留规划身份与 prompt/negative；QC 照常做像素与角色核验。
+        # 实测回环成本：「出图 → 重跑 R1 → QC 阻断 → 补登记 → 再重跑」= 3+ 次调用；
+        # 登记在 prepare 一步完成，链路凭证同样诚实（origin.source 写明自动登记）。
+        entry["decision"] = "existing"
+        entry["origin"] = {"kind": "original", "path": str(path),
+                           "source": "manifest prepare 时字节已存在，自动登记（规划身份保留）"}
     return manifest
 
 
@@ -124,7 +141,7 @@ def verify_sources(manifest: dict) -> list[str]:
             problems.append("brief 文件已变更或缺少原始文件凭证；重新 plan → assets → QC")
         if digest(plan.get("need")) != wf.get("brief_sha256"):
             problems.append("计划中的需求快照与 brief 内容凭证不一致")
-        if digest(plan) != wf.get("plan_sha256"):
+        if stable_plan_sha(plan) != wf.get("plan_sha256"):
             problems.append("plan 已变更；重新 assets → QC")
         if (plan.get("workflow") or {}).get("brief_sha256") != wf.get("brief_sha256"):
             problems.append("plan 与 brief 指纹不一致")
@@ -183,7 +200,7 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
             manifest = read_json(manifest_path)
             problems.extend(verify_sources(manifest))
             plan = read_json(manifest["workflow"]["plan_path"])
-            if contract.get("plan_sha256") != digest(plan):
+            if contract.get("plan_sha256") != stable_plan_sha(plan):
                 problems.append("纯原生稿件的计划凭证不一致")
             problems.extend(plan_issues(spec, plan))
         elif contract:
@@ -191,7 +208,7 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
                 problems.append("有计划凭证但缺 plan_path；重新生成骨架或提供资产清单")
             else:
                 plan = read_json(contract["plan_path"])
-                if contract.get("plan_sha256") != digest(plan):
+                if contract.get("plan_sha256") != stable_plan_sha(plan):
                     problems.append("计划已变更，请更新骨架")
                 problems.extend(plan_issues(spec, plan))
                 wf = plan.get("workflow") or {}
@@ -272,8 +289,6 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
             if entry["decision"] == "generate":
                 if not entry.get("prompt") or not entry.get("negative"):
                     issues.append(f"{aid}: 缺少生成提示词/负向提示词")
-                if sha and sha == entry.get("preexisting_sha256"):
-                    issues.append(f"{aid}: 清单生成前已存在同一图片；请显式登记为 existing/reuse")
             else:
                 origin = entry.get("origin") or {}
                 if origin.get("kind") not in {"provided", "licensed", "original", "reuse"} or not origin.get("source"):

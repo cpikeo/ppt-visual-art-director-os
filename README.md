@@ -6,7 +6,12 @@
 不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
 执行在一条命令里。
 
-当前版本 **6.4.4**（6.4.4 = 编辑化数据表达：单一信号色主题下系列色从「同色复用」改为同色相明度阶梯、accent 单占用（高亮不再与非高亮序列撞色）、预览不发明产物没有的边框与扇区色；钉值变化逐字节归因；
+当前版本 **6.5**（6.5 = 上下文减法：SKILL/brief/四份 references 合计 −34%（124.0KB→82.0KB），
+只删重复叙述与固定答案，不删事实、字段名与阻断码（221 项文档契约钉全过）；既有素材在
+assets 阶段**自动登记**（字节在 = existing 状态如实写，保留规划身份与 prompt，
+`asset_source` 只用于补版权/出处注记）；方向预览页数 ≤24 时自动全量（常规 deck 零采样
+损失）；`plan_sha256` 改为稳定指纹（同输入重跑字节不变，跨进程可缓存）；
+6.4.4 = 编辑化数据表达：单一信号色主题下系列色从「同色复用」改为同色相明度阶梯、accent 单占用（高亮不再与非高亮序列撞色）、预览不发明产物没有的边框与扇区色；钉值变化逐字节归因；
 6.4.3 = 实战反馈修复：预览不画假图、资产 QC 相对底色与声明文字色、既有素材保留规划身份、补端到端生产链自检；
 6.4.2 = 真实语料验证：五份真实稿 + 两组修订对照给出触发率/阻断率/修复后是否消失；QA 归属收口、px→pt 单源化，规则一条未删；
 6.4.1 = 职责单源与触发率仪表：同一事实只留一个 owner；
@@ -48,11 +53,12 @@ python scripts/vao.py check build_deck.py out.pptx --mode release \
 全量证据档。`--deadline` 是本次调用的墙钟预算：到点即跳过可选证据并留痕，不无限重试。
 
 - **无图片**：不必走资产步骤；`check` 显式记录跳过原因。
-- **用户提供/授权/自制/复用的图片**：在 brief 的 slide 中填写
-  `asset_source: {kind: provided, path: /path/to/image.jpg, source: "用户提供，授权待核实"}`。
-  不强制生成，但仍经资产清单与 QC。`kind` 也可为 `licensed / original / reuse`。
-- **有图旧项目迁移**：重新 plan → assets，既有图登记为 reuse；保留新骨架的
-  `asset_workflow.plan_sha256` 与 `plan_path` 并为图片填入 `asset_id`，QC 通过后再检查。
+- **用户提供/授权/自制/复用的图片**：放到清单规划的文件名（`generated_assets/<expected_filename>`）
+  即可——`assets` 阶段自动登记为 existing 并进入核验；要交代版权/出处时在 brief 的 slide 写
+  `asset_source: {kind: provided, path, source}`（kind 可为 `provided / licensed / original / reuse`）。
+  不强制生成，但仍经资产清单与 QC。
+- **有图旧项目迁移**：重新 plan → assets；若旧图文件名与新规划一致则自动接管，否则复制成
+  规划文件名（或在 slide 写 `asset_source`）。
 - **自定义 QC 路径**：默认找清单同目录的 `asset_manifest.qc.json`，或用 `check --asset-qc-report` 指定。
 - **流程边界**：发布通过证明本地文件证据一致，不证明外部模型按提示词执行，
   也不证明图片授权或艺术质量；不得以此替代人工设计判断。
@@ -91,7 +97,7 @@ ppt-visual-art-director-os/
     ├── guard.py qa.py        # 验证层（静态契约 + 交付判定，无评分无渲染）
     ├── ghost.py              # PIL 方向预览（替代外部渲染器）
     ├── asset_prompt.py       # 资产提示词翻译 + 资产 QC
-    └── selftest.py           # 最小验证网（220 项，含判断层、端到端生产链、反退化与速度档检查）
+    └── selftest.py           # 最小验证网（221 项，含判断层、端到端生产链、反退化与速度档检查）
 ```
 
 ## 设计上刻意不做的事
@@ -131,7 +137,7 @@ ppt-visual-art-director-os/
 ## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
 
 ```bash
-python scripts/selftest.py        # 220 项：交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
+python scripts/selftest.py        # 221 项：交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
 ```
 
 注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。

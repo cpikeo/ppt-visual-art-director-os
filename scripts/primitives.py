@@ -1102,6 +1102,21 @@ class RenderContext:
             return self.color(self._NEGATIVE_FALLBACK)
         return None
 
+    def chart_primary_color(self, element: dict | None):
+        """图表主叙事默认色：color_role > 逃生口 > 扁平键 > chart_palette.primary > accent。
+        单一真源——compiler.chart_colors 与 ghost 预览同读此处，杜绝两条解析链漂移。"""
+        el = element or {}
+        if el.get("color_role"):
+            c = self.chart_role(el["color_role"])
+            if c is not None:
+                return c
+        palette = self.theme.get("chart_palette")
+        return self.color(
+            el.get("primary_color")
+            or self.theme.get("chart_primary")
+            or (palette.get("primary") if isinstance(palette, dict) else None)
+            or "accent")
+
     def ramp_color(self, index: int):
         return self.color(f"ramp{max(1, min(5, index + 1))}")
 

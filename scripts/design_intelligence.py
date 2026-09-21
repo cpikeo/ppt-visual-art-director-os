@@ -293,19 +293,6 @@ def media_decision(page: dict) -> dict:
 # （能量/密度/负空间职责/阅读序）确定性给出，AI 只填「内容决定得了的」
 # （insight / focus）；显式覆盖永远赢。deck 级判断见 route.deck_decision。
 
-def resolve_family(family: str) -> str:
-    """家族名解析：route 家族名（COVER / DATA_STORY …）优先，其次 di 归一名（HERO / DATA …）。
-
-    两套命名空间都必须认。只认一套时，表里的条目会静默落空、整页退回兜底句——
-    那是最贵的错：判断看起来发生了，其实没有。
-    """
-    raw = str(family or "").strip().upper()
-    if raw in FAMILY_TOKENS:
-        return raw
-    fam = normalize_family(family)
-    if fam in FAMILY_TOKENS:
-        return fam
-    return raw
 
 def page_intent_skeleton(family: str, insight: str = "", focus: str | None = None,
                          **overrides) -> dict:

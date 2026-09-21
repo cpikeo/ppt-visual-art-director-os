@@ -1,34 +1,23 @@
 # Design Brief —— 唯一的需求契约（人写给技能包的一页纸）
 #
 # 纪律：
-#   1. 写了的字段原样生效。逐页 asset / asset_subject 一旦声明，
-#      优先级高于 direction / family / quality_level，也不被资产预算截断。
-#   2. 没写的字段不猜。deck 级判断字段缺失 → brief.unresolved；
-#      证据型页缺 content → plan.warnings（rule=unresolved_content），
-#      并同步进骨架注释。留痕的事实来源是 plan.warnings，骨架 ⚠ 注释是它的
-#      作业面拷贝——同一事实只处理一次，不重复消化。
-#   3. Skill 负责判断、编排、验证，不替用户虚构需求。
-#      title 不能代替 content；缺失信息意味着待判断，不意味着允许脑补。
-#   4. 声明优先级永不倒置：
-#      逐页显式声明 > deck 级显式声明 > 品牌约束 > direction 默认 > Skill 判断 > 保守兜底
-#      Priority determines authority, not creativity——
-#      用户声明的是不可改变的意图（主体/介质/比例），Skill 判断的是怎么把它做得高级
-#      （摆位、留白、光、层级、裁切、与整个视觉世界的关系）。
-#   5. quality_level 只改变判断 / 证据预算，
-#      不得覆盖用户显式声明，也不得制造额外视觉复杂度。
+#   1. 写了的字段原样生效（逐页声明 > deck 级 > 品牌 > direction > Skill 判断 > 兜底）。
+#   2. 没写的字段不猜。deck 级判断缺失 → brief.unresolved；证据型页缺 content →
+#      plan.warnings（unresolved_content）。title 不能代替 content。
+#   3. Skill 负责判断/编排/验证，不替用户虚构需求。
 #
-# 执行（有图 4 轮 / 无图 2 轮；无图去掉 --assets-out/--assets-dir）：
-#   python scripts/vao.py run templates/brief.yml --plan-out plan.json \
-#       --skeleton build_deck.py --assets-out asset_manifest.json \
-#       --assets-dir generated_assets
+# 执行：python scripts/vao.py run <brief> --plan-out plan.json --skeleton build_deck.py \
+#          --assets-out asset_manifest.json --assets-dir generated_assets
+#       出图后：python scripts/vao.py check build_deck.py out.pptx --mode release \
+#          --assets-manifest asset_manifest.json
 
 # ============================================================
-# 01 · 核心契约（决定这份 deck 为什么存在）
+# 01 · 核心契约
 # ============================================================
 
-audience: ""            # 谁看 + 在什么场景看（例：投资机构与战略合作伙伴，现场路演 + 会后异步阅读）
-decision: ""            # 看完希望支持的唯一决定（一个动词 + 一个对象，例：推进本轮融资）
-tension: ""             # 观众当前最大的疑问 / 风险 / 阻力——只写张力本身，不写解决方案
+audience: ""            # 谁看 + 什么场景（例：投资机构与战略伙伴，现场路演 + 异步阅读）
+decision: ""            # 看完希望支持的唯一决定（动词 + 对象，例：推进本轮融资）
+tension: ""             # 观众当前最大的疑问/风险/阻力——只写张力，不写解决方案
 
 # ============================================================
 # 02 · 页面叙事（family 决定页面家族；显式声明不被节奏判断改写）
@@ -40,151 +29,84 @@ slides:
                         # architecture|business|agenda|brand_story|product|closing
     title: ""
     content: ""
-    # density: sparse   # sparse|balanced|dense —— 写了就锁定，不被节奏判断改写
+    # density: sparse   # sparse|balanced|dense（写了锁定）
     # energy: medium    # low|medium|high
-    # 逐页视觉声明直接写在本 slide 条目里；可用字段见 03。
+    # 逐页视觉声明写在本条目内，字段见 03。
   - id: s02
     family: statement
     title: ""
   - id: s03
     family: data
     title: ""
-    content: ""         # 证据型家族：data / comparison / case / business / timeline。
-                        # content 留空 → plan.warnings 记 unresolved_content。
-                        # 不得由 title 脑补曲线、同比数字、案例细节或数据结论；
+    content: ""         # 证据型家族（data/comparison/case/business/timeline）必填；
+                        # 留空 → unresolved_content。不得由 title 脑补数据；
                         # 正确处理：补证据 / 改为观点页 / 删除该页。
 
 # ============================================================
-# 03 · 逐页视觉声明（写进对应 slide 条目）
+# 03 · 逐页视觉声明（已声明即权威，不被 direction/quality_level 覆盖）
 # ============================================================
-# 这是「这张图需要什么」的声明，不是模板、不是固定构图。
-# 未声明 → Skill 判断；已声明 → 不得被 direction / family / quality_level 覆盖。
+# Asset Decision ≠ 填图。判断顺序固定四步：
+#   1) 需要视觉资产？ → asset
+#   2) 建立空间 or 表达对象？ → asset_role: background | illustration | hybrid
+#   3) 为什么存在？ → asset_function: hero|proof|emotion|context|frame|separate
+#   4) 画面出现什么？ → asset_subject / material / lighting / texture
+#   最后才决定生成 / 复用 / 原生表达。两轴不互相推导：background ≠ hero，
+#   illustration ≠ 必须 hero；不发明组合枚举。
 #
-# ── Asset Decision ≠ Image Filling ───────────────────────────────────────
-# 判断顺序固定四步，不许跳步、不许倒着走：
-#   1) 这一页需不需要视觉资产            → asset
-#   2) 它是「建立空间」还是「表达对象」  → asset_role
-#   3) 它为什么存在                      → asset_function
-#   4) 画面里具体出现什么                → asset_subject / material / lighting / texture
-#   最后才决定生成、复用，还是用原生表达（形状 / 图表 / 排版）。
 # asset: required       # required|reuse|none
-#   required：这一页必须有图像资产，进入生成 / QC 链。
-#     ⚠ required ≠ 必须做一张主体图。它只意味着这一页必须有图像资产——
-#     是整幅背景、局部插图、主视觉、环境照片还是独立资产，由 asset_role +
-#     asset_function + 构图决定。看到 required 就自动生成一张漂亮图片塞进页面，
-#     是本包明确禁止的做法。
-#   reuse：不生成新图，复用既有画心；真实既有文件必须用 asset_source 登记（照样过 QC）。
-#   none：明确禁止该页使用图像资产。
-#   注意：asset_subject 非空等价于 asset=required（除非你另行显式写了 asset）——
-#   这是一条显式声明，不允许被任何默认策略覆盖。
-#
-# ── Asset Role：先判断「这张图在页面里扮演什么角色」 ───────────────────────
-# asset_role: background   # background | illustration | hybrid
-#   background   = 空间 / 氛围 / 材质 / 光 / 页面负空间 / 内容的视觉环境
-#   illustration = 对象 / 叙事 / 视觉符号 / 具象表达 / 独立视觉焦点
-#   hybrid       = 同一资产确实同时承担「空间 + 对象」——非默认选项
-#   未声明 → Skill 按角色纪律判断（资产清单记 asset_role_source=assumed；
-#   写错值会让 assets 当场停下，不静默降级）。
-#
-#   asset_role 与 asset_function 是两个轴，不重复、不互相推导：
-#     asset_role     = 它**是什么**
-#     asset_function = 它**为什么存在**
-#   因此：asset_role=background ≠ asset_function=hero（背景再漂亮也不会自动成为
-#   页面主角）；asset_role=illustration ≠ 必须成为 hero（插图可以只是 separate，
-#   服务于一个局部叙事）。不要发明 background_hero / illustration_context 这类
-#   组合枚举——组合就是这两轴相乘，二维判断不该被摊平成组件表。
-#
-#   background（空间纪律）：优先判断 空间 → 光 → 材质 → 调域 → 负空间 → 页面融合；
-#     倾向大面积连续视觉场、低主体竞争、保留文字安全区、光影有方向但不过度戏剧化、
-#     材质与空气感优先于具体物件；不主动制造「主角」，不做海报式完整插画，
-#     不为「高级」堆细节，不承担页面唯一信息结论。背景是页面的视觉环境，不是第二个标题。
-#   illustration（对象纪律）：优先判断 对象 → 轮廓 → 尺度 → 位置 → 视觉含义 →
-#     与文字的关系；允许明确主体、明确轮廓、更高识别度、局部细节、独立构图，
-#     必要时成为页面主要视觉焦点。仍然禁止：无意义装饰 / 为填空而生成 /
-#     与内容无关的漂亮物件 / 多个没有层级的插图堆叠 / 承担本应由原生图形表达的数据。
-#     插图是页面中的视觉对象，不是背景纹理。
-#   两者不是审美选择而是职责差异：背景要「能与文字共存」，插图要「自身作为视觉对象成立」。
-#   只写 medium 不等于声明了插图角色——medium 说用什么工艺说话，asset_role 说它是什么。
-#
+#   required ≠ 必须做主体图：整幅背景/局部插图/主视觉/环境照片由 role+function 决定。
+#   看到 required 就自动出图塞页面＝本包禁止的做法。none＝明确禁图。
+#   asset_subject 非空等价 asset=required（显式声明，不被默认策略覆盖）。
+# asset_role: background   # background＝空间/氛围/材质/光/负空间（须能与文字共存，
+#                          # 不制造主角）；illustration＝对象/叙事/符号（允许明确主体，
+#                          # 禁止无意义装饰与数据代偿）。未声明 → Skill 判断并留痕 assumed。
 # asset_subject: "a celadon tea bowl at right, empty space on the left for text"
-#   描述画面中「出现什么」，不是表达观点。不写 asset_subject：Skill 不得凭 title
-#   脑补具体对象（清单会记 title_fallback 并提醒补充），只允许按 asset_role 判断视觉类型。
-#   background：描述空间、环境、材质、光线、氛围、视觉密度，不要求形成完整主体。
-#   illustration：描述明确对象、人物、器物、场景或视觉符号，必须能作为独立视觉对象被识别。
-#   建议用英文写 subject：图像模型对英文遵循度更高；中文 subject 保留原文，
-#   只产生提示、不阻断流程。
-# medium: photography   # photography / chinese ink-wash painting / illustration …
-#   medium 决定视觉工艺纪律（摄影 → 写实纪律；水墨 → 水墨工艺纪律）。
-#   medium 是逐页属性，不由 deck 级 visual_world 隐式继承。
-# asset_ratio: "16:9"   # 16:9 | 4:3 | 3:2
-#   生成比例与页面需求不一致需要裁切时，必须显式声明 asset_allow_crop: true
-# asset_function: hero  # hero|proof|emotion|context|frame|separate
-#   hero      → 页面视觉主角          proof    → 证据 / 事实主体
-#   emotion   → 情绪与氛围            context  → 环境 / 场景背景
-#   frame     → 为页面建立空间边界     separate → 独立视觉资产
-#   hero / proof：具象主体，严格检查主体裁切，且不注入运动模糊类动势语言。
-#   emotion / context / frame / separate：画面边界由材质、光线、空间填充，
-#   不做具象裁切判断。QC 判据跟着 asset_role 的承诺走（见 references/asset-workflow.md §7）。
-# negative_space_anchor: left   # left|right|top|bottom|center —— 文字安全区主要落点
-#   对 background：重点是保持文字区域干净、低信息密度、可读。
-#   对 illustration：重点是控制主体与文字之间的关系，不要求整块画面都保持低信息密度。
+#   画面「出现什么」（建议英文）。background 写空间/材质/光线/氛围；
+#   illustration 写可独立识别的对象。Skill 不得凭 title 脑补对象。
+# medium: photography   # 逐页工艺纪律（摄影→写实；水墨→水墨），不由 deck 级继承。
+# asset_ratio: "16:9"   # 16:9|4:3|3:2；比例不符需裁切时显式 asset_allow_crop: true
+# asset_function: hero  # hero/proof＝具象主体，严查裁切、不注入运动模糊；
+#                       # emotion/context/frame/separate＝边界由材质光线承担。
+# negative_space_anchor: left   # left|right|top|bottom｜center，文字安全区主落点。
 # safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}
-#   仅在需要精确指定时写；未声明由 Skill 按构图判断。
-#   版面不压文字（整幅画心 / 栏内插图）时写 safe_area: {}，S 版面自己承担安静面；
-#   此时所有「留白 / 安全区」句式与检查一并停用（没有文字压图，就没有安全区）。
-# text_color: dark      # dark|light —— 安全区文字明暗，QC 按实际亮度验证
-# material: "rice paper ground, ink wash gradient"    # 自然语言描述材质，不写设计模板
+#   仅精确指定时写。版面不压文字（整幅画心/栏内插图）写 safe_area: {}——
+#   没有文字压图就没有安全区，相关句式与检查一并停用。
+# text_color: dark      # dark|light，QC 按实际亮度验证。
+# material: "rice paper ground, ink wash gradient"   # 自然语言材质，不写设计模板
 # lighting: "single soft north window light from the upper left, gentle falloff"
-#   逐页显式 lighting 是该资产的光照声明：direction / medium 的默认光照不得覆盖它。
-# texture: ["handmade rice paper fiber"]
-#   也可用族键：eastern | luxury | architecture | technology | organic
-# asset_color: ["ink tonal range of three to four values", "warm rice-paper ground"]
-# negative: ["saturated red sun", "gold leaf"]
-#   自动并入该页资产 negative；deck 级 avoid 同样进入最终 negative。
-#
-# 既有素材可以跳过生成，不能跳过来源登记与 QC：
+#   逐页光照声明：direction/medium 默认光不得覆盖。
+# texture: [handmade rice paper fiber]   # 或族键：eastern|luxury|architecture|technology|organic
+# asset_color: ["ink tonal range of three to four values"]
+# negative: ["saturated red sun"]        # 并入该页 negative；deck 级 avoid 同样并入。
+# 既有素材跳过生成，不跳过登记 + QC：
 # asset_source: {kind: provided, path: "images/tea.jpg", source: "用户提供；授权待核实"}
-#   kind：provided | licensed | original | reuse
+#   kind：provided|licensed|original|reuse。
+#   v6.5：prepare 时字节已存在的规划资产会被自动如实登记为 existing（保留规划身份），
+#   无须人工补登记。
 
 # ============================================================
-# 04 · Deck 级视觉世界（作用于整个 deck，永远低于逐页显式声明）
+# 04 · Deck 级视觉世界（永远低于逐页显式声明）
 # ============================================================
 
-visual_world: ""        # 一句话：材质 + 光影 + 空间（例：哑光纸面 + 冷灰轨道 + 单侧柔光）。
-                        # 禁止在这里声明 medium（摄影 / 水墨 / 宣纸）——
-                        # medium 属于逐页资产属性，写在 deck 级会把介质强加给全 deck。
-composition_grammar: "" # soft_asymmetry | strict_grid | cinematic_stage | evidence_field | path_sequence
-                        # 构图倾向，不是固定版式
-background_scene: ""    # solid_world | atmospheric | cinematic
-                        # 描述**整副 deck 的页面背景世界属于什么世界**，不判断
-                        # 「这一页有没有背景图」（那是逐页 asset + asset_role 的事）：
-                        #   solid_world → 背景以原生色面 / 材质场 / 极简空间为主
-                        #   atmospheric → 允许光、空气、材质、景深形成背景环境
-                        #   cinematic   → 允许完整空间、场景与摄影叙事形成页面背景
-                        # 四者职责不得混淆：background_scene 决定「页面背景世界」，
-                        # asset_role 决定「这张资产是什么」，asset_function 决定
-                        # 「它为什么存在」，asset_subject 决定「画面具体出现什么」。
-avoid: []               # 明确不要出现的视觉语言（例：[dashboard feeling,
-                        # decorative stock imagery, excessive cards]），进入相关资产 negative
+visual_world: ""        # 一句话：材质 + 光影 + 空间。禁止在此声明 medium
+                        # （medium 属逐页资产属性，deck 级会把介质强加全 deck）。
+composition_grammar: "" # soft_asymmetry|strict_grid|cinematic_stage|evidence_field|path_sequence
+background_scene: ""    # solid_world|atmospheric|cinematic —— 整副 deck 的页面背景世界；
+                        # 「这页有没有背景图」是逐页 asset 的事，四者职责不混淆。
+avoid: []               # 明确不要的视觉语言，进入相关资产 negative。
 
 # ============================================================
-# 05 · 品牌（品牌色存在时：brand > direction seed）
+# 05 · 品牌（品牌色优先于 direction seed）
 # ============================================================
-# 列表写法：按惯例序落位 —— 第 1 个=主色(文字/主信号)、第 2 个=强调色、第 3 个=辅色
-#   brand_colors: ["#1A3A5C", "#C8501E"]
-# 字典写法：精确指定槽位（background/paper = 纸面，ink/primary = 墨色）
-#   brand_colors: {primary: "#1A3A5C", accent: "#C8501E", background: "#FFFFFF"}
-# 仅接受 #RGB / #RRGGBB。对比度不足时允许可读性修正，但不得改变品牌色的设计意图。
+# 列表写法按惯例序：1=主色 2=强调 3=辅；字典写法精确指定槽位
+# （background/paper=纸面，ink/primary=墨色）。仅 #RGB/#RRGGBB。
 brand_colors: []
 
 # ============================================================
-# 06 · 视觉方向（起点，不是模板）
+# 06 · 视觉方向（起点，不是模板；无法识别回落 quiet_minimal 并留痕）
 # ============================================================
-# direction 可以提供：初始视觉世界、材质倾向、色彩种子、构图倾向、动势语言；
-# 但不得覆盖用户显式声明。名称无法识别 → 回落 quiet_minimal 并记 plan warning，
-# 不允许静默替换。
-# 结构预设（4）：quiet_minimal / editorial_brand / product_stage / evidence_first
-# 色彩·世界族（13）：song_elegance / zen_minimal / luxury_editorial / nordic_quiet /
+# 结构预设：quiet_minimal / editorial_brand / product_stage / evidence_first
+# 色彩·世界族：song_elegance / zen_minimal / luxury_editorial / nordic_quiet /
 #   quiet_luxury / monochrome_noir / cinematic_narrative / nature_luxury /
 #   organic_systems / precision_tech / precision_minimal / data_intelligence /
 #   editorial_intelligence
@@ -193,14 +115,5 @@ design_direction: ""
 # ============================================================
 # 07 · 质量等级（判断与证据预算，不是审美等级）
 # ============================================================
-quality_level: ""       # fast（默认）| advanced
-                        # 不是「fast = 低质量 / advanced = 高质量」。它只控制：
-                        # 判断深度、证据预算、资产预算；不得改变用户显式声明、
-                        # 页面内容、页面意图或视觉判断结果。
-                        # fast：最小充分证据预算，默认优先速度。
-                        # advanced：更高判断与证据预算，允许更多资产候选与更深视觉判断。
-                        # 但 advanced ≠ 更多图片 / 更多装饰 / 更复杂布局 / 更高级审美：
-                        # 最适合纯文字、原生图形或数据表达的页，advanced 下仍然纯原生。
-                        # 是否出图由 asset / asset_subject / asset_source 与 Skill 判断
-                        # 共同决定，显式声明永远优先；具体预算数字是执行器内部策略，
-                        # 不属于需求契约。
+quality_level: ""       # fast（默认）| advanced。不改变用户声明、内容、意图；
+                        # advanced ≠ 更多图片/装饰/复杂布局——纯排版页仍然纯排版。

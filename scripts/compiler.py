@@ -63,19 +63,12 @@ def normalize_fill(value):
                     "angle": float(value.get("angle", 90)),
                     "gradient_type": value.get("gradient_type", "linear")}
         raise ValueError(f"Invalid fill type {value['type']!r}; expected solid, gradient, or none.")
-    # Legacy: {"color": "#fff", "opacity": 0.3}
+    # 作者容错简写：{"color": "#fff", "opacity": 0.3} ≡ solid
     if "color" in value:
         return {"type": "solid", "color": value["color"], "opacity": value.get("opacity")}
-    # Legacy: {"gradient": {"stops": [[position, color, opacity], ...]}}
-    if "gradient" in value:
-        g = value["gradient"]
-        if not isinstance(g, dict):
-            raise ValueError("Invalid legacy gradient: expected an object.")
-        return {"type": "gradient", "stops": g.get("stops", []),
-                "angle": float(g.get("angle", 90)), "gradient_type": "linear"}
     raise ValueError(
-        "Invalid fill format. Received a mapping without 'type' or legacy 'color'. "
-        "Expected {type: 'solid', color: '#fff', opacity: 0.3}."
+        "Invalid fill format. Expected a color token or "
+        "{type: 'solid'|'gradient'|'none', ...}."
     )
 
 
@@ -563,11 +556,7 @@ def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
 def chart_colors(element: dict, ctx: RenderContext):
     # Color Role System：元素可声明语义角色（color_role / secondary_role）取代
     # 具体色值——主题换了图表语义不变。显式 *_color 仍是逃生口（永远可覆盖）。
-    primary = (ctx.chart_role(element["color_role"])
-               if element.get("color_role") else None)
-    if primary is None:
-        primary = ctx.color(element.get("primary_color")
-                            or ctx.theme.get("chart_primary", "accent"))
+    primary = ctx.chart_primary_color(element)
     if primary is None:
         primary = ctx.text_color("ink")
     secondary = (ctx.chart_role(element["secondary_role"])

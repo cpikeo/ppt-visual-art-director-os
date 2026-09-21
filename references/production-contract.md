@@ -1,237 +1,196 @@
 # Production Contract（运行时契约 · 权威表）
 
-分层切干净（同一事实只判一次）：
+同一事实只判一次：
 
 | 层 | 核心问题 | 是否阻断 |
 |---|---|---|
-| **Contract / Guard** | 文件正确、数据正确、结构正确、可编译、无溢出、无碰撞、资产链完整 | **是**（10 个阻断码） |
-| **留痕 / Risk** | 可读性风险、节奏风险、图表论点风险（仅留痕） | 否（只进 `trace_summary`） |
-| **Intelligence / Craft** | 高级感、审美、构图、节奏、视觉价值、应不应该这么设计 | 不属于 Contract |
+| Contract / Guard | 文件/数据/结构正确、可编译、无溢出碰撞、资产链完整 | 是（10 个阻断码） |
+| 留痕 / Risk | 可读性/节奏/图表论点风险 | 否（只进 `trace_summary`） |
+| Intelligence / Craft | 审美、构图、节奏、应不应该这么设计 | 不属于 Contract |
 
-**验证层不评分**：`guard.check_spec` 没有 score，不排序、不评级。它只查**工程事实**
-（能不能编译、会不会溢出、数据是否成立、文件是否可交付）与**作者自己写下的数字**
-（`constraints` / 声明过的上限）。审美、节奏、重点是否突出属于设计判断，不进门槛，
-也不以提示的形式回灌给作者。变化不是目的，必要性才是目的。
+**验证层不评分**：`guard.check_spec` 没有 score，不排序不评级；只查工程事实与作者自己写下
+的数字（`constraints`）。审美不进门槛，也不以提示回灌作者。
 
 ## Contract Map（写 spec 前查表）
 
 ### 硬门（阻断）
 
-| 任务 | 契约（到此为止） |
+| 任务 | 契约 |
 |---|---|
-| 文本 | `text` 放内容，样式平铺顶层（`size/color/bold/align/max_lines/line_height/padding`）；框高 ≥ 字号×行高×行数（`TEXT_OVERFLOW`） |
-| 填充 | `{"fill":{"type":"solid\|gradient\|none",...}}`；无效 fill 报编译错，不静默回退（`COMPILE_FAIL`） |
-| 墨迹 | text–text / chart / image 相交即 `OVERLAP`；来源区永不许遮挡（`SOURCE_COLLISION`）；图表标签冲突走 `label_collision_policy`（`CHART_LABEL_COLLISION`），不缩字号 |
-| 图表数据 | 每行 `label` + 有限 `value`；数值图表必须齐 `source/unit/period/basis` 且为非空白字符串（draft 记警告、release 阻断）；同 metric 同单位（`DATA_INTEGRITY_FAIL`） |
-| 载荷 | schema 合法 ≠ 画得出来：数值/行数据图表必须有可画的行（含非空 `label`），`matrix` 要 `points`、`architecture` 要 `layers`、`kpi/executive_kpi/big_number` 要元素级 `value`；空载荷当场阻断（空白页不出门） |
-| 空白 | `slides: []` 或「零元素且无 `background`」的页 = 空白交付物，阻断；有 `background` 的呼吸页合法 |
-| 图表类型 | `chart_kind` 白名单内且数据形态匹配（占比≠趋势，`CHART_TYPE_FAIL`） |
-| 元素合法性 | element_schema / focus 唯一 / 几何合法性（error 级归 `GUARD_FAIL`） |
-| 资产链 | 先 `assets --plan` 再出图，QC 记录清单与图片 SHA-256；retry/missing/block 均退出 2；有图稿件缺有效 QC 则不编译（`ASSET_WORKFLOW_FAIL`）。详见 `asset-workflow.md` |
-| 编译与发布证据 | `semantic_compile_view` 是输入投影（判要不要重编）；`artifact/output_sha256` 是本次 PPTX 字节戳（判文件是不是它）；release 门 = 0 阻断 + 资产链凭证 + 预览证据 + Manifest |
+| 文本 | 内容进 `text`，样式平铺顶层；框高 ≥ 字号×行高×行数（`TEXT_OVERFLOW`） |
+| 填充 | Fill Contract；无效 fill 报编译错，不静默回退（`COMPILE_FAIL`） |
+| 墨迹 | text–text/chart/image 相交即 `OVERLAP`；来源区永不许遮挡（`SOURCE_COLLISION`）；图表标签冲突走 `label_collision_policy`（`CHART_LABEL_COLLISION`），不缩字号 |
+| 图表数据 | 每行 label + 有限 value；数值图齐 `source/unit/period/basis` 非空（draft 警告、release 阻断）；同 metric 同单位（`DATA_INTEGRITY_FAIL`） |
+| 载荷 | schema 合法 ≠ 画得出来：行数据图须有可画行；`matrix` 要 points、`architecture` 要 layers、数字展示要元素级 value；空载荷阻断 |
+| 空白 | `slides: []` 或零元素且无 background 的页阻断；有 background 的呼吸页合法 |
+| 图表类型 | 白名单内且数据形态匹配（`CHART_TYPE_FAIL`） |
+| 元素合法性 | schema / focus 唯一 / 几何合法（error 级归 `GUARD_FAIL`） |
+| 资产链 | 先 assets 再出图，QC 记 SHA-256；retry/missing/block 退出 2；有图缺有效 QC 不编译（`ASSET_WORKFLOW_FAIL`）。详见 `asset-workflow.md` |
+| 编译与发布 | `semantic_compile_view` 判要不要重编；`output_sha256` 判文件是不是它；release 门 = 0 阻断 + 资产链凭证 + 预览证据 + Manifest |
 
 ### 留痕信号（只留痕，不阻断，不逐条修复）
 
-| 信号 | 度量（代码常量为准） | 等级 |
+| 信号 | 度量 | 等级 |
 |---|---|---|
-| 密度节奏 | `sparse/balanced/dense` 是输入语义（枚举合法性才是工程事实）；占用带（`DENSITY_BANDS`）实测只是参考，不是「必须和上页不同」的义务 | `rhythm`（hint，仅声明与结构同时重复才发） |
-| 色彩 | 色相族 ≤4（`max_colors`）= `constraints` 声明数字的执法，未声明不检查；值为什么存在在 Intelligence | `palette_discipline`（warn/hint） |
-| 图表论点 | 差异主张 + 零基长度编码 + 声明 `highlight`/`target` + max/min <1.25× = 差异不可见 | `chart_argument`（warn） |
-| 可读性 | 声明色弱化字 <3:1 提示、<1.8:1 警示；正文级 <4.5:1 是 `READABILITY_FAIL` 硬门 | `contrast`（hint/warn）；error 级才是 `READABILITY_FAIL` |
-| 背景保护 | 全幅背景图免检资格：`layer:background` + `overlay` ≥0.20 + 覆盖 ≥60%（`BG_MIN_*`） | `BG_UNPROTECTED`（warn/hint） |
-| 媒体策略 | 数据/表格/流程/结构页不出图 | route 媒体政策（plan 侧不派图） |
-| 网格 | 8 单位自动吸附（任一维 ≤2px 或通栏豁免）；`grid_exempt:true` 豁免 | 对齐事实进 `grid`，比率不计分 |
+| 密度节奏 | 枚举合法性才是工程事实；占用带实测只作参考 | `rhythm`（hint） |
+| 色彩 | 色相族上限＝`constraints` 声明数字的执法，未声明不检查 | `palette_discipline` |
+| 图表论点 | 差异主张 + 零基长度编码 + highlight/target + max/min <1.25× = 差异不可见 | `chart_argument`（warn） |
+| 可读性 | 声明色弱化字 <3:1 提示、<1.8:1 警示；正文级 <4.5:1 是 `READABILITY_FAIL` 硬门 | `contrast` |
+| 背景保护 | 全幅背景免检资格：`layer:background` + overlay ≥0.20 + 覆盖 ≥60% | `BG_UNPROTECTED` |
+| 媒体策略 | 数据/表格/流程/结构页不出图 | route 媒体政策 |
+| 网格 | 8 单位吸附（≤2px 或通栏豁免）；`grid_exempt:true` 豁免 | `grid` |
 
-构图：plan 每页给一条 `composition.grammar`（视线如何被组织）；这是**提案**——不给坐标、
-不给版式，生成侧可整体推翻。
-修订：照 `fix_plan` 根因组**一轮批量改完**（内嵌契约行，零回读），一次改完再复跑同档——
-不逐条「修一个、回读一个」。
+构图：plan 每页给 `composition.grammar` 提案——不给坐标版式，生成侧可整体推翻。
+修订：照 `fix_plan` 根因组一轮批量改完（fix 内嵌契约行，零回读），一次改完再复跑。
 
-### 速度档（v5.9）
+### 速度档
 
 | 项 | `--speed fast`（默认） | `--speed strict` |
 |---|---|---|
-| 资产 QC 像素域 | 长边 ≤1024 整数箱降采样；**文字安全区纹理按原分辨率** | 全分辨率 |
-| 图片读取 / 解码 | 每张各一次：QC 的字节经 `snapshots`、QC 的**已解码底图**经 `decode_seed` 供核验/编译/预览复用（size+mtime 守卫；持图有内存上限） | 同 |
-| 图片变换 | 同图同盒一次；无变换透传原字节；解码底图跨盒子复用 | 同 |
-| 编译缓存探测 | `pptx_size` + `pptx_mtime_ns`（快探针只判「要不要重编」）；两档各自分域，不跨档复用 | 整包 SHA-256 |
-| 方向预览 | `sample_pages` 采样 ≤4 页；单倍采样 + 低压缩 PNG | 全 deck 逐页；2× 超采样 |
-| 包级后处理 | 媒体条目 STORED（不再二次压缩），XML 仍 DEFLATE | 同 |
-| 产物哈希 | 同轮 stat 见证一次；不一致才重算 | 同 |
+| 资产 QC 像素域 | 长边 ≤1024 降采样；文字安全区纹理按原分辨率 | 全分辨率 |
+| 图片读取/解码 | 每张各一次；QC 已解码底图经 `decode_seed` 供核验/编译/预览复用 | 同 |
+| 图片变换 | 同图同盒一次；无变换透传原字节 | 同 |
+| 编译缓存探测 | size+mtime 快探针；两档分域不跨档复用 | 整包 SHA-256 |
+| 方向预览 | 页数 ≤`--ghost-pages`（默认 24，常规 deck 自动全量）时全量，否则采样；单倍采样 + 低压缩 | 全 deck 逐页；2× 超采样 |
+| 包级后处理 | 媒体 STORED，XML DEFLATE | 同 |
 
-判定口径两档完全相同（同一 `check_spec`、同一阈值、同一阻断码）。差异只进证据字段：
-`asset_manifest.qc.json → pixel_profile`（资产 QC 像素域）、`packet.preview.scope`（预览证据范围）、
-`qa_report.compile.attestation_mode`、`manifest.verification.{speed,visual_evidence_scope}`。
+判定口径两档完全相同（同一 check_spec、同一阈值、同一阻断码）；差异只进证据字段
+（`pixel_profile` / `preview.scope` / `attestation_mode` / `verification.{speed,scope}`）。
 
-`--deadline`（秒，默认 120，0/None = 不设上限）：核心阶段（资产核验 → guard → 编译 →
-收口）永远执行；可选证据（方向预览 / contact sheet）在剩余预算不足 `GHOST_MIN_BUDGET_S`
-时被跳过并记入 `budget.skipped`。release 档缺预览证据即 `BLOCKED`（fail-closed）——
-超预算只会得到一条诚实的结论，不会得到一次超时的交付。
+`--deadline`（秒，默认 120，0/None 不设限）：核心阶段（资产核验→guard→编译→收口）永远
+执行；可选证据（预览/contact sheet）预算不足时跳过并记 `budget.skipped`。release 档缺预览
+证据即 BLOCKED（fail-closed）——超预算只得到诚实结论，不得到超时交付。
 
 ## Calls（最小 API）
 
-入口与按需加载见 `SKILL.md`——本表只留字段与契约。
-**元素字段、`chart_kind` 全表与每页上限、role 白名单 → `design-system.md` §Spec 字段速查**
-（写 elements 前查它，不必回读 `compiler.py`）。
+元素字段、`chart_kind` 全表与 role 白名单 → `design-system.md` §Spec 字段速查。
 
-- `vao.py plan` → `pipeline.build_plan_bundle`：骨架只序列化**已决策字段**（canvas / theme 种子 /
-  page_intent / source_zone，注释里附该页家族、密度/能量、媒体判断与构图判断项），`elements` 留空——
-  几何归生成侧判断，零预设；页数与 brief 的 slides 一一对应。deck 级事实（theme 种子、
-  `direction_execution` 的介质/光照/图表手法）只在顶层出现一次，不逐页复制。
-- `vao.py dna` → 经验记忆：`--check` 体检 / `--add <条目>.json`（校验后原子写入）。
-  `judgment` 只写行为判断，色值/字号/版式结果放 `proven.measurements`——写坏的记忆不报错，
-  只会永远命不中。
-- `vao.py check` → normalize → guard → compile → `qa.verdict`（只读两份报告）+ ghost 预览 + 分组修复包；
-  全程单进程，不串行跑单脚本，不启动任何外部渲染器。
+- `plan`：骨架只序列化已决策字段（canvas/theme 种子/page_intent/source_zone + 注释里的
+  家族/密度/媒体/构图判断项），`elements` 留空——几何归生成侧，零预设；deck 级事实只在
+  顶层出现一次。
+- `dna`：`--check` 体检 / `--add <条目>.json` 原子写入；`judgment` 只写行为判断，结果数字
+  放 `proven.measurements`。
+- `check`：normalize → guard → compile → `qa.verdict`（只读报告）+ ghost 预览 + 分组修复包；
+  单进程，不串行脚本，不启动外部渲染器。
 
-报告自足：`fix_plan.groups[]` 按根因码分组阻断项（`count/ids/samples/fix`，fix 内嵌本表契约行）；
-修正轮照单一次改完，零回读。`trace_summary` 按 (domain,rule,level) 聚合非阻断项，只记录。
+`fix_plan.groups[]` 按根因码分组（count/ids/samples/fix）；`trace_summary` 按
+(domain,rule,level) 聚合非阻断项，只记录。
 
 ## 执行模式（三个已足够）
 
 | 模式 | 做什么 | 产物 |
 |---|---|---|
-| `spec` | 归一化 + Guard 判定，不编译、不落产物 | 判定报告 |
-| `draft`（默认） | Guard + Compile，产出可编辑 PPTX 与分组修复包 | PPTX + 报告 + `_vao/` 缓存 |
-| `release` | draft 全部 + 数值图表出处硬门 + ghost 方向证据 + Release Manifest | PPTX + 报告 + 预览 + Manifest |
+| `spec` | 归一化 + Guard，不编译 | 判定报告 |
+| `draft`（默认） | Guard + Compile | PPTX + 报告 + 缓存 |
+| `release` | draft 全部 + 出处硬门 + ghost 证据 + Manifest | PPTX + 报告 + 预览 + Manifest |
 
-深度由任务赢得：简单内容 draft 即交付；复杂数据与终版收口才用 release。
+## 方向预览的覆盖契约
 
-## 方向预览的覆盖契约（v6.4.3）
+ghost 是**预览**，不是第二个渲染器。两条纪律：
+1. **宽容度 ≤ 交付链**：预览认的键名/类型/载荷不得比 guard/compiler 更宽——写错的键在
+   预览里也必须是「画不出来」，证据不替错误背书。
+2. **自信度 ≤ 实现程度**：只画与产物同形的图形；没实现同形几何的类型如实写
+   「不渲染此图形 · 以编译产物为准」，不画一个大概。
 
-方向预览（ghost）是**预览**，不是第二个渲染器。两条纪律：
+类型归属覆盖 `primitives.CHART_KINDS` 全集，两种归宿：`ghost.PREVIEW_MIRRORED`
+（同形镜像：原生图表族 + 数字行/步/轴/瀑布/柱族 + 矩阵象限）与 `ghost.PREVIEW_ABSTRACT`
+（流程/架构/气泡——空间关系是价值，粗近似会误导）。加一种图先回答它在预览里怎么活。
+预览**不构成 QC**：release 门只认「预览证据存在且范围如实」。
 
-1. **宽容度 ≤ 交付链**：预览认的键名、图表类型、载荷形状不得比 guard / compiler 更宽——
-   写错的键在预览里也必须是「画不出来」，证据不能替错误背书。
-2. **自信度 ≤ 实现程度**：只画与产物 **mark 结构同形**的图形；没实现同形几何的类型，
-   预览里如实写「不渲染此图形 · 以编译产物为准」，**不画一个大概**。
+## 图表表达的执行层默认值（Editorial Data）
 
-类型归属必须覆盖 `primitives.CHART_KINDS` 全集，只有两种归宿：
-`ghost.PREVIEW_MIRRORED`（同形镜像：原生图表族 + 数字行 / 步 / 轴 / 瀑布 / 柱族）
-与 `ghost.PREVIEW_ABSTRACT`（结构图：流程 / 架构 / 矩阵 / 气泡——空间关系是它的价值，
-粗近似会误导间距判断）。往白名单里加一种图，先回答它在预览里怎么活；结构断言在自检里。
-
-预览**不构成 QC**：它不判定任何一条资质，release 门只认「预览证据存在且范围如实」
-（`verification.visual_evidence_scope`）。渲染口径（超采样、压缩、采样页数）以报告为准。
-
-## 图表表达的执行层默认值（Editorial Data，v6.4.4）
-
-方向是「数据是主角、装饰让位」：少颜色、少边框、少网格，层级靠**明度**而不是装饰。
-这一节记录的是**引擎已经保证的事实**（离线图表审计可复算：8 种图形 × 深/浅两主题，
-全部拆编译产物量，不看注释只看 XML）：
+「数据是主角、装饰让位」：少颜色、少边框、少网格，层级靠明度。以下为引擎已保证的事实
+（离线图表审计可复算）：
 
 | 事实 | 口径 |
 |---|---|
-| 无外框 | chartSpace / plotArea 都不描边（`_draw_chart` 级别无框可关） |
-| 无网格线 / 无轴线 | 主次网格线删除，值轴与类轴 `line.fill.background()` |
-| 无图例 | `has_legend = False`：读数责任交给**直接标注**（值标签默认开） |
-| 高亮只有一个 | 高亮 = accent；柱/条只有被指定的那一根换色，其余保持中性 |
-| 负值只在声明时着色 | 主题没有 `negative` 就一律中性——不由引擎替数据下判断 |
-| 系列色不重复 | 单一信号色主题下 = accent 起的**同色相明度阶梯**，相邻相对明度差 ≥0.05（实测 dark 0.062 / light 0.068）；主题声明 `premium` 时保留双信号色六档 |
-| accent 只占一个位置 | 高亮在手时非高亮序列从第 2 档起（`ctx.series_palette(count, highlight)`）——一处派生，编译器与预览共用，任何组合下不撞色 |
-| 预览不发明装饰 | 同形镜像的图形不画产物没有的外框；外框只属于「我不画」的占位分支；扇区/段色与产物同一份派生 |
+| 无外框/无网格/无轴线 | chartSpace/plotArea 不描边；主次网格删除；轴 `line.fill.background()` |
+| 无图例 | 读数责任交给直接标注（值标签默认开） |
+| 高亮只有一个 | 高亮 = accent；只有被指定那根换色 |
+| 负值只在声明时着色 | 主题无 negative 一律中性 |
+| 系列色不重复 | 单信号色主题 = accent 起的同色相明度阶梯（相邻明度差 ≥0.05） |
+| accent 只占一个位置 | `ctx.series_palette(count, highlight)` 一处派生，编译器与预览共用 |
+| 预览不发明装饰 | 同形镜像不画产物没有的外框；扇区/段色与产物同一份派生 |
 
-作者可覆盖的仍然可覆盖：`gap_width`、`show_values`、`highlight`、`series_roles`、
-`series`（多序列走 `categories + series`）、`theme.chart_palette` 的角色色。
-以上都不是规则，是默认值——声明了就按声明的画。
-
-**已知边界（不假装覆盖）**：多序列折线的末端只画**圆点**，不落序列名文字；
-超过 6 档的序列复用色阶；`multi_color` / `ramp` 覆盖下预览只镜像默认调色板。
+作者仍可覆盖：`gap_width / show_values / highlight / series_roles / series / theme.chart_palette`。
+已知边界：多序列折线末端只画圆点不落序列名；>6 档序列复用色阶；`multi_color/ramp` 下
+预览只镜像默认调色板。
 
 ## Spec minimum
 
 ```python
 spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
- "theme": {"colors":{...},"fonts":{"cn":...,"latin":...},"constraints":{...}},   # 方向种子照抄
+ "theme": {"colors":{...},"fonts":{"cn":...,"latin":...},"constraints":{...}},
  "strategy": {...}, "direction": {"color_intent": [...]},
  "slides": [{"id":"s01","page_intent":{...},
   "source_zone": {"x":48,"y":672,"width":1184,"height":32},
   "elements": [...]}]}
 ```
 
-`theme.fonts` 只读 `cn`/`latin`（`display`/`body` 是别名）；未声明则回落 Arial / Microsoft YaHei 并被 `theme_fonts` 点名。
-每页可带 `anchor`（跨页锚：`eyebrow`/`page_number`/`figure`）：落成 `role=eyebrow` / `role=page_number` /
-`caption` 元素后，`deck_anchor` 会查存在性、位置恒定性与编号连续性；不声明则不查。
+`theme.fonts` 只读 cn/latin；未声明回落 Arial / Microsoft YaHei 并被 `theme_fonts` 点名。
+每页可带 `anchor`（eyebrow/page_number/figure）：落成对应 role 元素后 `deck_anchor` 查
+存在性/位置恒定/编号连续；不声明不查。`theme.constraints` 是方向数字种子，plan 发下来
+原样照抄，guard 按它执法，写错键名被点名。光源以外的幻灯级字段不存在——写了被静默忽略。
+来源区 role 只允许 `{source, method, metadata}`。图片必须 `asset_id` 绑定清单，解析器与 QC
+同一路径。生成图目录优先 `--assets-dir`；既有素材路径由来源声明给出。
 
-`theme.constraints` 是方向的数字种子（accent 面积 / 留白下限 / 字号级差 / 装饰面积 / 背景层 / 粗体占比）：
-plan 发下来的原样照抄进 spec，guard 按它执法；写错键名同样被点名。
-每页 `page_intent` 含 insight / focus / page_family / density / energy；
-几何：所有可见对象数值 `x/y/width/height`。光源以外的字段（如幻灯级 `background`）不存在——写了也会被静默忽略，别写。
+可读性与裁切（工程，不是品味）：① 单行 meta 行 `wrap=False` 且盒宽 ≥1.5× 估宽——第二行落
+盒外的裁切是沉默的；② `focus` 声明视线第一落点，非叙事主语；③ 弱化字对比 hint/warn 分级。
+图表色走语义角色；背景画心 `layer:background` + 自带 overlay 不计媒体预算，资格不足按普通
+对象判。
 
-来源区内文字 `role` 只允许 `{source, method, metadata}`（页码/编号等挂 `metadata`/`label`）；
-其他角色触发 zone-invasion 错误。图片必须用 `asset_id` 绑定清单；绑定阶段采用与 QC 相同的路径解析器，再交给编译器。
-生成图片目录优先 `--assets-dir`，其次清单声明目录；既有素材路径由来源声明给出。
-
-可读性与裁切（工程，不是品味）：① 单行 meta 行（眉标/章标/页码/落款）`wrap=False`
-且盒宽 ≥1.5× 估宽——第二行落盒外的裁切是沉默的。② `page_intent.focus` 声明**视线第一落点**，
-非叙事主语。③ 弱化字对比声明色 <3:1 / <1.8:1 走 hint/warn（亮度分级见 `design-system.md` 的 muted 行）。
-
-图表色走语义角色（`color_role`，详见 design-system.md §图表字段五组；柱状负值自动染 negative）。
-背景画心声明 `layer:background` + 自带 `overlay` 内容保护，不计媒体预算；资格不足按普通对象判。
-
-## 资产 QC 的两条语义（v6.4.3）
+## 资产 QC 的两条语义
 
 | 判据 | 语义（以代码常量为准） |
 |---|---|
-| `brightness_balance` | **相对声明底色**：画面与 `background_color` 的亮度差 < `QC_TONE_MATCH_GAP`（0.18）＝同调，不判过暗/过亮（暗色沉浸的画心放深墨底上不是缺陷）；落差够大才报，那是可见分块。左右/上下失衡仍照常判。文字可读性**不由这条代偿** —— 它归 `contrast_suitability`（阻断级） |
-| `contrast_suitability` | 按**声明的文字色**判定：`text_color` 写 `#RRGGBB`（产物里的真颜色）或 `dark` / `light` 语义词都认，解析唯一实现在 `primitives.text_is_dark`。浅字要求安全区暗（<0.45）、深字要求亮（>0.55）；没声明才退回「中间带」规则 |
+| `brightness_balance` | 相对声明底色：与 `background_color` 亮度差 < 0.18 = 同调，不判过暗/过亮；落差够大才报可见分块。左右/上下失衡照常判。文字可读性归 `contrast_suitability` |
+| `contrast_suitability` | 按声明文字色判定：`#RRGGBB` 或 dark/light 都认（解析唯一实现 `primitives.text_is_dark`）；浅字要求安全区暗（<0.45）、深字要求亮（>0.55）；没声明才退回中间带（阻断级） |
 
-既有素材的登记路线（写了却不生效是这份包最贵的一类漏洞）：早于清单存在的字节必须在对应
-slide 写 `asset_source: {kind, path, source}`（见 `asset-workflow.md` §3）；若它正是本稿
-plan 规划的那张（文件名 = 规划的 `asset_id`），清单**保留规划身份与 prompt**，
-不退化成一个 `existing-<hash>`——「还是那一张」得以成立，作者不必重抄一整套资产卡。
+既有素材登记：早于清单存在的字节可在 slide 写 `asset_source` 显式登记；v6.5 起 prepare 时
+字节已存在的规划资产**自动如实登记为 existing**（保留规划身份与 prompt，见
+`asset-workflow.md` §2）。
 
-## Cold / Hot 与运行时事实（v6.2）
+## Cold / Hot 与运行时事实
 
-一次 `check` 只产出一份运行时事实账本（`result.evidence`）：身份（输入 / 资产 / 产物 /
-判定 / 像素 / 页）、读数（各阶段耗时与解码 / 变换计数）、复用与降级原因。报告、发布清单、
-预览证据都从这份账本取数，不再各自拼装。
+一次 `check` 只产一份运行时事实账本（`result.evidence`）：身份/读数/复用与降级原因；
+报告、发布清单、预览证据都从账本取数。
 
 | 路径 | 步骤 | 含义 |
-| --- | --- | --- |
-| COLD | identity → measure → evidence → compile → render | 这一轮重新建立事实 |
-| HOT | identity → evidence → release | 这一轮只取已有事实（不测量 / 不编译 / 不渲染） |
+|---|---|---|
+| COLD | identity → measure → evidence → compile → render | 重新建立事实 |
+| HOT | identity → evidence → release | 只取已有事实（不测量/编译/渲染） |
 
-* 复用必须带凭证：资产判定（清单摘要 + 量像素引擎 + 取样参数 + 逐资产字节凭证）、
-  产物（spec 投影 + 引擎指纹 + 产物凭证）、预览（产物凭证 + 渲染器指纹）。
-* 凭证不足时该步落回 COLD，并在 `evidence.cold_reasons` 写明原因——不允许静默重做。
-* 同一个事实只有一个身份：值摘要、文件字节、字节凭证、引擎指纹各只有一处实现，
-  全部由 `primitives.py` 的身份层产出（`run_evidence.py` 只负责收集与陈述）。
-* 新增步骤的准入问题：**属于 COLD 还是 HOT；为什么 HOT 需要重做。**
+复用必须带凭证（资产判定/产物/预览各自的摘要+指纹+字节凭证）；凭证不足落回 COLD 并在
+`evidence.cold_reasons` 写明，不许静默重做。同一事实只有一个身份，全部由 `primitives.py`
+身份层产出。新增步骤的准入问题：**属于 COLD 还是 HOT；为什么 HOT 需要重做。**
 
 ## Failure codes
 
 | 代码 | 状态 | 处理 |
 |---|---|---|
-| `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_WORKFLOW_FAIL` | BLOCKED | 必修：按 `fix_plan` 根因组一次改完 |
-| 其他 warn/hint（`BG_UNPROTECTED`、图表论点、对齐与网格提示等） | PASS | 只进 `trace_summary`，不解释、不询问、不逐条修复 |
+| `OVERLAP` `SOURCE_COLLISION` `CHART_LABEL_COLLISION` `TEXT_OVERFLOW` `READABILITY_FAIL` `DATA_INTEGRITY_FAIL` `CHART_TYPE_FAIL` `COMPILE_FAIL` `GUARD_FAIL` `ASSET_WORKFLOW_FAIL` | BLOCKED | 按 `fix_plan` 根因组一次改完 |
+| 其他 warn/hint | PASS | 只进 `trace_summary`，不解释、不询问、不逐条修复 |
 
-`guard.check_spec` 的返回只有 `passed / checks / warnings / grid`——
-**没有 score，也不恢复 score**：一旦出现总分，系统会退化成规则 → 指标 → 分数 → 排名 →
-模板化优化，反过来削弱设计智能。
-
+`guard.check_spec` 返回只有 passed/checks/warnings/grid——没有 score，也不恢复 score。
 状态优先级：有阻断 → BLOCKED；spec 档 → PREVIEW_ONLY；0 阻断 → PASS（`release_eligible`
-仅在 release 档、编译通过且所有发布凭证有效时为真）。
+仅 release 档、编译通过且发布凭证全有效时为真）。
 
 ## Release Manifest
 
-`vao.py check --mode release` 生成：`source_spec_hash`、`validation`、`verification`
-（外部渲染器状态 / 视觉证据类型 / 结构页数 / 预览页数 / `release_eligible`）、
-`compile_report`（含 `output_sha256`）、`ghost_preview`、`revision_count` 与 `revision_log`、
-`status`。清单校验三件事：报告盖的 spec 戳与当前 spec 一致；PPTX 字节戳与磁盘一致；
-预览证据引用的页面都在当前 spec 里。口径以代码为真源。
+`check --mode release` 生成：`source_spec_hash`、`validation`、`verification`（外部渲染器
+状态/视觉证据类型/结构页数/预览页数/release_eligible）、`compile_report`（含 output_sha256）、
+`ghost_preview`、`revision_count/log`、`status`。校验三件事：报告盖的 spec 戳与当前一致；
+PPTX 字节戳与磁盘一致；预览证据引用的页面都在当前 spec 里。
 
-## 资产前置与发布一致性（v5.1 / v5.1.1 条款，仍有效）
+## 资产前置与发布一致性（仍有效）
 
-`ASSET_WORKFLOW_FAIL` 由 `vao.py check` 在编译前给出；修法是补齐/刷新证据链，
-不是改字号或降低图像阈值。`spec` 模式同样校验有图稿件的资产依赖，但不编译。
-纯文字/原生图形稿件记录 `SKIPPED / no_image_elements`，不是伪造“已检查”。
-Release Manifest 的 `asset_workflow` 记录 `status`、brief/plan/清单/QC 指纹和报告位置；
-QC 本身包含每张图片的 SHA-256。验证失败时两层 `release_eligible` 均为 false；
-编译 PASS 不可代替完整流程 PASS。
+`ASSET_WORKFLOW_FAIL` 在编译前给出；修法是补齐/刷新证据链，不是改字号或降图像阈值。
+`spec` 模式同样校验资产依赖但不编译。纯原生稿件记 `SKIPPED / no_image_elements`，不伪造
+「已检查」。Release Manifest 的 asset_workflow 记 status 与 brief/plan/清单/QC 指纹；QC 含
+每图 SHA-256。验证失败时两层 release_eligible 均 false；编译 PASS 不可代替完整流程 PASS。
 
 - 以作者交付的那一版 spec 同时编译、预览与盖指纹；验证不改写 spec。
-- 图片采用核验 bytes 快照；预览必须有完整页 ID 及每个文件的 SHA-256。
-- 有计划的稿件必须覆盖计划的全部页 ID/顺序，包括无图稿件。
-- 每轮 check 分配 run_id；旧资格先失效，异常也写本轮失败报告。草稿不拥有发布资格。
+- 图片采用核验 bytes 快照；预览必须有完整页 ID 及每文件 SHA-256。
+- 有计划的稿件必须覆盖计划全部页 ID/顺序，包括无图稿件。
+- 每轮 check 分配 run_id；旧资格先失效，异常也写本轮失败报告；草稿不拥有发布资格。
 - 文本容量检查覆盖 text 与 shape.text；禁止换行时同时检查宽度。静态估算不是 Office 字体像素证明。

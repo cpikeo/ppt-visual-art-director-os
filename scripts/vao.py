@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import sys
 import time
 import types
@@ -208,6 +209,15 @@ def _plan(brief_path: str, out: str | None = None, skeleton: str | None = None) 
     if skeleton:
         target = Path(skeleton).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
+        # 覆写保护：已填稿的骨架（elements 非空）被重跑 R1 冲掉 = 整份编排归零。
+        # 实测作者只能靠「不传 --skeleton」规避；引擎应承担这个保护。
+        if target.is_file():
+            old = target.read_text(encoding="utf-8", errors="replace")
+            if re.search(r'"elements"\s*:\s*\[\s*\{', old):
+                safe = target.with_name(target.name + ".new.py")
+                safe.write_text(build_skeleton_module(bundle), encoding="utf-8")
+                print(f"skeleton: 检测到已填稿的 {target.name}，新骨架改写 {safe.name}（不覆盖作业稿）")
+                return bundle
         target.write_text(build_skeleton_module(bundle), encoding="utf-8")
     return bundle
 
@@ -668,12 +678,8 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
 
         blob = None if carried_ok else _bytes()
         image_sha = carried_sha if carried_ok else (digest_bytes(blob) if blob is not None else None)
-        if entry["decision"] == "generate" and image_sha and image_sha == entry.get("preexisting_sha256"):
-            workflow_issues.append(
-                f"{entry['asset_id']}: 清单前已有同一图片；须显式标记既有素材——在对应 slide 写 "
-                f"asset_source: {{kind: original|reuse, path: <该图路径>, source: <出处说明>}} 后重跑 "
-                f"assets；若它正是本稿 plan 规划的那张（文件名 = 规划的 asset_id），清单会保留规划身份"
-                f"（见 references/asset-workflow.md「用户提供、图库、自制与复用」）")
+        # 注：prepare 阶段已把「prepare 时字节已存在」的 generate 条目如实登记为
+        # existing（origin.source 留痕），此处不再有「清单前已有同一图片」的阻断分支。
         if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
             workflow_issues.append(f"{entry['asset_id']}: 缺少 prompt / negative")
         if entry["decision"] == "existing":
@@ -1393,7 +1399,8 @@ SPEED_PROFILES = {
 }
 DEFAULT_SPEED = "fast"
 DEFAULT_DEADLINE = 120.0          # 本次调用可用的墙钟预算（秒）；0 / None 表示不设上限
-DEFAULT_GHOST_PAGES = 4           # 快速档方向采样页数上限
+DEFAULT_GHOST_PAGES = 24          # 快速档方向采样页数上限（≤24 页自动全量；PIL 全量渲染 ~2s，
+                                  # 实测 15 页 deck 采样 4 页迫使作者另跑一次 strict = 纯调用浪费）
 
 
 def _add_speed_flags(parser: argparse.ArgumentParser) -> None:

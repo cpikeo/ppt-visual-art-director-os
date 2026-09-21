@@ -156,7 +156,7 @@ def build_skeleton_module(bundle: dict) -> str:
     _plan_cons = _plan_theme.get("constraints") if isinstance(_plan_theme.get("constraints"), dict) else {}
     seed_cons = {k: _plan_cons[k] for k in _CONSTRAINT_KEYS if k in _plan_cons}
 
-    from asset_workflow import digest
+    from asset_workflow import digest, stable_plan_sha
     # ── 骨架自足化：把 plan.json 里 AI 真正要用的 ~2KB 信号序列化进头注释 ──
     # （方向族事实 / 统一契约 / 待判断槽位 / DNA 命中）。plan.json 仍是链路凭证，
     # 但正常填稿流程不再需要读它——41KB≈1.2 万 token 只为取几行事实，不值。
@@ -219,7 +219,7 @@ def build_skeleton_module(bundle: dict) -> str:
          f'        "constraints": {seed_cons!r},   # 方向种子（数字约束）：写进 spec 才会被执法',
          '    },',
          '    "direction": {"color_intent": []},  # TODO：[brand, emotion, hierarchy]',
-         f'    "asset_workflow": {{"plan_sha256": {digest(bundle)!r}, "plan_path": {(bundle.get("workflow") or {}).get("plan_path")!r}}},',
+         f'    "asset_workflow": {{"plan_sha256": {stable_plan_sha(bundle)!r}, "plan_path": {(bundle.get("workflow") or {}).get("plan_path")!r}}},',
          '    "slides": [']
     for i in range(len(raw_slides)):
         pg, intel = pairs[i] if i < len(pairs) else ({}, {})

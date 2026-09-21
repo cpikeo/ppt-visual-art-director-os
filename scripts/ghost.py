@@ -150,22 +150,50 @@ def _resolve_color(ctx: RenderContext, token) -> tuple[int, int, int] | None:
 
 def _draw_gradient(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
                    value: Any, scale: float) -> None:
+    """与产物 gradFill 同语义：stop 的 color + alpha 沿 angle 插值（0=左→右，90=上→下）。
+    旧实现丢 alpha 且只走纵向——整幅画心的渐变 veil 在预览里变成不透明色块，
+    作者被迫去翻产物 XML 才能看到真实页面。"""
     x, y, w, h = box
     stops = value.get("stops") if isinstance(value, dict) else None
-    colors = []
+    parsed = []
     for stop in stops or []:
-        token = stop.get("color") if isinstance(stop, dict) else (stop[1] if len(stop) > 1 else None)
+        if isinstance(stop, dict):
+            pos = stop.get("position", stop.get("pos"))
+            token, alpha = stop.get("color"), stop.get("opacity", stop.get("alpha"))
+        elif isinstance(stop, (list, tuple)) and len(stop) >= 2:
+            pos, token = stop[0], stop[1]
+            alpha = stop[2] if len(stop) > 2 else None
+        else:
+            continue
         color = _resolve_color(ctx, token)
-        if color:
-            colors.append(color)
-    if len(colors) < 2:
+        if color is None or pos is None:
+            continue
+        parsed.append((float(pos), color, 1.0 if alpha is None else float(alpha)))
+    if len(parsed) < 2:
         return
+    parsed.sort(key=lambda t: t[0])
+
+    def _at(t: float):
+        if t <= parsed[0][0]:
+            p0 = p1 = parsed[0]
+        elif t >= parsed[-1][0]:
+            p0 = p1 = parsed[-1]
+        else:
+            p0, p1 = next((a, b) for a, b in zip(parsed, parsed[1:]) if a[0] <= t <= b[0])
+        k = 0.0 if p0 is p1 else (t - p0[0]) / ((p1[0] - p0[0]) or 1.0)
+        c = tuple(int(p0[1][i] + (p1[1][i] - p0[1][i]) * k) for i in range(3))
+        return (*c, int(round((p0[2] + (p1[2] - p0[2]) * k) * 255)))
+
+    horizontal = abs(float((value or {}).get("angle", 90)) % 180) < 45
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay, "RGBA")
-    for iy in range(max(1, h)):
-        t = iy / max(1, h - 1)
-        c = tuple(int(colors[0][i] + (colors[-1][i] - colors[0][i]) * t) for i in range(3))
-        d.line((x, y + iy, x + w, y + iy), fill=(*c, 255), width=1)
+    n = max(1, int(w if horizontal else h))
+    for i in range(n):
+        fillc = _at(i / max(1, n - 1))
+        if horizontal:
+            d.line((x + i, y, x + i, y + h - 1), fill=fillc, width=1)
+        else:
+            d.line((x, y + i, x + w - 1, y + i), fill=fillc, width=1)
     img.alpha_composite(overlay)
 
 
@@ -478,6 +506,8 @@ PREVIEW_MIRRORED = frozenset({
     "donut", "pie", "donut_composition",
     # 结构类：按编译器的同一组比例画（数字行 / 步 / 轴）
     "big_number_row", "steps", "timeline", "waterfall",
+    # 象限类：轴 + 点位 + 直接标注（v6.5 起真渲染，作者不必翻产物 XML）
+    "matrix",
     "progress_bar", "ranked_bar", "stacked_bar",
     # 数字展示：元素级 value/label 两行
     "kpi", "executive_kpi", "big_number",
@@ -487,7 +517,7 @@ PREVIEW_MIRRORED = frozenset({
 # 留在这边的都是**结构图**：它们的价值在空间关系（层级、象限、路线），粗近似
 # 只会让作者按一个不存在的间距做判断——所以如实写「不渲染」，而不是画一个大概。
 PREVIEW_ABSTRACT = frozenset({
-    "process_flow", "architecture", "matrix", "bubble",
+    "process_flow", "architecture", "bubble",
 })
 
 
@@ -552,9 +582,35 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         small = _font(px_to_pt(float(e.get("label_size", 16)) * scale), cjk=_has_cjk(label))
         cy = (top + bottom) // 2
         if value:
-            d.text((left, cy), value, font=big, fill=accent, anchor="lm")
+            # 与编译产物同一条解析链（chart_primary_color），预览不另立主色。
+            prim = ctx.chart_primary_color(e)
+            d.text((left, cy), value, font=big,
+                   fill=_rgba_color(prim, 0.95) if prim is not None else accent, anchor="lm")
         if label:
             d.text((left, cy + int(46 * scale)), label, font=small, fill=ink, anchor="lm")
+        img.alpha_composite(overlay)
+        return
+
+    if kind == "matrix":
+        # 同形镜像 compiler matrix：轴 + 点位 + 直接标注；点色同走 primary/secondary，
+        # 象限论证在预览里可见，作者不必再去翻产物 XML。
+        pts = e.get("points") or []
+        pad_x, pad_y = w * 0.12, h * 0.12
+        ox, oy = x + pad_x, y + h - pad_y
+        pw, ph = w - pad_x * 1.25, h - pad_y * 1.35
+        d.line((ox, oy, ox + pw, oy), fill=muted, width=max(1, int(scale)))
+        d.line((ox, oy, ox, oy - ph), fill=muted, width=max(1, int(scale)))
+        prim = ctx.chart_primary_color(e) or ctx.color("primary")
+        sec = ctx.color(ctx.theme.get("chart_secondary", "secondary")) or prim
+        lf = _font(px_to_pt(11 * scale), cjk=True)
+        for p0 in pts[:12]:
+            nx = ox + float(p0.get("x", 0.5)) * pw
+            ny = oy - float(p0.get("y", 0.5)) * ph
+            col = (_rgba_color(prim, 0.95) if p0.get("highlight")
+                   else _rgba_color(sec, 0.8))
+            r = max(3, int(7 * scale))
+            d.ellipse((nx - r, ny - r, nx + r, ny + r), fill=col)
+            d.text((nx + r + 2, ny), str(p0.get("label", "")), font=lf, fill=ink, anchor="lm")
         img.alpha_composite(overlay)
         return
 
