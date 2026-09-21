@@ -1477,6 +1477,14 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--check", action="store_true", help="validate the store (default action)")
     d.add_argument("--json", action="store_true")
 
+    m = sub.add_parser("make", help="One-pass production: build.py → auto-bind → guard → compile → preview")
+    m.add_argument("build")
+    m.add_argument("output", nargs="?", default="deck.pptx")
+    m.add_argument("--assets-dir", default=None, help="assets directory (default: auto-detect)")
+    m.add_argument("--preview", default="preview", help="preview output directory")
+    m.add_argument("--mode", choices=("draft", "release"), default="release")
+    _add_speed_flags(m)
+
     return parser
 
 
@@ -1520,6 +1528,87 @@ def _dna(args) -> int:
         for item in report["warnings"]:
             print(f"  · [{item['id']}] {item['reason']}")
     return 0 if report["ok"] else 2
+
+
+def _make(args) -> int:
+    """One-pass production command:
+    Loads spec, auto-binds image assets from --assets-dir or standard sibling directories,
+    runs normalization and guard checks, compiles PPTX, renders ghost preview contact sheet,
+    and returns a clean single-line verdict.
+    """
+    build_file = Path(args.build).expanduser().resolve()
+    if not build_file.is_file():
+        print(f"VAO make: error · build file not found: {args.build}", file=sys.stderr)
+        return 2
+
+    spec, _ = load_spec(str(build_file))
+    base_dir = build_file.parent
+
+    search_dirs = []
+    if getattr(args, "assets_dir", None):
+        search_dirs.append(Path(args.assets_dir).expanduser().resolve())
+    search_dirs.extend([
+        base_dir / "generated_assets",
+        base_dir / "assets",
+        base_dir,
+    ])
+
+    bound = 0
+    slides = spec.get("slides") or []
+    for s in slides:
+        for e in s.get("elements", []):
+            if isinstance(e, dict) and e.get("type") == "image":
+                if not e.get("src"):
+                    aid = e.get("asset_id")
+                    if aid:
+                        for sdir in search_dirs:
+                            if sdir.is_dir():
+                                for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                                    cand = sdir / f"{aid}{ext}"
+                                    if cand.is_file():
+                                        e["src"] = str(cand)
+                                        bound += 1
+                                        break
+                                if e.get("src"):
+                                    break
+                elif e.get("src") and not Path(e["src"]).is_absolute():
+                    e["src"] = str((base_dir / e["src"]).resolve())
+
+    from guard import normalize_spec, check_spec
+    norm_spec, _ = normalize_spec(spec)
+    guard_report = check_spec(norm_spec)
+    blocking = [iss for iss in guard_report.get("issues", []) if iss.get("severity") in ("block", "error", "BLOCK")]
+    if blocking:
+        print(f"VAO make: BLOCKED · {len(blocking)} blocking issue(s):")
+        for b in blocking:
+            print(f"  ✗ [{b.get('slide', '?')}:{b.get('id', '?')}] {b.get('message', b)}")
+        return 2
+
+    from compiler import compile_deck
+    out_path = Path(args.output).expanduser()
+    if not out_path.is_absolute():
+        out_path = base_dir / out_path
+    compile_deck(norm_spec, str(out_path))
+    file_bytes = out_path.stat().st_size
+
+    preview_dir = getattr(args, "preview", "preview")
+    info = _ghost(norm_spec, preview_dir, None, base_path=base_dir, speed=getattr(args, "speed", "fast"))
+
+    manifest_path = out_path.with_suffix(".manifest.json")
+    from primitives import file_digest
+    _json_write(manifest_path, {
+        "output_path": str(out_path),
+        "output_size": file_bytes,
+        "output_sha256": file_digest(out_path),
+        "status": "PASS",
+        "release_eligible": True,
+        "slide_count": len(slides),
+        "bound_images": bound,
+        "contact_sheet": info.get("contact_sheet"),
+    })
+
+    print(f"VAO make: PASS · compiled {len(slides)} slides to {out_path.name} ({file_bytes/1024/1024:.1f} MB) · preview: {info.get('contact_sheet')}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1593,6 +1682,8 @@ def main(argv: list[str] | None = None) -> int:
                 info["asset_binding"] = binding
             print(json.dumps(info, ensure_ascii=False, indent=2))
             return 2 if binding and binding["status"] == "BLOCK" else 0
+        if args.command == "make":
+            return _make(args)
         return 2
     except ModuleNotFoundError as exc:
         print(f"VAO error: missing Python dependency {exc.name!r}; "

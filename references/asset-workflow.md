@@ -25,14 +25,14 @@ PPT Production Contract（能不能交付）→ Release Manifest（发布证据�
 # 规划 + 资产契约一次调用
 python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.py \
     --assets-out asset_manifest.json --assets-dir generated_assets
-# 出图后：
-python scripts/vao.py check build_deck.py out.pptx --assets-manifest asset_manifest.json
-# 终稿（release 含 Manifest 证据链）：
+# 出图后极速交付（推荐单命令直出）：
+python scripts/vao.py make build_deck.py out.pptx --preview preview
+# 或标准发布（release 含 Manifest 证据链）：
 python scripts/vao.py check build_deck.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```
 
 ```
-vao.py：run（标准入口）· plan / assets（单段重跑，口径同 run）· check（编译/验证/发布）
+vao.py：make（单命令直出）· run（标准入口）· plan / assets（单段重跑）· check（编译/验证/发布）
         · preview（ghost 联络表）· dna（设计记忆）
 ```
 

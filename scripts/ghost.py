@@ -731,7 +731,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 类目轴在左侧：不给它留位置，预览就只剩一串没有主人的数字，
         # 而产物里 OOXML 是会把标签画出来的——预览必须说同一件事。
         gap = max(3, int(8 * scale))
-        cfont = _font(10 * scale)
+        cfont = _font(10 * scale, cjk=any(_has_cjk(r.get("label", "")) for r in rows))
         cat_w = int(min(180 * scale, (right - left) * 0.34))
         bar_left = left + cat_w
         bh = max(2, int((bottom - top - gap * max(0, len(values) - 1)) / max(1, len(values))))
@@ -759,7 +759,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         hl = highlight_index(e, rows, -1)
         show_values = bool(e.get("show_values", True))
         vfont = _font(11 * scale)
-        cfont = _font(10 * scale)
+        cfont = _font(10 * scale, cjk=any(_has_cjk(r.get("label", "")) for r in rows))
         for i, val in enumerate(values):
             bx = left + i * (bw + gap)
             by = bottom - int((val - lo) / span * (bottom - top))

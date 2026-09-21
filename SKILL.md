@@ -17,12 +17,20 @@ description: >
 最高目标：世界级审美 × 世界级排版 × 清晰信息层级 × 完整视觉世界。
 不是每页相同，也不是每页故意不同——**每页都是针对这份内容的正确设计决定**。
 
-## 01 · Judgment Priority（永不倒置）
+## 01 · Judgment Priority 与 Pre-production 六定律（永不倒置）
 
 ```
 Judgment > Rules      Content > Template     Meaning > Decoration
 Quality > Complexity  Reduction > Addition   One Strong Decision > Many Weak Decisions
 ```
+
+在落笔写代码之前，视觉总监必须在前置思维中锁定 **Pre-production 六定律**，杜绝事后修补：
+1. **视觉主语唯一律 (Single Subject)**：每页只讲一件事。封面是气场，陈述页是标语字重，数据页是单一核心图表，工坊是空间摄影。禁止同页争抢焦点。
+2. **留白呼吸律 (Whitespace Discipline)**：留白不是空白，是思考空间。全案执行充裕的白空间比，外围边缘预留充足边距，顶部留给眉标导航，底部留给数据来源行。
+3. **原生表达优先律 (Native-First)**：能用原生矢量图表和排版说清的，绝不滥用图片。数据图表使用原生 column/horizontal_bar；架构流使用纯发丝线与排版矩阵。
+4. **资产克制律 (Asset Discipline)**：全案摄影图严控数量。明确区分 `illustration`（独立物体，如盖碗/茶仓，需留白）与 `background`（空间肌理，大面积负空间，漫射光）。
+5. **排版断句律 (Typography Rhythm)**：主标题取高字阶 (Bold)，副标题取中字阶，正文取舒适易读字阶 (行高宽松)；提前在数据中用 `\n` 语义断句，严禁行尾孤字（如单独一个汉字或标点折行）。
+6. **色彩人格律 (Color Personality)**：中性纸白/墨黑为主轴，强调色（Accent）极为稀缺，仅用于核心数字、高亮柱状图与签约背书，杜绝全屏开花。
 
 ```
 逐页显式声明 > deck 级显式声明 > 品牌约束 > 设计方向默认 > Skill 判断 > 保守兜底
@@ -95,13 +103,12 @@ Brand → Context → Emotion → Material → Light → Color → Image → Com
 `brief` 是唯一需求契约（`templates/brief.yml`）：人声明意图，Skill 做判断；
 标题不代替内容——证据型页缺 `content` 留痕 `unresolved_content`，不得脑补数据。
 
-标准生产入口是 `scripts/vao.py` 的 `run` / `check`（不绕过入口调底层脚本）：
+标准生产入口是 `scripts/vao.py` 的 `run` / `make` / `check`（不绕过入口调底层脚本）：
 
-```
-R1  run：规划 + 骨架 + 资产契约（一次调用）
-R2  外部图片工具按清单 prompt / negative / ratio / safe_area 批量出图（无图稿跳过）
-R3  填完骨架 → check 一轮收口（release 含资产核验与 Manifest 证据链）
-```
+- **极简路径（两步交付，零摩擦）**：
+  R1 规划：`run` 产出骨架与出图清单；出图后，R2 用 `make` 单命令一键自动绑定、Guard 检验、原生编译与 Ghost 全量预览。
+- **标准发布路径（Enterprise Release）**：
+  R1 规划与资产契约（`run`）→ R2 外部出图 → R3 填完骨架后全量发布校验（`check --mode release`，含资产核验与 Manifest 证据链）。
 
 命令原文与退出码 → `references/asset-workflow.md` §2/§5；字段与阈值 →
 `references/design-system.md`；运行时门槛 → `references/production-contract.md`。
