@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
-                        highlight_index)
+                        highlight_index, color_to_hex)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -91,6 +91,17 @@ def _rgba(ctx: RenderContext, token, opacity: float | None = None,
     rgb = _rgb(ctx, token, fallback)
     alpha = 255 if opacity is None else max(0, min(255, int(float(opacity) * 255)))
     return (*rgb, alpha)
+
+
+def _rgba_color(color, opacity: float) -> tuple[int, int, int, int]:
+    """RGBColor / #RRGGBB → RGBA 元组。
+
+    刻意**不走 token 解析**：派生色（系列色阶）不是主题令牌，把它当令牌喂给
+    ctx.paint 会解析失败并静默回退成灰——实测甜甜圈四段全灰，预览比产物更难读。
+    """
+    h = color_to_hex(color) or "888888"
+    return (*(int(h[i:i + 2], 16) for i in (0, 2, 4)),
+            max(0, min(255, int(float(opacity) * 255))))
 
 
 def _scale_box(e: dict, scale: float) -> tuple[int, int, int, int]:
@@ -417,6 +428,60 @@ def _value(row: dict, default=0.0) -> float:
     return default
 
 
+
+# ── 预览覆盖契约（v6.4.3）──────────────────────────────────────────────────
+# ghost 是**方向预览**，不是第二个渲染器：它只画「与产物 mark 结构同形」的图形。
+# 曾经这里有一条兜底分支，把任何合法但未实现的图表类型画成一排柱图。于是
+# big_number_row / steps / timeline / waterfall 在预览里全是**假图**——作者看到的
+# 图形在编译产物里根本不存在（实战案源：2026 年终总结 s03 / s06 / s10，作者按
+# 假预览改了三页构图）。预览的宽容度必须 ≤ 交付链的宽容度，预览的自信度也必须
+# ≤ 它真正实现的程度：宁可说「这里我不渲染」，也不拿一张假图顶替。
+#
+# 两种归宿，必须覆盖 CHART_KINDS 全集（结构断言在 selftest，运行期兜底走 ABSTRACT）：
+PREVIEW_MIRRORED = frozenset({
+    # 原生图表：预览与产物同族几何（同向、零基、同类标签）
+    "bar", "horizontal_bar", "comparison_bar", "column",
+    "line", "area", "trend", "single_trend_line", "sparkline",
+    "donut", "pie", "donut_composition",
+    # 结构类：按编译器的同一组比例画（数字行 / 步 / 轴）
+    "big_number_row", "steps", "timeline", "waterfall",
+    "progress_bar", "ranked_bar", "stacked_bar",
+    # 数字展示：元素级 value/label 两行
+    "kpi", "executive_kpi", "big_number",
+})
+# 不渲染形状的类型：画布上只留一句实话（类型名 + 以产物为准）。
+# 提升进 MIRRORED 需要一次单独决定（那意味着多维护一份同形几何）。
+# 留在这边的都是**结构图**：它们的价值在空间关系（层级、象限、路线），粗近似
+# 只会让作者按一个不存在的间距做判断——所以如实写「不渲染」，而不是画一个大概。
+PREVIEW_ABSTRACT = frozenset({
+    "process_flow", "architecture", "matrix", "bubble",
+})
+
+
+
+def _draw_wrapped(d: ImageDraw.ImageDraw, text: str, xy: tuple[int, int], width: int,
+                  font, fill, scale: float, line_gap: float = 1.3) -> None:
+    """按像素宽度折行的小段文本（steps 的 desc 用；与 compiler 文本框同口径）。"""
+    line_h = int(font.size * line_gap)
+    dy = 0
+    for line in _wrap_lines(text, font, width)[:4]:
+        d.text((xy[0], xy[1] + dy), line, font=font, fill=fill, anchor="la")
+        dy += line_h
+
+
+def _draw_unrendered(d: ImageDraw.ImageDraw, box: tuple[int, int, int, int], kind: str,
+                     scale: float) -> None:
+    """预览不渲染的图形类型：留一句实话，不画想象出来的形状。"""
+    left, top, right, bottom = box
+    cx, cy = (left + right) // 2, (top + bottom) // 2
+    name = _font(px_to_pt(12.5 * scale), cjk=False)
+    note = _font(px_to_pt(11 * scale), cjk=True)
+    d.text((cx, cy - int(10 * scale)), kind.upper(), font=name, fill=(150, 150, 150, 200),
+           anchor="mb")
+    d.text((cx, cy + int(10 * scale)), "预览不渲染此图形 · 以编译产物为准",
+           font=note, fill=(150, 150, 150, 200), anchor="mt")
+
+
 def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> None:
     x, y, w, h = _scale_box(e, scale)
     if w <= 0 or h <= 0:
@@ -433,8 +498,14 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     ink = _rgba(ctx, e.get("color") or "primary", 0.78)
     muted = _rgba(ctx, "muted", 0.28)
     accent = _rgba(ctx, "accent", 0.92)
-    d.rounded_rectangle((x, y, x + w, y + h), radius=max(2, int(8 * scale)), outline=muted,
-                        width=max(1, int(scale)))
+    # 外框**只属于占位分支**（见下方 ABSTRACT / 载荷缺失两处）：它是「这里我不画」
+    # 的边界，不是装饰。同形镜像的图形一律不画框——产物里的图表本来就没有外框
+    # （chartSpace / plotArea 描边实测为无），预览替它加一个圆角框，等于让作者
+    # 按一个不存在的边框改构图。
+    def placeholder_frame() -> None:
+        d.rounded_rectangle((x, y, x + w, y + h), radius=max(2, int(8 * scale)),
+                            outline=muted, width=max(1, int(scale)))
+
     pad = max(8, int(18 * scale))
     left, top, right, bottom = x + pad, y + pad, x + w - pad, y + h - pad
 
@@ -457,7 +528,16 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     # 未知/缺失 kind 与空载荷同样处理成「画不出来」的占位叉：交付链里它们
     # 都会被 guard 拦下（CHART_TYPE_FAIL / 空载荷），预览就不该替它们画出
     # 一张像样的图。合法 kind 的真源在 primitives.CHART_KINDS，与 guard 共用。
+    # 合法但不渲染形状的类型放在最前：matrix / architecture 走的是 points / layers
+    # 不是 data 行，用「空载荷叉」表示它们，与「载荷真的缺失」是两件事——预览不能
+    # 把「我不画」说成「你画不出来」（前者是预览的边界，后者是稿件的缺陷）。
+    if kind in PREVIEW_ABSTRACT:
+        placeholder_frame()
+        _draw_unrendered(d, (left, top, right, bottom), kind, scale)
+        img.alpha_composite(overlay)
+        return
     if not rows or kind not in CHART_KINDS:
+        placeholder_frame()
         d.line((left, bottom, right, top), fill=muted, width=max(1, int(scale)))
         d.line((left, top, right, bottom), fill=muted, width=max(1, int(scale)))
         img.alpha_composite(overlay)
@@ -465,7 +545,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     values = [_value(r) for r in rows]
     lo, hi = min(0.0, min(values)), max(1.0, max(values))
     span = max(1e-9, hi - lo)
-    if kind in {"line", "area", "trend"}:
+    if kind in {"line", "area", "trend", "single_trend_line", "sparkline"}:
         pts = []
         for i, val in enumerate(values):
             px = left + (right - left) * (i / max(1, len(values) - 1))
@@ -475,22 +555,24 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.line(pts, fill=accent, width=max(2, int(3 * scale)), joint="curve")
         for px, py in pts:
             d.ellipse((px - 3 * scale, py - 3 * scale, px + 3 * scale, py + 3 * scale), fill=accent)
-    elif kind in {"donut", "pie", "ring"}:
+    elif kind in {"donut", "pie", "donut_composition"}:
         vals = [max(0, v) for v in values]
         total = sum(vals) or 1
         start = -90
-        colors = [accent, ink, _rgba(ctx, "secondary", 0.7), _rgba(ctx, "muted", 0.5)]
-        hl = highlight_index(e, rows, 0)
+        # 扇区色与产物同源（ctx.series_palette = 编译器构成图用的那一份派生）：
+        # 预览曾用 ink/secondary/muted，与产物里的同色相明度阶梯毫无关系——作者会
+        # 把「金色系深浅」误读成「中性灰」。
+        hl = int(highlight_index(e, rows, 0))
+        palette = [_rgba_color(c, 0.92) for c in ctx.series_palette(len(vals), hl)]
         for i, val in enumerate(vals):
             end = start + 360 * val / total
-            d.pieslice((left, top, right, bottom), start=start, end=end,
-                       fill=accent if i == hl else colors[(i + 1) % len(colors)])
+            d.pieslice((left, top, right, bottom), start=start, end=end, fill=palette[i])
             start = end
         hole = max(1, int(min(right - left, bottom - top) * 0.52))
         cx, cy = (left + right) // 2, (top + bottom) // 2
         bg = _rgb(ctx, "background", (255, 255, 255))
         d.ellipse((cx - hole // 2, cy - hole // 2, cx + hole // 2, cy + hole // 2), fill=(*bg, 255))
-    elif kind in ("bar", "horizontal_bar", "comparison_bar"):
+    elif kind in {"bar", "horizontal_bar", "comparison_bar"}:
         # OOXML 里 barChart 的 barDir="bar" 是横向条：预览必须与产物同向，
         # 否则「方向证据」给的是错的（曾经把横向条画成竖柱）。
         # 类目轴在左侧：不给它留位置，预览就只剩一串没有主人的数字，
@@ -516,7 +598,9 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 d.text((bar_left + bw2 + 4 * scale, by + bh / 2), vtext,
                        font=vfont, fill=ink, anchor="lm")
         d.line((bar_left, top, bar_left, bottom), fill=muted, width=max(1, int(scale)))
-    else:
+    elif kind == "column":
+        # 原生竖柱：与产物同向、同零基、同类目标签（此前它是靠兜底分支"蒙对"的，
+        # 现在显式声明——蒙对与实现是两件事，前者随时会因为别人的改动失真）。
         gap = max(3, int(8 * scale))
         bw = max(2, int((right - left - gap * max(0, len(values) - 1)) / max(1, len(values))))
         hl = highlight_index(e, rows, -1)
@@ -526,10 +610,8 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         for i, val in enumerate(values):
             bx = left + i * (bw + gap)
             by = bottom - int((val - lo) / span * (bottom - top))
-            # 强调谁由 spec 决定；没声明就不强调（预览不替作者挑「最大的那条」）
             d.rounded_rectangle((bx, by, bx + bw, bottom), radius=max(1, int(4 * scale)),
                                 fill=accent if i == hl else ink)
-            # 直接标注与类目轴：产物里有，预览里就必须有。
             cx = (bx + bx + bw) / 2
             if show_values:
                 vtext = str(int(val)) if float(val).is_integer() else str(val)
@@ -538,6 +620,162 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.text((cx, bottom + 3 * scale), str(rows[i].get("label", "")),
                    font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="mt")
         d.line((left, bottom, right, bottom), fill=muted, width=max(1, int(scale)))
+    elif kind == "big_number_row":
+        # 与 compiler 同形：值一行 + 标签一行 + 列间发丝竖线（不是柱子！）
+        n = min(len(rows), 5)
+        col_w = w / max(n, 1)
+        vfont = _font(px_to_pt(float(e.get("value_size", 52)) * scale), bold=True)
+        lfont = _font(px_to_pt(float(e.get("label_size", 14)) * scale), cjk=True)
+        for i, row in enumerate(rows[:n]):
+            cx = x + i * col_w
+            if i > 0:
+                rx = int(cx - 11 * scale)
+                d.rectangle((rx, int(y + h * 0.18), rx + max(1, int(1.5 * scale)),
+                             int(y + h * 0.18 + h * 0.52)), fill=muted)
+            shown = row.get("display")
+            val = str(shown) if shown is not None else str(row.get("value", ""))
+            d.text((int(cx + 12 * scale), int(y + h * 0.14 + h * 0.20)), val,
+                   font=vfont, fill=ink, anchor="lm")
+            d.text((int(cx + 12 * scale), int(y + h * 0.56 + h * 0.10)),
+                   str(row.get("label", ""))[:18], font=lfont,
+                   fill=_rgba(ctx, "muted", 0.9), anchor="lm")
+    elif kind == "steps":
+        # 与 compiler 同形：序号 + 标题 + 说明 + 列间连接线
+        n = min(len(rows), 6)
+        col_w = w / max(n, 1)
+        nfont = _font(px_to_pt(float(e.get("num_size", 30)) * scale), bold=True)
+        tfont = _font(px_to_pt(float(e.get("title_size", 18)) * scale), cjk=True, bold=True)
+        dfont = _font(px_to_pt(float(e.get("desc_size", 14)) * scale), cjk=True)
+        for i, row in enumerate(rows[:n]):
+            cx = x + i * col_w
+            d.text((int(cx), int(y)), str(i + 1), font=nfont,
+                   fill=_rgba(ctx, "secondary", 0.9), anchor="la")
+            d.text((int(cx), int(y + 48 * scale)), str(row.get("label", ""))[:16],
+                   font=tfont, fill=ink, anchor="la")
+            desc = str(row.get("desc", "") or "").strip()
+            if desc:
+                _draw_wrapped(d, desc, (int(cx), int(y + 48 * scale + h * 0.36)),
+                              int(col_w * 0.9), dfont, _rgba(ctx, "muted", 0.9), scale)
+            if i < n - 1:
+                d.line((int(cx + col_w * 0.9), int(y + 22 * scale),
+                        int(cx + col_w), int(y + 22 * scale)),
+                       fill=muted, width=max(1, int(scale)))
+    elif kind == "timeline":
+        # 与 compiler 同形：一条轴 + 节点圆点 + 居中标签（末节点为强调色）
+        n = min(len(rows), 7)
+        axis_y = y + h * 0.52
+        d.line((left, int(axis_y), right, int(axis_y)), fill=muted, width=max(1, int(scale)))
+        lfont = _font(px_to_pt(float(e.get("label_size", 13)) * scale), cjk=True)
+        for i, row in enumerate(rows[:n]):
+            cx = x + w * (i + 0.5) / n
+            rad = max(3, int(7 * scale))
+            fill = accent if i == n - 1 else _rgba(ctx, "secondary", 0.85)
+            d.ellipse((int(cx - rad), int(axis_y - rad), int(cx + rad), int(axis_y + rad)),
+                      fill=fill)
+            d.text((int(cx), int(axis_y + 16 * scale)), str(row.get("label", ""))[:14],
+                   font=lfont, fill=ink, anchor="ma")
+    elif kind == "waterfall":
+        # 与 compiler 同形：浮动柱（starts→ends）+ 零轴 + 小计整段 + 段间桥接虚线。
+        cum = 0.0
+        starts, ends, is_total = [], [], []
+        for row in rows:
+            total = bool(row.get("subtotal") or row.get("is_total") or row.get("total"))
+            if total:
+                starts.append(0.0); ends.append(cum); is_total.append(True)
+            else:
+                starts.append(cum); cum += _value(row); ends.append(cum)
+                is_total.append(False)
+        lo = min(0.0, *starts, *ends)
+        hi = max(0.0, *starts, *ends)
+        span = max(hi - lo, 1.0)
+        plot_h = h * 0.62
+        def _py(v):
+            return y + h * 0.82 - (v - lo) / span * plot_h
+        d.line((left, int(_py(0.0)), right, int(_py(0.0))), fill=muted,
+               width=max(1, int(scale)))
+        n = max(len(rows), 1)
+        bw = w / n * 0.46
+        lfont = _font(px_to_pt(11 * scale), cjk=True)
+        for i, row in enumerate(rows):
+            bx = x + w * (i + 0.5) / n - bw / 2
+            top = max(starts[i], ends[i]); bot = min(starts[i], ends[i])
+            ry = _py(top); rh = max(5 * scale, (top - bot) / span * plot_h)
+            d.rectangle((int(bx), int(ry), int(bx + bw), int(ry + rh)),
+                        fill=(accent if is_total[i] else
+                              (ink if (row.get("value") or 0) >= 0 else _rgba(ctx, "secondary", 0.8))))
+            d.text((int(bx + bw / 2), int(y + h * 0.82 + 10 * scale)),
+                   str(row.get("label", ""))[:12], font=lfont,
+                   fill=ink if is_total[i] else _rgba(ctx, "muted", 0.9), anchor="ma")
+            if i < len(rows) - 1 and not (is_total[i] or is_total[i + 1]):
+                x0 = x + w * (i + 0.5) / n + bw / 2
+                x1 = x + w * (i + 1.5) / n - bw / 2
+                yy = int(_py(ends[i]))
+                d.line((int(x0), yy, int(x1), yy), fill=muted, width=max(1, int(scale)))
+    elif kind in {"progress_bar", "ranked_bar"}:
+        # 与 compiler 同形：标签列 + 轨道 + 圆头填充 + 直接数值（ranked 按值降序）
+        data = rows[: (8 if kind == "ranked_bar" else 6)]
+        if kind == "ranked_bar":
+            data = sorted(data, key=lambda r: _value(r), reverse=True)
+        label_w = w * float(e.get("label_ratio", 0.24))
+        bar_x = x + label_w + float(e.get("label_gap", 24)) * scale
+        # 数值列按 canvas 单位留宽（与 compiler 的 value_width 同口径），
+        # 再乘 scale 落到像素域——用固定像素留宽会在小尺度预览里把数值挤出框外。
+        value_w = float(e.get("value_width", 78)) * scale
+        track_right = max(right - value_w, bar_x + 10)
+        row_h = h / max(len(data), 1)
+        bar_h = max(4, min(float(e.get("bar_height", 12)) * scale, row_h * 0.34))
+        top_value = max([_value(r) for r in data] or [1.0]) or 1.0
+        lfont = _font(px_to_pt(12 * scale), cjk=True)
+        vfont = _font(px_to_pt(11 * scale), cjk=False)
+        for i, row in enumerate(data):
+            cy = y + row_h * (i + 0.5)
+            span = max(track_right - bar_x, 10)
+            filled = span * max(0.0, _value(row)) / (top_value if kind == "ranked_bar" else 100.0)
+            if kind == "progress_bar":
+                d.rounded_rectangle((int(bar_x), int(cy - bar_h / 2), int(track_right), int(cy + bar_h / 2)),
+                                    radius=max(1, int(bar_h / 2)), fill=_rgba(ctx, "muted", 0.22))
+            d.text((int(x), int(cy)), str(row.get("label", ""))[:14],
+                   font=lfont, fill=ink, anchor="lm")
+            d.rounded_rectangle((int(bar_x), int(cy - bar_h / 2), int(bar_x + filled), int(cy + bar_h / 2)),
+                                radius=max(1, int(bar_h / 2)), fill=accent)
+            dot = bar_h + max(2, int(6 * scale))
+            d.ellipse((int(bar_x + filled - dot / 2), int(cy - dot / 2),
+                       int(bar_x + filled + dot / 2), int(cy + dot / 2)), fill=accent)
+            shown = row.get("display")
+            d.text((int(right), int(cy)),
+                   str(shown) if shown is not None else str(_value(row)), font=vfont,
+                   fill=ink, anchor="rm")
+    elif kind == "stacked_bar":
+        # 与 compiler 同形：一条整宽堆叠条 + 段内百分比 + 直接图例
+        vals = [max(_value(r), 0.0) for r in rows[:8]]
+        total = sum(vals) or 1.0
+        bar_h = max(10, min(float(e.get("bar_height", 46)), h * 0.34))
+        bar_y = y + (h - bar_h) / 2 - h * 0.10
+        cursor = float(x)
+        # 段色与产物同源：compiler 的堆叠条用 ctx.series_color(i)（单一信号色的明度
+        # 阶梯）。预览此前按 secondary/primary 压暗，于是「金色系深浅」在预览里读成
+        # 一排灰——与甜甜圈同一类不同源，按同一处方修。
+        palette = [_rgba_color(c, 0.95) for c in ctx.series_palette(len(vals), -1)]
+        for i, val in enumerate(vals):
+            seg = w * val / total
+            if seg <= 0:
+                continue
+            d.rectangle((int(cursor), int(bar_y), int(cursor + seg), int(bar_y + bar_h)),
+                        fill=palette[i])
+            if seg > 46 * scale:
+                d.text((int(cursor + seg / 2), int(bar_y + bar_h / 2)),
+                       f"{val / total:.0%}", font=_font(px_to_pt(11 * scale)),
+                       fill=_rgba_color(ctx.auto_text_for(ctx.series_palette(len(vals), -1)[i]), 0.95),
+                       anchor="mm")
+            cursor += seg
+        lfont = _font(px_to_pt(10 * scale), cjk=True)
+        for i, row in enumerate(rows[:8]):
+            lx = x + i * (w / max(len(vals), 1))
+            d.text((int(lx), int(bar_y + bar_h + 10 * scale)), str(row.get("label", ""))[:12],
+                   font=lfont, fill=_rgba(ctx, "muted", 0.9), anchor="la")
+    else:
+        # 契约之外的 kind：运行期兜底同样不发明图形（结构断言在 selftest）。
+        _draw_unrendered(d, (left, top, right, bottom), kind, scale)
     img.alpha_composite(overlay)
 
 

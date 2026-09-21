@@ -367,6 +367,22 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             base = Path((bundle.get("workflow") or {}).get("brief_path") or ".").resolve().parent
             origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
             aid = "existing-" + digest(origin)[:16]
+            # 「复用本稿已生成的图」：把清单身份带回既有素材条目（v6.4.3）。
+            # 作者声明 asset_source 时，图常常就是**本稿 plan 已规划**的那一张
+            # （迭代重出，或先生成后补清单）。身份不该因此退化成 existing-<hash>：
+            # 认得出规划身份就保留规划 asset_id 与 prompt/negative——「还是那一张」
+            # 得以成立，作者不必重抄一整套资产卡（否则下一次迭代会绕过链路）。
+            planned = None
+            try:
+                _card_pv, _page_pv = _asset_page(brief, page_plan, raw, asset_id=f"asset-{sid}",
+                                                 deck=plan)
+                _fp = asset_fingerprint(_card_pv, _page_pv)
+                planned = f"asset-{_fp.removeprefix('asset-')}"
+            except Exception:      # noqa: BLE001 —— 规划身份只是加分项，算不出来不影响登记
+                planned = None
+            stem = Path(origin["path"]).stem
+            if planned and (str(origin.get("asset_id") or "") == planned or stem == planned):
+                aid = planned
             previous = next((e for e in assets if e.get("asset_id") == aid), None)
             if previous:
                 previous["slide_ids"].append(sid)
@@ -380,6 +396,19 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
                                "safe_area": normalize_safe_area(raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
                                "meta": {"text_color": raw.get("text_color")}, "retry_budget": 0,
                                "background_color": ((plan.get("theme") or {}).get("colors") or {}).get("background", "#FFFFFF")})
+                if planned and aid == planned:
+                    try:
+                        _built = build_asset_prompt(_card_pv, _page_pv,
+                                                    ratio=str(raw.get("asset_ratio")
+                                                              or brief.get("asset_ratio") or "16:9"),
+                                                    asset_function=_page_pv["asset_function"])
+                        assets[-1].update({"prompt": _built.get("prompt"),
+                                           "negative": _built.get("negative"),
+                                           "expected_filename": assets[-1].get("expected_filename")
+                                           or f"{aid}{Path(origin['path']).suffix}",
+                                           "planned_identity": True})
+                    except Exception:      # noqa: BLE001
+                        pass
             continue
         if decision == "none":
             skipped_pages.append({"slide_id": sid, "decision": "skip",
@@ -573,6 +602,7 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
                               qc_profile, qc_retry_decision)
 
     from primitives import (digest_bytes, engine_fingerprint, json_read_cached,
+                           text_is_dark,
                             witness_matches)
     from asset_workflow import QC_REPORT_SCHEMA
     manifest_file = Path(manifest_path).expanduser().resolve()
@@ -639,7 +669,11 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
         blob = None if carried_ok else _bytes()
         image_sha = carried_sha if carried_ok else (digest_bytes(blob) if blob is not None else None)
         if entry["decision"] == "generate" and image_sha and image_sha == entry.get("preexisting_sha256"):
-            workflow_issues.append(f"{entry['asset_id']}: 清单前已有同一图片；须显式标记 existing/reuse")
+            workflow_issues.append(
+                f"{entry['asset_id']}: 清单前已有同一图片；须显式标记既有素材——在对应 slide 写 "
+                f"asset_source: {{kind: original|reuse, path: <该图路径>, source: <出处说明>}} 后重跑 "
+                f"assets；若它正是本稿 plan 规划的那张（文件名 = 规划的 asset_id），清单会保留规划身份"
+                f"（见 references/asset-workflow.md「用户提供、图库、自制与复用」）")
         if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
             workflow_issues.append(f"{entry['asset_id']}: 缺少 prompt / negative")
         if entry["decision"] == "existing":
@@ -688,8 +722,9 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
             reused_assets += 1
         else:
             qc = image_qc(str(candidate), safe_rect=safe,
-                          text_is_dark=(True if text_color == "dark" else
-                                        False if text_color == "light" else None),
+                          # 声明可以是 hex（产物里的真颜色）或 dark/light 语义词：
+                          # 判定的唯一实现在 primitives，这里不做第二套解析。
+                          text_is_dark=text_is_dark(text_color),
                           image_bytes=blob, expected_ratio=entry.get("ratio"),
                           allow_crop=entry.get("allow_crop") is True,
                           background=entry.get("background_color") or "#FFFFFF",

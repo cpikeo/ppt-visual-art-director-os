@@ -695,8 +695,9 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     """多序列原生图表（line/column/area）：categories + series[{name, values}]。
 
     与「类型枚举」互补而非取代：同一个 line geometry，通过 series/highlight/
-    end_labels 组合出多序列趋势、末端直接标注等编辑式表达。每序列用系列色，
-    highlight 指定的序列升级为 accent + 加粗 + 末端圆点。"""
+    end_labels 组合出多序列趋势与末端强调。每序列用系列色，highlight 指定的
+    序列升级为 accent + 加粗；end_labels 控制末端**圆点**（这条路径目前只画点，
+    不落文字——多序列无图例时的末端文字标注属未覆盖路径，见 production-contract）。"""
     cn, latin = ctx.families(element)
     primary, secondary, ink, muted = chart_colors(element, ctx)
     eid = str(element.get("id", "chart"))
@@ -757,11 +758,11 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     # 每序列可声明语义角色（series_roles: ["primary","negative",...]）——
     # 「这条序列是风险」是判断，不该写死成某个 hex。
     series_roles = element.get("series_roles") or []
+    palette = ctx.series_palette(len(chart.series), hl)
     for i, series in enumerate(chart.series):
         role_color = (ctx.chart_role(str(series_roles[i]))
                       if i < len(series_roles) else None)
-        color = role_color or (ctx.color("accent") if i == hl
-                               else ctx.series_color(i))
+        color = role_color or palette[i]
         if kind in ("line", "trend", "single_trend_line"):
             series.format.line.color.rgb = color
             series.format.line.width = Pt(3.0 if i == hl else 1.75)
@@ -914,13 +915,14 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
         if kind in ("donut", "donut_composition", "pie"):
             if kind != "pie":
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
-            hl = highlight_index(element, rows, 0)
+            hl = int(highlight_index(element, rows, 0))
+            palette = ctx.series_palette(len(series.points), hl)
             for i, point in enumerate(series.points):
                 point.format.fill.solid()
                 # 构成图各扇区用系列色区分（原先非高亮点统一 secondary，
                 # 多类构成会糊成同色块）；高亮点保持 accent 语义。
-                point.format.fill.fore_color.rgb = (
-                    ctx.color("accent") if i == int(hl) else ctx.series_color(i))
+                # 调色板从同一派生取：高亮档不会与任何扇区撞色。
+                point.format.fill.fore_color.rgb = palette[i]
             # 环心 KPI：把「总数/结论」放进甜甜圈的洞（叠加可编辑文本框，
             # 不破坏原生扇区的可编辑性）。这是高端 dashboard 的标志性动作：
             # 洞不再空着，而是承担「这一图到底说了什么」的单一读数。

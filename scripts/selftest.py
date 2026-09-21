@@ -686,6 +686,19 @@ def _ghost_ink(element: dict) -> int:
     return sum(1 for px in img.convert("RGB").getdata() if px != (255, 255, 255))
 
 
+
+def _ghost_ink_chart(element: dict) -> int:
+    """ghost 为这个**图表**元素落了多少着色像素（与 _ghost_ink 同口径，走图表分支）。"""
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
+                        "primary": "#1A3A5C", "secondary": "#40617F", "accent": "#C8501E"}}
+    img = Image.new("RGBA", (1280, 720), (255, 255, 255, 255))
+    _ghost._draw_chart(img, element, RenderContext(theme, {"width": 1280, "height": 720}), 1.0)
+    return sum(1 for px in img.convert("RGB").getdata() if px != (255, 255, 255))
+
+
 def check_silent_failure_seams() -> None:
     """静默失效缝：写了却不生效、预览比产物宽容、门槛从未执行。
 
@@ -744,6 +757,25 @@ def check_silent_failure_seams() -> None:
                      "不被兜底画成柱图（guard 会拦下它，证据不得替错误背书）",
                      rendered is False):
             break
+
+    # ③b 预览覆盖契约（v6.4.3）：每种合法图表类型要么「同形镜像」，要么明确
+    #     「预览不渲染」——没有第三种归宿。曾经未实现的类型落到一条通用柱图兜底，
+    #     于是 big_number_row / steps / timeline / waterfall 在预览里是**假图**
+    #     （案源：年终总结稿按假预览改了三页构图）。这条断言是防复发的钉子：
+    #     往 primitives.CHART_KINDS 里加一种图，就必须先回答它在预览里怎么活。
+    from primitives import CHART_KINDS as _KINDS
+    _mirror, _abstract = _ghost.PREVIEW_MIRRORED, _ghost.PREVIEW_ABSTRACT
+    check("ghost: 预览覆盖契约覆盖全部图表类型（新增类型必须表态，不许落进假图兜底）",
+          _mirror | _abstract == set(_KINDS) and not (_mirror & _abstract),
+          f"缺 {sorted(set(_KINDS) - _mirror - _abstract)} · 多 "
+          f"{sorted((_mirror | _abstract) - set(_KINDS))} · 重叠 {sorted(_mirror & _abstract)}")
+    # 行为上没有「像柱图」这种中间态：抽象类型的着色量必须远小于同数据的真柱图。
+    _cols = {"x": 0, "y": 0, "width": 700, "height": 360, "label_size": 12,
+             "data": [{"label": "A", "value": 3}, {"label": "B", "value": 9}]}
+    _wf, _col = dict(_cols, chart_kind="waterfall"), dict(_cols, chart_kind="column")
+    check("ghost: 不渲染的类型不冒充柱图（waterfall 的着色量不可能是真柱图量级）",
+          _ghost_ink_chart(_wf) * 3 < _ghost_ink_chart(_col),
+          f"{_ghost_ink_chart(_wf)} vs {_ghost_ink_chart(_col)}")
 
     # ④ 文本溢出是治理层事实：spec 档（不编译）也必须点名到元素
     overflow = {"id": "t", "type": "text", "x": 48, "y": 48, "width": 304, "height": 40,
@@ -1430,6 +1462,101 @@ def check_asset_workflow(work: pathlib.Path) -> None:
           verify_chain(bound, manifest_path, broken_qc)["status"] == "BLOCKED")
 
 
+
+def check_production_path(work: pathlib.Path) -> None:
+    """作者真正走的那条路：brief → plan → assets → 出图 → build → check(release)。
+
+    为什么单独有这一条（v6.4.3）：上面那些用例都在验证**各段的判据**，而实战翻车
+    发生在**段与段之间的契约**上——骨架把 plan 指纹发给作者，作者填完稿才发现资产清单
+    的指纹与它不一致，一次修复要重走 plan→assets→改稿三遍（年终总结稿实际卡了 3 次）。
+    契约测试走完整链路，把「段间契约」也钉住：
+      ① 骨架的 asset_workflow 指纹必须就是清单认的那一个（不是「差不多」）；
+      ② 作者重出图后按文档声明 asset_source，清单必须**保留规划身份**（同一 asset_id +
+         prompt），而不是退化成 existing-<hash> ——身份断了，稿件与清单就靠肉眼对齐；
+      ③ 这条链的终点是 release PASS + release_eligible，而不是「能编译」。
+    """
+    import contextlib
+    import io
+    from PIL import Image
+    import vao
+
+    def read_json(path):
+        return json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+
+    d = work / "production-path"
+    images = d / "generated_assets"
+    images.mkdir(parents=True)
+    brief = {"audience": "team", "decision": "approve the plan", "quality_level": "advanced",
+             "design_direction": "editorial brand", "brand_colors": {"background": "#12141A",
+             "ink": "#EDEAE4", "accent": "#C0A062", "muted": "#75716A", "secondary": "#A8A39B"},
+             "slides": [{"id": "s01", "family": "cover", "title": "Production path",
+                         "asset": "required", "asset_role": "background",
+                         "asset_subject": "a still night lake", "medium": "photography",
+                         "text_color": "#EDEAE4"}]}
+    (d / "brief.json").write_text(json.dumps(brief, ensure_ascii=False), encoding="utf-8")
+    plan, skeleton, manifest = d / "plan.json", d / "build.py", d / "asset_manifest.json"
+    run_vao("plan", str(d / "brief.json"), "--out", str(plan), "--skeleton", str(skeleton))
+    run_vao("assets", str(d / "brief.json"), "--plan", str(plan), "--out", str(manifest),
+            "--assets-dir", str(images))
+    first = read_json(manifest)["assets"][0]
+    # 出图（按清单的 expected_filename 落到约定路径）
+    generated = images / first["expected_filename"]
+    Image.new("RGB", (1376, 768), (14, 15, 17)).save(generated)
+    # ② 重出图后按文档声明既有素材：身份必须保留
+    brief["slides"][0]["asset_source"] = {"kind": "original", "path": str(generated),
+                                          "source": "本稿自制（按清单 prompt 生成）"}
+    (d / "brief.json").write_text(json.dumps(brief, ensure_ascii=False), encoding="utf-8")
+    run_vao("plan", str(d / "brief.json"), "--out", str(plan), "--skeleton", str(skeleton))
+    run_vao("assets", str(d / "brief.json"), "--plan", str(plan), "--out", str(manifest),
+            "--assets-dir", str(images))
+    # ① 骨架发给作者的指纹 = 清单认的指纹（作者照抄的就是它，两处必须同一个）
+    skel_plan = re.search(r"plan_sha256\D+([0-9a-f]{64})",
+                          skeleton.read_text(encoding="utf-8")).group(1)
+    check("production path: 骨架的 plan 指纹与资产清单一致（作者照抄即成立）",
+          skel_plan == (read_json(manifest).get("workflow") or {}).get("plan_sha256"),
+          f"骨架 {skel_plan[:12]} vs 清单 "
+          f"{str((read_json(manifest).get('workflow') or {}).get('plan_sha256'))[:12]}")
+    entry = read_json(manifest)["assets"][0]
+    check("production path: 声明的既有素材保留规划身份（同一 asset_id + prompt，不退化成 existing-<hash>）",
+          entry["decision"] == "existing" and entry["asset_id"] == first["asset_id"]
+          and bool(entry.get("prompt")),
+          f"{first['asset_id']} → {entry['asset_id']} · prompt={bool(entry.get('prompt'))}")
+
+    # ③ 终点：release PASS —— 按骨架写最小 build，链路必须一次走通
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#12141A", "ink": "#EDEAE4",
+                                 "primary": "#EDEAE4", "secondary": "#A8A39B",
+                                 "muted": "#75716A", "accent": "#C0A062"},
+                      "fonts": {"cn": "Songti SC", "latin": "Georgia"}},
+            "direction": {"color_intent": ["brand"]},
+            "asset_workflow": {"plan_sha256": skel_plan, "plan_path": str(plan)},
+            "slides": [{"id": "s01", "page_intent": {"insight": "one still night",
+                         "focus": "bg", "page_family": "COVER", "density": "sparse",
+                         "energy": "high"},
+                        "anchor": {"eyebrow": "COVER"},
+                        "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
+                        "elements": [
+                            {"type": "image", "id": "bg", "asset_id": entry["asset_id"],
+                             "x": 0, "y": 0, "width": 1280, "height": 720, "fit": "cover",
+                             "layer": "background", "role": "background",
+                             "asset_function": "emotion",
+                             "overlay": {"type": "solid", "color": "#12141A", "opacity": 0.4}},
+                            {"type": "text", "id": "t", "role": "eyebrow", "x": 96, "y": 48,
+                             "width": 400, "height": 24, "text": "COVER", "size": 12.5,
+                             "color": "muted", "line_height": 1.2}]}]}
+    build = d / "build.py"
+    build.write_text("SPEC = " + repr(spec), encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()):
+        result, code = vao.run_check(str(build), str(d / "out.pptx"), mode="release",
+                                     assets_manifest=str(manifest), speed="fast",
+                                     preview=str(d / "preview"))
+    released = read_json(d / "out.manifest.json") if (d / "out.manifest.json").exists() else {}
+    check("production path: brief → plan → assets → build → release 一次走通（PASS + release_eligible）",
+          code == 0 and result.get("status") == "PASS" and bool(released.get("release_eligible")),
+          f"code={code} status={result.get('status')} eligible={released.get('release_eligible')} "
+          f"codes={result.get('failure_codes')}")
+
+
 def check_audit_fixes(work: pathlib.Path) -> None:
     """Fourteen audit findings plus legitimate-use controls. No external services."""
     import contextlib
@@ -1694,6 +1821,181 @@ def check_audit_fixes(work: pathlib.Path) -> None:
         "x":760,"y":280,"width":384,"height":256,"fit":"cover","asset_function":"context"})
     save(sp,spec);result,code=invoke(sp,folder/"deck.pptx",mp)
     check("control: explicit existing external asset can QC, compile and release",authorized and code==0)
+
+
+def _ghost_border_ink_chart(element: dict, kind_theme: dict | None = None) -> int:
+    """图表元素**外框线**上有多少着色像素（灰底白纸，1.0 倍）。
+
+    锁行为不锁实现：不关心 ghost 走哪个分支，只关心「它有没有替产物画框」。
+    """
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#888888",
+                        "primary": "#1A3A5C", "secondary": "#40617F", "accent": "#C8501E"}}
+    img = Image.new("RGBA", (1280, 720), (255, 255, 255, 255))
+    _ghost._draw_chart(img, element, RenderContext(theme, {"width": 1280, "height": 720}), 1.0)
+    px = img.convert("RGB").load()
+    x, y = int(element["x"]), int(element["y"])
+    w, h = int(element["width"]), int(element["height"])
+    ink = 0
+    for i in range(x, x + w + 1):
+        ink += (px[i, y] != (255, 255, 255)) + (px[i, y + h] != (255, 255, 255))
+    for j in range(y, y + h + 1):
+        ink += (px[x, j] != (255, 255, 255)) + (px[x + w, j] != (255, 255, 255))
+    return ink
+
+
+def _ghost_palette_hit(element: dict, colors: dict, count: int, highlight: int,
+                       tol: int = 20) -> int:
+    """预览里出现了几档系列色（用来抓「派生色被当令牌解析 → 静默回退灰」）。
+
+    只认像素：把元素的绘图区抠出来，逐个色阶找容差内的像素。底图画成主题背景色
+    （预览真实的合成底色），容差留出扇区 0.92 不透明度带来的一点点偏移。
+    """
+    from PIL import Image
+    import ghost as _ghost
+    from primitives import RenderContext, color_to_hex
+    theme = {"colors": colors}
+    bg = tuple(int(colors["background"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    img = Image.new("RGBA", (1280, 720), (*bg, 255))
+    ctx = RenderContext(theme, {"width": 1280, "height": 720})
+    el = dict(element, x=60, y=120, width=700, height=340)
+    _ghost._draw_chart(img, el, ctx, 1.0)
+    px = set(img.convert("RGB").crop((60, 120, 760, 460)).getdata())
+    hit = 0
+    for c in ctx.series_palette(count, highlight):
+        h = color_to_hex(c)
+        want = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        if any(all(abs(p[k] - want[k]) <= tol for k in range(3)) for p in px):
+            hit += 1
+    return hit
+
+
+def _chart_xml(path: pathlib.Path) -> list[str]:
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        return [z.read(n).decode("utf-8", "ignore")
+                for n in sorted(z.namelist()) if re.match(r"ppt/charts/chart\d+\.xml$", n)]
+
+
+def check_editorial_chart_defaults(work: pathlib.Path) -> None:
+    """Editorial Data 的执行层默认值（v6.4.4）。
+
+    少颜色不是「色值表短」，而是**每个序列/扇区都拿得到自己的颜色**；少装饰不是
+    「少画点东西」，而是预览别替产物发明边框。四条断言全部落在产物与像素上：
+
+      ① 单信号色主题（只声明 accent，premium 缺省回退）下六档系列色互不相同，
+         相邻相对明度差 ≥0.05（深/浅两主题都成立）。
+      ② 高亮在手时，accent 只出现在高亮位，其余序列一律不撞色。
+      ③ 产物：4 段构成图 = 4 个不同扇区色；3 序列折线 = 3 个不同序列色。
+      ④ 预览：同形镜像的图形外框线上 0 着色像素（产物本身无框）；占位分支仍带框。
+    """
+    import contextlib
+    import io
+    import json as _json
+    import zipfile
+    from primitives import RenderContext, luminance as _lum, color_to_hex
+    import vao as _vao
+
+    themes = {
+        "dark": {"background": "#0E0F11", "ink": "#EAEAE7", "primary": "#EAEAE7",
+                 "secondary": "#A5A6A1", "muted": "#6E6F6B", "accent": "#C0A062"},
+        "light": {"background": "#F7F6F2", "ink": "#1B1A16", "primary": "#1B1A16",
+                  "secondary": "#6E6A5E", "muted": "#8A8578", "accent": "#8E2F28"},
+    }
+
+    # ── ① 单信号色主题：六档互不相同 + 相邻明度差够 ────────────────────────
+    worst, details = 1.0, []
+    for name, colors in themes.items():
+        ctx = RenderContext({"colors": colors})
+        hexes = [color_to_hex(c) for c in ctx.series_palette(6)]
+        lums = [_lum(h) for h in hexes]
+        gaps = [round(b - a, 3) for a, b in zip(lums, lums[1:])]
+        worst = min(worst, min(gaps))
+        details.append(f"{name} {len(set(hexes))}色 最小ΔL {min(gaps):.3f}")
+        check(f"editorial: {name} 主题六档系列色互不相同（同色 = 序列无从区分）",
+              len(set(hexes)) == 6 and hexes[0] == color_to_hex(ctx.color("accent")),
+              " ".join(hexes))
+    check("editorial: 六档系列色相邻相对明度差 ≥0.05（两主题都成立）",
+          worst >= 0.05, "；".join(details))
+
+    # ── ② 高亮不与任何序列撞色 ─────────────────────────────────────────────
+    collide = []
+    for name, colors in themes.items():
+        ctx = RenderContext({"colors": colors})
+        for hl in (0, 1, 2):
+            for n in (2, 3, 4):
+                pal = [color_to_hex(c) for c in ctx.series_palette(n, hl)]
+                if len(set(pal)) != n:
+                    collide.append(f"{name}/hl={hl}/n={n}")
+        if len(set(color_to_hex(c) for c in ctx.series_palette(6, -1))) != 6:
+            collide.append(f"{name}/无高亮")
+    check("editorial: 高亮在手时 accent 只出现在高亮位（不与非高亮序列撞色）",
+          not collide, " ".join(collide))
+
+    # ── ③ 产物：扇区/序列各自拿到自己的颜色 ────────────────────────────────
+    def compile_one(kind_extra: dict, out: pathlib.Path) -> str:
+        spec = {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": themes["dark"]}, "direction": {"color_intent": ["hierarchy"]},
+                "slides": [{"id": "s01",
+                            "page_intent": {"insight": "x", "focus": "c1",
+                                            "page_family": "DATA_STORY", "density": "balanced",
+                                            "energy": "low"},
+                            "elements": [dict({"type": "chart", "id": "c1", "x": 96, "y": 200,
+                                               "width": 1000, "height": 340, "unit": "%",
+                                               "period": "2026", "basis": "同口径",
+                                               "source": "示例", "metric": "m1"}, **kind_extra)]}]}
+        sp = out.with_suffix(".json")
+        sp.write_text(_json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            _vao.run_check(str(sp), str(out), mode="draft", speed="fast", deadline=120.0)
+        return (_chart_xml(out) or [""])[0]
+
+    d = work / "editorial"
+    d.mkdir()
+    donut_xml = compile_one({"chart_kind": "donut",
+                             "data": [{"label": f"类{i}", "value": 20 + i} for i in range(4)]},
+                            d / "donut.pptx")
+    slices = sorted(set(re.findall(r"<c:dPt>.*?<a:solidFill><a:srgbClr val=\"([0-9A-F]{6})\"",
+                                   donut_xml, re.S)))
+    check("editorial: 产物里 4 段构成图 = 4 个不同扇区色（此前第 1/2 段同色）",
+          len(slices) == 4, " ".join(slices))
+
+    line_xml = compile_one({"chart_kind": "line", "categories": ["Q1", "Q2", "Q3"],
+                            "series": [{"name": "甲", "values": [9, 12, 16]},
+                                       {"name": "乙", "values": [5, 6, 7]},
+                                       {"name": "丙", "values": [2, 3, 4]}]},
+                           d / "line.pptx")
+    strokes = sorted(set(re.findall(r"<c:ser>.*?<a:solidFill><a:srgbClr val=\"([0-9A-F]{6})\"",
+                                    line_xml, re.S)))
+    check("editorial: 产物里 3 序列折线 = 3 个不同序列色（此前第 1/2 条同色）",
+          len(strokes) == 3, " ".join(strokes))
+
+    # ── ④ 预览不发明装饰：镜像图形无框，占位分支仍带框 ──────────────────────
+    box = {"x": 96, "y": 200, "width": 1000, "height": 340}
+    mirrored = dict(box, type="chart", id="c1", chart_kind="bar",
+                    data=[{"label": "甲", "value": 12}, {"label": "乙", "value": 30}])
+    abstract = dict(box, type="chart", id="c2", chart_kind="process_flow",
+                    data=[{"label": "甲", "value": 1}, {"label": "乙", "value": 2}])
+    empty = dict(box, type="chart", id="c3", chart_kind="bar", data=[])
+    check("editorial: 预览不替产物发明外框（镜像图形外框线 0 着色像素）",
+          _ghost_border_ink_chart(mirrored) == 0, str(_ghost_border_ink_chart(mirrored)))
+    donut_el = {"type": "chart", "id": "c4", "chart_kind": "donut",
+                "data": [{"label": f"类{i}", "value": 20 + i} for i in range(4)]}
+    painted = _ghost_palette_hit(donut_el, themes["dark"], 4, 0)
+    check("editorial: 预览扇区色与产物色阶同源（不是灰块——派生色被当令牌会静默回退）",
+          painted >= 3, f"命中 {painted}/4 档")
+    stacked_el = {"type": "chart", "id": "c5", "chart_kind": "stacked_bar",
+                  "data": [{"label": "甲", "value": 45}, {"label": "乙", "value": 35},
+                           {"label": "丙", "value": 20}]}
+    stacked_hit = _ghost_palette_hit(stacked_el, themes["dark"], 3, -1)
+    check("editorial: 预览堆叠条段色与产物色阶同源（此前是 secondary/primary 一排灰）",
+          stacked_hit >= 2, f"命中 {stacked_hit}/3 档")
+
+    check("editorial: 占位分支仍带边界（ABSTRACT / 载荷缺失的框是「我不画」的意思）",
+          _ghost_border_ink_chart(abstract) > 0 and _ghost_border_ink_chart(empty) > 0,
+          f"abstract={_ghost_border_ink_chart(abstract)} empty={_ghost_border_ink_chart(empty)}")
 
 
 def check_prompt_discipline() -> None:
@@ -2549,7 +2851,9 @@ def main() -> int:
         check_deck_anchor(work)
         check_silent_failure_seams()
         check_asset_workflow(work)
+        check_production_path(work)
         check_audit_fixes(work)
+        check_editorial_chart_defaults(work)
         check_prompt_discipline()
         check_asset_role_separation()
         check_anti_regression()

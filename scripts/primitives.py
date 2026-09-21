@@ -357,6 +357,31 @@ CHART_LABEL_MIN_H = 190      # 图表标签空间的物理下限（guard 判「�
 CHART_LABEL_MIN_COUNT = 6    # 触发上一条所需的标签数（少于这个数标签本来就放得下）
 
 
+def text_is_dark(value) -> bool | None:
+    """声明的文字色 → 「深字 / 浅字」二值；没声明或读不懂时返回 None。
+
+    为什么必须收在一处（v6.4.3）：QC 的对比度判据要的是「这行字是深的还是浅的」，
+    而作者可能写 `text_color: "#E9E4D9"`（产物里真正的颜色）或 `dark` / `light`
+    （语义词）。此前只认后两种——写 hex 时声明被静默忽略，判据退回「中间带」规则，
+    安全区亮度落在 0.70–0.55 之间就会放过一行**读不出来的浅字**。
+    与 `is_light` 同源：同一个亮度阈值，不再各写一份。
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    low = raw.lower()
+    if low == "dark":
+        return True
+    if low == "light":
+        return False
+    if low.startswith("#") and len(low) in (4, 7):
+        try:
+            return not is_light(low)
+        except Exception:      # noqa: BLE001 —— 脏色值不炸全链，当没声明处理
+            return None
+    return None
+
+
 def is_light(hex_color: str) -> bool:
     """背景是否偏浅：唯一判据，浅底/深底的分支都走这里。"""
     return luminance(hex_color) > LIGHT_BG_LUMINANCE
@@ -671,14 +696,25 @@ def derive_tokens(base: dict) -> dict:
     light_bg = luminance(bg) > 0.5
     deep_target = ink if light_bg else "#000000"
     tint_target = bg if light_bg else ink
-    series = [
-        accent,                              # 1 主信号
-        premium,                             # 2 次信号（异色相）
-        blend(accent, deep_target, 0.42),    # 3 主信号加深
-        blend(premium, deep_target, 0.42),   # 4 次信号加深
-        blend(accent, tint_target, 0.45),    # 5 主信号提亮
-        blend(premium, tint_target, 0.45),   # 6 次信号提亮
-    ]
+    if premium == accent:
+        # 主题只声明一个信号色（premium 缺省时回退到 accent）——此时原来那六档
+        # 只剩三个不同值，每对相邻序列**完全同色**（实测 dark：series1=series2=
+        # #C0A062、series3=series4=#5A4A2B、series5=series6=#D3C19F）。后果是
+        # 4 段甜甜圈里两段一模一样、双序列折线画成一条线：读者看不出「这是两组
+        # 数据」。单信号色主题下序列只能靠明度分层，改为该色相的一条明度阶梯：
+        # accent 起、向背景反方向逐档提亮，相邻相对明度差实测 ≥0.06（dark 0.062 /
+        # light 0.068），六档互不相同且都落在背景可见范围内。
+        series = [accent] + [blend(accent, tint_target, t)
+                             for t in (0.18, 0.34, 0.50, 0.66, 0.82)]
+    else:
+        series = [
+            accent,                              # 1 主信号
+            premium,                             # 2 次信号（异色相）
+            blend(accent, deep_target, 0.42),    # 3 主信号加深
+            blend(premium, deep_target, 0.42),   # 4 次信号加深
+            blend(accent, tint_target, 0.45),    # 5 主信号提亮
+            blend(premium, tint_target, 0.45),   # 6 次信号提亮
+        ]
     for i, v in enumerate(series, 1):
         put(f"series{i}", v)
 
@@ -1014,6 +1050,19 @@ class RenderContext:
     def series_color(self, index: int):
         """按顺序取系列色（循环使用）。"""
         return self.color(f"series{(index % 6) + 1}")
+
+    def series_palette(self, count: int, highlight: int = -1) -> list:
+        """一次算完一组序列色：高亮位用 accent，其余按明度阶梯顺次取。
+
+        accent 同时是「第 1 档系列色」和「高亮色」。高亮存在时若不跳过第 1 档，
+        第一个序列会与高亮序列拿到同一个 accent（实测：4 段甜甜圈里 highlight
+        默认第 0 段、第 1 段取 series1=accent → 两段同色；「高亮第 2 序列」时
+        第 1 序列同样撞色）。accent 的强调语义也一并被稀释。
+        非高亮序列从第 2 档起，任何组合下都不与高亮撞色。
+        """
+        step = 1 if highlight >= 0 else 0
+        return [self.color("accent") if i == highlight else self.series_color(i + step)
+                for i in range(max(0, int(count)))]
 
     # -- 图表角色色（Chart Color Role System）─────────────────────────
     # 图表不写死色值，声明语义角色：primary=主叙事 / secondary=对比 /

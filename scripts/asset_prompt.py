@@ -921,6 +921,7 @@ QC_BRIGHT_LIGHT = 0.88             # 整体过亮阈值
 QC_BALANCE_GAP = 0.18              # 左右/上下亮度失衡阈值
 QC_SUBJECT_MARGIN = 0.02           # 主体贴边判定阈值（主体质量占比达到此比例视为贴边）
 QC_TEXT_RANGE = 0.30               # 安全区亮度需落在此范围外才同时支持深浅文字
+QC_TONE_MATCH_GAP = 0.18           # 画面与声明底色亮度差小于此值 = 同调（不判过暗/过亮）
 
 # QC 是资产局部体检，不是整副 deck 的 QA。默认最多允许一次定向重出；
 # review/release 只记录问题并交给人工/qa 处理，不由资产脚本自动升级流程。
@@ -1123,14 +1124,38 @@ def _native_safe_area_texture(opened, w: int, h: int, normalized: dict) -> float
         return None
 
 
-def _balance_check(arr):
-    """整体明暗 + 左右/上下失衡（只记录，不阻断）。"""
+def _balance_check(arr, background: str | None = None):
+    """整体明暗 + 左右/上下失衡（只记录，不阻断）。
+
+    「过暗 / 过亮」只有相对声明底色才有意义（v6.4.3）：整幅暗色画心放在深墨底上，
+    是方向本身而不是缺陷——绝对的亮度下限会把「暗色沉浸」这种方向一律判成问题
+    （案源：年终总结稿 4 张夜景背景图亮度 0.09–0.11，全部收到「整体过暗」；
+    连作者按方向声明 `text_color` 之后，这条告警仍在反对作者的方向）。
+    判据改成**落差**：画面与声明底色的亮度差 ≥ QC_TONE_MATCH_GAP 才报（那是可见的
+    分块）；同调画面只判左右/上下失衡。文字可读性不靠这条兜底——它由
+    `contrast_suitability`（按声明的文字深浅判定，阻断级）负责，两处不再互相代偿。
+    """
     mean = float(arr.mean())
     h, w = arr.shape
-    if mean < QC_BRIGHT_DARK:
-        return False, f"整体过暗（亮度 {mean:.2f}）", "提高整体曝光或提亮主体受光面，保留层次"
-    if mean > QC_BRIGHT_LIGHT:
-        return False, f"整体过亮（亮度 {mean:.2f}）", "压暗背景或收光圈，让主体与文字有落点"
+    bg_lum = None
+    if background:
+        try:
+            from primitives import luminance
+            bg_lum = float(luminance(str(background)))
+        except Exception:      # noqa: BLE001 —— 脏色值当没声明，退回绝对判据
+            bg_lum = None
+    tone_matched = bg_lum is not None and abs(mean - bg_lum) < QC_TONE_MATCH_GAP
+    if not tone_matched:
+        if mean < QC_BRIGHT_DARK:
+            rel = f"（比声明底色 {bg_lum:.2f} {'亮' if mean > bg_lum else '暗'} " \
+                  f"{abs(mean - bg_lum):.2f}）" if bg_lum is not None else ""
+            return False, f"整体过暗（亮度 {mean:.2f}{rel}）", \
+                "提高整体曝光或提亮主体受光面，保留层次"
+        if mean > QC_BRIGHT_LIGHT:
+            rel = f"（比声明底色 {bg_lum:.2f} 亮 {abs(mean - bg_lum):.2f}）" \
+                if bg_lum is not None else ""
+            return False, f"整体过亮（亮度 {mean:.2f}{rel}）", \
+                "压暗背景或收光圈，让主体与文字有落点"
     lr_gap = abs(float(arr[:, : w // 2].mean()) - float(arr[:, w // 2:].mean()))
     tb_gap = abs(float(arr[: h // 2, :].mean()) - float(arr[h // 2:, :].mean()))
     if lr_gap > QC_BALANCE_GAP or tb_gap > QC_BALANCE_GAP:
@@ -1250,7 +1275,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         _add("subject_position", True, None, None)
         _add("contrast_suitability", True, None, None)
         _add("hard_seam", *_hard_seam_check(arr, alpha))
-        _add("brightness_balance", *_balance_check(arr))
+        _add("brightness_balance", *_balance_check(arr, background))
         _settle(native, handed)
         return {"file": str(p), "status": "ok", "dimensions": [w, h], "checks": checks,
                 "qc_scale": scale, "qc_domain": [int(ww), int(wh)],
@@ -1305,7 +1330,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         _add("subject_position", True, None, None)
 
     # 4. 亮度平衡：整体明暗 + 左右/上下失衡
-    _add("brightness_balance", *_balance_check(arr))
+    _add("brightness_balance", *_balance_check(arr, background))
 
     # 5. 对比度适配：安全区能否同时给深浅文字留出对比
     safe_lum = crop[sy0 * bhs:sy1 * bhs, sx0 * bws:sx1 * bws].mean() \
