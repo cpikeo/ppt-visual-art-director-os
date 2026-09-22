@@ -1,4 +1,4 @@
-# 资产生产与发布契约 · v7.0.0
+# 资产生产与发布契约 · v7.1.0
 
 ## 1. 顺序与责任
 
@@ -40,7 +40,7 @@ vao.py：make（单命令直出）· run（标准入口）· plan / assets（单
 - 轮次由资产数量/QC 状态/根因修订决定，不为凑轮次增加调用；R1/R3 各一次、一次收口。
 - 迭代构图先 `check --mode draft`，终稿必须回 release。
 
-**v7.0.0 引擎保护（实测回环归零）**：
+**v7.1.0 引擎保护（实测回环归零）**：
 - **骨架覆写保护**：`--skeleton` 目标若已填稿（elements 非空），新骨架改写
   同名加 `.new` 后缀的旁路文件 并提示，不覆盖作业稿。
 - **稳定计划指纹**：`plan_sha256` 只含内容、不含时间戳；仅重跑 R1 不再使骨架失效。
@@ -70,6 +70,10 @@ deck 级 `background_scene`＝页面背景世界，不回答「这张图是什�
 （或显式 `readability_exempt`）+ 覆盖 ≥60% 承担免检；illustration/hybrid 按具象主体
 判定；插图安全区纹理密度为 advisory。`asset: required` ≠ 必须做主体图；看到
 required 就自动塞图是禁止做法。
+
+**介质与材质分离**：`medium: photography` 决定写实摄影纪律；`material: rice paper / 宣纸`
+只描述表面与触感，不会把摄影变成水墨。只有作者明确选择 ink-wash / sumi-e / 水墨等介质时，
+才进入水墨生成纪律。
 
 **清单作业上下文只要十个字段**：`asset_id / slide_ids / decision / asset_role /
 prompt / negative / ratio / safe_area / expected_filename / status`

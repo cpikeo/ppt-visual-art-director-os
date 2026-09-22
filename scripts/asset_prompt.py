@@ -127,9 +127,14 @@ def subject_implies_people(card: dict) -> bool:
 # --------------------------------------------------------------------------
 INK_TERMS: tuple[str, ...] = (
     "ink-wash", "ink wash", "inkwash", "sumi-e", "sumi e", "shui-mo",
-    "shuimo", "水墨", "宣纸", "笔墨", "泼墨", "写意", "oriental ink",
-    "chinese ink", "east asian ink", "rice paper",
+    "shuimo", "水墨", "笔墨", "泼墨", "写意", "oriental ink",
+    "chinese ink", "east asian ink",
 )
+# Rice paper / 宣纸 is a material cue, not a medium declaration. A photograph
+# can use it as a surface, so it must not activate painted-ink instructions.
+# The old broad token caused photography cards in the SHANZHI case to receive
+# contradictory "hand-painted ... no photographic shading" clauses.
+
 INK_DISCIPLINE: tuple[str, ...] = (
     "hand-painted Chinese ink-wash (shui-mo / sumi-e) painting",
     "single deliberate brushwork, dry-brush gradients with visible stroke structure",

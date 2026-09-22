@@ -2104,7 +2104,7 @@ def check_prompt_discipline() -> None:
         card = {"asset_type": "background", "asset_function": "hero",
                 "subject": ["a celadon tea bowl resting on a wooden table"],
                 "color": ["neutral tonal range with one restrained accent"],
-                "material": ["glazed ceramic and warm oak wood"],   # 勿含水墨词（rice paper 会点火水墨闸门）
+                "material": ["glazed ceramic and warm oak wood"],
                 "lighting": ["soft box light from above"],   # 标记句：出现即泄漏
                 "composition": ["calm evidence-field composition"],
                 "medium": "photography", "negative": []}
@@ -2122,6 +2122,15 @@ def check_prompt_discipline() -> None:
           and "one dramatic light source" not in p1
           and p1.count("single natural light source") == 1,
           p1[:160])
+
+    # Material is not medium: rice paper can be photographed without turning the
+    # card into an ink painting. This is a regression from the SHANZHI asset pass.
+    paper_photo = build_asset_prompt(
+        _photo_card(material=["handmade rice paper and dark stone"]), page)["prompt"]
+    check("prompt: rice paper material does not activate ink medium",
+          "hand-painted Chinese ink-wash" not in paper_photo
+          and "photography medium" in paper_photo,
+          paper_photo[:180])
 
     # P2 作者逐页声明 lighting：声明句赢，摄影层的光句让位（介质句保留）
     r2 = build_asset_prompt(_photo_card(lighting_source="declared"), page)
@@ -2322,7 +2331,7 @@ def check_asset_role_separation() -> None:
     workflow_doc = (refs / "asset-workflow.md").read_text(encoding="utf-8")
     check("docs: 角色分离写进契约（brief.yml 声明 asset_role；SKILL 四步判断不填图）",
           "asset_role: background" in brief_yml
-          and "Asset Decision ≠ Image Filling" in skill
+          and "资产决策不等于填图" in skill
           and "asset_role" in workflow_doc)
 
 
@@ -2893,6 +2902,12 @@ def check_audit_7_0(work: pathlib.Path) -> None:
     check("audit7: missing pptx fails before asset I/O",
           proc.returncode == 2 and "missing compiler dependency: pptx" in (proc.stdout + proc.stderr),
           (proc.stdout + proc.stderr).strip())
+
+    compact_args = vao.build_parser().parse_args(["assets", "brief.yml", "--plan", "plan.json"])
+    verbose_args = vao.build_parser().parse_args(["assets", "brief.yml", "--plan", "plan.json",
+                                                  "--show-prompts"])
+    check("audit7: asset CLI keeps prompt text out of default conversation",
+          compact_args.show_prompts is False and verbose_args.show_prompts is True)
 
 
 def check_doc_counts() -> None:

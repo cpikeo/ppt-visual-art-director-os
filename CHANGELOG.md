@@ -1,5 +1,18 @@
 # 变更记录
 
+## 7.1.0 · Case-led Audit / Medium Separation + Compact Asset Context
+
+以 `PPT_CASE_003｜山止 SHANZHI` 15 页高端东方茶品牌融资路演为真实样本，复盘从 brief、资产生成、QC、编排到 release 的完整路径。
+
+- 修正摄影资产被 `rice paper / 宣纸` 材质词误触发水墨闸门的问题；材质不再伪装成介质声明；
+- 新增回归测试：摄影卡可以使用 rice paper 材质，但不会收到 `hand-painted ink-wash` 与 `no photographic shading` 的冲突指令；
+- `vao.py assets` 默认只打印紧凑资产摘要，完整 prompt 改为显式 `--show-prompts`，避免把长 prompt/negative 清单灌入 Agent 对话；
+- SKILL 增加图片首轮 QC 后的设计判断：一次定向修复仍不成立时，删除图片并改用 native composition；
+- 生成骨架的构图 JIT 入口改指向 `references/design-judgment.md`，字段细节仍按需查 `design-system.md`；
+- 版本统一为 `7.1.0`。
+
+案例审计见 `AUDIT_2026-09_CASE003.md`。
+
 ## 7.0.0 · Practitioner Audit / One Production Contract
 
 以 `PPT_CASE_004｜CIRCA 纪时酒庄` 为真实端到端样本，完成 Intelligence / Context /

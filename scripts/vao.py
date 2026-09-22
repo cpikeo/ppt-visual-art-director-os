@@ -1441,6 +1441,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--assets-dir",
                    help="图将被放到哪个目录（写进 manifest，check 默认据此找图并核验）")
     a.add_argument("--cache", help="prompt cache JSON; reuse identical visual-demand fingerprints")
+    a.add_argument("--show-prompts", action="store_true",
+                   help="print full prompt/negative text; default output stays compact")
     a.add_argument("--json", action="store_true")
 
     c = sub.add_parser("check", help="build.py → normalize/guard/compile/preview → packet")
@@ -1588,22 +1590,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"assets complete · unique_calls={calls} · manifest={args.out}")
                 gen_items = [a for a in manifest.get("assets", []) if a.get("decision") == "generate"]
                 if gen_items:
-                    print("-" * 60)
-                    print("  视觉资产提示词清单 (via asset_prompt.py)")
-                    print("-" * 60)
+                    print(f"asset cards: {len(gen_items)} generated · prompts stored in {args.out}")
                     for idx, a in enumerate(gen_items, 1):
                         sid = ",".join(a.get("slide_ids", []))
-                        aid = a.get("asset_id")
-                        fn = a.get("expected_filename")
-                        ratio = a.get("ratio", "16:9")
-                        prompt = a.get("prompt", "")
-                        neg = a.get("negative", "")
-                        print(f"[{idx}/{len(gen_items)}] Slide {sid} -> {fn} (ID: {aid})")
-                        print(f"  Ratio: {ratio} | Safe Area: {a.get('safe_area')}")
-                        print(f"  Prompt: {prompt}")
-                        if neg:
-                            print(f"  Negative: {neg}")
+                        role = a.get("asset_role") or a.get("asset_type") or "?"
+                        function = a.get("asset_function") or "?"
+                        print(f"  [{idx}/{len(gen_items)}] {sid} → {a.get('asset_id')} "
+                              f"{role}/{function} {a.get('ratio', '16:9')}")
+                    if args.show_prompts:
                         print("-" * 60)
+                        print("  full prompt cards")
+                        print("-" * 60)
+                        for a in gen_items:
+                            print(f"[{','.join(a.get('slide_ids', []))}] {a.get('asset_id')}\n"
+                                  f"  Prompt: {a.get('prompt', '')}\n"
+                                  f"  Negative: {a.get('negative', '')}")
+                            print("-" * 60)
             return 0
         if args.command == "dna":
             return _dna(args)

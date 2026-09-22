@@ -256,7 +256,7 @@ def build_skeleton_module(bundle: dict) -> str:
                      f'{str(comp.get("intent") or "").strip() and " · " + str(comp["intent"]).strip()}')
         else:
             L.append('        #    构图: 待判断——先定这页唯一主语，再定它如何被看见'
-                     '（语法查询见 references/design-intelligence.md）')
+                     '（先读 references/design-judgment.md，字段再查 design-system）')
         if ref:
             L.append(f'        #    内容参考: {ref[:90]}')
         if pg.get("content_missing"):

@@ -1,157 +1,141 @@
-# Design Judgment · Just-in-Time core
+# 设计判断 · 即时读取核心
 
-This is the one reference to read first when making a deck. It explains why a
-page should look the way it does; it is not a layout table, palette library or
-page template. Numeric contracts remain in `design-system.md`, hard gates in
-`production-contract.md`.
+这是制作 deck 时应首先读取的参考文档。它解释一页为什么应该这样呈现，不是布局表、色板库或页面
+模板。数值契约保留在 `design-system.md`，硬性门槛保留在 `production-contract.md`。
 
-## A. Start with the decision
+## A. 从决策开始
 
-Use this chain once per page:
+每一页只走一次这条链：
 
 ```
-strategy → meaning → insight → focus → evidence → form → reduction → rationale
+策略 → 意义 → 洞察 → 焦点 → 证据 → 形式 → 减法 → 取舍理由
 ```
 
-- **Strategy**: who is watching and what decision should be easier afterward?
-- **Meaning**: what is the page actually saying, and how strong is its proof?
-- **Insight**: a repeatable sentence, not a topic label.
-- **Focus**: where the eye lands first.
-- **Evidence**: claim, proof, implication and action; keep facts separate from
-  hypotheses and management assumptions.
-- **Form**: the least theatrical medium that makes the insight visible.
-- **Reduction**: delete before regrouping, regroup before styling, styling before
-  decoration.
-- **Rationale**: name the choice and the rejected alternative in one sentence.
+- **策略**：谁在观看，观看之后应该更容易做出什么决定？
+- **意义**：这一页究竟在说什么，证据强度如何？
+- **洞察**：受众可以复述的一句话，而不是一个主题标签。
+- **焦点**：视线首先落在哪里？
+- **证据**：主张、证明、含义与行动；事实必须与假设、管理模型分开。
+- **形式**：让洞察可见的最低戏剧化表达方式。
+- **减法**：先删除，再重组；先重组，再样式化；先样式化，再装饰。
+- **取舍理由**：用一句话说明选择了什么，以及放弃了什么替代方案。
 
-When a page cannot state its insight and focus, it is not ready for coordinates.
+当一页无法说清自己的洞察与焦点时，它还没有准备好进入坐标与元素阶段。
 
-## B. Deck-level design card
+## B. Deck 级设计卡
 
-Before elements, lock only what must be shared:
+写元素之前，只锁定真正需要在全案共享的内容：
 
-- audience, decision and tension;
-- narrative arc and energy curve;
-- visual world: material, light, space and atmosphere;
-- type voice and reading distance;
-- color behavior and the one job of the accent;
-- anchor language and source-line behavior;
-- media posture: native-first, background, illustration or no image;
-- what may differ across pages: composition, density, crop, color weight and
-  title position.
+- 受众、决策与张力；
+- 叙事弧线与能量曲线；
+- 视觉世界：材质、光线、空间与氛围；
+- 字体语气与阅读距离；
+- 色彩行为，以及强调色唯一的职责；
+- 锚点语言与来源行的处理方式；
+- 媒体姿态：原生优先、背景、插图或无图；
+- 页面之间允许变化的部分：构图、密度、裁切、色彩权重与标题位置。
 
-Consistency is a shared world, not repeated coordinates. A dark chapter reset,
-a pale evidence page and an image-led close can belong to the same deck when
-material, type voice, anchors and color discipline remain related.
+一致性是共享的视觉世界，不是重复坐标。深色章节转场、浅色证据页与图像主导的结尾页，可以属于
+同一副 deck，只要材质、字体语气、锚点与色彩纪律仍然相关。
 
-## C. Composition
+## C. 构图
 
-Use operators before prototypes:
+先使用构图操作，再考虑原型：
 
-- **axis**: centered, offset or asymmetric;
-- **split**: unequal fields are usually more editorial than equal columns;
-- **scale contrast**: one large conclusion against small proof;
-- **overlap**: only when depth or relation changes meaning;
-- **path**: horizontal for sequence, vertical for authority, diagonal for tension;
-- **negative space**: name its job—protect focus, hold emotion, create authority
-  or separate chapters.
+- **轴线**：居中、偏置或不对称；
+- **分割**：不等分的空间通常比等宽栏更有编辑感；
+- **尺度对比**：一个巨大的结论对应小尺度的证明；
+- **叠压**：只有当深度或关系改变意义时才使用；
+- **路径**：水平表达顺序，垂直表达权威，斜线表达张力；
+- **负空间**：明确它的职责——保护焦点、承载情绪、制造权威感或分隔章节。
 
-Reading order is a physical argument. The first landing point must carry the
-page's main meaning, not a decorative photo edge, page number or accent line.
+阅读顺序是一种空间论证。第一落点必须承载页面主意义，不能落在装饰性照片边缘、页码或强调线上。
 
-Grouping cost rises in this order:
+分组成本按以下顺序递增：
 
 ```
-field → alignment → hairline → type → container
+场域 → 对齐 → 发丝线 → 字体 → 容器
 ```
 
-A container is justified only when the audience needs to perceive an object as a
-separate object, needs protection from a complex background, or needs a real data
-module. Equal modules with equal weight are not a system; they are indecision.
+只有当受众需要把某个内容看成独立对象、需要把内容与复杂背景隔离，或需要一个真实的数据模块时，
+容器才是合理的。等权重的模块不是系统，而是没有做出选择。
 
-## D. Type and color
+## D. 字体与色彩
 
-Typography creates the reading path through size, weight, position, line height,
-width, spacing and silence. Use few levels and few families. A bold word must
-carry a conclusion; if every label is bold, no label is emphasized.
+字体通过字号、字重、位置、行高、宽度、字距与静默建立阅读路径。层级与字体家族都要克制。粗体词
+必须承担一个结论；如果每个标签都是粗体，就没有任何标签真正被强调。
 
-Use a serif/sans relationship only when the content benefits from it. Chinese
-and Latin are mixed by optical baseline, not by forcing character spacing. Keep
-metadata single-line and visually quiet.
+只有当内容确实受益时，才建立衬线与无衬线的关系。中文与拉丁文字混排应通过视觉基线协调，而不是
+强行调整字距。元数据保持单行，并且视觉上安静。
 
-Color is relational:
+色彩是关系性的：
 
-- foundation creates the field;
-- information carries text and data;
-- supporting colors separate without competing;
-- accent identifies one semantic target;
-- negative or warning color is not a decorative second accent.
+- 基础色建立场域；
+- 信息色承载文字与数据；
+- 支持色负责区分，但不争夺注意力；
+- 强调色指向一个语义目标；
+- 负面或警示色不是装饰性的第二强调色。
 
-Low saturation is not automatically luxurious. Dark luminous work can be
-restrained; a pale deck can be cheap if every element asks for attention.
+低饱和不天然等于高级。深色发光的作品可以很克制；浅色 deck 也可能廉价，因为每个元素都在索取
+注意力。
 
-## E. Image judgment
+## E. 图像判断
 
-An image must answer three questions:
+一张图必须回答三个问题：
 
-1. Is it establishing a **space** or expressing an **object**?
-2. Which sentence does it prove or make felt?
-3. Does its light, material and negative space belong to this visual world?
+1. 它是在建立一个**空间**，还是在表达一个**对象**？
+2. 它证明了哪一句话，或让受众感受到哪一句话？
+3. 它的光线、材质与负空间是否属于这套视觉世界？
 
-Backgrounds should carry atmosphere and let type breathe. Illustrations should
-have a readable silhouette, scale and relation to nearby content. Avoid generic
-stock gestures, centered product advertising, empty mood images, plastic detail,
-over-sharpening and AI symmetry. If the answer is only “it looks premium”,
-delete it.
+背景图应该承载氛围，并让字体能够呼吸。插图应该有清晰的轮廓、尺度，以及与邻近内容的关系。避免
+通用图库姿势、居中的产品广告、空洞的情绪图、塑料感细节、过度锐化与 AI 对称。如果它唯一的理由
+只是“看起来高级”，就删除它。
 
-Use real environments—vineyards, stone, cellar, wood, table, architecture—when
-they establish context. Product photography is not a substitute for brand
-world-building.
+当需要建立语境时，使用真实环境——葡萄园、石材、酒窖、木材、桌面或建筑。产品摄影不能替代品牌
+世界的建立。
 
-## F. Data and proof
+## F. 数据与证据
 
-A chart is a visual argument, not an automatic component.
+图表是视觉论证，不是自动套用的组件。
 
-- one chart, one relationship;
-- one basis and one period;
-- direct labels before legends when space allows;
-- shared baseline for length encoding;
-- highlighter points to an answer, not a color festival;
-- source, unit and assumption stay visible;
-- management model, estimate and forecast are labelled as such.
+- 一张图表只表达一个关系；
+- 使用一个统一口径与一个时间区间；
+- 空间允许时，优先直接标注，而不是让受众来回看图例；
+- 长度编码共享同一基线；
+- 高亮只指向一个答案，不要变成颜色庆典；
+- 来源、单位与假设必须保持可见；
+- 管理模型、估算与预测必须明确标注。
 
-A single large number is valid only when its reference frame is present. If the
-number cannot be compared, contextualized or acted upon, it is a poster, not
-evidence.
+只有在参照框架存在时，一个巨大的数字才成立。如果数字无法比较、无法被放回语境或无法指导行动，
+它只是海报，不是证据。
 
-## G. Rhythm and stopping
+## G. 节奏与停止
 
-A deck breathes through contrast: image to native evidence, dark to pale,
-sparse to dense, close to distance. Change a page only when content, emotion or
-narrative changes; forced variation is as mechanical as repeated templates.
+Deck 通过对比呼吸：图像与原生证据、深色与浅色、疏与密、近与远。只有当内容、情绪或叙事发生变化
+时才改变页面；强行制造变化，与重复模板一样机械。
 
-Review at three scales:
+用三个尺度复核：
 
-- **thumbnail**: does the deck have rhythm and a singular focal field?
-- **three seconds**: does each page establish its subject?
-- **thirty seconds**: can the audience explain the claim, proof and next action?
+- **缩略图尺度**：整副 deck 是否有节奏，是否形成单一的焦点场？
+- **三秒尺度**：每一页是否迅速建立自己的主题？
+- **三十秒尺度**：受众能否解释主张、证明与下一步行动？
 
-The final edit is subtraction. If removing an element does not reduce meaning,
-remove it. QA may protect delivery facts; it may not redesign the page.
+最后一轮编辑是减法。如果删除一个元素并没有减少意义，就删除它。QA 可以保护交付事实，但不能重新
+设计页面。
 
-## H. Practitioner calibration: CIRCA case
+## H. 实战校准：CIRCA 案例
 
-The CIRCA wine financing deck is a useful calibration example, not a template.
-The successful decisions were:
+CIRCA 酒庄融资 deck 是一个用于校准的案例，不是模板。
 
-- immersive environment photography instead of bottle advertising;
-- native bars, timelines and hairlines instead of card walls;
-- limestone, vine green, charcoal, burgundy and old copper changing by scene;
-- a single visual subject per page;
-- assumptions labelled as management model / planning assumption;
-- image roles declared as background versus illustration;
-- a full-canvas native slide background instead of a decorative rectangle that
-  collides with the source zone.
+其中有效的判断包括：
 
-The lesson is not “copy wine colors”. The lesson is to make the visual world,
-data honesty and spatial hierarchy do the work before decoration begins.
+- 使用沉浸式环境摄影，而不是瓶身广告；
+- 使用原生柱状图、时间线与发丝线，而不是卡片墙；
+- 根据场景变化使用石灰岩、藤蔓绿、炭黑、勃艮第红与旧铜色；
+- 每页只有一个视觉主语；
+- 把假设标注为 `management model / planning assumption`；
+- 明确声明图片是 `background` 还是 `illustration`；
+- 使用整页原生背景，而不是会与来源区冲突的装饰矩形。
+
+这里的教训不是“复制酒庄配色”，而是在装饰开始之前，先让视觉世界、数据诚实与空间层级完成主要
+工作。

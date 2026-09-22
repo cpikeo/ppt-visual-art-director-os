@@ -506,7 +506,7 @@ PREVIEW_MIRRORED = frozenset({
     "donut", "pie", "donut_composition",
     # 结构类：按编译器的同一组比例画（数字行 / 步 / 轴）
     "big_number_row", "steps", "timeline", "waterfall",
-    # 象限类：轴 + 点位 + 直接标注（v7.0.0 起真渲染，作者不必翻产物 XML）
+    # 象限类：轴 + 点位 + 直接标注（v7.1.0 起真渲染，作者不必翻产物 XML）
     "matrix",
     "progress_bar", "ranked_bar", "stacked_bar",
     # 数字展示：元素级 value/label 两行
