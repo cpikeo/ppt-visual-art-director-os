@@ -1640,8 +1640,7 @@ def _postprocess_package(output_path, *, media_stored: bool = True) -> dict:
             "media_entries_stored": media_passthrough}
 
 
-def compile_deck(spec: dict, output_path, checks: bool = True,
-                 guard_rules: dict | None = None, spec_path: str | None = None,
+def compile_deck(spec: dict, output_path, spec_path: str | None = None,
                  image_bytes: dict | None = None, speed: str = "strict",
                  decode_seed: dict | None = None) -> dict:
     """
@@ -1652,10 +1651,12 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
       theme  : {"colors":{...},"fonts":{...},...}      设计身份
       slides : [{"id","background","elements":[...]}]  页面与元素
 
-    checks=True（默认）时先做静态治理（engine/guard.py，OS 硬约束断言），
-    静态问题以 [guard] 前缀并入 warnings；guard_rules 可配置治理阈值。
-    返回契约不变：{"passed","slides","warnings","file_bytes"}；
-    启用 checks 时追加 "guard"（治理明细），旧调用不受影响。
+    治理（guard）是编排层的一步，不是编译器的一步：vao 在编译前跑 check_spec，
+    报告由 qa.verdict 消费——同一判定只发生一次。
+    （v7.2.0 审计删除了 checks/guard_rules 参数与内置 guard 块：全库 5 个调用点
+    全部 checks=False，该路径从未执行，只是第二份治理入口的残骸。）
+
+    返回契约：{"passed","slides","warnings","file_bytes"}。
 
     speed="fast"（v5.9）时：图片变换用低压缩级别编码，包级后处理仍做
     （时间戳与 XML 规格不变，产物仍确定性），只是不再为媒体条目重复压缩。
@@ -1700,13 +1701,6 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
         ctx.warn(_spec_warning)
     for _warning in canvas_warnings:
         ctx.warn(_warning)
-
-    guard = None
-    if checks:
-        from guard import check_spec
-        guard = check_spec(spec, rules=guard_rules)
-        for w in guard["warnings"]:
-            ctx.warn(f"[guard] {w}")
 
     prs = Presentation()
     prs.slide_width = Emu(emu(canvas["width"]))
@@ -1794,9 +1788,6 @@ def compile_deck(spec: dict, output_path, checks: bool = True,
         "output_path": str(output_path),
         "output_exists": output_path.exists(),
     }
-    if guard is not None:
-        report["guard"] = {"checks": guard["checks"],
-                           "passed": guard["passed"]}
     # 编译内部计时：让「慢在哪里」是数出来的，不是猜出来的（进 repair packet.performance）。
     report["performance"] = {
         "speed": ctx.speed,

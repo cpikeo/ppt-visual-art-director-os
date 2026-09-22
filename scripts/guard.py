@@ -227,17 +227,6 @@ def _uses_role(value, role_name: str, theme: dict) -> bool:
     return bool(target and isinstance(target, str) and value.upper() == target.upper())
 
 
-def _inside_zone(e: dict, zone: dict) -> bool:
-    try:
-        ex, ey = float(e.get("x", 0)), float(e.get("y", 0))
-        ew, eh = float(e.get("width", 0)), float(e.get("height", 0))
-        zx, zy = float(zone.get("x", 0)), float(zone.get("y", 0))
-        zw, zh = float(zone.get("width", 0)), float(zone.get("height", 0))
-        return ex >= zx and ey >= zy and ex + ew <= zx + zw and ey + eh <= zy + zh
-    except (TypeError, ValueError, OverflowError):
-        return False
-
-
 def _intersects_zone(e: dict, zone: dict) -> bool:
     """Any positive-area collision, not only full containment."""
     try:
@@ -481,66 +470,6 @@ def _box(e: dict, text_ink_ratio: float = 1.0,
         w *= float(text_ink_ratio)
         h *= float(text_ink_v)
     return (x, y, w, h)
-
-
-def _geometry_occlusion(slide: dict):
-    """文字框两两重叠检测：覆盖率超过 30% 即认定为遮挡。
-
-    只查文字——图形/图片的有意叠压（画心、蒙版、色块衬底）是设计手法，
-    文字压文字则一定是失误。返回 [(id_a, id_b, 覆盖率), ...]。
-    """
-    # 先把每个文本框的几何缓存下来；原实现每个 pair 都重复 _box，
-    # 文字数量一多会把 O(n²) 的比较再乘上一层字典/float 解析成本。
-    texts = []
-    for e in (slide.get("elements") or []):
-        if not isinstance(e, dict) or e.get("type") != "text":
-            continue
-        if not (e.get("text") or "").strip():
-            continue
-        x, y, w, h = _box(e)
-        texts.append((e.get("id") or e.get("role") or "text", x, y, w, h))
-    out = []
-    for i, a in enumerate(texts):
-        _, ax, ay, aw, ah = a
-        for b in texts[i + 1:]:
-            _, bx, by, bw, bh = b
-            ox = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
-            oy = max(0.0, min(ay + ah, by + bh) - max(ay, by))
-            inter = ox * oy
-            if inter <= 0:
-                continue
-            smaller = min(aw * ah, bw * bh)
-            if smaller <= 0:
-                continue
-            ratio = inter / smaller
-            if ratio >= 0.30:
-                out.append((a[0], b[0], ratio))
-    return out
-
-
-def _baseline_crossings(slide: dict):
-    """柱体不得穿过基线：hairline 细线若落在某柱体内部（非底边），
-    渲染即读作「柱底越过坐标线」。真实案例：尺寸吸附把柱底抬过基线。"""
-    out = []
-    els = [e for e in slide.get("elements") or [] if isinstance(e, dict)]
-    rules = [e for e in els if e.get("type") == "shape"
-             and float(e.get("height", 9)) <= 2 and float(e.get("width", 0)) > 50
-             and e.get("fill") in ("hairline", "track")]
-    bars = [e for e in els if e.get("type") == "shape"
-            and e.get("shape") in ("rect", "rounded_rect")
-            and float(e.get("height", 0)) > 24]
-    for b in bars:
-        bx, by = float(b.get("x", 0)), float(b.get("y", 0))
-        bw, bh = float(b.get("width", 0)), float(b.get("height", 0))
-        for r in rules:
-            rx, ry = float(r.get("x", 0)), float(r.get("y", 0))
-            rw = float(r.get("width", 0))
-            if rx < bx + bw and rx + rw > bx and by + 1 < ry < by + bh - 1:
-                # track 型细线本就是柱内轨道（成对条形），只有穿过底边附近才算病
-                if r.get("fill") == "track" and ry < by + bh - 6:
-                    continue
-                out.append((b.get("id"), r.get("id"), ry - (by + bh)))
-    return out
 
 
 def _chart_values(chart: dict):
@@ -1068,12 +997,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             except (TypeError, ValueError):
                 pass
 
-            # 背景安全区：仅检查内容承载对象；通栏背景/结构线不参与。
-            safe_zones = s.get("safe_zones") or []
-            if safe_zones and typ in ("text", "chart", "native_chart", "image"):
-                if not any(_inside_zone(e, z) for z in safe_zones if isinstance(z, dict)):
-                    add("safe_zone", eid, "warn", "内容对象未完整落入任何声明的文字安全区")
-
+            # （v7.2.0 审计：slide 级 safe_zones 无任何 producer——骨架/模板/文档
+            # 都不发它，文字安全区由逐页资产的 safe_area 承担（QC 侧）。死检查删。）
 
             # §19 图表容量与数据完整性
             if typ in ("chart", "native_chart"):
@@ -1384,20 +1309,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         # 背景层资格（工程事实，非预测）：伪背景 error、无保护 warn
         _check_background_qualification(s, sid, cw, ch, add)
 
-        # ── 几何自检：三级门禁都不查元素互相遮挡，只能静态补 ──
-        # 真实案例：图例(1096–1232) 与页码(1112–1232) 100% 重叠，guard / QA /
-        # Critic 全数通过，人眼才发现。遮挡一旦发生，页面等于少了一处信息。
-        occlusions = _geometry_occlusion(s)
-        for a_id, b_id, ratio in occlusions:
-            add("geom_occlude", sid, "warn",
-                f"「{a_id}」与「{b_id}」重叠 {ratio:.0%}（互相遮挡，"
-                f"其中一方信息实际不可读；挪开或删掉其一）")
-
-        # ── 柱体不得穿过基线（柱底压线是编辑式图表的契约）──
-        for b_id, r_id, over in _baseline_crossings(s):
-            add("baseline_crossing", sid, "warn",
-                f"柱体「{b_id}」底边越过基线「{r_id}」{-over:.0f}px"
-                f"（柱底应与基线共边，不得穿过）")
+        # （v7.2.0 审计删除两个重复判定：geom_occlude 用原始声明框 ≥30% 重判
+        # overlap error 已用墨迹口径 >12% + 豁免表判过的同一事实——声明框不是
+        # 可见墨迹，粗口径只会对合法叠压（文本压在图形上）报噪音；
+        # baseline_crossing 只认 fill:hairline/track 的填充矩形基线（legacy 写法），
+        # 文档口径是 shape:line + stroke 发丝线（fill 为空），对合规 spec 永不触发。）
 
         # ── 主张 vs 图表：标题里的百分比必须能在图上算出来 ──
         # 真实案例：标题写「自有内容 61%」，图表单位是「指数点」，68/180=37.8%，

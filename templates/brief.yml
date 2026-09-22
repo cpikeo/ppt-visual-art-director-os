@@ -2,8 +2,9 @@
 #
 # 纪律：
 #   1. 写了的字段原样生效（逐页声明 > deck 级 > 品牌 > direction > Skill 判断 > 兜底）。
-#   2. 没写的字段不猜。deck 级判断缺失 → brief.unresolved；证据型页缺 content →
-#      plan.warnings（unresolved_content）。title 不能代替 content。
+#   2. 没写的字段不猜。deck 级判断缺失由骨架头的「等你判断的槽位」列出；
+#      证据型页缺 content → plan.warnings（unresolved_content）+ 骨架 ⚠ 注释。
+#      title 不能代替 content。
 #   3. Skill 负责判断/编排/验证，不替用户虚构需求。
 #
 # 执行：python scripts/vao.py run <brief> --plan-out plan.json --skeleton build_deck.py \

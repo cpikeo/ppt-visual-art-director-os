@@ -738,14 +738,27 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         hl = highlight_index(e, rows, -1)
         show_values = bool(e.get("show_values", True))
         vfont = _font(11 * scale)
+        # 多序列（comparison_bar）：条色按**序列**取，不能全体墨色——产物里每条
+        # <c:ser> 有自己的色（series_roles → series_palette），预览全涂墨色等于把
+        # 「山外 vs 同业」读成一堆同色条，作者看到的证据与产物不是同一件事。
+        n_groups = max(1, len(groups))
+        per_group = max(1, (len(rows) + n_groups - 1) // n_groups)
+        roles = e.get("series_roles") or []
+        gpalette = ctx.series_palette(n_groups,
+                                      series_highlight_index(e, [n for n, _v in groups], -1))
         for i, val in enumerate(values):
             by = top + i * (bh + gap)
             bw2 = int((val - lo) / span * (right - bar_left))
             d.text((left, by + bh / 2), str(rows[i].get("label", ""))[:24],
                    font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="lm")
+            if n_groups > 1:
+                gi = min(i // per_group, n_groups - 1)
+                role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
+                col = _rgba_color(role if role is not None else gpalette[gi], 0.95)
+            else:
+                col = accent if i == hl else ink
             d.rounded_rectangle((bar_left, by, bar_left + bw2, by + bh),
-                                radius=max(1, int(4 * scale)),
-                                fill=accent if i == hl else ink)
+                                radius=max(1, int(4 * scale)), fill=col)
             if show_values:
                 vtext = str(int(val)) if float(val).is_integer() else str(val)
                 d.text((bar_left + bw2 + 4 * scale, by + bh / 2), vtext,
@@ -905,10 +918,14 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         bar_h = max(10, min(float(e.get("bar_height", 46)), h * 0.34))
         bar_y = y + (h - bar_h) / 2 - h * 0.10
         cursor = float(x)
-        # 段色与产物同源：compiler 的堆叠条用 ctx.series_color(i)（单一信号色的明度
-        # 阶梯）。预览此前按 secondary/primary 压暗，于是「金色系深浅」在预览里读成
-        # 一排灰——与甜甜圈同一类不同源，按同一处方修。
-        palette = [_rgba_color(c, 0.95) for c in ctx.series_palette(len(vals), -1)]
+        # 段色与产物同源：compiler 的堆叠条在 ramp=true 时走 ctx.ramp_color(i)（明度阶梯
+        # 由浅到深），未声明 ramp 时才走 series_color(i)。预览此前**只**用 series 阶梯，
+        # 于是同一张图在预览里是「深→浅」、在产物里是「浅→深」——同一份数据两种颜色顺序，
+        # 而段内文字色又是按预览那块色算的，产物里的对比度结论跟着一起错。
+        # 预览是方向证据：它必须说与产物同一件事。
+        _seg_colors = [(ctx.ramp_color(i) if e.get("ramp") else ctx.series_color(i))
+                       for i in range(len(vals))]
+        palette = [_rgba_color(c, 0.95) for c in _seg_colors]
         for i, val in enumerate(vals):
             seg = w * val / total
             if seg <= 0:
@@ -918,7 +935,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             if seg > 46 * scale:
                 d.text((int(cursor + seg / 2), int(bar_y + bar_h / 2)),
                        f"{val / total:.0%}", font=_font(px_to_pt(11 * scale)),
-                       fill=_rgba_color(ctx.auto_text_for(ctx.series_palette(len(vals), -1)[i]), 0.95),
+                       fill=_rgba_color(ctx.auto_text_for(_seg_colors[i]), 0.95),
                        anchor="mm")
             cursor += seg
         lfont = _font(px_to_pt(10 * scale), cjk=True)

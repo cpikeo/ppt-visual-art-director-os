@@ -11,7 +11,7 @@
 - 生成骨架的构图 JIT 入口改指向 `references/design-judgment.md`，字段细节仍按需查 `design-system.md`；
 - 版本统一为 `7.1.0`。
 
-案例审计见 `AUDIT_2026-09_CASE003.md`。
+案例审计结论已并入本版回归网（审计源文档未随仓库快照分发）。
 
 ## 7.0.0 · Practitioner Audit / One Production Contract
 
@@ -24,10 +24,11 @@ Architecture / Execution / Design / Production / Verification 七层审核。
 - check 在资产 I/O 之前发现缺少 `python-pptx`，避免无效 QC 轮次；
 - `make` 改为 `check` 的兼容别名，消除旁路绑定/Guard/compile/ghost 链；
 - 新增 `references/design-judgment.md`，SKILL 改为更短的 JIT 导航；
-- 新增 `AUDIT_2026-09.md` 记录文件、函数、规则、Context、Command 与交互存废判断；
+- 完成文件、函数、规则、Context、Command 与交互的存废判断（审计源文档未随仓库
+  快照分发，结论并入各条与回归网）；
 - selftest 仍作为 CI 回归，不进入 Agent 默认 Context。
 
-实战证据、职责矩阵与停止条件见 `AUDIT_2026-09.md`。
+实战证据与停止条件并入发布门槛与回归网。
 
 ## 6.5 · Context Diet + Zero-Loop Assets（上下文减法 34%、既有素材零回路、稳定指纹）
 
@@ -1067,6 +1068,33 @@ bench② 全链（plan→assets→asset-qc→release）PASS 1074ms。
   数字带只是预测参考值，不是「这页必须和上页不同」的义务。
 - 保留并置顶：`composition.grammar` 提案定位（不给坐标、不给版式、可整体推翻）、
   `fix_plan` 根因聚类一轮批量修复、**没有 score 也不恢复 score**（总分会让系统退化成
+  规则→指标→分数→排名→模板化优化）。
+- v5.1 / v5.1.1 两段历史条款合并为一节；Spec minimum、Calls、执行模式、Release Manifest
+  契约事实原样保留。
+
+**asset-workflow.md：职责收敛 + 执行路径减法（v5.4.0 → v5.4.6）**
+
+- **`run` 是标准生产入口**：补子命令心智图（run / plan / assets / asset-qc / check），
+  Skill 层只暴露 `vao.py`。
+- **删除「有图 4 轮 / 无图 2 轮」固定轮次契约**（README 标题同步）：实际轮次由资产数量、
+  QC 状态和必要的根因修订决定，不得为满足固定轮次增加无意义调用——速度来自减少不必要的
+  工作，不是规定必须跑几轮。
+- **清单字段两层化**：作业上下文只需九个字段（asset_id/slide_ids/decision/prompt/negative/
+  ratio/safe_area/expected_filename/status）；指纹与生产控制（plan_sha256/brief_sha256/
+  preexisting_sha256/attempt/retry_budget/run_id/版本）由运行时内部保存——
+  **证据可以复杂，AI 的工作上下文不能复杂**。
+- **retry 改根因驱动**：失败 → 判根因（prompt/subject/构图/asset requirement）→ 一次根因
+  修正 → 重新 QC；`retry_budget` 只是生产控制上限，不是设计输入，不做次数循环。
+- **资产职责两行化**：资产只承担视觉叙事（asset_function 六枚举）；PPT 原生对象承担信息
+  （文字/数据/图表/表格/Logo）——图片不烘焙正文、图表、Logo。
+- **§7 明确 Asset Integrity ≠ Design Quality**：QC 回答「PPT 用的是不是被检查的那张图」
+  （存在/可读/尺寸/比例/SHA-256/绑定/清单），不回答「图够不够高级」（主体/构图/留白/
+  光线/视觉世界契合归 Intelligence + Craft + 人眼）；QC 没有、也永远不加 artistic /
+  beauty / prompt-adherence / premium 一类审美评分。
+- §1 补六层分工表（Intelligence / Craft / Asset Contract / Asset QC / Production Contract /
+  Release Manifest 各答一问）；证据链条款（§4 绑定 / §6 失效表 / §8 最低校验）原样保留。
+
+字节账（诚实）：production-contract 10,599 → 11,864（+12%），asset-workflo�批量修复、**没有 score 也不恢复 score**（总分会让系统退化成
   规则→指标→分数→排名→模板化优化）。
 - v5.1 / v5.1.1 两段历史条款合并为一节；Spec minimum、Calls、执行模式、Release Manifest
   契约事实原样保留。

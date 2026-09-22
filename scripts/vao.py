@@ -482,10 +482,10 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         _json_write(cache_file, {"schema": "vao-asset-prompt-cache-v1",
                                  "entries": prompt_cache})
+    # （v7.2.0 审计：manifest 曾有 source_hash——need 的第三种摘要且零读取，
+    # 链绑定实际用 brief_sha256=digest(need) + plan["need"] 快照。删。）
     return {
         "schema": "vao-assets-v1",
-        "source_hash": (bundle.get("source_hash") or
-                         (bundle.get("brief") or {}).get("source_hash")),
         "design_direction": plan.get("design_direction"),
         "quality_level": quality,
         "asset_budget": {"planned_route_calls": len(generation_ids),
@@ -625,11 +625,16 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
     qc_phase = "draft" if str(phase).strip().lower() not in {"draft", "review", "release"} \
         else str(phase).strip().lower()
     # ── 上一轮判定的复用前提（缺一即重新测量）─────────────────────────────
-    #   * 同一份清单（manifest_sha256）与同一阶段；
+    #   * 同一份清单（manifest_sha256）；
     #   * 同一像素预算（档位 / max_side）；
     #   * 同一判定实现（asset_prompt.py 的指纹——阈值或口径一改，旧判定作废）；
     #   * 每个资产的字节身份（size+mtime_ns，严格档再加 sha256）与判定输入一致。
     # 「复用」只在全部成立时发生，任一不成立即回到完整测量：快路径不是漏检路径。
+    # 阶段**不在**复用键里：像素测量与阶段无关（image_qc 不收 phase），
+    # 阶段只改 retry 策略（qc_retry_decision），而策略在下方按当前 phase
+    # 对每个资产重新计算——draft 量过的字节，release 直接沿用判定。
+    # （v7.2.0 审计修复：此前 phase 在复用键里，draft→release 同清单同字节
+    # 会整批重测像素——同一事实量两遍，且 draft 报告与 release 报告互斥。）
     prev_report: dict = {}
     reuse_base: str | None = None
     prev_results: dict = {}
@@ -645,7 +650,6 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
         engine_now = engine_fingerprint("measure")
         if (prev_report.get("manifest_sha256") == digest(manifest)
                 and prev_report.get("pixel_profile") == profile
-                and prev_report.get("phase") == qc_phase
                 and prev_report.get("qc_engine") == engine_now):
             reuse_base = "sha256" if profile.get("speed") == "strict" else "size+mtime_ns"
             prev_results = {str(r.get("asset_id")): r for r in (prev_report.get("results") or [])}
@@ -782,13 +786,17 @@ def _asset_qc_report(manifest_path: str, input_dir: str | None = None,
     out_path = Path(output).expanduser() if output else manifest_file.with_name(
         manifest_file.stem + ".qc.json")
     report["report_path"] = str(out_path)
-    # 全部判定都复用的一轮不重写这份证据：文件上的 checked_at 回答的是「这些像素什么时候
-    # 被量过」，不是「谁什么时候读过它」。重写会把时间戳刷成「刚量过」——一句假话，
-    # 顺带改一次 mtime，逼下游把没变的字节再读一遍。判定内容不变 = 文件不必动。
+    # 全部判定都复用**且阶段未变**的一轮不重写这份证据：文件上的 checked_at 回答的是
+    # 「这些像素什么时候被量过」，不是「谁什么时候读过它」。重写会把时间戳刷成「刚量过」
+    # ——一句假话，顺带改一次 mtime，逼下游把没变的字节再读一遍。判定内容不变 = 文件不必动。
+    # 阶段变了必须重写：像素判定虽复用，retry 策略按新阶段重算，报告的 status/
+    # blocking_assets 可能整段变（draft 的 retry 在 release 是 block）。
     # 只对「引擎自己派生的报告路径」生效：作者显式指定了输出路径（`vao assets --out`）
     # 就是显式要一份文件，照写不误。
-    if output or not (prev_report and reuse_base is not None and results
-                      and reused_assets == len(results)):
+    phase_changed = bool(prev_report) and prev_report.get("phase") != qc_phase
+    if (output or phase_changed
+            or not (prev_report and reuse_base is not None and results
+                    and reused_assets == len(results))):
         _json_write(out_path, report)
     # 静默：一次执行只输出一条结论（check 打印）。0 只代表「每个应生成的资产都被
     # 验证过且无阻断」；未生成 = 无法验证 = 不能当作通过。
@@ -917,7 +925,6 @@ def _stale_manifest_write(manifest_path: Path, run_id: str, result: dict,
 
 
 def _compile_step(spec: dict, output_path: Path, *, mode: str, speed: str,
-                  guard_errors: list, effective_rules: dict,
                   cache: bool = True, spec_path: str | None = None,
                   image_bytes: dict | None = None,
                   digests: dict | None = None,
@@ -955,9 +962,9 @@ def _compile_step(spec: dict, output_path: Path, *, mode: str, speed: str,
     if compile_report is None:
         try:
             from compiler import compile_deck
-            compile_report = compile_deck(spec, output_path, checks=False,
+            # guard 已在编排层跑过（guard_report）：编译器不再自带第二份治理。
+            compile_report = compile_deck(spec, output_path,
                                           decode_seed=decode_seed,
-                                          guard_rules=effective_rules,
                                           spec_path=str(spec_path) if spec_path else None,
                                           image_bytes=image_bytes, speed=speed)
         except ModuleNotFoundError as exc:
@@ -1146,7 +1153,6 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
         else:
             compile_report, timing = _compile_step(
                 normalized, output_path, mode=prof["mode"], speed=speed,
-                guard_errors=guard_errors, effective_rules=effective_rules,
                 cache=cache_enabled, spec_path=str(build), image_bytes=snapshots,
                 digests=digests, decode_seed=decoded, t_guard_start=t_guard_start)
         timing["provenance_required"] = bool(effective_rules.get("require_provenance", False))
@@ -1361,15 +1367,8 @@ def _print_verdict(result, ledger, ghost, manifest_path, packet_path,
 
 
 def run_once(args: argparse.Namespace) -> int:
-    """Prepare a plan/manifest OR check an existing build; never skip the asset pause."""
-    build = args.build
-    if build and getattr(args, "assets_out", None):
-        raise ValueError("run --assets-out 只准备资产；不要同时 --build。先出图与QC，再 check 编排稿")
-    if build:
-        # Do not overwrite a plan already bound to image/QC evidence.
-        bundle = None
-    else:
-        bundle = _plan(args.brief, args.plan_out, args.skeleton)
+    """Prepare a plan/manifest; check 是校验编排稿的唯一入口。"""
+    bundle = _plan(args.brief, args.plan_out, args.skeleton)
     if getattr(args, "assets_out", None):
         from intent_compiler import _load_need
         need = _load_need(args.brief)
@@ -1381,25 +1380,13 @@ def run_once(args: argparse.Namespace) -> int:
         _json_write(args.assets_out, manifest)
         print(f"assets complete · unique_calls={manifest['asset_budget']['unique_generation_calls']} "
               f"· manifest={args.assets_out}")
-    if not build:
-        if not args.skeleton:
-            print(json.dumps({"plan": bundle, "next": "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）"},
-                             ensure_ascii=False, indent=2))
-        else:
-            print(f"plan complete · skeleton: {args.skeleton} · "
-                  "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）")
-        return 0
-    manifest_for_check = getattr(args, "assets_manifest", None) or getattr(args, "assets_out", None)
-    _, code = run_check(build, args.output, mode=args.mode, packet=args.packet,
-                        preview=args.preview,
-                        json_output=args.json, assets_manifest=manifest_for_check,
-                        assets_dir=getattr(args, "assets_dir", None),
-                        asset_qc_report=getattr(args, "asset_qc_report", None),
-                        speed=getattr(args, "speed", DEFAULT_SPEED),
-                        deadline=getattr(args, "deadline", DEFAULT_DEADLINE),
-                        ghost_pages=getattr(args, "ghost_pages", DEFAULT_GHOST_PAGES),
-                        )
-    return code
+    if not args.skeleton:
+        print(json.dumps({"plan": bundle, "next": "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）"},
+                         ensure_ascii=False, indent=2))
+    else:
+        print(f"plan complete · skeleton: {args.skeleton} · "
+              "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）")
+    return 0
 
 
 SPEED_PROFILES = {
@@ -1457,22 +1444,18 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--json", action="store_true")
     _add_speed_flags(c)
 
-    r = sub.add_parser("run", help="prepare plan/assets OR check an existing build after QC")
+    # （v7.2.0 审计：`run --build` 与 `check` 是同一条 run_check 路径，
+    # brief 位置参数在 check 分支里被忽略——一个入口两个名字只会长出分歧。
+    # 校验编排稿一律走 check；run 只做规划与资产准备，check 类旗标全部移除。）
+    r = sub.add_parser("run", help="prepare plan/assets from a brief")
     r.add_argument("brief")
-    r.add_argument("--build")
     r.add_argument("--skeleton", default="build_vao.py")
     r.add_argument("--plan-out", default="plan.json")
-    r.add_argument("--output", default="deck.pptx")
     r.add_argument("--assets-out", help="also emit deduplicated asset_manifest.json in this run")
     r.add_argument("--asset-cache", help="prompt cache JSON for --assets-out")
-    r.add_argument("--assets-manifest", help="bind an existing asset manifest during check")
-    r.add_argument("--assets-dir", help="directory containing generated manifest filenames")
-    r.add_argument("--asset-qc-report", help="QC报告；默认资产清单同目录的 <stem>.qc.json")
-    r.add_argument("--mode", choices=("spec", "draft", "release"), default="draft")
-    r.add_argument("--packet")
-    r.add_argument("--preview")
+    r.add_argument("--assets-dir",
+                   help="图将被放到哪个目录（写进 manifest，check 默认据此找图并核验）")
     r.add_argument("--json", action="store_true")
-    _add_speed_flags(r)
 
     v = sub.add_parser("preview", help="spec/build → ghost contact sheet (PIL only)")
     v.add_argument("build")
@@ -1614,7 +1597,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.json or not (args.plan_out or args.skeleton):
                 print(json.dumps(bundle, ensure_ascii=False, indent=2, default=str))
             else:
-                print(f"plan complete · route_calls=1 · {bundle['performance']['planning_ms']}ms")
+                print(f"plan complete · {args.plan_out or 'plan.json'}"
+                      + (f" · skeleton: {args.skeleton}" if args.skeleton else ""))
             return 0
         if args.command == "check":
             _, code = run_check(args.build, args.output, mode=args.mode,

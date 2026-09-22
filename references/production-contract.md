@@ -40,7 +40,8 @@
 | 媒体策略 | 数据/表格/流程/结构页不出图 | route 媒体政策 |
 | 网格 | 8 单位吸附（≤2px 或通栏豁免）；`grid_exempt:true` 豁免 | `grid` |
 
-构图：plan 每页给 `composition.grammar` 提案——不给坐标版式，生成侧可整体推翻。
+构图：作者显式声明 `composition` 时 plan 原样带过去；未声明是**待判断项**（骨架里留注释），
+引擎不给家族→语法的先验答案。
 修订：照 `fix_plan` 根因组一轮批量改完（fix 内嵌契约行，零回读），一次改完再复跑。
 
 ### 速度档
@@ -121,7 +122,7 @@ ghost 是**预览**，不是第二个渲染器。两条纪律：
 ```python
 spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
  "theme": {"colors":{...},"fonts":{"cn":...,"latin":...},"constraints":{...}},
- "strategy": {...}, "direction": {"color_intent": [...]},
+ "direction": {"color_intent": [...]},
  "slides": [{"id":"s01","page_intent":{...},
   "source_zone": {"x":48,"y":672,"width":1184,"height":32},
   "elements": [...]}]}
@@ -129,7 +130,7 @@ spec = {"canvas": {"width":1280,"height":720,"grid_columns":12,"grid_unit":8},
 
 `theme.fonts` 只读 cn/latin；未声明回落 Arial / Microsoft YaHei 并被 `theme_fonts` 点名。
 每页可带 `anchor`（eyebrow/page_number/figure）：落成对应 role 元素后 `deck_anchor` 查
-存在性/位置恒定/编号连续；不声明不查。`theme.constraints` 是方向数字种子，plan 发下来
+存在性/编号连续（位置恒定是设计判断，不逐页执法）；不声明不查。`theme.constraints` 是方向数字种子，plan 发下来
 原样照抄，guard 按它执法，写错键名被点名。光源以外的幻灯级字段不存在——写了被静默忽略。
 来源区 role 只允许 `{source, method, metadata}`。图片必须 `asset_id` 绑定清单，解析器与 QC
 同一路径。生成图目录优先 `--assets-dir`；既有素材路径由来源声明给出。

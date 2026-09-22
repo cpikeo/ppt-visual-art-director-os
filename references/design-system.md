@@ -124,7 +124,8 @@ System 不要求相邻页必须变化；Intelligence 决定要变化之后，Sys
 `theme` 真正被读的键只有四个——多写的键无声忽略：
 
 ```python
-theme = {"colors": {"background","surface","primary","secondary","ink","muted","accent","negative"},
+theme = {"colors": {"background","surface","primary","secondary","ink","muted","accent","negative",
+                    "premium","optional"},   # premium/optional：多序列图表的二级信号色（缺省回落 accent）
         "fonts": {"cn","latin"},          # display/body 是等价别名
         "constraints": {"whitespace_min": 0.55},   # 只写你真的要承诺的数字
         "chart_palette": {"primary","secondary","neutral","accent","negative"}}
@@ -187,7 +188,8 @@ metadata source method axis data_label legend decoration eyebrow page_number`。
 **跨页锚**：plan 给每页发 `anchor`（≥4 页成套 deck 才有）：眉标 `role=eyebrow` 用 plan
 家族词汇原文、固定上缘；页码 `role=page_number` 固定象限、封面不编号；证据编号
 （Fig.01…）不用——演示无回指，编号只会挤掉来源行里真正该写的口径。
-`guard.deck_anchor` 只查：声明了有没有落、位置是否同一、编号连不连续。
+`guard.deck_anchor` 只查：声明了有没有落、编号连不连续（位置恒定是设计判断，
+由统一契约承担，引擎不逐页执法）。
 **来源区内只放 source/method/metadata**；其他角色对象与 `source_zone` 相交即
 `SOURCE_COLLISION`（形状同样算；合格背景画心除外）。
 

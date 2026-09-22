@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 # Support both `python scripts/pipeline.py` and importing the module from repo root.
@@ -22,16 +21,18 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from intent_compiler import compile_brief
 from route import align_pages, explicit_content_type, one_pass_plan, plan_deck
 
 
 def build_plan_bundle(need: dict) -> dict:
-    """Build brief, deck route and page intents with one route computation."""
-    t0 = time.perf_counter()
+    """Build deck route and page intents with one route computation.
+
+    （v7.2.0 审计：bundle 曾有 `brief`（compile_brief 的嵌套镜像）与
+    source_hash/performance——前者全库零消费者（need 与 plan 本就在 bundle 里），
+    后者是常量噪音（route_calls 恒为 1）。链凭证只需要 need 快照 + plan 指纹。）
+    """
     need = dict(need or {})
     plan = plan_deck(need)
-    brief = compile_brief(need, route_plan=plan)
     intelligence = one_pass_plan(need, plan=plan)
 
     # 页事实完整性：brief slides / plan.pages / 意图 pages 三份同出一次 route，
@@ -48,19 +49,11 @@ def build_plan_bundle(need: dict) -> dict:
     # the large object in the persisted bundle.
     bundle = {
         "schema": "vao-plan-v1",
-        "source_hash": brief.get("source_hash"),
         "need": need,
-        "brief": brief,
         "plan": plan,
         "deck_decision": intelligence.get("deck_decision"),
         "color_plan": intelligence.get("color_plan"),
         "pages": intelligence.get("pages") or [],
-        "performance": {
-            "planning_ms": round((time.perf_counter() - t0) * 1000, 2),
-            "route_calls": 1,
-            "rendered": False,
-            "compiled": False,
-        },
     }
     return bundle
 
@@ -198,7 +191,8 @@ def build_skeleton_module(bundle: dict) -> str:
          '落笔清单（一次做完，不要回来补第二遍）：',
          '  1) 每页 page_intent.insight（本页唯一结论）与 focus（视线第一落点元素 id）',
          '  2) elements 平铺写：x/y/width/height（8 的倍数）+ text + 样式平铺顶层。',
-         '     会被当场抓住的量只有三个：框高 ≥ 字号 × 行高(默认1.35) × 行数；',
+         '     会被当场抓住的量只有三个：框高 ≥ 字号 × 行高 × 行数；行高按字号阶梯',
+         '     （display 1.05–1.15 / title 1.15–1.25 / 正文 1.3–1.5，不写默认 1.35）；',
          '     标题按 +20% 余量给宽；内容过多先删句改写，不缩字号。',
          '  3) theme.fonts 写 {cn, latin}；图表页齐 source/unit/period/basis；',
          '     每页 anchor 落成元素：眉标 role=eyebrow（写你自己的说法也行）+ role=page_number，',

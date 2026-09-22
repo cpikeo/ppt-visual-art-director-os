@@ -1381,6 +1381,16 @@ def check_asset_workflow(work: pathlib.Path) -> None:
             {"check":"text_safe_area", "status":"issue"}]}), contextlib.redirect_stdout(io.StringIO()):
         retry, code = vao._asset_qc_report(str(manifest_path), phase="draft")
     check("assets: retry is not PASS and returns 2", code == 2 and retry["status"] == "BLOCKED" and bool(retry["retry_assets"]))
+    # v7.2.0：阶段不再进复用键——像素判定与阶段无关，只有 retry 策略按当前
+    # 阶段重算。上方 mock 的判定因此被 release 复用，策略必须从 draft retry
+    # 变成 release 阻断（策略不重算就会被 mock 放行）。
+    _, success_code = vao._asset_qc_report(str(manifest_path), phase="release")
+    qc = read_json(qcpath)
+    check("assets: release 复用 draft 的像素判定并按 release 策略重判（不自动重出）",
+          success_code == 2 and qc["status"] == "BLOCKED"
+          and bool(qc["blocking_assets"]) and not qc["retry_assets"])
+    # 清报告强制真实测量：真实图在 release 被量过，字节凭证绑进清单。
+    qcpath.unlink()
     _, success_code = vao._asset_qc_report(str(manifest_path), phase="release")
     qc = read_json(qcpath)
     check("assets: real image QC binds inspected bytes to manifest",
@@ -2411,13 +2421,13 @@ def check_speed_profile(work: pathlib.Path) -> None:
             ]}]}
     snapshots = {str(picture): blob}
     out_a = builds / "a.pptx"
-    report_a = compile_deck(spec, out_a, checks=False, image_bytes=snapshots, speed="fast")
+    report_a = compile_deck(spec, out_a, image_bytes=snapshots, speed="fast")
     perf = report_a.get("performance") or {}
     check("compile: 同图同盒只变换一次（换盒子才另算一次、解码底图仍复用）",
           perf.get("image_transforms") == 2 and perf.get("image_transform_reuses") == 1
           and perf.get("image_decode_reuses") == 1, str(perf))
     out_b = builds / "b.pptx"
-    compile_deck(spec, out_b, checks=False, image_bytes=snapshots, speed="fast")
+    compile_deck(spec, out_b, image_bytes=snapshots, speed="fast")
     check("compile: 同 spec 同档位两遍编译字节一致（确定性未因提速而丢）",
           hashlib.sha256(out_a.read_bytes()).hexdigest()
           == hashlib.sha256(out_b.read_bytes()).hexdigest())
@@ -2442,7 +2452,7 @@ def check_speed_profile(work: pathlib.Path) -> None:
     check("assets: 已解码底图有内存上限（快路径不把内存变成新的失败模式）",
           "overflow" not in capped, str(sorted(capped)))
     out_d = builds / "d.pptx"
-    seeded = compile_deck(spec, out_d, checks=False, image_bytes=snapshots,
+    seeded = compile_deck(spec, out_d, image_bytes=snapshots,
                           decode_seed=decoded, speed="fast")
     seeded_perf = seeded.get("performance") or {}
     check("compile: 复用核验底图不改产物字节（同一份像素，少解一遍）",
@@ -2452,7 +2462,7 @@ def check_speed_profile(work: pathlib.Path) -> None:
           f"reuses={seeded_perf.get('image_decode_reuses')}")
 
     out_c = builds / "c.pptx"
-    strict_report = compile_deck(spec, out_c, checks=False, image_bytes=snapshots, speed="strict")
+    strict_report = compile_deck(spec, out_c, image_bytes=snapshots, speed="strict")
     import zipfile
     with zipfile.ZipFile(out_a) as za, zipfile.ZipFile(out_c) as zc:
         check("compile: fast/strict 产物结构一致（条目与页数相同，只是压缩口径不同）",

@@ -63,46 +63,36 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
 #   （64/44/32/22/17/12.5），路由再发一份 type_scale 只会造出第二套口径
 #   ——旧字段无消费者且 fast 档缩放值落在驻点之外，已删除。
 # ─────────────────────────────────────────────────────────────
+# 每列都有消费者：family → 媒体模型/骨架；density/energy → 意图骨架与节奏；
+# asset/asset_function → 资产预算与清单。（v7.2.0 审计删除了 media/texts/
+# empty_space 三列——全库零读取，留白职责词汇只活在 design-craft 的概念层。）
 ROUTES: dict[str, dict] = {
     "cover":        dict(family="COVER", density="sparse", energy="high",
-                         asset="required", asset_function="hero",
-                         media=1, texts=4, empty_space="hold_emotion"),
+                         asset="required", asset_function="hero"),
     "brand_story":  dict(family="EDITORIAL", density="sparse", energy="medium",
-                         asset="required", asset_function="emotion",
-                         media=1, texts=4, empty_space="hold_emotion"),
+                         asset="required", asset_function="emotion"),
     "product":      dict(family="HERO", density="balanced", energy="high",
-                         asset="required", asset_function="hero",
-                         media=1, texts=4, empty_space="protect_focus"),
+                         asset="required", asset_function="hero"),
     "case":         dict(family="CASE_STUDY", density="balanced", energy="medium",
-                         asset="optional", asset_function="proof",
-                         media=2, texts=4, empty_space="create_authority"),
+                         asset="optional", asset_function="proof"),
     "statement":    dict(family="MINIMAL_STATEMENT", density="sparse", energy="low",
-                         asset="optional", asset_function="emotion",
-                         media=1, texts=4, empty_space="hold_emotion"),
+                         asset="optional", asset_function="emotion"),
     "closing":      dict(family="MINIMAL_STATEMENT", density="sparse", energy="medium",
-                         asset="optional", asset_function="emotion",
-                         media=1, texts=4, empty_space="hold_emotion"),
+                         asset="optional", asset_function="emotion"),
     "business":     dict(family="EXECUTIVE_SUMMARY", density="balanced", energy="medium",
-                         asset="none", asset_function=None,
-                         media=1, texts=4, empty_space="create_authority"),
+                         asset="none", asset_function=None),
     "agenda":       dict(family="EXECUTIVE_SUMMARY", density="balanced", energy="low",
-                         asset="none", asset_function=None,
-                         media=1, texts=5, empty_space="separate_chapter"),
+                         asset="none", asset_function=None),
     "data":         dict(family="DATA_STORY", density="balanced", energy="low",
-                         asset="none", asset_function=None,
-                         media=1, texts=4, empty_space="protect_focus"),
+                         asset="none", asset_function=None),
     "comparison":   dict(family="COMPARISON", density="balanced", energy="low",
-                         asset="none", asset_function=None,
-                         media=1, texts=4, empty_space="protect_focus"),
+                         asset="none", asset_function=None),
     "timeline":     dict(family="TIMELINE", density="balanced", energy="medium",
-                         asset="none", asset_function=None,
-                         media=1, texts=4, empty_space="separate_chapter"),
+                         asset="none", asset_function=None),
     "architecture": dict(family="FRAMEWORK", density="balanced", energy="medium",
-                         asset="optional", asset_function="context",
-                         media=1, texts=4, empty_space="separate_chapter"),
+                         asset="optional", asset_function="context"),
     "process":      dict(family="NARRATIVE", density="balanced", energy="medium",
-                         asset="none", asset_function=None,
-                         media=1, texts=4, empty_space="separate_chapter"),
+                         asset="none", asset_function=None),
 }
 DEFAULT_ROUTE = ROUTES["business"]
 
@@ -606,8 +596,6 @@ def _plan_deck(brief: dict) -> dict:
     generate = declared + judged[:cap]
     assets = {"generate": generate, "generate_extra": judged[cap:], "reuse": reused,
               "skipped": [p["id"] for p in pages if p["asset"]["decision"] == "none"]}
-    assets["planned_calls"] = len(generate)
-    exec_mode = recommend_mode(brief)
     # V3：P1 就召回 Design DNA（经验线并行，不串行等待）。可选智能层失败可以降级，
     # 但必须留在 plan.warnings，不能把异常伪装成「无 DNA/无媒体判断」。
     intelligence_warnings = []
@@ -656,18 +644,16 @@ def _plan_deck(brief: dict) -> dict:
                          "msg": "content 缺失：证据型页面不能由标题脑补数据/案例——"
                                 "补真实证据，或改成纯排版观点页，或删掉这一页"}
                         for pg in pages if pg.get("content_missing")])
+    # （v7.2.0 审计：execution/recommend_mode 整链零消费者——推荐模式流向
+    # plan.execution → brief.route.execution → 无处，且 "review" 不是真实模式；
+    # direction_input/quality_input 与 warnings 里的 input+canonical 留痕重复。
+    # 删。深度由任务赢得：简单任务 draft 即交付，终版收口才需要 release。）
     return {
         "path": quality,
         "mode": MODE_LABEL[quality],
         "dna": dna_hit,
-        "execution": {"recommended": exec_mode,
-                      "modes": ["spec", "draft", "release"],
-                      "note": ("深度由任务赢得：简单任务走 draft 即交付；"
-                               "只有终版收口才需要 release 的全量证据与 Manifest。")},
         "design_direction": direction,
-        "direction_input": requested_direction,
         "quality_level": quality,
-        "quality_input": quality_input,
         "warnings": plan_warnings,
         "theme": seed,      # 整副 deck 的主题种子：落进 spec.theme（可被作者覆盖）
         "direction_execution": _execution_with_brief_overrides(direction, brief),  # 介质/光照/图表手法（deck 级）
@@ -701,45 +687,13 @@ def _alternate_density(pages: list[dict]) -> None:
             cur["density"] = nxt[cur["density"]]
 
 
-# --------------------------------------------------------------------------
-# CLI： python route.py brief.yml [--json]      或      python route.py --demo
-# --------------------------------------------------------------------------
-# 执行模式关键词（确定性 sniff；显式 brief.execution_mode 永远优先）
-_RELEASE_HINTS = ("终版", "发布", "定稿", "release", "final", "publish")
-_REVIEW_HINTS = ("确认", "审阅", "审查", "review", "方向确认")
-
-
-def recommend_mode(brief: dict) -> str:
-    """brief → draft | review | release。
-
-    默认是 draft（创作链）：初稿/探索/多方案不该付发布级流水线的成本。
-    只有 brief 明说要终版发布、或用户已确认方向时才升档。
-    显式 brief.execution_mode 优先；关键词 sniff 只做兜底。
-    """
-    explicit = str((brief or {}).get("execution_mode") or "").strip().lower()
-    if explicit in ("draft", "creative", "a"):
-        return "draft"
-    if explicit in ("review", "design_review", "b"):
-        return "review"
-    if explicit in ("release", "final", "c"):
-        return "release"
-    occasion = " ".join(str((brief or {}).get(k) or "")
-                        for k in ("occasion", "subject", "brief", "purpose", "task"))
-    low = occasion.lower()
-    if any(h in low for h in _RELEASE_HINTS):
-        return "release"
-    if any(h in low for h in _REVIEW_HINTS):
-        return "review"
-    return "draft"
-
-
 def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     """Deck Decision Card：全 deck 判断一次，页面继承。
 
-    生成速度的大头是「每页重新想」。这张卡把 deck 级判断（叙事弧线/方向/
-    密度曲线/媒体政策/色彩行为/执行模式）一次固化，页面只做适配——
-    意图用 design_intelligence.page_intent_skeleton 继承骨架后按内容覆写，
-    页面拿到家族 + 叙事动作 + 意图骨架；构图由生成侧判断。
+    生成速度的大头是「每页重新想」。这张卡把 deck 级判断（叙事弧线、
+    统一契约、饱和人格提醒、待判断槽位）一次固化，页面只做适配——
+    意图用 design_intelligence.page_intent_skeleton 继承骨架后按内容覆写；
+    构图由生成侧判断。方向/主题/媒体政策等已是 plan 里的事实，卡上不再复制。
     纯确定性派生；卡上留的洞（visual_world / type_voice / 每页 insight）
     是内容级判断，仍是 Art Director 的职责。
     """
@@ -755,29 +709,13 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
     else:
         arc = ["establish", "context", "explain", "explain", "prove", "prove",
                "recommend", "close"]
-    assets = plan.get("assets") or {}
-
-    def _n(x):
-        return len(x) if isinstance(x, (list, tuple, dict)) else 0
-
+    # （v7.2.0 审计瘦身：theme/execution 是 plan 同名字段的字面复制，
+    # media_policy 是 plan.assets 的计数，color/composition/visual/note 是常量串
+    # 或 plan 已有事实——同一事实在同一 bundle 里写两遍。卡只留判断：
+    # 弧线、统一契约（骨架消费）、待判断槽位（骨架消费）与饱和人格的提醒。）
+    brand_derived = bool((plan.get("theme") or {}).get("brand_derived"))
     return {
         "narrative_arc": arc,
-        "visual": {"direction": plan.get("design_direction"),
-                   "visual_world": None,      # 洞：一句话隐喻（材质/光影/空间）
-                   "type_voice": None},       # 洞
-        "composition": {"rule": "页面拿到家族与叙事动作；几何与构图由生成侧判断；"
-                                "相邻页的变化要有内容理由（结构雷同由布局指纹风险点名）"},
-        "media_policy": {"generate": _n(assets.get("generate")),
-                         "reuse": _n(assets.get("reuse")),
-                         "skipped": _n(assets.get("skipped"))},
-        "color": {"brand_derived": bool((plan.get("theme") or {}).get("brand_derived")),
-                  "behavior": "color_behavior 判断（非色值）；图表走 chart_palette 角色",
-                  # 高级感 ≠ 低饱和默认：品牌没给色时，种子只是执行起点，
-                  # 饱和人格是内容情绪要回答的洞——不允许把 quiet 隐式当「高级」。
-                  "saturation_regime": ("brand_derived"
-                                        if (plan.get("theme") or {}).get("brand_derived")
-                                        else "undecided: quiet 只是种子起点，"
-                                             "饱和人格按内容情绪/行业语境判断")},
         # 整体统一契约：统一的是世界，可不同的是页面。把「必须统一」写进
         # deck 卡，生成侧拿到的就不只是「可推翻」，还有「必须一致」。
         "unity": {"same_world": ["材质与光的逻辑", "排版声音", "锚点词汇",
@@ -785,11 +723,12 @@ def deck_decision(brief: dict, plan: dict | None = None) -> dict:
                   "may_differ": ["构图", "密度", "色重", "图片比例",
                                  "标题位置", "页面结构"],
                   "rule": "不同页面拥有不同的视觉表达，但仍属于同一个完整的视觉世界"},
-        "execution": plan.get("execution"),
-        "theme": plan.get("theme"),
         "slots": ["visual_world", "type_voice", "饱和人格（color_behavior）",
                   "每页 insight / focus"],
-        "note": "卡是判断的锚点不是答案：页面意图用 page_intent_skeleton 继承后再按内容覆写",
+        # 高级感 ≠ 低饱和默认：品牌没给色时，种子只是执行起点，
+        # 饱和人格是内容情绪要回答的洞——不允许把 quiet 隐式当「高级」。
+        "saturation_regime": ("brand_derived" if brand_derived
+                              else "undecided: quiet 只是种子起点，按内容情绪/行业语境判断"),
     }
 
 
@@ -803,8 +742,8 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
     plan 可由统一入口预先计算；传入后本函数不会再次调用 plan_deck，避免
     intent_compiler / route 在同一轮重复推导。
 
-    返回 {plan, deck_decision, color_plan, pages:[{family, skeleton, move,
-    media, budget}]}。生成侧拿到的是**判断线索**（家族、意图骨架、叙事动作、
+    返回 {plan, deck_decision, color_plan, pages:[{id, family, skeleton,
+    composition, media}]}。生成侧拿到的是**判断线索**（家族、意图骨架、
     媒体闸门），不是预置坐标——几何与构图归生成侧的设计判断。
     """
     import design_intelligence as di
@@ -813,13 +752,9 @@ def one_pass_plan(brief: dict, plan: dict | None = None) -> dict:
     color = di.color_plan(plan.get("design_direction"), brief)
     pages = []
     plan_pages = plan.get("pages") or []
-    for idx, pg in enumerate(plan_pages):
+    for pg in plan_pages:
         fam = pg.get("page_family") or ""
         intent = {"page_intent": {"page_family": fam, "density": pg.get("density")}}
-        # 节奏位由位置决定（开篇/主体/收束），密度与能量由路由表决定——
-        # 两者都来自 route，避免骨架自己再推一遍值。
-        stage = ("opening" if idx == 0 else
-                 "closing" if idx == len(plan_pages) - 1 else "body")
         # 构图语法由作者判断（本层只把作者显式声明的原样带过去）。
         # 此前这里按 family → 语法的表给出「答案 + 备选」，那是把设计判断写成了查表：
         # 页面拿到的是一个先验结论，不是内容推出来的选择。

@@ -238,8 +238,6 @@ def verdict(spec: dict, output: str | Path, *, mode: str | None = None,
     # 没有 id 的 fix_plan 分组只能说「有问题」，说不出「改哪个」。
     compile_warning_ids = list(compile_report.get("warning_ids") or [])
     for idx, w in enumerate(compile_warnings):
-        if w.startswith("[guard]"):
-            continue          # 与 guard 域同源，不重复计数
         wid = compile_warning_ids[idx] if idx < len(compile_warning_ids) else None
         items.append({"domain": "compile", "level": "warn", "rule": "compiler",
                       "id": wid, "msg": w})
