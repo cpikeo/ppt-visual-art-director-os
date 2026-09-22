@@ -204,7 +204,9 @@ statement 与留白的比例比增加装饰更有效」（可迁移判断），�
 `pattern/when_not_to`、`design_problem`、`judgment`（只写行为判断，维度限 hierarchy/space/
 media/color_behavior/charts/anchor_rule/structure/type_voice）、`works_because/avoid`、
 `proven`（实测证据，数字放这里）。`judgment` 里出现色值/字体/版式结果会被拒收；库损坏
-拒绝写入。写坏的记忆比不写更贵——它不报错，只会被静默误用。
+拒绝写入。写坏的记忆比不写更贵——它不报错，只会被静默误用。新增 DNA 前，先判断
+是否可以增强已有 DNA（`--replace` 加固 `proven`）；只有形成新的、跨项目可复用的
+设计判断时才新增。
 
 不做「标注 → 反推 → 改常量」的校准工程。guard/QA 阈值只守物理底线（对比度/溢出/色距/
 accent 面积）：底线只升不调，底线之上不存在「审美分数线」。

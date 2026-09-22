@@ -1028,13 +1028,25 @@ def check_anti_regression() -> None:
     legacy = ("gravity_anchor", "vp-00", "perception_goal", "spatial_grammar",
               "typography_voice", "media_behavior", "chart_behavior", "forbidden_signals",
               "differentiation", "fact_basis_mismatch", "invalid_data", "batch.deferred",
-              "hold_attention", "frame_focus", "art_critic", "layout_search", "render_check")
-    docs = list(ROOT.glob("*.md")) + list((ROOT / "references").glob("*.md"))
+              "hold_attention", "frame_focus", "art_critic", "layout_search", "render_check",
+              "vao-asset-qc-v3")
+    # CHANGELOG 是历史账本不是写作指南：版本间废弃/重命名的字段与 schema 名
+    # 在账本里必然出现（历史记录不是「教作者照着写」），词钉只守面向使用者的文档。
+    docs = [d for d in list(ROOT.glob("*.md")) + list((ROOT / "references").glob("*.md"))
+            if d.name != "CHANGELOG.md"]
     drift = {d.name: [w for w in legacy if w in d.read_text(encoding="utf-8").lower()]
              for d in docs}
     drift = {n: w for n, w in drift.items() if w}
     check("docs: 文档不出现代码未实现的字段/枚举/规则码（防止照着写被静默忽略）",
           not drift, str(drift))
+
+    # 文档引用 QC 报告 schema 时与代码常量一致（v7.2.1 漂移案：asset-workflow.md
+    # 曾写着代码已拒收的旧 schema——词表钉不住 schema 串，须以常量为锚）。
+    from asset_workflow import QC_REPORT_SCHEMA as _qcs
+    wf_txt = next(d.read_text(encoding="utf-8") for d in docs
+                  if d.name == "asset-workflow.md")
+    check("docs: 资产契约写的 QC schema 与代码常量一致（漂移 = 教用户犯拒收错误）",
+          _qcs in wf_txt, f"asset-workflow.md 未引用当前 {_qcs}")
 
     # 文档列阻断码时必须列全：少一条 = 作者以为它可忽略
     import qa as _qa
@@ -1316,6 +1328,7 @@ def check_asset_workflow(work: pathlib.Path) -> None:
     from PIL import Image
     import vao
     from asset_workflow import digest, stable_plan_sha, verify_chain, read_json
+    from asset_prompt import RESOLVED_LIGHT_SOURCES
     from asset_prompt import asset_fingerprint
 
     d = work / "asset-chain"
@@ -1342,6 +1355,12 @@ def check_asset_workflow(work: pathlib.Path) -> None:
     check("assets: manifest records prompt builder and plan hash",
           proc.returncode == 0 and manifest["workflow"]["plan_sha256"] == stable_plan_sha(read_json(plan))
           and bool(entry["prompt"]) and bool(entry["negative"]))
+    # v7.3 决策期落盘：manifest 是唯一视觉决策源——生成入口的每张卡必须带
+    # 决策对象（渲染期只翻译不在场的决策）。
+    check("assets: manifest 生成条目带 resolved 决策对象（v=1，光语来源合法）",
+          isinstance(entry.get("resolved"), dict) and entry["resolved"].get("v") == 1
+          and entry["resolved"]["light"]["from"] in RESOLVED_LIGHT_SOURCES,
+          str(entry.get("resolved")))
     plan2 = d / "plan_again.json"
     run_vao("plan", str(brief), "--out", str(plan2))
     check("assets: plan fingerprint is run-stable (volatile keys excluded)",
@@ -1745,6 +1764,21 @@ def check_audit_fixes(work: pathlib.Path) -> None:
     visible=d/"visible-alpha.png";logo.save(visible)
     check("control: visible transparent logo is not blanket-rejected",
           qc_retry_decision(image_qc(str(visible)),phase="release")["action"].startswith("accept"))
+
+    # 亮度断崖（v7.2.1）：承诺的纸与交付的图物理断裂是工程事故，不是方向。
+    sa = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
+    black = d / "black.png"; Image.new("RGB", (256, 256), (2, 2, 2)).save(black)
+    qb = image_qc(str(black), background="#F5F4EF", safe_rect=sa)
+    bb = next(c for c in qb["checks"] if c["check"] == "brightness_balance")
+    db = qc_retry_decision(qb, phase="release")
+    check("tone: 亮度断崖（0.00 图 vs 0.90 声明底色）升级为阻断（带 severity 留痕）",
+          db["action"] == "block" and bb.get("severity") == "blocking"
+          and "brightness_balance" in db["blocking_checks"], str(bb))
+    qd = image_qc(str(black), background="#14161A", safe_rect=sa)
+    check("control: 暗色沉浸方向不受断崖影响（深图配深底同调豁免）",
+          qc_retry_decision(qd, phase="release")["action"].startswith("accept"))
+    check("tone: 断崖在 draft 期仍是一次定向重出（根因纪律不动）",
+          qc_retry_decision(qb, phase="draft")["action"] == "retry")
 
     folder, sp, spec, mp, pic = asset_case("resolution")
     Image.new("RGB",(320,200),(242,240,230)).save(pic)
@@ -2197,6 +2231,86 @@ def check_prompt_discipline() -> None:
     check("card: 中文 subject 收到「改英文」提醒（非阻断，清单保留原文）",
           any("subject 含中文" in s for s in issues), str(issues))
 
+    # P8 光语互斥无条件化（v7.2.1）：非摄影卡带方向光语时句式光一句都不注——
+    # 实测封面 manifest 曾三光语并存（flat even ambient + soft directional +
+    # one dramatic light source），模型只能对矛盾指令做平均。
+    plain = {"asset_type": "background", "asset_function": "hero",
+             "subject": ["mist over layered mountain ridges"],
+             "color": ["neutral tonal range"],
+             "material": ["matte paper ground"],
+             "lighting": ["flat even ambient light"],
+             "composition": ["calm evidence-field composition"]}
+    p8 = build_asset_prompt(plain, page)["prompt"]
+    check("prompt: 光语互斥无条件（卡片已有光语时句式光与能量光全部让位）",
+          "flat even ambient light" in p8
+          and "soft directional light" not in p8
+          and "one dramatic light source" not in p8, p8[:180])
+    p9 = build_asset_prompt({k: v for k, v in plain.items() if k != "lighting"},
+                            page)["prompt"]
+    check("control: 卡片无光语时句式光正常兜底（单一光来源）",
+          "soft directional light from the upper left" in p9
+          and "one dramatic light source" in p9, p9[:180])
+
+    # P10 决策单源静态钉（v7.3 · Accepted Constraint §4-3）：渲染期只翻译。
+    # 边界（用户裁决）：只钉函数体内不引用决策常量、决策函数恰好一次调用；
+    # legacy 兜底（缺 resolved 当场补判）必须继续成立，不扫描调用者。
+    from asset_prompt import (resolve_asset_card, RESOLVED_LIGHT_SOURCES,
+                              ENERGY_LIGHT_VARIANTS)
+    src_ap = (ROOT / "scripts/asset_prompt.py").read_text(encoding="utf-8")
+    body = re.search(r"def build_asset_prompt\(.*?\n\ndef ", src_ap, re.S).group(0)
+    no_decision = all(tok not in body for tok in (
+        "ENERGY_PHRASES", "LIGHT_PHRASES", "INK_DISCIPLINE",
+        "PHOTO_REALISM_DISCIPLINE", "ENERGY_LIGHT_VARIANTS"))
+    check("prompt: build_asset_prompt 不承担决策（只翻译 resolved，决策常量零引用）",
+          no_decision and body.count("resolve_asset_card(") == 1,
+          f"tokens-clear={no_decision} resolve-calls={body.count('resolve_asset_card(')}")
+
+    # P11 决策对象完备性：五来源覆盖 + 每格条件唯一。
+    d_decl = {"asset_type": "background", "asset_function": "hero",
+              "subject": ["s"], "color": ["c"], "material": ["m"],
+              "lighting": ["warm side light"], "composition": ["k"],
+              "lighting_source": "declared"}
+    d_dir = {**d_decl, "lighting": ["flat even ambient"], "lighting_source": "direction"}
+    d_fb = {**d_decl, "lighting": ["single soft directional light"], "lighting_source": "fallback"}
+    d_photo = _photo_card(lighting_source="preset")
+    d_none = {k: v for k, v in plain.items() if k != "lighting"}
+    cases = [(d_decl, "declared", "low"), (d_dir, "direction", "high"),
+             (d_dir, "direction", "medium"), (d_fb, "fallback", "low"),
+             (d_photo, "photo_discipline", "high"), (d_none, "phrase_fallback", "low")]
+    src_enum = {resolve_asset_card(dict(c), {"energy": e})["resolved"]["light"]["from"]
+                for c, _, e in cases}
+    check("resolve: 光语五来源全枚举覆盖（一格条件一来源，互相不可能并存）",
+          src_enum == set(RESOLVED_LIGHT_SOURCES), f"observed={sorted(src_enum)}")
+
+    # P12 能量抵达回归（v7.3 修 §1.1 实测伤口：互斥曾把能量光一并灭口，
+    # energy=high 与 energy=low 的 prompt 逐字节相同——页面能量判断被吞）。
+    hi = build_asset_prompt(resolve_asset_card(dict(d_dir), {**page, "energy": "high"}), {**page, "energy": "high"})["prompt"]
+    lo = build_asset_prompt(resolve_asset_card(dict(d_dir), {**page, "energy": "low"}), {**page, "energy": "low"})["prompt"]
+    md = build_asset_prompt(resolve_asset_card(dict(d_dir), {**page, "energy": "medium"}), {**page, "energy": "medium"})["prompt"]
+    dec_hi = build_asset_prompt(resolve_asset_card(dict(d_decl), {**page, "energy": "high"}), {**page, "energy": "high"})["prompt"]
+    dec_lo = build_asset_prompt(resolve_asset_card(dict(d_decl), {**page, "energy": "low"}), {**page, "energy": "low"})["prompt"]
+    check("resolve: 页面能量判断抵达像素（方向光语强弱调谐；medium 保留原句）",
+          ENERGY_LIGHT_VARIANTS["flat even ambient"]["high"] in hi
+          and ENERGY_LIGHT_VARIANTS["flat even ambient"]["low"] in lo
+          and "flat even ambient" in md and lo != hi
+          and resolve_asset_card(dict(d_dir), {"energy": "high"})["resolved"]["light"]["energy_applied"]
+          and not resolve_asset_card(dict(d_dir), {"energy": "medium"})["resolved"]["light"]["energy_applied"],
+          hi[-140:])
+    check("resolve: declared 自由文本永远赢（能量不着一字，逐字节守恒）",
+          dec_hi == dec_lo and "warm side light" in dec_hi
+          and not resolve_asset_card(dict(d_decl), {"energy": "high"})["resolved"]["light"]["energy_applied"],
+          dec_hi[-140:])
+
+    # P13 legacy 兜底等价：缺 resolved 不是错误，当场补判与预结算字节一致。
+    legacy = build_asset_prompt(dict(d_dir), page)
+    stamped = build_asset_prompt(resolve_asset_card(dict(d_dir), page), page)
+    check("prompt: legacy 兜底与决策期结算字节一致（缺 resolved ≠ 错误）",
+          legacy["prompt"] == stamped["prompt"] and legacy["negative"] == stamped["negative"],
+          legacy["prompt"][:140])
+    # R4 审计钉：resolved 只存一份（manifest 条目顶层）；meta 里不允许镜像。
+    check("prompt: resolved 单存储（meta 不落镜像副本，manifest 顶层是唯一落盘处）",
+          "resolved" not in legacy["meta"], str(list(legacy["meta"].keys())[:6]))
+
 
 def check_asset_role_separation() -> None:
     """角色分离（v5.7）：背景图与插图的职责边界，不是第三个枚举系统。
@@ -2528,6 +2642,26 @@ def check_speed_profile(work: pathlib.Path) -> None:
           released.returncode == 0 and rm["release_eligible"]
           and ver.get("visual_evidence_scope") in {"full", "sampled"}
           and ver.get("speed") == "fast", released.stdout[-300:])
+    # ── 6b) 案史闭环信号（v7.3.2）：案史空白才提示沉淀（matched 则静默） ──
+    dna_state = (read_json(plan).get("plan") or {}).get("dna") or {}
+    hint_line = "dna: 本稿无可召回案史" in released.stdout
+    check("dna: release PASS 案史空白提示沉淀（matched 则一行都没有）",
+          hint_line == (not dna_state.get("matched")),
+          f"matched={str(dna_state.get('matched'))[:40]} hint={hint_line}")
+    from vao import _dna_recall_hint as _hint
+    plan_a, plan_b = d / "plan_a.json", d / "plan_b.json"
+    plan_a.write_text(json.dumps({"plan": {"dna": {"matched": "x"}}}), encoding="utf-8")
+    plan_b.write_text(json.dumps({"plan": {"dna": {"matched": None}}}), encoding="utf-8")
+    swp = {"asset_workflow": {"plan_path": str(plan_a)}}
+    gate = [_hint({"passed": False}, swp, None, "release"),
+            _hint({"passed": True}, swp, None, "draft"),
+            _hint({"passed": True}, swp, None, "release"),
+            _hint({"passed": True}, {}, None, "release")]
+    swp["asset_workflow"]["plan_path"] = str(plan_b)
+    fire = _hint({"passed": True}, swp, None, "release")
+    check("dna: hint 门完备（非PASS/非release/matched/无plan 全静默；空白唯一提示）",
+          all(x is None for x in gate) and fire and "dna --add" in fire,
+          f"gate={gate} fire={str(fire)[:60]}")
     check("release: 产物字节戳由同一轮见证，不重复整包哈希",
           any("未重复整包哈希" in n for n in (rm["validation"].get("notes") or [])),
           str(rm["validation"].get("notes"))[:200])
@@ -2921,17 +3055,17 @@ def check_audit_7_0(work: pathlib.Path) -> None:
 
 
 def check_doc_counts() -> None:
-    """文档里的自检项数必须等于实际项数。
+    """README 不维护会过期的数字（v7.2.1）。
 
-    这一类漂移没有代码会报错（数字只是散文），但读者会照它判断「验证网有多大」。
-    放在最后一项执行：此时 RESULTS 已含除本项以外的全部检查，总数 = len(RESULTS) + 1。
+    此钉曾要求「README 写的自检项数 = 实际项数」——它把脆弱性写进契约：每增删
+    一条回归，README 散文都要跟着改，而这类漂移没有代码会报错。README 的职责是
+    定位与入口，不是账本；账本只有一个：`python scripts/selftest.py` 的输出。
     """
     import re as _re
-    total = len(RESULTS) + 1
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     stated = {int(m) for m in _re.findall(r"(\d+)\s*项", readme)}
-    check(f"docs: README 里的自检项数与实际一致（实际 {total} 项）",
-          stated == {total}, f"README 写着 {sorted(stated)}")
+    check("docs: README 不写自检项数（数字只活在 selftest 输出里，不维护第二份）",
+          not stated, f"README 写着 {sorted(stated)}")
 
 def check_boundary_negatives(work: pathlib.Path) -> None:
     """技能包的否定边界：不只测"能做什么"，更测**不该做什么**（§33）。

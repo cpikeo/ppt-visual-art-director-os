@@ -227,7 +227,7 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
     """brief + one route page → compact asset card + geometric page contract."""
     from asset_prompt import (enhance_asset_card, grammar_phrase,
                               hex_to_color_name, normalize_safe_area,
-                              resolve_asset_role)
+                              resolve_asset_card, resolve_asset_role)
 
     raw = raw_slide if isinstance(raw_slide, dict) else {"content": str(raw_slide)}
     deck = deck or {}
@@ -321,6 +321,10 @@ def _asset_page(brief: dict, page_plan: dict, raw_slide: Any, *, asset_id: str,
         "asset_function": function,
         "ratio": str(raw.get("asset_ratio") or brief.get("asset_ratio") or "16:9"),
     }
+    # 决策期结算（v7.3 · Visual Decision Object）：视觉语言在清单落盘处一次判完，
+    # 渲染期只翻译。manifest 是唯一视觉决策源——这也是 page.tokens 能影响 prompt
+    # 的最后一站。
+    card = resolve_asset_card(card, page)
     return card, page
 
 
@@ -345,7 +349,9 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
     if cache_file:
         try:
             loaded = json.loads(cache_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
+            # 文件级 schema 门禁（R4 审计）：v7.3 起 prompt 是 resolved 的译稿，
+            # v1 旧缓存整票失效重算——要作废的是「钱全集」不是逐条，单一事实存一处。
+            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v2":
                 prompt_cache = loaded.get("entries") or {}
         except (OSError, ValueError, TypeError):
             prompt_cache = {}
@@ -465,6 +471,8 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
             "asset_role_source": card["asset_role_source"],
             "asset_function": page["asset_function"],
             "ratio": page["ratio"],
+            # 决策对象随清单落盘（manifest 是唯一视觉决策源）
+            "resolved": card.get("resolved"),
             "allow_crop": raw.get("asset_allow_crop") is True,
             "background_color": ((plan.get("theme") or {}).get("colors") or {}).get("background", "#FFFFFF"),
             "safe_area": page["safe_area"],
@@ -480,7 +488,7 @@ def build_asset_manifest(brief: dict, bundle: dict | None = None,
         generated_count += 1
     if cache_file:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        _json_write(cache_file, {"schema": "vao-asset-prompt-cache-v1",
+        _json_write(cache_file, {"schema": "vao-asset-prompt-cache-v2",
                                  "entries": prompt_cache})
     # （v7.2.0 审计：manifest 曾有 source_hash——need 的第三种摘要且零读取，
     # 链绑定实际用 brief_sha256=digest(need) + plan["need"] 快照。删。）
@@ -874,14 +882,21 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
     manifest_path = output_path.with_suffix(".manifest.json")
     def publish_failure(result):
+        """真失败时一次性落盘 repair packet 与 manifest（同一路径只写一次）。
+
+        「上一轮的 PASS 不能继承」由这份 BLOCKED 凭证覆盖语义承担；
+        此前失败路径先 _stale_manifest_write 写一遍 manifest、这里再写第二遍
+        payload 90% 相同的同文件——两次无效 I/O，已合并（v7.2.1 审计）。
+        """
         result["run_id"] = run_id
         result["input_sha256"] = file_digest(Path(build_path).expanduser())
-        _json_write(packet_path, _repair_packet(result, mode, Path(build_path), output_path))
         if mode != "spec":
+            result["stale_pass_write"] = True
             _json_write(manifest_path, {"run_id": run_id, "status": "BLOCKED",
                 "release_eligible": False, "verification": {"release_eligible": False},
                 "input_sha256": result["input_sha256"], "qa_report": result,
                 "validation": {"issues": [result["next_action"]]}})
+        _json_write(packet_path, _repair_packet(result, mode, Path(build_path), output_path))
     try:
         result, code = _run_check(build_path, output, mode=mode, packet=packet, preview=preview,
             json_output=json_output,
@@ -897,31 +912,12 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         return result, code
     except Exception as exc:
         result = fail_result({}, [f"输入或执行失败: {type(exc).__name__}: {exc}"])
-        # 上一轮的 PASS 不能继承：失败一律留下 BLOCKED 凭证。
-        result["stale_pass_write"] = _stale_manifest_write(manifest_path, run_id, result,
-                                                          build_path, mode)
         publish_failure(result)
         if json_output:
             print(json.dumps(_repair_packet(result, mode, Path(build_path), output_path), ensure_ascii=False))
         else:
             print(f"VAO {mode}: BLOCKED · {result['next_action']}")
         return result, 2
-
-
-def _stale_manifest_write(manifest_path: Path, run_id: str, result: dict,
-                          build_path: str, mode: str) -> bool:
-    """把失败写进产物清单位（同一份路径），确保「上一轮 PASS」不会留在磁盘上冒充本轮。"""
-    if mode == "spec":
-        return False
-    try:
-        from asset_workflow import file_digest
-        _json_write(manifest_path, {"run_id": run_id, "status": "BLOCKED",
-            "release_eligible": False, "verification": {"release_eligible": False},
-            "input_sha256": file_digest(Path(build_path).expanduser()),
-            "qa_report": result, "validation": {"issues": [result.get("next_action")]}})
-        return True
-    except Exception:
-        return False
 
 
 def _compile_step(spec: dict, output_path: Path, *, mode: str, speed: str,
@@ -1302,6 +1298,12 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
             evidence.measure(key, perf_now[key], stage="count")
     evidence.finish()
     result["evidence"] = evidence.as_dict()
+    # 案史闭环的唯一信号（v7.3.2）：release PASS 且本稿无可召回经验时，
+    # 提示一趟「值得沉淀」。自动写 DNA 是错的——写坏的记忆比不写更贵，
+    # 沉淀是判断动作，不是机制动作；链路只负责让这一局被看见。
+    hint = _dna_recall_hint(result, normalized, asset_binding, mode)
+    if hint:
+        result["dna_hint"] = hint
     if evidence.data["contract"] != "ok" and isinstance(result.get("warnings"), list):
         # 契约是工程事实：HOT 无凭证 / COLD 无原因都说明账本漏记，必须显式暴露。
         for issue in evidence.contract_issues():
@@ -1315,33 +1317,74 @@ def _run_check(build_path: str, output: str, *, mode: str = "draft",
         print(json.dumps(packet_value, ensure_ascii=False, indent=2, default=str))
     else:
         _print_verdict(result, ledger, ghost, manifest_path, packet_path,
-                       asset_binding, speed, budget)
+                       asset_binding, speed, budget, mode=mode)
     binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
                                              or asset_binding.get("missing_files")))
     return result, (0 if result.get("passed") and not binding_block else 2)
 
 
+def _dna_recall_hint(result: dict, spec: dict | None,
+                     asset_binding: dict | None, mode: str) -> str | None:
+    """release PASS 后的一句沉淀提示（或者 None）。
+
+    案史空白的交付是这套 Skill 真正该增长判断的地方（Memory > 新代码）。
+    条件：release 模式 + 本轮 PASS + plan 的 dna.matched 为空（recall 没找到
+    相邻经验——本局的方向选择是新案源）。matched 非空就闭嘴：库已覆盖，不堆提示。
+    一切读取失败静默返回 None（提示是加分项，不许炸交付）。
+    """
+    if mode != "release" or not result.get("passed"):
+        return None
+    try:
+        from asset_workflow import read_json
+        plan_path = None
+        if asset_binding and asset_binding.get("manifest"):
+            plan_path = ((read_json(asset_binding["manifest"]).get("workflow") or {})
+                         .get("plan_path"))
+        if not plan_path:
+            plan_path = ((spec or {}).get("asset_workflow") or {}).get("plan_path")
+        if not plan_path:
+            return None
+        dna = (read_json(plan_path).get("plan") or {}).get("dna") or {}
+        if dna.get("matched"):
+            return None
+        return ("本稿无可召回案史（dna.matched=None）——若这局的方向判断有效，记入经验："
+                "python scripts/vao.py dna --add entry.json")
+    except Exception:
+        return None
+
+
 def _print_verdict(result, ledger, ghost, manifest_path, packet_path,
-                   asset_binding, speed, budget) -> None:
-    """一次执行一条结论（含速度档与预览范围）：不让作者在读输出时猜发生了什么。"""
-    print(f"VAO {result.get('execution', {}).get('mode')}: "
-          f"{result.get('verdict', {}).get('verdict')} · {result.get('status')} · "
-          f"{result.get('performance', {}).get('total_ms', 0)}ms · "
-          f"speed={speed} · round {ledger.get('n')}/{ledger.get('budget')}")
-    # 复用路径写在人类读的这一行上：这一轮是 HOT（没重做测量/编译/渲染）还是 COLD、
-    # 为什么必须重做——不必去翻证据字典才知道「为什么可以复用」。
+                   asset_binding, speed, budget, *, mode="check") -> None:
+    """一次执行一条结论（含速度档与预览范围）：不让作者在读输出时猜发生了什么。
+
+    输出纪律（v7.2.2 审计压缩）：对话里每一行都是作者的注意力预算，证据在文件
+    里，不在滚屏里。PASS 路径默认 ≤4 行（状态+复用一行、预览一行、artifact 一
+    行）；「PASS · PASS」式的状态重复、「repair packet」单独占行、干净状态下的
+    自我表扬行全部并入状态行。BLOCKED 路径的 fix 行原样保留——那是唯一需要被
+    读的东西，一行都不省。
+    """
+    verdict = result.get("verdict", {}).get("verdict")
+    status = result.get("status")
+    verdict_txt = str(status) if verdict == status else f"{verdict} · {status}"
     evidence = result.get("evidence") or {}
     path_kind = str(evidence.get("path") or "").upper()
-    if path_kind == "NONE":
-        # 第三種結局：这一轮没有产物，复用无从谈起——不拿性能语言掩盖失败。
-        print(f"  复用路径: 未成立 · 本轮 BLOCKED（{evidence.get('blocked_reason') or '未通过核验'}）")
-    elif path_kind == "HOT":
-        print(f"  复用路径: HOT · measure/compile/render 全部复用"
-              f"（{len(evidence.get('reuse') or [])} 条凭证，contract {evidence.get('contract')}）")
-    elif path_kind:
+    if path_kind == "HOT":
+        reuse_txt = f"HOT（{len(evidence.get('reuse') or [])} 条凭证）"
+    elif path_kind == "COLD":
         why = "；".join(f"{c.get('step')} {c.get('reason')}"
                         for c in evidence.get("cold_reasons") or [])
-        print(f"  复用路径: COLD · {why or '本轮重新建立事实'}")
+        reuse_txt = f"COLD：{why or '重新建立事实'}"
+    elif path_kind == "NONE":
+        reuse_txt = f"复用未成立（{evidence.get('blocked_reason') or '未通过核验'}）"
+    else:
+        reuse_txt = ""
+    no_fix = not (result.get("fix_plan") or {}).get("groups")
+    clean_txt = "无阻断" if (no_fix and path_kind != "NONE") else ""
+    tail = " · ".join(p for p in (clean_txt, reuse_txt) if p)
+    print(f"VAO {result.get('execution', {}).get('mode') or mode}: "
+          f"{verdict_txt} · {result.get('performance', {}).get('total_ms', 0)}ms · "
+          f"speed={speed} · round {ledger.get('n')}/{ledger.get('budget')}"
+          f"{' · ' + tail if tail else ''}")
     for group in (result.get("fix_plan") or {}).get("groups") or []:
         ids = "、".join(group.get("ids") or []) or "deck"
         print(f"  fix[{group.get('root_cause')}] ×{group.get('count', 0)} ({ids}) "
@@ -1351,8 +1394,6 @@ def _print_verdict(result, ledger, ghost, manifest_path, packet_path,
         files = asset_binding.get("missing_files") or []
         print("  fix[asset-binding] ×{} → 补齐 manifest 引用或重新生成资产: {}".format(
             len(ids) + len(files), "、".join(ids + files)))
-    if not (result.get("fix_plan") or {}).get("groups"):
-        print("  ✓ 无阻断：证据只留痕（warn/hint 不进入对话）")
     if ghost:
         suffix = "（同产物复用，未重渲）" if ghost.get("reused") else ""
         scope = ghost.get("scope")
@@ -1361,9 +1402,11 @@ def _print_verdict(result, ledger, ghost, manifest_path, packet_path,
         print(f"  preview: {label} → {ghost['contact_sheet'] or ghost['dir']}{suffix}")
     for item in budget.get("skipped") or []:
         print(f"  defer[{item['stage']}]: {item['reason']}")
-    if manifest_path:
-        print(f"  manifest: {manifest_path}")
-    print(f"  repair packet: {packet_path}")
+    artifacts = [str(p) for p in (manifest_path, packet_path) if p]
+    print(f"  artifacts: {' · '.join(artifacts)}")
+    # 案史闭环信号：PASS 且本稿无可召回经验时一行提示（matched 则静默）。
+    if result.get("dna_hint"):
+        print(f"  dna: {result['dna_hint']}")
 
 
 def run_once(args: argparse.Namespace) -> int:
@@ -1378,14 +1421,19 @@ def run_once(args: argparse.Namespace) -> int:
         manifest = prepare_manifest(manifest, need, bundle, args.brief, args.plan_out,
                                     args.assets_out, getattr(args, "assets_dir", None))
         _json_write(args.assets_out, manifest)
-        print(f"assets complete · unique_calls={manifest['asset_budget']['unique_generation_calls']} "
-              f"· manifest={args.assets_out}")
     if not args.skeleton:
         print(json.dumps({"plan": bundle, "next": "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）"},
                          ensure_ascii=False, indent=2))
     else:
-        print(f"plan complete · skeleton: {args.skeleton} · "
-              "有图先 assets → 出图 → 填骨架 → check（资产核验在 check 内部完成）")
+        # run 的标准产出是一条状态行（plan ↔ skeleton ↔ 资产预算一次说完），
+        # 不重复计划里已有的字段——下一轮怎么走，骨架头注释已经写了。
+        calls = None
+        if getattr(args, "assets_out", None):
+            calls = (locals().get("manifest") or {}).get("asset_budget", {}).get(
+                "unique_generation_calls")
+        print(f"run complete · plan={args.plan_out} · skeleton={args.skeleton}"
+              + (f" · manifest={args.assets_out}(unique_calls={calls})"
+                 if getattr(args, "assets_out", None) else ""))
     return 0
 
 

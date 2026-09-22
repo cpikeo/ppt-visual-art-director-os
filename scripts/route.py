@@ -262,10 +262,10 @@ def _color_family(value) -> dict | None:
     name = str(value or "").strip().lower()
     if not name:
         return None
-    try:
-        from design_intelligence_rules import COLOR_DIRECTIONS
-    except ImportError:      # 判断层缺失时保持原行为，不把包带崩
-        return None
+    # 平铺打包（py-modules 全量同装）下 ImportError 不可能发生；真发生时必须
+    # 大声失败——静默 return None 会让 13 族色彩方向无声全灭（v7.2.1 审计删除
+    # 同包 try/except 死防御）。
+    from design_intelligence_rules import COLOR_DIRECTIONS
     entry = COLOR_DIRECTIONS.get(name)
     return dict(entry) if isinstance(entry, dict) else None
 

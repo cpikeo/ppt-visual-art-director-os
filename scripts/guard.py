@@ -80,13 +80,16 @@ from primitives import is_cjk as _is_cjk   # 单一实现（曾经 guard/ghost �
 
 
 def _text_box_capacity(e: dict) -> dict | None:
-    """文本能不能装进声明的盒子——**与 compiler.add_text 逐字同源的静态复算**。
+    """文本能不能装进声明的盒子——**容量判定的唯一方**（compiler 只渲染，不再判容量）。
 
-    口径必须和编译器一致，否则就会出现「guard 说行、编译说不行」的二义：
+    测量原语单源在 primitives（estimate_lines / insert_script_gaps / text_width），
+    compiler.add_text 渲染用的也是同一组原语，不存在第二份容量实现需要同步：
       * 换行按 \\n 拆段，每段用 estimate_lines(插入中西细空格后的文本)；
-      * 需要高度 = 总行数 × size × line_height，默认行高 1.35（同 compiler）；
-      * 可用高度 = height − 2 × padding，容差 +1px（同 compiler）。
+      * 需要高度 = 总行数 × size × line_height，默认行高 1.35；
+      * 可用高度 = height − 2 × padding，容差 +1px。
     wrap=False 时每段恒为 1 行（同 estimate_lines）。返回 None 表示不适用。
+    （v7.2.1 审计修正 docstring：旧版「与 compiler.add_text 逐字同源」已过时——
+    容量判定早已全部收口到本函数，误导性的「双份」说法会诱使维护者两边对齐改。）
     """
     try:
         size = float(e.get("size", 18))

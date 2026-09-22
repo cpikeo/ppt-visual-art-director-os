@@ -1,4 +1,4 @@
-# 资产生产与发布契约 · v7.1.0
+# 资产生产与发布契约 · v7.2.1
 
 ## 1. 顺序与责任
 
@@ -108,7 +108,10 @@ asset_source:
 
 ## 5. 检查结果与退出码（retry 是根因驱动）
 
-- `accept / accept_with_advisory` 才通过；亮度平衡等建议不阻断。
+- `accept / accept_with_advisory` 才通过；亮度平衡等建议不阻断。例外：`brightness_balance`
+  构成**亮度断崖**（画面与声明底色落差 ≥0.50 且画面落在极端区）时升级为阻断——
+  这是「承诺的纸与交付的图物理断裂」，不是方向（暗色方向声明深底色，落差天然 <0.50，
+  不受影响）。
 - `retry`＝仍需重出，返回 2。路径：失败 → 根因判断（prompt/subject/构图/requirement）
   → 一次根因修正 → 重新 QC。`retry_budget` 是控制上限，不是设计输入；不做原样重试循环。
 - draft 最多建议一次定向重出；重出后 `attempt=1` 并重 QC（旧指纹失效）。
@@ -146,7 +149,8 @@ QC 只回答 Integrity（是不是被检查过的那张图：存在/可读/尺�
 
 ## 8. 最低校验与兼容性
 
-- QC 报告 schema `vao-asset-qc-v3`；旧报告须重跑，不得只改名称。
+- QC 报告 schema 以代码 `asset_workflow.QC_REPORT_SCHEMA` 为准（当前 `vao-asset-qc-v4`）；
+  旧报告须重跑，不得只改名称。
 - brief 指纹按字节复核；QC/发布阶段不重新执行 Python brief。
 - 图片短边 ≥32px；计划比例偏差 ≤5%；裁切需求声明 `asset_allow_crop: true`。
 - crop 后至少满足落位 1× 像素（1% 容差）；摄影建议 2× 交付。

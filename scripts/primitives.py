@@ -120,8 +120,6 @@ def file_digest(path) -> str | None:
 # 还有第四类：**产出这些证据的代码**的身份 → engine_fingerprint(scope)。
 # ══════════════════════════════════════════════════════════════════════════
 
-IDENTITY_SCHEMA = "vao-identity-v1"
-
 
 def identity(value, *, schema: str | None = None, short: int | None = None) -> str:
     """规范 JSON → sha256（全库唯一实现）。

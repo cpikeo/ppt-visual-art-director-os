@@ -215,11 +215,7 @@ def compile_reuse(work: Path, pptx: Path, view: str, *, fast_probe: bool = False
         report["_cache_verified_sha256"] = stored_sha
         report["output_sha256"] = stored_sha
         return report
-    if len(stored_sha) >= 64:
-        current_sha = file_digest(pptx)
-    else:
-        # 旧 metadata 只存短指纹：仍可命中，但下一次 record_compile 会升级为完整戳。
-        current_sha = (file_digest(pptx) or "")[:16]
+    current_sha = file_digest(pptx)
     if current_sha != stored_sha:
         return None
     report = dict(rec["report"])

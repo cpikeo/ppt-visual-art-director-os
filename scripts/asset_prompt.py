@@ -378,6 +378,23 @@ ENERGY_PHRASES = {
     "high": "one dramatic light source, cinematic contrast",
 }
 
+# 能量调谐表（v7.3 · 决策期结算）：路由方向预设的四种世界光语，能量只有**强弱**调谐权。
+# 键是 DIRECTION_PRESETS 的 light 原文（route._direction_execution 产出，本函数唯一读者，
+# 与方向预设同一张表不许两个读者）。medium 保留原句不动；自由文本（declared / fallback）
+# 不在表内——作者逐页写下的话逐字赢，能量不得追加一个字（审计裁决）。
+# 实测证据：v7.2 之前光语互斥的无条件缝合把 ENERGY_PHRASES 一起灭口，energy=high
+# 与 energy=low 的 prompt 逐字节相同——页面能量判断被静默吞掉。本表把它还给像素。
+ENERGY_LIGHT_VARIANTS: dict[str, dict[str, str]] = {
+    "flat even ambient":      {"low": "very soft, near-shadowless ambient light",
+                               "high": "even ambient light with one deliberate focal gradient"},
+    "single soft upper-left": {"low": "single soft upper-left light, gentle and even",
+                               "high": "single soft upper-left light with deep gentle falloff"},
+    "one key light":          {"low": "one soft key light, restrained shadow",
+                               "high": "one strong key light with deep shadow falloff"},
+    "flat":                   {"low": "soft flat light, calm and even",
+                               "high": "flat light with one controlled contrast accent"},
+}
+
 ASSET_FUNCTION_PHRASES = {
     "frame": "the image frames the message without competing with it",
     "separate": "the image separates sections while staying quiet",
@@ -713,6 +730,90 @@ def validate_asset_card(card: dict) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# 决策期结算（v7.3 · Visual Decision Object）
+# --------------------------------------------------------------------------
+RESOLVED_LIGHT_SOURCES: tuple[str, ...] = (
+    "declared", "direction", "fallback", "photo_discipline", "phrase_fallback")
+
+
+def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
+    """一张资产卡的视觉语言，一次判完（纯函数，确定性）。
+
+    只依赖 (card, page.tokens)：同一资产指纹 → 同一 resolved，结果随清单落盘，
+    渲染期只翻译、不再调停——矛盾在结构上变得不可能。
+
+    光语来源是一个**封闭枚举**（见 RESOLVED_LIGHT_SOURCES），每个来源只由
+    一格条件赋值，互相不可能并存：
+
+      declared          作者逐页显式声明 —— 逐字赢，能量不得触碰；
+      direction         路由方向预设光语 —— 能量只允许强弱调谐（变体表替换，不叠加）；
+      fallback          卡片有光语但既非声明也非方向（保守兜底）—— 冻结原文；
+      photo_discipline  摄影写实纪律独家给光（介质说了算）；
+      phrase_fallback   卡片完全无光语时，句式光 + 能量句式一起兜底。
+
+    返回 dict(card, resolved={...})；resolved 亦随资产清单落盘（manifest 是
+    唯一视觉决策源）。
+    """
+    card = dict(card or {})
+    page = page if isinstance(page, dict) else {}
+    ink = ink_gate_active(card)
+    photo = photo_gate_active(card)
+    source = str(card.get("lighting_source") or "").strip().lower()
+    declared = source == "declared"
+    card_lights = [str(s).strip() for s in _as_list(card.get("lighting")) if str(s).strip()]
+    energy = str(page.get("energy") or "low").strip().lower()
+    light_dir = str(page.get("light_direction") or "left").strip().lower()
+
+    light = {"from": None, "card_lines": [], "photo_lines": [], "ink_lines": [],
+             "phrase": None, "energy_phrase": None,
+             "energy": energy, "energy_applied": False}
+    if ink:
+        # 水墨工艺纪律句不包含光语，与光来源正交，永远逐字附送。
+        light["ink_lines"] = list(INK_DISCIPLINE)
+    if photo:
+        if declared:
+            # 作者声明的光照是唯一光来源；摄影介质句（大气透视/胶片质感）保留。
+            light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE[1:])
+            light["from"] = "declared"
+            light["card_lines"] = card_lights
+        else:
+            # 摄影写实纪律独家给光：预设/兜底光让位，避免同帧两种光。
+            light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE)
+            light["from"] = "photo_discipline"
+    elif declared:
+        # 作者写了光照句子：逐字赢，能量不得触碰（不着一字）；
+        # 写了来源却没写句子（罕见）：尊重声明的沉默，句式兜底光不许接管。
+        light["from"] = "declared"
+        light["card_lines"] = card_lights
+    elif card_lights:
+        light["card_lines"] = card_lights
+        if source in ("direction", "preset"):
+            light["from"] = "direction"
+            if energy in ("low", "high") and len(card_lights) == 1:
+                variant = ENERGY_LIGHT_VARIANTS.get(card_lights[0], {}).get(energy)
+                if variant:
+                    light["card_lines"] = [variant]
+                    light["energy_applied"] = True   # 页面能量判断真的抵达了像素
+        else:
+            light["from"] = "fallback"
+    else:
+        light["from"] = "phrase_fallback"
+        light["phrase"] = LIGHT_PHRASES.get(light_dir)
+        light["energy_phrase"] = ENERGY_PHRASES.get(energy)
+
+    card["resolved"] = {
+        "v": 1,
+        "light": light,
+        # 动势 / 微浮雕 / 融合在 enhance_asset_card（决策期）已注入完毕，
+        # 这里只是快照——渲染期以此为准，不再回头读卡面的原始字段。
+        "motion": _as_list(card.get("motion")),
+        "texture": _as_list(card.get("texture")),
+        "fusion": _as_list(card.get("fusion")),
+    }
+    return card
+
+
+# --------------------------------------------------------------------------
 # 主函数
 # --------------------------------------------------------------------------
 def build_asset_prompt(card: dict, page: dict | None = None, *,
@@ -724,7 +825,12 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
                        energy: str | None = None,
                        asset_function: str | None = None,
                        separator: str = ", ") -> dict:
-    """把资产卡与页面参数组装成确定性英文提示词。
+    """把资产卡与页面参数**翻译**成确定性英文提示词（序列化器，无决策权）。
+
+    视觉语言在决策期已经结算（`card.resolved`，见 resolve_asset_card）：
+    本函数只把结论文本按序拼成 prompt/negative，**不再做任何光语互斥调停**。
+    legacy 卡片（自检 / out-of-tree 独立调用）没有 resolved 时当场补判——
+    用的是同一个结算函数，缺 resolved 不是错误，结论与决策期完全一致。
 
     参数优先级：关键字参数 > `page` 字典 > 保守默认（left / left / low / frame）。
     `card` 与 `page` 均由调用方传入，本函数不持有任何主题数据。
@@ -739,22 +845,28 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     if asset_type not in ASSET_TYPE_SUFFIX:
         raise ValueError(f"未知 asset_type: {asset_type}")
 
-    # 介质闸门只判一次，正向纪律与光照纪律、反向分层共用同一个结论。
+    # 介质闸门：分类（检测），负向分层也要用；它不是决策——决策在 resolved 里。
     ink = ink_gate_active(card)
     photo = photo_gate_active(card)
-    # 光照单一来源：逐页显式声明 > 介质纪律光语 > 方向/兜底光。三层同时注入会
-    # 自相矛盾（flat even ambient vs one dramatic light source vs negative 的
-    # no uniform flat studio lighting），模型只能对矛盾指令做平均——不可预测的
-    # 光比没有光更贵。摄影资产由 PHOTO_REALISM_DISCIPLINE 独家给光；
-    # 作者逐页写了 lighting 时以作者为准，方向光与句式光全部让位。
-    lighting_declared = str(card.get("lighting_source") or "").lower() == "declared"
-    photo_light_override = photo and not lighting_declared
+    # 唯一决策出口（v7.3）。光语来源/能量调谐/句式兜底的互斥结论已在
+    # resolve_asset_card 一次性判完并（生产路径上）随清单落盘；这里只读结论。
+    resolved = card.get("resolved")
+    if not isinstance(resolved, dict) or not isinstance(resolved.get("light"), dict):
+        eff = dict(page)
+        if light_direction is not None:
+            eff["light_direction"] = light_direction
+        if energy is not None:
+            eff["energy"] = energy
+        resolved = resolve_asset_card(card, eff).get("resolved") or {}
+    light_decision = resolved.get("light") if isinstance(resolved.get("light"), dict) else {}
 
     # --- 1. 资产卡主体段 -------------------------------------------------
     segments = []
     for key in CARD_SEGMENTS:
-        if key == "lighting" and photo_light_override:
-            continue        # 预设/兜底光让位给摄影写实光语，避免同帧两种光
+        if key == "lighting":
+            # 光语只从结论读：摄影纪律接管时结论是 []，预设/兜底/声明各归其位。
+            segments.extend(_as_list(light_decision.get("card_lines")))
+            continue
         segments.extend(_as_list(card.get(key)))
 
     # --- 2. 有机层 / 叠加层描述（可选，只作为弱描述进入 prompt） --------
@@ -765,7 +877,7 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         if layers.get("organic_shapes"):
             segments.append(f"{layers['organic_shapes']} organic shapes")
 
-    # --- 三层：动势 / 微浮雕 / 空间融合（enhance_asset_card 注入）---
+    # --- 三层：动势 / 微浮雕 / 空间融合（决策期 enhance_asset_card 已注入）---
     # 融合按**角色**定，不按用途定：空间资产要融进版面（消灭贴纸边），
     # 独立视觉对象要保住自己的边界。用途（frame/separate/context）不再决定这件事——
     # 那正是「插图被当成背景纹理」的来源。
@@ -776,22 +888,21 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         fusion_allowed = asset_type in ("background", "hybrid") or (
             asset_type != "illustration" and function_hint in {
                 "frame", "separate", "context", "contextualize"})
-    segments.extend(_as_list(card.get("motion"))[:1])
-    texture = _as_list(card.get("texture"))
+    segments.extend(_as_list(resolved.get("motion"))[:1] if isinstance(resolved, dict)
+                    else _as_list(card.get("motion"))[:1])
+    texture = _as_list(resolved.get("texture")) if isinstance(resolved, dict) \
+        else _as_list(card.get("texture"))
     # One material cue + one discipline cue is enough; prompt length is part
     # of visual direction and excess adjectives reduce model fidelity.
     segments.extend(texture[:2])
     if fusion_allowed:
-        segments.extend(_as_list(card.get("fusion"))[:2])
+        fusion_lines = _as_list(resolved.get("fusion")) if isinstance(resolved, dict) \
+            else _as_list(card.get("fusion"))
+        segments.extend(fusion_lines[:2])
 
-    # --- 水墨纪律闸门：已选水墨语言 → 注入工艺纪律 + 廉价症状反向清单 ---
-    if ink:
-        segments.extend(INK_DISCIPLINE)
-    if photo:
-        # 光照单一来源的最后一块：作者逐页声明了 lighting 时，摄影写实层的
-        # 光句（首句）也让位——介质句（大气透视/胶片质感）保留，那不是光。
-        segments.extend(PHOTO_REALISM_DISCIPLINE[1:] if lighting_declared
-                        else PHOTO_REALISM_DISCIPLINE)
+    # --- 介质纪律句：照决策期结论逐字搬运（水墨工艺 / 摄影写实，无调停）---
+    segments.extend(_as_list(light_decision.get("ink_lines")))
+    segments.extend(_as_list(light_decision.get("photo_lines")))
 
     # --- 3. OS 强制三段 --------------------------------------------------
     anchor = str(negative_space or page.get("negative_space_anchor") or "left").lower()
@@ -815,12 +926,12 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
                      else NEGATIVE_SPACE_PHRASES)
     if anchor in space_phrases:
         segments.append(space_phrases[anchor])
-    # 光向/能量句式只在「光没有被介质纪律或作者声明接管」时注入（见函数头）。
-    if not (photo_light_override or lighting_declared):
-        if light in LIGHT_PHRASES:
-            segments.append(LIGHT_PHRASES[light])
-        if level in ENERGY_PHRASES:
-            segments.append(ENERGY_PHRASES[level])
+    # 句式光兜底也是决策期结论（phrase_fallback 来源）：光没有被介质纪律、
+    # 作者声明或卡片已有光语接管时，句式光 + 能量句式一起托底（见 resolve_asset_card）。
+    if light_decision.get("phrase"):
+        segments.append(light_decision["phrase"])
+    if light_decision.get("energy_phrase"):
+        segments.append(light_decision["energy_phrase"])
     if function in ASSET_FUNCTION_PHRASES:
         segments.append(ASSET_FUNCTION_PHRASES[function])
     segments.append(safe_area_phrase(area, text_color))
@@ -870,6 +981,8 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
         "prompt": prompt,
         "negative": negative,
         "meta": {
+            # resolved 决策对象不住在 meta（那是镜像）：manifest 条目顶层的
+            # entry["resolved"] 是唯一落盘处（R4 审计：同一事实只存一份）。
             "apc": card.get("apc"),
             "theme_ref": card.get("theme_ref"),
             "asset_type": asset_type,
@@ -927,6 +1040,12 @@ QC_BALANCE_GAP = 0.18              # 左右/上下亮度失衡阈值
 QC_SUBJECT_MARGIN = 0.02           # 主体贴边判定阈值（主体质量占比达到此比例视为贴边）
 QC_TEXT_RANGE = 0.30               # 安全区亮度需落在此范围外才同时支持深浅文字
 QC_TONE_MATCH_GAP = 0.18           # 画面与声明底色亮度差小于此值 = 同调（不判过暗/过亮）
+# 亮度「断崖」：画面与声明底色差距 ≥0.5 且画面落在极端区（过暗/过亮）。
+# 这不是方向，是事故——0.00 亮度的图当不了 #F5F4F1 的纸（v7.2.1 审计实证：
+# 一张全黑封面图 accept_with_advisory 出货、深字压黑图对比 ≈1.4:1、零可见信号）。
+# 断崖与方向的边界：暗色沉浸方向声明的是**深底色**，深图配深底 |Δ| 天然 <0.5，
+# 豁免不需要任何额外标志——落差本身就是判据。
+QC_TONE_CATASTROPHE_GAP = 0.50     # 画面与声明底色亮度差 ≥此值 = 断崖（升级阻断）
 
 # QC 是资产局部体检，不是整副 deck 的 QA。默认最多允许一次定向重出；
 # review/release 只记录问题并交给人工/qa 处理，不由资产脚本自动升级流程。
@@ -959,9 +1078,15 @@ def qc_policy() -> dict:
     清单里曾另写一份同义字典，于是「报告承诺什么」与「代码执行什么」可以不一致：
     实测 negative_space_ratio 已降级为 advisory，清单仍写 blocking。策略只有一个
     出口：谁改这里，清单和执法一起改。
+    亮度断崖（v7.2.1）：brightness_balance 平时是 advisory，但画面与声明底色
+    是「断崖级断裂」（|Δ亮度| ≥ QC_TONE_CATASTROPHE_GAP 且画面在极端区）升级为
+    blocking——这是物理事故不是方向，清单如实写明。
     """
-    return {**{c: "blocking" for c in sorted(ASSET_QC_BLOCKING_CHECKS)},
-            **{c: "advisory" for c in sorted(ASSET_QC_ADVISORY_CHECKS)}}
+    policy = {**{c: "blocking" for c in sorted(ASSET_QC_BLOCKING_CHECKS)},
+              **{c: "advisory" for c in sorted(ASSET_QC_ADVISORY_CHECKS)}}
+    policy["brightness_balance"] = \
+        "advisory; blocking: tone_gap>=0.5（画面与声明底色断崖，非方向）"
+    return policy
 # 「主体贴边被裁」这条判据是为**具象主体**设的：产品、人物、建筑被画框切掉，
 # 一眼就是错的。而氛围/语境类资产的画面边界本来就该由材质与光填满——宣纸的
 # 撕边、石面的颗粒、雾气的过渡延伸到画外是自然的，不是「被裁断的主体」。
@@ -978,8 +1103,9 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
     """把 image_qc 结果翻译成有界动作，不改变 verdict 的 review/release 档位。
 
     ``attempt`` 从 0 开始。draft 只对影响文字安全区/构图可用性的检查自动
-    允许一次定向重出；brightness_balance 仅建议。review/release 不自动重出，
-    release 的阻断信号仍须由最终 QA/Manifest 消费，而不是由这层伪造通过。
+    允许一次定向重出；brightness_balance 仅建议（例外：亮度断崖在条目上
+    自带 severity="blocking"，与静态策略表等效消费）。review/release 不自动
+    重出，release 的阻断信号仍须由最终 QA/Manifest 消费，而不是由这层伪造通过。
 
     ``asset_role`` 只传**作者显式声明的**角色（未声明传 None）：QC 的判据跟着
     这张资产的承诺走——背景承诺「可与文字共存」，于是查可读性、连续性与负空间；
@@ -1016,7 +1142,8 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
         subject_bearing = str(asset_function or "").strip().lower() \
             not in ASSET_QC_CONTEXT_FUNCTIONS
     blocking = [c for c in issues
-                if c.get("check") in ASSET_QC_BLOCKING_CHECKS
+                if (c.get("check") in ASSET_QC_BLOCKING_CHECKS
+                    or c.get("severity") == "blocking")
                 and not (not subject_bearing and c.get("check") == "subject_position")]
     # 插图的承诺是「主体与文字建立关系」，不是「整块画面保持低信息密度」：
     # 安全区纹理密度对插图降为 advisory——压字可读性由 contrast_suitability（亮度）
@@ -1045,8 +1172,8 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
         "blocking_checks": [c.get("check") for c in blocking],
         "advisory_checks": [c.get("check") for c in advisory],
         "manual_required": bool(blocking and action != "retry") or missing_file,
-        "triggers_review": False,
-        "triggers_release": False,
+        # （v7.2.1 审计删除 triggers_review / triggers_release 两个恒 False
+        # 字段：全库零消费者——升级流程由 verdict 与 Manifest 承担，这层不信号。）
     }
 
 
@@ -1139,6 +1266,11 @@ def _balance_check(arr, background: str | None = None):
     判据改成**落差**：画面与声明底色的亮度差 ≥ QC_TONE_MATCH_GAP 才报（那是可见的
     分块）；同调画面只判左右/上下失衡。文字可读性不靠这条兜底——它由
     `contrast_suitability`（按声明的文字深浅判定，阻断级）负责，两处不再互相代偿。
+
+    断崖升级（v7.2.1）：声明了底色时，|画面 − 声明底色| ≥ QC_TONE_CATASTROPHE_GAP
+    且画面落在极端区，这条从 advisory 升级为 blocking——「暗色沉浸」方向声明的是
+    深底色（|Δ| 小，两极对齐，照常不拦），断崖只拦「承诺的纸与交付的图物理断裂」。
+    返回 (ok, issue, suggestion, severity)；severity 恒为 None 或 "blocking"。
     """
     mean = float(arr.mean())
     h, w = arr.shape
@@ -1151,21 +1283,33 @@ def _balance_check(arr, background: str | None = None):
             bg_lum = None
     tone_matched = bg_lum is not None and abs(mean - bg_lum) < QC_TONE_MATCH_GAP
     if not tone_matched:
+        catastrophe = (bg_lum is not None
+                       and abs(mean - bg_lum) >= QC_TONE_CATASTROPHE_GAP)
+        severity = "blocking" if catastrophe else None
         if mean < QC_BRIGHT_DARK:
             rel = f"（比声明底色 {bg_lum:.2f} {'亮' if mean > bg_lum else '暗'} " \
                   f"{abs(mean - bg_lum):.2f}）" if bg_lum is not None else ""
-            return False, f"整体过暗（亮度 {mean:.2f}{rel}）", \
-                "提高整体曝光或提亮主体受光面，保留层次"
+            note = "；落差 ≥ %.2f，资产与声明纸面物理断裂" % QC_TONE_CATASTROPHE_GAP \
+                if catastrophe else ""
+            return False, f"整体过暗（亮度 {mean:.2f}{rel}）{note}", \
+                ("提高整体曝光或提亮主体受光面，保留层次"
+                 + ("；或核对：这张图是否根本不是为本页底色出的" if catastrophe else "")), \
+                severity
         if mean > QC_BRIGHT_LIGHT:
             rel = f"（比声明底色 {bg_lum:.2f} 亮 {abs(mean - bg_lum):.2f}）" \
                 if bg_lum is not None else ""
-            return False, f"整体过亮（亮度 {mean:.2f}{rel}）", \
-                "压暗背景或收光圈，让主体与文字有落点"
+            note = "；落差 ≥ %.2f，资产与声明纸面物理断裂" % QC_TONE_CATASTROPHE_GAP \
+                if catastrophe else ""
+            return False, f"整体过亮（亮度 {mean:.2f}{rel}）{note}", \
+                ("压暗背景或收光圈，让主体与文字有落点"
+                 + ("；或核对：这张图是否根本不是为本页底色出的" if catastrophe else "")), \
+                severity
     lr_gap = abs(float(arr[:, : w // 2].mean()) - float(arr[:, w // 2:].mean()))
     tb_gap = abs(float(arr[: h // 2, :].mean()) - float(arr[h // 2:, :].mean()))
     if lr_gap > QC_BALANCE_GAP or tb_gap > QC_BALANCE_GAP:
-        return False, f"画面失衡（左右差 {lr_gap:.2f} / 上下差 {tb_gap:.2f}）", "平衡光源或主体分布，避免一侧明显压黑/过曝"
-    return True, None, None
+        return False, f"画面失衡（左右差 {lr_gap:.2f} / 上下差 {tb_gap:.2f}）", \
+            "平衡光源或主体分布，避免一侧明显压黑/过曝", None
+    return True, None, None, None
 
 
 def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = None,
@@ -1254,10 +1398,13 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
 
     checks = []
 
-    def _add(check, ok, issue, suggestion):
-        checks.append({"check": check, "status": "ok" if ok else "issue",
-                       "issue": None if ok else issue,
-                       "suggestion": None if ok else suggestion})
+    def _add(check, ok, issue, suggestion, severity=None):
+        entry = {"check": check, "status": "ok" if ok else "issue",
+                 "issue": None if ok else issue,
+                 "suggestion": None if ok else suggestion}
+        if severity and not ok:
+            entry["severity"] = severity     # 条件级阻断（亮度断崖，v7.2.1）
+        checks.append(entry)
 
     _add("image_dimensions", True, None, None)
     _add("visibility", bool(visible), "图片完全透明，无可见内容", "更换可见素材；透明Logo允许保留有效alpha")

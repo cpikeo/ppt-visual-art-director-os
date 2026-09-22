@@ -473,9 +473,16 @@ def release_manifest(spec: dict, qa_report: dict, *, compile_report: dict | None
            "release_eligible": bool(qa_report.get("release_eligible"))}
     if isinstance(verification, dict):
         ver.update(verification)
-    from asset_workflow import image_elements
     workflow = qa_report.get("asset_workflow") or {}
-    if any(image_elements(spec)) and workflow.get("status") != "PASS":
+    # 「本稿有没有图」首先消费资产链已经算好的 image_count（同一事实只判一次）；
+    # 工作流没跑过 / 没带计数时，才退回对 spec 的本地扫描——那是「有图却没
+    # 核验」的兜底证明，不是常规路径。（v7.2.1 审计：此前这里对同一份 spec
+    # 再扫一遍 image_elements，与 verify_chain 的扫描重复。）
+    image_count = workflow.get("image_count")
+    if image_count is None:
+        from asset_workflow import image_elements
+        image_count = sum(1 for _ in image_elements(spec))
+    if image_count and workflow.get("status") != "PASS":
         issues.append("含图稿件缺少通过的 asset_workflow；不能把编译PASS当成资产流程PASS")
     if qa_report.get("passed"):
         issues.extend(preview_issues(ghost, [str(s.get("id")) for s in slides]))
