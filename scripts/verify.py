@@ -581,8 +581,40 @@ def _snap_pos(value: float, grid: int) -> int:
     return int(round(value / grid)) * grid
 
 
-def _snap_size(value: float, grid: int) -> int:
+def _snap_size(value: float, grid: int) -> float:
+    """尺寸落网格——但**亚网格厚度按原值保留**。
+
+    为什么不再 `max(grid, ...)`（v6.5 修）：发丝线的厚度是作者的设计决定。
+    把 1px 的线强行抬到 4px 是 4× 的视觉重量改变，而且没有任何提示——
+    「归一化」越权改了排版，不是在对齐节奏。小于一个网格的尺寸一律原样透传；
+    退化（≤0）仍由 guard 的 geometry 硬门拦截，这里不代偿。
+    """
+    if 0 < value < grid:
+        return value
     return max(grid, int(round(value / grid)) * grid)
+
+
+def _snap_span(pos: float, size: float, grid: int) -> tuple:
+    """把一维（位置, 尺寸）落到网格上，**同心关系优先于边缘对齐**。
+
+    根因（v6.5 修）：位置与尺寸各自独立吸附时，中心会漂移最多 grid/2。
+    作者让一条 1px 轴线与一个骑在它上面的对象共享同一条中线，吸附后
+    线挪了、对象没挪——产物里对象永远悬在线的一侧，而 guard 看不出问题
+    （几何合法、不重叠、不溢出），于是错位一路走到交付。
+
+    规则：
+      · 厚度 ≥ 一个网格 → 位置与尺寸照常吸附（版面节奏由网格主导）
+      · 厚度 < 一个网格（发丝线、细轴）→ 吸附**中心**，厚度原样保留
+        这样「1px 线的中心」与「8px 对象的中心」落在同一条网格线上，必然同心。
+    幂等：第二趟输入的中心已在网格上，吸附是恒等变换。
+    """
+    size_n = _snap_size(size, grid)
+    # 尺寸被改写时，保住中心——「把 6px 圆整到 8px」不该顺带把对象挪走。
+    # 亚网格厚度（发丝线）同样走中心口径：它的上边缘没有对齐意义，中线才有。
+    if size_n != size or 0 < size_n < grid:
+        center = _snap_pos(pos + size / 2.0, grid)
+        return center - size_n / 2.0, size_n
+    return _snap_pos(pos, grid), size_n
 
 
 def _canonical_color(value, tokens: dict) -> tuple:
@@ -621,18 +653,33 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True) -> tup
             if not isinstance(e, dict):
                 continue
             eid = str(e.get("id", "?"))
-            if grid:
-                for field, snap in (("x", _snap_pos), ("y", _snap_pos),
-                                    ("width", _snap_size), ("height", _snap_size)):
-                    value = e.get(field)
-                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if grid and e.get("snap") is not False:
+                # 成对吸附：(x, width) 与 (y, height) 各作为一维整体处理，
+                # 中心关系不被拆散（逐字段独立吸附会让同心对象漂开）。
+                for pos_f, size_f in (("x", "width"), ("y", "height")):
+                    pos, size = e.get(pos_f), e.get(size_f)
+                    if isinstance(pos, bool) or not isinstance(pos, (int, float)):
                         continue
-                    if field == "height" and _is_rule_shape(e):
+                    if isinstance(size, bool) or not isinstance(size, (int, float)):
+                        new_pos = _snap_pos(float(pos), grid_step)
+                        if new_pos != pos:
+                            record(sid, eid, pos_f, pos, new_pos, "grid")
+                            e[pos_f] = new_pos
                         continue
-                    snapped = snap(float(value), grid_step)
-                    if snapped != value:
-                        record(sid, eid, field, value, snapped, "grid")
-                        e[field] = snapped
+                    # 线是一维对象：厚度方向本就允许 0，不参与尺寸吸附
+                    if size_f == "height" and _is_rule_shape(e):
+                        new_pos = _snap_pos(float(pos), grid_step)
+                        if new_pos != pos:
+                            record(sid, eid, pos_f, pos, new_pos, "grid")
+                            e[pos_f] = new_pos
+                        continue
+                    new_pos, new_size = _snap_span(float(pos), float(size), grid_step)
+                    if new_pos != pos:
+                        record(sid, eid, pos_f, pos, new_pos, "grid")
+                        e[pos_f] = new_pos
+                    if new_size != size:
+                        record(sid, eid, size_f, size, new_size, "grid")
+                        e[size_f] = new_size
             for field in _COLOR_FIELDS:
                 value = e.get(field)
                 if isinstance(value, str):

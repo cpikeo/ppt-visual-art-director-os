@@ -48,6 +48,12 @@ spec = {
 plan 按视觉世界给出种子，作者可覆盖任意一项。**颜色只能写 #HEX 或 token 名**——写错名字会在产物里静默回落，所以必拦。
 
 **元素信封**：`id`（页内唯一）、`type`、`x/y/width/height`（必填）、`role`。
+
+**归一化与网格**（作者需要知道的唯一一条）：几何按 4px 机械吸附，`(x,width)` 与
+`(y,height)` **成对**处理——所以「一条细线 + 骑在它上面的对象」吸附后仍然同心，
+不需要手工凑偶数坐标。**厚度小于一个网格的尺寸原样保留**：`height:1` 的发丝线
+就是 1px，不会被抬成 4px（此时吸附的是中心，不是上边缘）。
+需要完全绕开吸附时写 `snap: false`。
 填充四写法：`"#RRGGBB"` · token 名 · `{type:solid,color,opacity}` ·
 `{type:gradient,angle,stops≥2}` · `{type:none}`。**形状填充走 `fill`、描边走 `stroke`**。
 

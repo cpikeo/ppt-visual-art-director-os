@@ -551,6 +551,28 @@ def test_verify(tmp: Path):
     check("normalize: 幂等（二次归一指纹不变）",
           spec_fingerprint(twice) == spec_fingerprint(normalized))
 
+    # 回归（v6.5）：亚网格厚度不被抬高，同心关系不被吸附拆散。
+    # 症状曾是——1px 发丝线被抬成 4px、骑线对象与线各挪各的，
+    # 产物里对象永远悬在线的一侧，而硬门全绿（几何合法、不重叠、不溢出）。
+    concentric = {"theme": {"colors": {}}, "slides": [{"id": "s", "elements": [
+        {"id": "hairline", "type": "shape", "shape": "rect",
+         "x": 96, "y": 280, "width": 400, "height": 1},
+        {"id": "rider", "type": "shape", "shape": "rect",
+         "x": 96, "y": 276, "width": 200, "height": 8},
+    ]}]}
+    norm_c, _ = normalize_spec(concentric)
+    line_e, bar_e = norm_c["slides"][0]["elements"]
+    check("normalize: 亚网格厚度原样保留（1px 发丝线不被抬成 4px）",
+          line_e["height"] == 1, f'height={line_e["height"]}')
+    check("normalize: 同心关系吸附后仍同心（线与骑线对象共中线）",
+          abs((line_e["y"] + line_e["height"] / 2)
+              - (bar_e["y"] + bar_e["height"] / 2)) < 1e-9,
+          f'线中心={line_e["y"] + line_e["height"] / 2}，'
+          f'对象中心={bar_e["y"] + bar_e["height"] / 2}')
+    twice_c, _ = normalize_spec(norm_c)
+    check("normalize: 同心吸附幂等（二次归一不再漂移）",
+          spec_fingerprint(twice_c) == spec_fingerprint(norm_c))
+
     # verdict：PASS / BLOCK 二态 + 分组修复包
     from verify import verdict
     good = verdict(spec, mode="release",
