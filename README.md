@@ -1,94 +1,89 @@
 # PPT Visual Art Director OS
 
-一个 **Presentation Design Intelligence Skill**：把内容、受众与决策转成视觉策略与页面意图，
-产出**原生可编辑 PPTX**，然后只做一次必要的交付验证。
+设计智能优先的 PPT 生产技能包：**内容 → 视觉策略 → 原生可编辑 PPTX**，单入口执行，最小验证。
 
-不是模板库、不是设计系统、不是布局引擎。判断在 `SKILL.md` 与 `references/` 里，
-执行在一条命令里。版本以 `pyproject.toml` 为准，逐版变更见 `CHANGELOG.md`。
+它是 **Skill / Agent Intelligence / Visual Art Director**——不是设计系统、不是组件库、
+不是模板引擎。它把「生成 → 检查 → 逐条修复 → 再生成」压缩为：
 
-## 标准生产顺序（`run` 是标准入口；轮次由资产数量、QC 状态与根因修订决定）
+```
+THINK（plan，一次）→ BUILD（作者填骨架）→ VERIFY（check，一次收口）
+```
 
-**brief → plan+资产契约（一次调用）→ 按清单出图 → 填骨架 → check 收口**
+## 唯一决策链
 
-图片提示词由 `vao.py run/assets` 内置的 `asset_prompt.py` 产生，不是先自由出图后补清单。
-外部图片服务并未内置于技能包；执行者仍需调用实际的生成工具。
+```
+Audience → Decision → Claim → Tension → Focus → Form → Space → Media → Spec
+```
+
+- `family` 只辅助路由（锚点词汇 / 媒体闸门 / 形态问题校准），不套用页面；
+- `density` 由作者声明或成稿测量，规划层不预定——**相同内容不默认产生相同布局**；
+- `asset` 必须经过必要性判断（置信度 + 理由），作者声明永远压过判断；
+- 规划产出的是**逐页判断问题**（本页唯一结论 / 第一落点 / 最诚实的形式 / 留白职责），
+  答案由内容决定；几何与构图永远归生成侧。
+
+## 生产路径（约 2 分钟内完成 10–15 页）
 
 ```bash
-# 0) Python 3.10+ 环境
-python3 -m venv .venv && . .venv/bin/activate
-python3 -m pip install -r requirements.txt
-
-# 1) 完成 brief 后，一次调用拿到 plan + 骨架 + 资产清单（无图项目去掉后两个参数，直接跳到 3）
-python scripts/vao.py run brief.yml --plan-out plan.json --skeleton build_deck.py \
+# 1 · THINK：一次规划（判断面 plan.json + 骨架 build.py + 资产清单）
+python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py \
     --assets-out asset_manifest.json --assets-dir generated_assets
 
-# 2) 用外部图片工具按清单 prompt / negative / ratio / safe_area 生成图片
-#    保存到 generated_assets；名称按 expected_filename（也支持同名 JPEG）
+# 2 · BUILD：按清单 prompt/negative 出图（外部工具），填骨架
+#      （先回答每页判断四问，再写元素；字段速查 → references/contract.md）
 
-# 3) 填完骨架（头注释即完整作业单）直接 release 收口；确需迭代构图才先 --mode draft
-#    check 内部完成资产核验：缺图、待重试或阻断都退出 2，不编译
-python scripts/vao.py check build_deck.py out.pptx --mode release \
-    --assets-manifest asset_manifest.json --speed fast --deadline 120
+# 3 · VERIFY：一次收口（normalize → guard → compile → 预览 → PASS/BLOCK）
+python scripts/vao.py check build.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```
 
-- **无图片**：不必走资产步骤；`check` 显式记录跳过原因。
-- **用户提供/授权/自制/复用的图片**：放到清单规划的文件名即可——`assets` 阶段自动登记为
-  existing 并进入核验；要交代版权/出处时在 brief 里写 `asset_source`。
-- **流程边界**：发布通过证明本地文件证据一致，不证明外部模型按提示词执行，
-  也不证明图片授权或艺术质量；不得以此替代人工设计判断。
+纯原生稿件不需要资产清单。`--mode draft` 用于迭代构图；干净稿直接 release。
+速度档 `--speed fast`（默认）/ `strict` 只影响证据预算，不影响判定口径。
 
-资产链、迁移与绕过契约 → `references/asset-workflow.md`；运行时契约 → `references/production-contract.md`。
+## 架构（8 个模块 · 一条链）
 
-## 唯一入口
+```
+scripts/
+  vao.py          唯一生产入口（plan / check / preview / dna）
+  intelligence.py brief 加载 → 决策链 → 判断面 → 骨架（含 Design DNA 记忆）
+  assets.py       资产判断 → 提示词 → 清单 → 像素 QC → 链核验
+  verify.py       硬错误 Guard → PASS/BLOCK 判定 → 发布清单
+  compiler.py     确定性 PPTX 编译（含编译缓存）
+  primitives.py   最小生产原语（颜色/文本/几何/身份）
+  ghost.py        PIL 结构预览（方向证据渲染器，零外部依赖）
+  selftest.py     核心测试（生产路径即测试路径）
+```
 
-| 命令 | 作用 |
+- **QA 只拦截生产级硬错误**：编译失败 / 内容缺失 / 溢出 / 越界 / 重叠 / 无效资产 /
+  无效图表 / 来源缺失（release）。输出只有 **PASS / BLOCK**；warning 只进 trace，
+  不进对话，不构成修复循环。
+- **不调用 LibreOffice / soffice / poppler**：方向证据由 `ghost.py` 的确定性结构预览给出。
+- **可复用即复用**：编译缓存（同投影 + 同产物字节戳 ⇒ 不重编）、资产判定复用
+  （同清单 + 同像素口径 + 同字节身份 ⇒ 不重测）、预览页缓存（改一页只画一页）。
+- **PPT 全程原生可编辑**：文本、形状、图表在 PowerPoint 对象模型中可直接修改。
+
+## Context 纪律（JIT）
+
+| 需要解决的问题 | 读取 |
 |---|---|
-| `vao.py run` | brief → plan + 骨架 + 资产清单（标准入口），或检查已有编排稿 |
-| `vao.py check` | 资产核验 → normalize → guard → compile → 可选 ghost → 分组修复包（`spec`/`draft`/`release`） |
-| `vao.py plan` / `assets` | 规划 / 资产清单的单段重跑 |
-| `vao.py preview` | 只出 ghost 方向预览（PIL，秒级） |
-| `vao.py dna` | 经验记忆：`--check` 体检 / `--add` 写入一条（校验后才入库） |
+| 设计判断、焦点、留白、字体、图像、图表、节奏 | `references/judgment.md` |
+| 精确 spec 字段、元素契约、阻断码、速度档 | `references/contract.md` |
+| 资产身份、提示词、QC、既有文件、裁切 | `references/assets.md` |
+| 历史案例、DNA 沉淀/召回（仅明确需要时） | `references/precedent.md` |
 
-`make` 是 `check` 的兼容别名，不维护第二条生产链。`assets` 默认只打印紧凑摘要；
-`--show-prompts` 才把完整 prompt/negative 打到终端，`--json` 供机器消费。
+## 设计经验记忆（DNA）
 
-## 设计上刻意不做的事
-
-- **不调用 LibreOffice / soffice / poppler**：方向证据由 `ghost.py` 的确定性结构预览给出，
-  产物是原生可编辑 PPTX。
-- **不给作者判卷**：引擎只判工程事实；构图、用词、家族写法是设计判断，规则不代答。
-- **不为架构完整而保留代码**：无人消费的字段与层次一律删除；判定层永不因此放松。
-- **不打审美分**：验证只回答"能不能交付"；有没有设计价值由 `references/design-craft.md` 回答。
-- **不把 warning 变成对话**：非阻断项聚合留痕；阻断项一次性按根因分组修完。
-- **不做加法优先的修补**：页面不够高级时先走减法链 `删除 > 重组 > 排版 > 强化 > 装饰`。
-- **不做逐脚本编排**：所有生产调用都从 `vao.py` 进入。
-
-## 样张（assets/）
-
-`assets/` 里是四副匿名化验证样张（整副 deck 的方向预览 contact sheet，PNG），覆盖四种
-不同视觉世界：东方墨韵编辑 / 瑞士精密科技 / 安静极简 / 有机奢华。它们证明的是
-跨风格的版式纪律——章节页全幅重置、数据页单一强调、锚点同位——而不是供复制的
-版式截图。代码不引用它们：它们是给人目检的证据，不是流水线的输入。
-
-| ![东方墨韵编辑](assets/1c2f20c6a78cd5c41dd344397e986f5b.png) | ![安静极简](assets/ffb347873654bd8176db4d7acbb3bd3d.png)  |
-|:--:|:--:|
-| 东方墨韵编辑 | 安静极简 |
-| ![有机奢华](assets/bb423798bd14650761b3e744dfcd9905.png)| ![瑞士精密](assets/af927d8d95970a43eaec3f6cc67102aa.png)  |
-|  有机奢华 | 瑞士精密 |
-
-## 框架自检（开发者离线回归网，制作 PPT 时无需运行）
+`memory/design_dna.json` 只记录「为什么某个设计判断有效」——不记坐标、固定颜色、
+固定布局、组件模板。规划时自动召回；release PASS 后鼓励沉淀：
 
 ```bash
-python scripts/selftest.py        # 交付链 / 生产链契约 / 契约拦截 / 判断层 / 反退化 / 静默失效缝 / 速度档
+python scripts/vao.py dna --check          # 体检
+python scripts/vao.py dna --add entry.json # 沉淀（校验 + 去重 + 原子写入）
 ```
 
-注意：**这是技能包本身的单元测试集，制作幻灯片时绝对不需要运行**。
-演示文稿生成生产阶段只运行 `python scripts/vao.py check ...`（毫秒级几何与安全网验证）。
+## 安装
 
-验证网只保四件事：交付链能跑通、契约还拦得住错、判断层没有静默退化，
-以及**文档没有写出代码不认的词**（照着写会被静默忽略，这是最贵的文档债）。
+Python 3.10+，零系统级组件：
 
-## 许可
-
-MIT（见 `LICENSE.txt`）。正文中提及的第三方品牌与作品仅作可观察设计行为的引证，
-不含其商标、素材或任何授权暗示。
+```bash
+pip install -r requirements.txt
+python scripts/selftest.py   # 核心测试
+```

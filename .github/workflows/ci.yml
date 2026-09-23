@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows 必须进矩阵：渲染链探测、路径归一化、profile URI 这几条
+        # Windows 必须进矩阵：路径归一化、字体回落、缓存 marker 这几条
         # 都是平台相关分支，只在 Linux 上跑等于没测到最容易坏的地方。
         os: [ubuntu-latest, windows-latest]
         python: ["3.10", "3.12", "3.13"]
@@ -59,10 +59,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Plan a deck from a brief (R1)
+      - name: Plan a deck from a brief (THINK)
         run: python scripts/vao.py plan templates/brief.yml --out /tmp/plan.json
 
-      - name: Confirm spec mode stays free of python-pptx (v3.2 红线)
+      - name: Confirm spec mode stays free of python-pptx (红线)
+        # 唯一入口 vao.py check --mode spec：判定但不编译。
+        # 断言 pptx / lxml / compiler 不进 sys.modules——spec 档在无渲染依赖的
+        # 环境必须可用；这条红线由 selftest 的 CLI 组与这里的冒烟双重锁定。
         run: |
           python - <<'PY'
           import subprocess, sys, textwrap, pathlib, tempfile
@@ -70,34 +73,27 @@ jobs:
               SPEC = {"canvas": {"width": 1280, "height": 720},
                       "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
                                            "muted": "#777777", "primary": "#222222",
-                                           "secondary": "#333333", "accent": "#AA0000"}},
+                                           "secondary": "#333333", "accent": "#AA0000"},
+                                "fonts": {"cn": "Source Han Sans SC", "latin": "Arial"}},
                       "slides": [{"id": "s01",
                                   "source_zone": {"x": 48, "y": 664, "width": 1184, "height": 40},
-                                  "page_intent": {"insight": "A", "focus": "t", "density": "sparse",
-                                                  "energy": "high", "empty_space_role": "hold_emotion"},
+                                  "page_intent": {"insight": "A", "focus": "t"},
                                   "elements": [{"type": "text", "id": "t", "x": 400, "y": 300,
                                                 "width": 480, "height": 120, "size": 48, "text": "A",
                                                 "color": "ink", "max_lines": 1, "line_height": 1.2}]}]}
           ''')
           d = pathlib.Path(tempfile.mkdtemp())
-          build = d / "build_probe.py"
-          build.write_text(spec, encoding="utf-8")
+          (d / "build_probe.py").write_text(spec, encoding="utf-8")
           code = (
               "import sys; sys.path.insert(0, 'scripts')\n"
-              "import importlib.util as iu, guard, qa\n"
-              f"m = iu.spec_from_file_location('b', r'{build}')\n"
-              "mod = iu.module_from_spec(m); m.loader.exec_module(mod)\n"
-              "r = qa.verdict(mod.SPEC, r'%s', mode='spec',\n"
-              "              guard_report=guard.check_spec(mod.SPEC),\n"
-              "              compile_report={'passed': True, 'skipped': True, 'warnings': [],\n"
-              "                              'slides': 1, 'file_bytes': None,\n"
-              "                              'reason': 'spec_mode_no_compile',\n"
-              "                              'output_exists': False, 'output_sha256': None})\n"
+              "from vao import run_check\n"
+              f"run_check(r'{d / 'build_probe.py'}', r'{d / 'spec.pptx'}', mode='spec',\n"
+              "          json_output=True)\n"
               "bad = sorted({n for n in sys.modules if n.split('.')[0] in "
-              "{'pptx','lxml','compiler','render_check','numpy'}})\n"
-              "print('RESULT', bad, r['status'])\n"
+              "{'pptx','lxml','compiler'}})\n"
+              "print('FORBIDDEN MODULES:', bad)\n"
               "assert not bad, bad\n"
-          ) % (d / "spec.pptx", d / "render")
+          )
           out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
           print(out.stdout, out.stderr)
           sys.exit(out.returncode)

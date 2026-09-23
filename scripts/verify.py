@@ -1,23 +1,16 @@
 # -*- coding: utf-8 -*-
-"""
-Layer 0.5 · Guard（静态治理层）
+"""verify.py · 验证层：硬错误 Guard → PASS/BLOCK 判定 → 发布清单
 
-职责：**工程正确性的静态层**——回答「这份 PPT 能不能正确交付」的前半段。
-  error（阻断）：数据合同、结构合法性、文本溢出、越界、未声明遮挡、来源区冲突
-  warn / hint（只提醒，不阻断）：网格贴合、Accent 面积、行长、圆角容器密度、
-        跨页节奏——这些是「设计契约」，过度自动化会把创造力关进规则里，
-        因此只作提醒；判断叙事归 references/design-craft，生成前策略归 design_intelligence。
-本层是只读的：不修改 spec、不生成任何元素，也不打分——
-只返回「检查结果」，供 Release Gate 回答一个问题：这份 PPT 能不能交付。
+QA 只回答一个问题：这份 PPTX 能不能交付？
+  * 只拦截生产级硬错误：schema/内容契约缺失、文字溢出、越界、墨迹重叠、
+    图表载荷非法、数据诚信（单位口径打架、来源缺失升档）、资产链断裂、编译失败。
+  * 作者写下数字约束（theme.constraints / rules）才执法；包不发明审美数字。
+  * 非阻断证据只聚合留痕（trace），不构成门槛、不进对话——Evidence ≠ Error。
+  * 生产输出只有 PASS / BLOCK；修复包按根因分组并内嵌 error 明细，一次修完。
+  * 不重新设计 PPT、不打审美分、不产生修复循环。
 
-设计原则（与引擎一致）：
-  - 纯函数，不持有主题，不写死参数；所有阈值由调用方经 `rules` 传入。
-  - 检查的是「调用方声明的设计」是否违反 OS 的确定性规则，
-    不做审美判断、不替调用方做设计决策。
-  - 引擎不做设计决策：guard 只报告，由调用方决定是否整改。
-
-依赖方向：primitives ← guard ← compiler / qa
-本层不反向依赖任何上层，可独立演进。
+合并自 guard（静态硬约束）与 qa（判定/清单）：它们是同一条验证链的两半，
+拆开只制造"判定层读报告、报告层再认证报告"的循环。
 """
 from __future__ import annotations
 
@@ -32,35 +25,18 @@ from primitives import (AUX_TEXT_ROLES, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H
                         BG_MIN_COVERAGE, BG_MIN_PROTECT_OPACITY,
                         contrast, bg_coverage, bg_overlay_opacity, is_background_declared,
                         text_units, spec_fingerprint)
-from design_intelligence_rules import (FAMILY_TOKENS, DENSITY_BANDS,
-                                       ENERGY_LEVELS)
+from intelligence import FAMILY_TOKENS, DENSITY_LEVELS, ENERGY_LEVELS
 
-# 网格基准（OS §02.1：间距基准 8 / 12 列栅格 / 基线 8，所有主题共享）
+from primitives import is_cjk as _is_cjk   # 单一实现
 
-# ── Guard 只查工程事实 ────────────────────────────────────────────────
-# 它回答四件事：这份 spec 合法吗、数据是真的吗、内容会不会被切掉、文件能不能交付。
-# 「高级感」「节奏」「焦点尺度」不在管辖范围——那是 Design Intelligence 与
-# design-craft.md 的判断，验证层不评分、也不发设计提示（v5.7 起）。
-# 判据只有两类：工程错误（阻断），与**作者自己写下的数字**（写了才执法）。
-# 新增判断先问一句：它能被一个固定阈值完全描述，且不写就不检查吗？
-
-# 图表容量上限（OS §19 / USAGE §5.4）
+# 图表容量上限（OS §19）：数值类 kind 集合与载荷契约（schema 合法 ≠ 画得出来）
 NUMERIC_CHART_KINDS = {
     "bar", "horizontal_bar", "column", "comparison_bar", "line", "trend",
     "single_trend_line", "area", "donut", "donut_composition", "pie",
     "waterfall", "ranked_bar", "progress_bar", "stacked_bar", "bubble",
-    # Metric displays still carry data semantics: finite values and provenance
-    # apply even when the visual is shape/text rather than a native chart.
     "big_number_row", "sparkline",
 }
-
-# 与 compiler 的原生/形状图表分发保持同一 schema 边界；未知 kind
-# 先在 Guard 阻断，避免编译器只警告后留下半成品 PPTX。
 SUPPORTED_CHART_KINDS = CHART_KINDS
-
-# 载荷契约：schema 合法 ≠ 画得出来。缺载荷的图表会「PASS 出门、页面空白」，
-# 这是最贵的漏洞——看起来做完了，其实什么都没画。这里只守「有没有东西可画」，
-# 不管画得好不好（那是设计判断）。
 ROWS_CHART_KINDS = (
     "bar", "horizontal_bar", "column", "comparison_bar", "line", "trend",
     "single_trend_line", "area", "donut", "donut_composition", "pie", "waterfall",
@@ -68,15 +44,6 @@ ROWS_CHART_KINDS = (
     "process_flow", "timeline", "steps", "bubble",
 )
 ELEMENT_METRIC_KINDS = ("kpi", "executive_kpi", "big_number")
-
-
-
-from primitives import is_cjk as _is_cjk   # 单一实现（曾经 guard/ghost 各存一份，范围不一致）
-
-
-# 物理阈值住 primitives（单一口径），这里直连读取——不为 5 个常量搭缓存层。
-
-
 
 
 def _text_box_capacity(e: dict) -> dict | None:
@@ -262,8 +229,8 @@ def _family_token_known(token: str) -> bool:
     if token in FAMILY_TOKENS:
         return True
     try:
-        from route import _canonical_content_type      # brief 词汇表（唯一真源在 route）
-        return bool(_canonical_content_type(token))
+        from intelligence import explicit_content_type  # brief 词汇表（唯一真源在 intelligence）
+        return bool(explicit_content_type({"type": token}))
     except Exception:
         return True        # 解析器不可用时不做判断（宁可沉默，也不冤枉合法写法）
 
@@ -291,7 +258,7 @@ def _check_page_contract(slide: dict, sid: str, add,
     # 只剩「谁也解析不出来」才是事实错误（拼错），且按值去重——同一个错不刷 15 行。
     for key, legal, shown in (
             ("energy", set(ENERGY_LEVELS), " / ".join(ENERGY_LEVELS)),
-            ("density", set(DENSITY_BANDS), " / ".join(DENSITY_BANDS))):
+            ("density", set(DENSITY_LEVELS), " / ".join(DENSITY_LEVELS))):
         value = field(key)
         if not value:
             continue
@@ -489,54 +456,6 @@ def _chart_values(chart: dict):
     return vals
 
 
-def _data_claim_mismatch(slide: dict):
-    """标题里的百分比，能否由本页图表数据推出？
-
-    支持三种等价算法：直接等于某值、占总量百分比、占最大值百分比。
-    任一命中即视为主张成立（不同图表的口径本就不同，不宜只认一种）。
-    """
-    import re
-    charts = [e for e in (slide.get("elements") or [])
-              if isinstance(e, dict) and e.get("type") in ("chart", "native_chart")]
-    if not charts:
-        return []
-    texts = [e for e in (slide.get("elements") or [])
-             if isinstance(e, dict) and e.get("type") == "text"
-             and (e.get("text") or "").strip()]
-    if not texts:
-        return []
-    # 主张句 = 字号最大的**句子**，不是最大的数字。
-    # 反例：KPI 页里 44px 的「↓ 34%」比 40px 的标题还大，若按字号直接取，
-    # 会把指标值当成主张去图表里找，凭空造出一条误报。故要求 ≥8 个字符。
-    candidates = [e for e in texts if len(str(e.get("text") or "").strip()) >= 8]
-    if not candidates:
-        return []
-    head = max(candidates, key=lambda e: float(e.get("size") or 0))
-    head_txt = str(head.get("text") or "")
-    claims = [float(m) for m in re.findall(r"(\d+(?:\.\d+)?)\s*%", head_txt)]
-    if not claims:
-        return []
-    out = []
-    for chart in charts:
-        vals = _chart_values(chart)
-        if not vals:
-            continue
-        total = sum(vals) or 1.0
-        vmax = max(vals) or 1.0
-        for n in claims:
-            cands = [abs(v - n) for v in vals]
-            cands += [abs(100.0 * v / total - n) for v in vals]
-            cands += [abs(100.0 * v / vmax - n) for v in vals]
-            best = min(cands)
-            if best > 0.6:                     # 容差 0.6：容得下四舍五入
-                nearest = min(
-                    [100.0 * v / total for v in vals] +
-                    [100.0 * v / vmax for v in vals] + list(vals),
-                    key=lambda x: abs(x - n))
-                out.append((chart.get("id") or "chart", f"{n:g}%", f"{nearest:.1f}"))
-    return out
-
-
 def _rule_num(rules: dict, key: str, default, cast=float):
     """rules 阈值容错读取：None/非数值/脏输入一律回落默认（不炸全链）——
     rules 来自主题约束或调用方生成物，没有资格让治理层崩溃。"""
@@ -634,13 +553,188 @@ def _weak_text_roles(theme: dict, slides: list) -> set[str]:
     return roles & {"muted", "secondary"}
 
 
+def _declared_layer_checks(slides, cw, ch, *, add, whitespace_min,
+                           bg_layers_max, type_step_min, bold_ratio_max,
+                           bg_layer_cov) -> dict | None:
+    """声明执法层：量测无条件进行（镜子），执法只在作者写下数字时发生。
+
+    五个量都对得上「可执行」的定义：说得出、量得到、超了有点名。未声明不检查。
+    返回密度事实（每页占用带 + 整副均值），只进 JSON trace，不参与判定。
+    """
+    # ---- 方向种子（deck 级）：方向发下来的数字约束，谁来执法 ----
+    # 五个量都对得上「可执行」的定义：说得出、量得到、超了有点名。未声明不检查。
+    _seed_hits: list[tuple[str, str, str, str]] = []
+
+    def _seed(scope: str, level: str, msg: str) -> None:
+        _seed_hits.append(("direction_seed", scope, level, msg))
+
+    if cw > 0 and ch > 0:
+        _area = cw * ch
+        _ws_pages: list[tuple[str, float]] = []
+        _bg_pages: list[tuple[str, int]] = []
+        _type_gaps: list[tuple[str, float]] = []
+        _bold_elems = _text_elems = 0
+        for _s in slides:
+            if not isinstance(_s, dict):
+                continue
+            _sid = str(_s.get("id", "?"))
+            _rects: list[tuple[float, float, float, float]] = []
+            _sizes: set[float] = set()
+            _layers = 0
+            for _e in (_s.get("elements") or []):
+                if not isinstance(_e, dict):
+                    continue
+                _r = _element_rect(_e, cw, ch)
+                if _r:
+                    # 背景层是纸，不是墨：不入留白测量（否则满幅封面恒 dense，
+                    # 镜子对修订就是误导）；背景层计数保留（那是它的本职）。
+                    if str(_e.get("layer", "")) != "background":
+                        _rects.append(_r)
+                    if (str(_e.get("type", "text")) != "text"
+                            and _element_area(_e) / _area >= bg_layer_cov):
+                        _layers += 1
+                if str(_e.get("type", "text")) == "text":
+                    _text_elems += 1
+                    if _e.get("bold") is True or str(_e.get("weight", "")).lower() in (
+                            "bold", "700", "800", "900"):
+                        _bold_elems += 1
+                    try:
+                        _sz = float(_e.get("size") or 0)
+                    except (TypeError, ValueError):
+                        _sz = 0.0
+                    if _sz > 0:
+                        _sizes.add(_sz)
+            if _rects:
+                _ws_pages.append((_sid, 1.0 - _ink_union(_rects) / _area))
+            if _layers:
+                _bg_pages.append((_sid, _layers))
+            _st = sorted(_sizes)
+            if len(_st) >= 2:
+                _type_gaps.append((_sid, min(b / a for a, b in zip(_st, _st[1:]) if a > 0)))
+
+        if whitespace_min is not None and _ws_pages:
+            _mean_ws = sum(w for _, w in _ws_pages) / len(_ws_pages)
+            _worst = min(_ws_pages, key=lambda t: t[1])
+            if _mean_ws < whitespace_min:
+                _seed("deck", "warn",
+                      f"留白率 {_mean_ws:.0%} < 方向下限 {whitespace_min:.0%}"
+                      f"（最挤的一页是 {_worst[0]} {_worst[1]:.0%}）：元素框已经占满版面，"
+                      f"要么砍内容，要么把整页拆成两页")
+            else:
+                _thin = [(sid_, w) for sid_, w in _ws_pages if w < whitespace_min][:3]
+                if _thin:
+                    _seed("deck", "hint",
+                          f"留白率整体达标（均值 {_mean_ws:.0%}），但这几页低于下限 "
+                          f"{whitespace_min:.0%}：" + "、".join(f"{a} {b:.0%}" for a, b in _thin))
+        if bg_layers_max is not None:
+            for _sid, _n in _bg_pages:
+                if _n > bg_layers_max:
+                    _seed(_sid, "warn",
+                          f"背景层 {_n} 层（≥{bg_layer_cov:.0%} 页面积的非文字元素）"
+                          f" > 上限 {bg_layers_max}：层叠越多，前景越难突出")
+        if type_step_min is not None and _type_gaps:
+            _sid, _g = min(_type_gaps, key=lambda t: t[1])
+            if _g < type_step_min - 1e-9:
+                _seed(_sid, "hint",
+                      f"字号相邻级差 {_g:.2f}× < {type_step_min:.2f}×：级差太小读起来是「没对齐」"
+                      f"而不是「有层级」——拉开到 {type_step_min:g}× 以上，或改用字重/墨色区分")
+        if bold_ratio_max is not None and _text_elems >= 4:
+            _ratio = _bold_elems / _text_elems
+            if _ratio > bold_ratio_max:
+                _seed("deck", "warn",
+                      f"粗体占比 {_ratio:.0%} > 上限 {bold_ratio_max:.0%}"
+                      f"（{_bold_elems}/{_text_elems} 个文本元素显式加粗）：全都加粗等于都没加粗，"
+                      f"层级要让给字号与墨色")
+    # 密度事实（镜子，不是规则）：占用带只是测量归档，不设门槛、不进对话，
+    # 只进 JSON trace——作者下一轮修订时对照「哪几页真的挤」自行判断。
+    _density = None
+    if _ws_pages:
+        _mean_occ = sum(1.0 - w for _, w in _ws_pages) / len(_ws_pages)
+        _pages_f = []
+        for _sid, _w in _ws_pages:
+            _occ = 1.0 - _w
+            _band = "sparse" if _occ < 0.35 else ("dense" if _occ > 0.60 else "balanced")
+            _pages_f.append({"id": _sid, "occupancy": round(_occ, 3), "band": _band})
+        _density = {"deck_mean_occupancy": round(_mean_occ, 3), "pages": _pages_f}
+    for _rule, _scope, _level, _msg in _seed_hits:
+        add(_rule, _scope, _level, _msg, layer="declared")
+    return _density
+
+
+def _trace_deck_checks(theme, slides, *, add, chart_styles, accent_hue_min,
+                       chart_label_scale_tol) -> None:
+    """咨询层（deck 级）：色彩系统 / 图表风格漂移 / 弱化文字对比度。
+
+    这些是设计判断的投影，不是可执行的门槛——住进独立函数，add 的 trace
+    层在结构上禁止 error，永不阻断、永不进 fix_plan。升级检查的唯一合法
+    方式：挪回 check_spec 主体并在注释里说明理由。
+    """
+    pal = theme.get("colors") or {}
+    acc = _hls(pal.get("accent"))
+    # 中性色没有色相可言：#1E1E1C 与 #6E6E6A 的 HLS 色相都会算成 60°，
+    # 于是「灰阶 accent + 灰阶 primary」被判成同族——而这恰恰是本技能包
+    # 自己的 zen_minimal / 安静极简种子生成的骨架配色。规则对自家出厂配色
+    # 每次都误报，作者学到的是「这条 warning 可以忽略」，真正的同族撞色
+    # 反而被一起忽略。彩度低于 NEUTRAL_SAT 的色不参与色相族判定
+    # （与 _hue_family 的中性判定同一口径）。
+    if acc and acc[2] >= NEUTRAL_SAT:
+        for role in ("primary", "secondary"):
+            role_hls = _hls(pal.get(role))
+            if not role_hls or role_hls[2] < NEUTRAL_SAT:
+                continue          # 中性主色不与强调色争色相：这是纪律，不是冲突
+            gap = _hue_gap(acc, role_hls)
+            if accent_hue_min is not None and gap is not None and gap < accent_hue_min:
+                add("palette_discipline", f"theme.{role}", "warn",
+                    f"accent {pal.get('accent')} 与 {role} {pal.get(role)} 色相差 "
+                    f"{gap:.0f}° < {accent_hue_min:.0f}°：强调色与主色同族，页面拿不到"
+                    f"「唯一重点」信号——把强调色移出色相族，或改由明度/尺度承担强调", layer="trace")
+    for kind, rec in sorted(chart_styles.items()):
+        if len(rec["pages"]) < 2:
+            continue
+        sizes = rec["sizes"]
+        if len(sizes) > 1:
+            lo, hi = min(sizes), max(sizes)
+            if (chart_label_scale_tol is not None and lo > 0
+                    and hi / lo > chart_label_scale_tol):
+                add("chart_style_drift", kind, "warn",
+                    f"{kind} 出现在 {len(rec['pages'])} 页但标签字号 "
+                    f"{lo:g}–{hi:g}px（>{chart_label_scale_tol:g}×）：同一图表类型应共用"
+                    f"一套标签规格，差异只会读成没对齐", layer="trace")
+
+
+
+    # ---- 可读性底线：弱化文字（muted / secondary）对背景的对比度 ----
+    # 刻度、注释、来源通常由 muted 承担；对比不足时整页"隐性不可读"，
+    # 这是最常见也最容易被忽略的质量漏洞。只报告，不替调用方改色。
+    # 两条线合成一条口径：hint = 3:1（契约文档承诺的线）、warn = 1.8:1（真读不出来）。
+    # 旧实现 hint 从 2.5:1 起，2.5–3.0 之间静默放过——正是"看着还行、投影上消失"的灰。
+    # 只判**可能在承载文字**的 token：与 ink 同侧的才算字，另一侧是面/影
+    # （深底主题的 secondary 就是深面，拿它当字才不该通过）。
+    _colors = theme.get("colors") or {}
+    _bg = _colors.get("background")
+    _weak_roles = _weak_text_roles(theme, slides)
+    if isinstance(_bg, str) and _bg.startswith("#"):
+        for _role in sorted(_weak_roles):
+            _fg = _colors.get(_role)
+            if not (isinstance(_fg, str) and _fg.startswith("#")):
+                continue
+            try:
+                _k = contrast(_fg, _bg)
+            except Exception:
+                continue
+            if _k < 1.8:
+                add("contrast", f"theme.{_role}", "warn",
+                    f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 1.8:1，"
+                    f"刻度/注释将不可读（建议加深至 ≥3:1）", layer="trace")
+
+
 def check_spec(spec: dict, rules: dict | None = None) -> dict:
     """
     静态治理：对调用方传入的 spec 做 OS 硬约束断言。
 
     rules（可配置阈值，调用方传入；缺省用默认值；脏输入一律回落默认不炸链。
     只做工程判定与「作者自己写下的数字」执法：结构、数据、几何、越界、来源、
-    可读性底线、资产链。设计判断不在这里、也不产生提示。
+    可读性底线、资产链。设计判断不设门槛，只以 trace 身份留痕（永不阻断）。
     主题约束 `spec.theme.constraints` 仅对 accent_max/max_charts/max_colors/
     font_levels_max/font_families_max 五项在未显式传入 rules 时生效）:
       overlap_ratio  : 元素重叠容忍上限（默认 .12）
@@ -665,9 +759,13 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
       title_semantics  : insight 退化成「字段名标题」→ hint（提示改写为可复述结论）
 
     returns: {
-      "passed": bool, "checks": [...], "warnings": [...],
-      "grid": {checked, aligned, adherence}
+      "passed": bool（无 error 即 True）,
+      "checks": [{rule, id, level, msg, layer}, ...],
+      "warnings": [...],
+      "facts": {"density": {pages: [{id, occupancy, band}], deck_mean_occupancy}} | {}
     }
+    layer 三级执法身份：hard（可 error，阻断）/ declared（只执法作者写下的数字）/
+    trace（咨询留痕，结构性禁止 error）。blocking 判定只消费 error 级检查。
     """
     if not isinstance(spec, dict):
         return _invalid_spec_result("spec 顶层必须是对象/dict")
@@ -736,8 +834,14 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     checks: list[dict] = []      # 每项: {"rule", "id", "level", "msg"}
     warnings: list[str] = []
 
-    def add(rule, eid, level, msg):
-        checks.append({"rule": rule, "id": eid, "level": level, "msg": msg})
+    def add(rule, eid, level, msg, *, layer="hard"):
+        # layer = 执法身份：hard（可 error，阻断）/ declared（只执法作者写下的数字）/
+        # trace（咨询留痕，结构性禁止 error——误写会被压回 warn，永不进 blocking 与
+        # fix_plan）。升级一条 trace 检查的唯一合法方式：挪出 trace 层并说明理由。
+        if layer == "trace" and level == "error":
+            level = "warn"
+        checks.append({"rule": rule, "id": eid, "level": level, "msg": msg,
+                       "layer": layer})
         if level in ("warn", "error"):
             warnings.append(f"[{rule}] {msg}")
 
@@ -890,7 +994,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                         if e.get("size") is not None and float(e["size"]) < min_font_size:
                             add("typography", eid, "warn",
                                 f"{role} 文字 {float(e['size']):g}px < 可读下限 "
-                                f"{min_font_size:g}px；提高字号或改由更高层级角色承担")
+                                f"{min_font_size:g}px；提高字号或改由更高层级角色承担",
+                                layer="trace")
                     except (TypeError, ValueError):
                         pass
             x = e.get("x", 0)
@@ -1318,17 +1423,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         # baseline_crossing 只认 fill:hairline/track 的填充矩形基线（legacy 写法），
         # 文档口径是 shape:line + stroke 发丝线（fill 为空），对合规 spec 永不触发。）
 
-        # ── 主张 vs 图表：标题里的百分比必须能在图上算出来 ──
-        # 真实案例：标题写「自有内容 61%」，图表单位是「指数点」，68/180=37.8%，
-        # 主张与证据不符；另一页「Q4 占 38%」而实际 142/486=29%。这类错误
-        # 静态就能判定，不该拖到发布评审才发现。
-        for cid, claim, got in _data_claim_mismatch(s):
-            add("data_claim_unsupported", sid, "warn",
-                "标题声称 " + str(claim) + "，但图表「" + str(cid) + "」里算不出该值"
-                + (f"（最接近的是 {got}）" if got else "")
-                + "；主张必须能被页内证据推出")
-
-
         # 焦点尺度：声明焦点为文字时，应获得页内最大字号（OS「一页一焦点」）
         # ---- 主题字体键（deck 级，逐页重复没意义，但每页都被它影响）----
         if si == 0:
@@ -1347,7 +1441,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 if not str(fonts.get("latin") or fonts.get("display") or "").strip():
                     problems.append("没有拉丁字族（latin/display）：拉丁与数字会回落 Arial")
             if problems:
-                add("theme_fonts", "deck", "warn", "；".join(problems))
+                add("theme_fonts", "deck", "warn", "；".join(problems),
+                    layer="trace")
 
         # ---- 主题约束键：写错的名字要点名（同 theme_fonts 的做法）----
         if si == 0:
@@ -1361,99 +1456,23 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                     f"theme.constraints 里的 {_unknown_cons} 不生效（可用的键："
                     f"max_charts / max_colors / whitespace_min / type_step_min / "
                     f"bg_layers_max / bg_layer_coverage / bold_ratio_max / hue_families_max / "
-                    f"accent_hue_min / chart_label_scale_tol）——写了等于没写")
+                    f"accent_hue_min / chart_label_scale_tol）——写了等于没写",
+                    layer="trace")
 
         # ---- 主题生产约束（来自 VP 主题「生产约束」章节） ----
         if max_charts is not None and chart_count > int(max_charts):
             add("theme_constraint", sid, "warn",
-                f"每页图表 {chart_count} > 主题上限 {max_charts}")
+                f"每页图表 {chart_count} > 主题上限 {max_charts}", layer="declared")
         if max_colors is not None and len(page_colors) > int(max_colors):
             add("theme_constraint", sid, "hint",
-                f"每页颜色 {len(page_colors)} > 主题上限 {max_colors}（仅统计引用角色/字面色）")
+                f"每页颜色 {len(page_colors)} > 主题上限 {max_colors}（仅统计引用角色/字面色）",
+                layer="declared")
 
-    # ---- 方向种子（deck 级）：方向发下来的数字约束，谁来执法 ----
-    # 五个量都对得上「可执行」的定义：说得出、量得到、超了有点名。未声明不检查。
-    _seed_hits: list[tuple[str, str, str, str]] = []
-
-    def _seed(scope: str, level: str, msg: str) -> None:
-        _seed_hits.append(("direction_seed", scope, level, msg))
-
-    if cw > 0 and ch > 0:
-        _area = cw * ch
-        _ws_pages: list[tuple[str, float]] = []
-        _bg_pages: list[tuple[str, int]] = []
-        _type_gaps: list[tuple[str, float]] = []
-        _bold_elems = _text_elems = 0
-        for _s in slides:
-            if not isinstance(_s, dict):
-                continue
-            _sid = str(_s.get("id", "?"))
-            _rects: list[tuple[float, float, float, float]] = []
-            _sizes: set[float] = set()
-            _layers = 0
-            for _e in (_s.get("elements") or []):
-                if not isinstance(_e, dict):
-                    continue
-                _r = _element_rect(_e, cw, ch)
-                if _r:
-                    _rects.append(_r)
-                    if (str(_e.get("type", "text")) != "text"
-                            and _element_area(_e) / _area >= bg_layer_cov):
-                        _layers += 1
-                if str(_e.get("type", "text")) == "text":
-                    _text_elems += 1
-                    if _e.get("bold") is True or str(_e.get("weight", "")).lower() in (
-                            "bold", "700", "800", "900"):
-                        _bold_elems += 1
-                    try:
-                        _sz = float(_e.get("size") or 0)
-                    except (TypeError, ValueError):
-                        _sz = 0.0
-                    if _sz > 0:
-                        _sizes.add(_sz)
-            if _rects:
-                _ws_pages.append((_sid, 1.0 - _ink_union(_rects) / _area))
-            if _layers:
-                _bg_pages.append((_sid, _layers))
-            _st = sorted(_sizes)
-            if len(_st) >= 2:
-                _type_gaps.append((_sid, min(b / a for a, b in zip(_st, _st[1:]) if a > 0)))
-
-        if whitespace_min is not None and _ws_pages:
-            _mean_ws = sum(w for _, w in _ws_pages) / len(_ws_pages)
-            _worst = min(_ws_pages, key=lambda t: t[1])
-            if _mean_ws < whitespace_min:
-                _seed("deck", "warn",
-                      f"留白率 {_mean_ws:.0%} < 方向下限 {whitespace_min:.0%}"
-                      f"（最挤的一页是 {_worst[0]} {_worst[1]:.0%}）：元素框已经占满版面，"
-                      f"要么砍内容，要么把整页拆成两页")
-            else:
-                _thin = [(sid_, w) for sid_, w in _ws_pages if w < whitespace_min][:3]
-                if _thin:
-                    _seed("deck", "hint",
-                          f"留白率整体达标（均值 {_mean_ws:.0%}），但这几页低于下限 "
-                          f"{whitespace_min:.0%}：" + "、".join(f"{a} {b:.0%}" for a, b in _thin))
-        if bg_layers_max is not None:
-            for _sid, _n in _bg_pages:
-                if _n > bg_layers_max:
-                    _seed(_sid, "warn",
-                          f"背景层 {_n} 层（≥{bg_layer_cov:.0%} 页面积的非文字元素）"
-                          f" > 上限 {bg_layers_max}：层叠越多，前景越难突出")
-        if type_step_min is not None and _type_gaps:
-            _sid, _g = min(_type_gaps, key=lambda t: t[1])
-            if _g < type_step_min - 1e-9:
-                _seed(_sid, "hint",
-                      f"字号相邻级差 {_g:.2f}× < {type_step_min:.2f}×：级差太小读起来是「没对齐」"
-                      f"而不是「有层级」——拉开到 {type_step_min:g}× 以上，或改用字重/墨色区分")
-        if bold_ratio_max is not None and _text_elems >= 4:
-            _ratio = _bold_elems / _text_elems
-            if _ratio > bold_ratio_max:
-                _seed("deck", "warn",
-                      f"粗体占比 {_ratio:.0%} > 上限 {bold_ratio_max:.0%}"
-                      f"（{_bold_elems}/{_text_elems} 个文本元素显式加粗）：全都加粗等于都没加粗，"
-                      f"层级要让给字号与墨色")
-    for _rule, _scope, _level, _msg in _seed_hits:
-        add(_rule, _scope, _level, _msg)
+    # 声明执法层 + 密度测量（镜子）：量测每轮进行，执法只在作者写下数字时发声
+    _density = _declared_layer_checks(
+        slides, cw, ch, add=add, whitespace_min=whitespace_min,
+        bg_layers_max=bg_layers_max, type_step_min=type_step_min,
+        bold_ratio_max=bold_ratio_max, bg_layer_cov=bg_layer_cov)
 
     _check_deck_anchor(slides, ch, add)
 
@@ -1461,39 +1480,12 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     if hue_families_max is not None and len(deck_hues) > hue_families_max:
         add("palette_discipline", "deck", "warn",
             f"全套使用 {len(deck_hues)} 个色相族（{HUE_BUCKET:.0f}° 一档）> 上限 "
-            f"{hue_families_max}；颜色已不成系统——收拢为一组主辅色 + 一个强调色")
-    pal = theme.get("colors") or {}
-    acc = _hls(pal.get("accent"))
-    # 中性色没有色相可言：#1E1E1C 与 #6E6E6A 的 HLS 色相都会算成 60°，
-    # 于是「灰阶 accent + 灰阶 primary」被判成同族——而这恰恰是本技能包
-    # 自己的 zen_minimal / 安静极简种子生成的骨架配色。规则对自家出厂配色
-    # 每次都误报，作者学到的是「这条 warning 可以忽略」，真正的同族撞色
-    # 反而被一起忽略。彩度低于 NEUTRAL_SAT 的色不参与色相族判定
-    # （与 _hue_family 的中性判定同一口径）。
-    if acc and acc[2] >= NEUTRAL_SAT:
-        for role in ("primary", "secondary"):
-            role_hls = _hls(pal.get(role))
-            if not role_hls or role_hls[2] < NEUTRAL_SAT:
-                continue          # 中性主色不与强调色争色相：这是纪律，不是冲突
-            gap = _hue_gap(acc, role_hls)
-            if accent_hue_min is not None and gap is not None and gap < accent_hue_min:
-                add("palette_discipline", f"theme.{role}", "warn",
-                    f"accent {pal.get('accent')} 与 {role} {pal.get(role)} 色相差 "
-                    f"{gap:.0f}° < {accent_hue_min:.0f}°：强调色与主色同族，页面拿不到"
-                    f"「唯一重点」信号——把强调色移出色相族，或改由明度/尺度承担强调")
-    for kind, rec in sorted(chart_styles.items()):
-        if len(rec["pages"]) < 2:
-            continue
-        sizes = rec["sizes"]
-        if len(sizes) > 1:
-            lo, hi = min(sizes), max(sizes)
-            if (chart_label_scale_tol is not None and lo > 0
-                    and hi / lo > chart_label_scale_tol):
-                add("chart_style_drift", kind, "warn",
-                    f"{kind} 出现在 {len(rec['pages'])} 页但标签字号 "
-                    f"{lo:g}–{hi:g}px（>{chart_label_scale_tol:g}×）：同一图表类型应共用"
-                    f"一套标签规格，差异只会读成没对齐")
-
+            f"{hue_families_max}；颜色已不成系统——收拢为一组主辅色 + 一个强调色",
+            layer="declared")
+    # ---- 咨询层（deck 级）：色彩系统 / 图表风格漂移 / 对比度——只留痕，永不阻断 ----
+    _trace_deck_checks(theme, slides, add=add, chart_styles=chart_styles,
+                       accent_hue_min=accent_hue_min,
+                       chart_label_scale_tol=chart_label_scale_tol)
 
     # ---- 事实/口径跨页一致性（业务级，deck 级）：同一指标的单位/期间/口径必须全 deck 一致 ----
     # 单页各自合规、跨页口径打架，是金融/董事会材料最隐蔽也最致命的错误：
@@ -1522,34 +1514,11 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 "error" if len(units) > 1 else "warn",
                 f"指标「{metric}」跨页口径不一致：" + "；".join(bits))
 
-    # ---- 可读性底线：弱化文字（muted / secondary）对背景的对比度 ----
-    # 刻度、注释、来源通常由 muted 承担；对比不足时整页"隐性不可读"，
-    # 这是最常见也最容易被忽略的质量漏洞。只报告，不替调用方改色。
-    # 两条线合成一条口径：hint = 3:1（契约文档承诺的线）、warn = 1.8:1（真读不出来）。
-    # 旧实现 hint 从 2.5:1 起，2.5–3.0 之间静默放过——正是"看着还行、投影上消失"的灰。
-    # 只判**可能在承载文字**的 token：与 ink 同侧的才算字，另一侧是面/影
-    # （深底主题的 secondary 就是深面，拿它当字才不该通过）。
-    _colors = theme.get("colors") or {}
-    _bg = _colors.get("background")
-    _weak_roles = _weak_text_roles(theme, slides)
-    if isinstance(_bg, str) and _bg.startswith("#"):
-        for _role in sorted(_weak_roles):
-            _fg = _colors.get(_role)
-            if not (isinstance(_fg, str) and _fg.startswith("#")):
-                continue
-            try:
-                _k = contrast(_fg, _bg)
-            except Exception:
-                continue
-            if _k < 1.8:
-                add("contrast", f"theme.{_role}", "warn",
-                    f"{_role} {_fg} 对背景对比 {_k:.1f}:1 < 1.8:1，"
-                    f"刻度/注释将不可读（建议加深至 ≥3:1）")
-
     return {
         "passed": not any(c["level"] == "error" for c in checks),
         "checks": checks,
         "warnings": warnings,
+        "facts": {"density": _density} if _density else {},
     }
 
 
@@ -1777,3 +1746,301 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True,
         "unresolved": unresolved[:_REPORT_ITEM_CAP],
     }
     return src, report
+
+
+# ══════════════════════════════════════════════════════════════════
+# 判定与发布清单（原 qa：只消费报告，PASS / BLOCK 二态）
+# ══════════════════════════════════════════════════════════════════
+import time as _time
+from pathlib import Path as _Path
+
+MODES = {
+    "spec":    {"label": "Spec · 只诊断", "compile": False,
+                "aim": "归一化 + Guard 判定，不写 PPTX"},
+    "draft":   {"label": "Draft · 创作（默认）", "compile": True,
+                "aim": "Guard + Compile 一次通过，产出可编辑 PPTX 与分组修复包"},
+    "release": {"label": "Release · 交付", "compile": True,
+                "aim": "draft 全部 + 数值图表出处硬门 + 结构预览证据 + 发布清单"},
+}
+DEFAULT_MODE = "draft"
+
+_RULE_CODES = {
+    "overlap": "OVERLAP", "source_zone": "SOURCE_COLLISION",
+    "chart_label_collision": "CHART_LABEL_COLLISION",
+    "text_capacity": "TEXT_OVERFLOW", "contrast": "READABILITY_FAIL",
+    "data_integrity": "DATA_INTEGRITY_FAIL",
+    "data_provenance": "DATA_INTEGRITY_FAIL",
+    "chart_type": "CHART_TYPE_FAIL",
+    "safety": "GUARD_FAIL",
+}
+FIX_HINTS = {
+    "OVERLAP": "文本/图表/图片/来源区墨迹不相交；挪几何或删元素，不缩字号。",
+    "SOURCE_COLLISION": "来源区（source_zone）内只放 role∈{source,method,metadata} 的文字。",
+    "CHART_LABEL_COLLISION": "用 label_collision_policy:hide_redundant|move_outside|fail 处置，不缩字号。",
+    "TEXT_OVERFLOW": "框高 ≥ 字号×行高×行数；减行数/减字数/加框高，三选一。",
+    "READABILITY_FAIL": "声明色对比不足：加深文字色或加遮罩/底衬，不动构图。",
+    "DATA_INTEGRITY_FAIL": "每行 label + 有限 value；数值图齐 source/unit/period/basis。",
+    "CHART_TYPE_FAIL": "图表类型在白名单内且数据形态匹配（占比≠趋势）。",
+    "COMPILE_FAIL": "按编译 warnings 修 schema，不绕过 Guard。",
+    "GUARD_FAIL": "按下述明细逐条修：element_schema/focus/几何合法性优先。",
+    "ASSET_WORKFLOW_FAIL": "按 asset_workflow.issues 修：出图 / 登记 / 重新核验。",
+}
+BLOCKING_CODES = set(FIX_HINTS)
+
+
+def mode_profile(mode):
+    key = str(mode or "").strip().lower() or DEFAULT_MODE
+    prof = MODES.get(key)
+    if prof is None:
+        key, prof = DEFAULT_MODE, MODES[DEFAULT_MODE]
+    return {"mode": key, **prof}
+
+
+def _rule_to_code(rule):
+    return _RULE_CODES.get(rule, "GUARD_FAIL")
+
+
+def build_fix_plan(guard_report, compile_report) -> dict:
+    """阻断项按根因分组，**组内携带 error 明细**——修复包自足，零回读。"""
+    groups: dict = {}
+
+    def _g(code):
+        return groups.setdefault(code, {"root_cause": code, "count": 0,
+                                        "ids": [], "details": []})
+    for chk in (guard_report or {}).get("checks", []):
+        if not isinstance(chk, dict) or chk.get("level") != "error":
+            continue
+        g = _g(_rule_to_code(chk.get("rule")))
+        g["count"] += 1
+        pid = str(chk.get("id") or "")
+        if pid and pid not in g["ids"]:
+            g["ids"].append(pid)
+        if len(g["details"]) < 12:
+            g["details"].append({"id": pid, "rule": chk.get("rule"),
+                                 "msg": str(chk.get("msg") or "")[:220]})
+    cr = compile_report if isinstance(compile_report, dict) else {}
+    if cr and not cr.get("passed", False) and not cr.get("skipped"):
+        g = _g("COMPILE_FAIL")
+        g["count"] += 1
+        for w in (cr.get("warnings") or [])[:6]:
+            if len(g["details"]) < 12:
+                g["details"].append({"id": None, "rule": "compiler", "msg": str(w)[:220]})
+    for code, g in groups.items():
+        g["fix"] = FIX_HINTS.get(code, "")
+    return {"policy": "本轮一次修完全部组，修完复跑同一条 check 命令；不逐条对话。",
+            "groups": list(groups.values())}
+
+
+def build_trace_summary(checks) -> list:
+    """非阻断项按 rule 聚合留痕（不进对话，只进 JSON 证据）。"""
+    agg: dict = {}
+    order: list = []
+    for c in checks or []:
+        if not isinstance(c, dict) or c.get("level") not in ("warn", "hint"):
+            continue
+        key = (c.get("rule"), c.get("level"))
+        if key not in agg:
+            agg[key] = {"rule": key[0], "level": key[1], "count": 0, "samples": []}
+            order.append(key)
+        b = agg[key]
+        b["count"] += 1
+        if c.get("msg") and len(b["samples"]) < 3:
+            b["samples"].append(str(c["msg"])[:200])
+    return [agg[k] for k in order]
+
+
+def release_guard_rules(mode, guard_rules=None):
+    rules = dict(guard_rules or {})
+    if mode == "release" and "require_provenance" not in rules:
+        rules["require_provenance"] = True
+    return rules
+
+
+def verdict(spec, output, *, mode=None, guard_report, compile_report,
+            runtime_facts=None) -> dict:
+    """判定：只消费报告（guard + compile），不编译、不读产物字节。"""
+    t0 = _time.time()
+    prof = mode_profile(mode)
+    mode = prof["mode"]
+    facts = dict(runtime_facts or {})
+    do_compile = bool(prof["compile"])
+    guard = guard_report if isinstance(guard_report, dict) else {}
+    _gfacts = guard.get("facts") if isinstance(guard.get("facts"), dict) else {}
+    if not isinstance(spec, dict):
+        spec = {"slides": [], "_input_error": "spec 顶层必须是对象/dict"}
+    blocking = [c for c in guard.get("checks", []) if c.get("level") == "error"]
+    cr = compile_report if isinstance(compile_report, dict) else {}
+    compile_failed = not cr.get("passed", False)
+    codes: list = []
+    for c in blocking:
+        code = _rule_to_code(c.get("rule"))
+        if code not in codes:
+            codes.append(code)
+    if blocking and "GUARD_FAIL" not in codes:
+        codes.append("GUARD_FAIL")
+    if compile_failed:
+        codes.append("COMPILE_FAIL")
+    codes = [c for c in codes if c in BLOCKING_CODES]
+    passed = not codes
+    status = "BLOCKED" if codes else ("PREVIEW_ONLY" if not do_compile else "PASS")
+    release_eligible = bool(status == "PASS" and mode == "release" and cr.get("passed"))
+    next_action = ("fix: " + ", ".join(codes)) if codes else (
+        "ready · 交付前用 --mode release 收口" if mode != "release" else "ready")
+    result = {
+        "source_spec_hash": spec_fingerprint(spec),
+        "normalization": facts.get("normalization"),
+        "execution": {"entrypoint": "vao.py", "mode": mode, "profile": prof["label"],
+                      "compiled": do_compile,
+                      "provenance_required": bool(facts.get("provenance_required", False)),
+                      "external_renderer": "disabled", "visual_evidence": "ghost_preview"},
+        "verdict": {"verdict": "BLOCKED" if codes else "PASS", "status": status,
+                    "blocking": len(blocking),
+                    "trace": len([c for c in guard.get("checks", [])
+                                  if c.get("level") in ("warn", "hint")]),
+                    "codes": codes, "question": "这份 PPT 能不能交付？"},
+        "status": status, "passed": passed, "release_eligible": release_eligible,
+        "blocking_items": len(blocking), "failure_codes": codes,
+        "affected_slides": sorted({str(c.get("id")).split(":")[0] for c in blocking
+                                   if c.get("id")}),
+        "blocking_detail": [{"rule": c.get("rule"), "id": c.get("id"),
+                             "msg": str(c.get("msg") or "")[:220]} for c in blocking],
+        "guard": {"checks": len(guard.get("checks", [])), "errors": len(blocking)},
+        "compile": {k: cr.get(k) for k in
+                    ("passed", "skipped", "reason", "warnings", "slides", "file_bytes",
+                     "output_sha256", "output_path", "performance", "reused")},
+        "fix_plan": build_fix_plan(guard, cr),
+        "trace_summary": build_trace_summary(guard.get("checks")),
+        "facts": _gfacts,
+        "asset_workflow": facts.get("asset_workflow"),
+        "next_action": next_action,
+        "performance": {**{k: facts.get(k) for k in
+                           ("guard_ms", "qc_ms", "compile_ms", "attestation_ms",
+                            "cache_reason", "cache_enabled")},
+                        "speed_profile": facts.get("speed"),
+                        "slides": len(spec.get("slides") or []),
+                        "compile_reused": bool(cr.get("reused"))},
+        "elapsed_ms": int((_time.time() - t0) * 1000),
+    }
+    return result
+
+
+def fail_result(result: dict, problems: list, code: str = "GUARD_FAIL") -> dict:
+    result.update(status="BLOCKED", passed=False, release_eligible=False)
+    codes = result.setdefault("failure_codes", [])
+    if code not in codes:
+        codes.append(code)
+    result["blocking_items"] = result.get("blocking_items", 0) + len(problems)
+    result.setdefault("verdict", {}).update(verdict="BLOCKED", status="BLOCKED",
+                                            blocking=result["blocking_items"], codes=codes)
+    result.setdefault("fix_plan", {"policy": "", "groups": []})["groups"].append({
+        "root_cause": code, "ids": [], "count": len(problems),
+        "details": [{"id": None, "rule": code, "msg": str(p)[:220]} for p in problems],
+        "fix": FIX_HINTS.get(code, "；".join(str(p) for p in problems))})
+    result["next_action"] = "fix: " + "；".join(str(p) for p in problems[:3])
+    return result
+
+
+def preview_issues(ghost, page_ids: list) -> list:
+    """预览证据自洽：声明页 = 渲染页 = 文件数，且每页都在当前稿件内。"""
+    if not isinstance(ghost, dict):
+        return []
+    pages = ghost.get("pages") or []
+    scope = str(ghost.get("scope") or "full")
+    if scope == "sampled":
+        expected = [str(x) for x in (ghost.get("sampled_ids") or [])]
+        actual = [str(x) for x in (ghost.get("slide_ids") or [])]
+        if (not expected or expected != actual or ghost.get("count") != len(expected)
+                or len(pages) != len(expected)):
+            return ["采样预览的声明页与实际渲染页不一致"]
+        outside = [x for x in expected if x not in {str(p) for p in page_ids}]
+        if outside:
+            return ["采样预览引用了当前稿件之外的页面：" + "、".join(outside)]
+    elif (ghost.get("slide_ids") != [str(p) for p in page_ids]
+          or ghost.get("count") != len(page_ids) or len(pages) != len(page_ids)):
+        return ["预览页没有完整覆盖当前稿件"]
+    return []
+
+
+def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
+                     workflow: dict | None = None) -> dict:
+    """发布清单：报告可追溯到当前 spec、产物字节与磁盘一致、预览页在稿内。
+
+    产物核对只有一级：重算一次 SHA-256 与报告比对（10MB 级文件毫秒级），
+    没有二级见证协议。
+    """
+    from datetime import datetime, timezone
+    from primitives import file_digest
+
+    spec = spec if isinstance(spec, dict) else {}
+    qa_report = qa_report if isinstance(qa_report, dict) else {}
+    spec_hash = spec_fingerprint(spec)
+    issues: list = []
+    notes: list = []
+    slides = spec.get("slides") if isinstance(spec.get("slides"), list) else []
+    page_ids = {str(s.get("id")) for s in slides if isinstance(s, dict) and s.get("id")}
+
+    got = qa_report.get("source_spec_hash")
+    if got and got != spec_hash:
+        norm = qa_report.get("normalization") or {}
+        if not (norm.get("hash_before") == spec_hash and norm.get("hash_after") == got
+                and norm.get("idempotent")):
+            issues.append("qa_report 来自另一版 spec（source_spec_hash 不符）")
+    ghost = ghost_preview if isinstance(ghost_preview, dict) else None
+    if ghost:
+        ghost_issues = preview_issues(ghost, sorted(page_ids))
+        issues.extend(ghost_issues)
+        if ghost.get("count") and len(ghost.get("pages") or []) < len(slides):
+            notes.append(f"预览覆盖 {ghost.get('count')}/{len(slides)} 页（方向采样）")
+    compile_claim = qa_report.get("compile") if isinstance(qa_report.get("compile"), dict) else {}
+    output_path, output_sha = compile_claim.get("output_path"), compile_claim.get("output_sha256")
+    if output_path or output_sha:
+        if not output_path or not output_sha:
+            issues.append("PPTX 凭证不完整：需要 output_path 与 output_sha256")
+        else:
+            try:
+                actual = file_digest(output_path)
+                if actual != output_sha:
+                    issues.append("PPTX output_sha256 与磁盘文件不一致")
+            except (OSError, TypeError, ValueError):
+                issues.append(f"PPTX 不可读取: {output_path}")
+    if str(qa_report.get("status", "")).upper() == "PASS":
+        if not qa_report.get("release_eligible"):
+            issues.append("qa_report 声称 PASS 但 release_eligible=false")
+        if str((qa_report.get("execution") or {}).get("mode", "")).lower() != "release":
+            issues.append("qa_report 声称 PASS 但 execution.mode 不是 release")
+        if not compile_claim.get("passed"):
+            issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")
+    wf = workflow if isinstance(workflow, dict) else (qa_report.get("asset_workflow") or {})
+    image_count = wf.get("image_count")
+    if image_count is None:
+        from assets import image_elements
+        image_count = sum(1 for _ in image_elements(spec))
+    if image_count and wf.get("status") != "PASS":
+        issues.append("含图稿件缺少通过的资产链核验；编译 PASS 不能代替资产 PASS")
+    if qa_report.get("passed"):
+        issues.extend(preview_issues(ghost, sorted(page_ids)))
+    status = "BLOCKED" if issues else str(qa_report.get("status", "BLOCKED"))
+    release_eligible = bool(status == "PASS" and qa_report.get("release_eligible"))
+    return {
+        "schema": "vao-release-manifest-v2",
+        "source_spec_hash": spec_hash,
+        "validation": {"issues": issues, "notes": notes, "page_count": len(page_ids)},
+        "slide_count": len(slides),
+        "release_eligible": release_eligible,
+        "asset_workflow": wf,
+        "verification": {
+            "external_renderer": "disabled",
+            "visual_evidence": "ghost_preview" if ghost else "structural_only",
+            "visual_evidence_scope": (ghost or {}).get("scope", "full") if ghost else None,
+            "structural_pages": len(page_ids),
+            "ghost_pages": (ghost or {}).get("count") if ghost else 0,
+            "release_eligible": release_eligible},
+        "compile_report": compile_claim,
+        "qa_summary": {k: qa_report.get(k) for k in
+                       ("status", "passed", "failure_codes", "blocking_items",
+                        "performance", "execution")},
+        "ghost_preview": ({"dir": ghost.get("dir"),
+                           "contact_sheet": ghost.get("contact_sheet")} if ghost else None),
+        "status": status,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }

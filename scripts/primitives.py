@@ -1193,3 +1193,169 @@ BG_MIN_COVERAGE = 0.60           # 背景层免检：至少覆盖 60% 画布面�
 BG_MIN_PROTECT_OPACITY = 0.20    # 内容保护层最低不透明度
 
 
+
+
+# ══════════════════ 编译缓存判定（身份/指纹操作；零 pptx 依赖）══════════════════
+
+# 语义投影 + 引擎指纹 + 产物字节戳一致 ⇒ 跳过重复编译。判断"要不要重编"零成本。
+from primitives import (digest_bytes, engine_fingerprint, file_digest, identity,
+                        json_read_cached, json_write, stat_witness, witness_matches)
+
+CACHE_NAME = "compile_cache.json"
+CACHE_VIEW_VERSION = 8
+NON_GEOMETRIC_SLIDE_KEYS = (
+    "page_intent", "source_zone", "notes", "speaker_notes", "comment",
+    "comments", "annotations", "id", "label",
+)
+NON_GEOMETRIC_THEME_KEYS = (
+    "constraints", "notes", "description", "name", "metadata",
+    "provenance", "id",
+)
+
+
+def _media_stamp(slide, base_path, spec_path=None, image_bytes=None, digests=None):
+    """图片指纹与编译器的相对路径解析同口径。"""
+    roots = [Path(base_path) if base_path else Path.cwd()]
+    if spec_path:
+        roots.append(Path(spec_path).parent)
+    stamps = []
+    slide = slide if isinstance(slide, dict) else {}
+    elements = slide.get("elements", [])
+    if not isinstance(elements, list):
+        return stamps
+    for element in elements or []:
+        if not isinstance(element, dict):
+            continue
+        src = element.get("src")
+        if not src and isinstance(element.get("asset"), dict):
+            src = element["asset"].get("src")
+        if not src:
+            continue
+        path = Path(str(src))
+        if not path.is_absolute():
+            candidates = [(root / path).resolve() for root in roots]
+            path = next((c for c in candidates if c.exists()), candidates[0])
+        known = (digests or {}).get(str(path))
+        if known is None and digests is not None:
+            try:
+                known = digests.get(str(path.resolve()))
+            except OSError:
+                known = None
+        blob = (image_bytes or {}).get(str(path))
+        if known is not None:
+            size = len(blob) if blob is not None else None
+            if size is None:
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    stamps.append([str(path), "missing"])
+                    continue
+            stamps.append([str(path), size, known])
+            continue
+        if blob is not None:
+            stamp = digest_bytes(blob)
+            if digests is not None:
+                digests[str(path)] = stamp
+            stamps.append([str(path), len(blob), stamp])
+            continue
+        try:
+            stat = path.stat()
+            stamps.append([str(path.resolve()), stat.st_size, stat.st_mtime_ns,
+                           (file_digest(path) or "unreadable")[:16]])
+        except (OSError, ValueError):
+            stamps.append([str(path.resolve()), "missing"])
+    return stamps
+
+
+def _projection(obj, drop):
+    return {k: v for k, v in (obj if isinstance(obj, dict) else {}).items()
+            if k not in drop}
+
+
+def _load_meta(work):
+    try:
+        value = json_read_cached(Path(work) / CACHE_NAME)
+        return dict(value) if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _patch_meta(work, **fields):
+    try:
+        meta = _load_meta(work)
+        meta.update(fields)
+        json_write(Path(work) / CACHE_NAME, meta, indent=1, trailing_newline=False, fsync=True)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def spec_view(spec, base_path=None, spec_path=None, image_bytes=None, digests=None):
+    """spec → 确定性编译投影（决定"要不要重编"的唯一身份）。"""
+    spec = spec if isinstance(spec, dict) else {}
+    raw_canvas = spec.get("canvas")
+    canvas = dict(raw_canvas) if isinstance(raw_canvas, dict) else {}
+    theme = _projection(spec.get("theme"), NON_GEOMETRIC_THEME_KEYS)
+    views = []
+    raw_slides = spec.get("slides")
+    if not isinstance(raw_slides, list):
+        raw_slides = []
+    for raw_slide in raw_slides:
+        slide = raw_slide if isinstance(raw_slide, dict) else {}
+        elements = slide.get("elements") if isinstance(slide.get("elements"), list) else []
+        views.append({
+            "background": _projection(slide, NON_GEOMETRIC_SLIDE_KEYS).get("background"),
+            "elements": elements,
+            "id": slide.get("id"),
+            "media": _media_stamp(slide, base_path, spec_path, image_bytes, digests),
+        })
+    return identity({"canvas": canvas, "theme": theme, "slides": views,
+                     "engine": engine_fingerprint("compile"), "v": CACHE_VIEW_VERSION},
+                    schema="vao-compile-view-v8", short=24)
+
+
+def compile_reuse(work, pptx, view, *, fast_probe=False, speed=None):
+    """语义投影一致 + 产物字节戳一致 ⇒ 复用编译报告；否则 None。"""
+    rec = _load_meta(work).get("compile") or {}
+    if not isinstance(rec, dict) or not isinstance(rec.get("report"), dict):
+        return None
+    if rec.get("semantic_view") != view or not rec.get("report"):
+        return None
+    if speed is not None:
+        recorded = str(((rec.get("report") or {}).get("performance") or {}).get("speed")
+                       or "strict")
+        if recorded != str(speed):
+            return None
+    witness = rec.get("output_witness") or {}
+    stored_sha = str(witness.get("sha256") or "")
+    if len(stored_sha) < 64 or not Path(pptx).exists():
+        return None
+    if fast_probe:
+        size, mtime_ns = stat_witness(pptx)
+        if not witness_matches(witness, {"size": size, "mtime_ns": mtime_ns}):
+            return None
+        report = dict(rec["report"])
+        report.update(reused=True, _cache_probe="size+mtime_ns",
+                      _cache_verified_sha256=stored_sha, output_sha256=stored_sha)
+        return report
+    current_sha = file_digest(pptx)
+    if current_sha != stored_sha:
+        return None
+    report = dict(rec["report"])
+    report.update(reused=True, _cache_probe="content_sha256",
+                  _cache_verified_sha256=current_sha, output_sha256=current_sha)
+    return report
+
+
+def record_compile(work, pptx, view, report):
+    output_sha = str((report or {}).get("output_sha256") or "")
+    if len(output_sha) != 64:
+        output_sha = file_digest(pptx) or ""
+    size, mtime_ns = stat_witness(pptx)
+    _patch_meta(work, compile={
+        "semantic_view": view,
+        "compile_speed": str(((report or {}).get("performance") or {}).get("speed") or "strict"),
+        "output_witness": {"size": size, "mtime_ns": mtime_ns, "sha256": output_sha},
+        "pptx_name": Path(pptx).name,
+        "report": {k: v for k, v in (report or {}).items()
+                   if k not in ("guard", "output_sha256")},
+    })

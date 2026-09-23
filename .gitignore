@@ -19,3 +19,9 @@ asset_prompt_cache.json
 
 # OS / 编辑器
 .DS_Store
+
+# demo 证据最小集：成品 PPTX 与联络表入库；页级渲染/缓存可再生成，不入库
+!demo/deck.pptx
+!demo/deck_preview/
+demo/deck_preview/ghost-*.png
+demo/deck_preview/pages/

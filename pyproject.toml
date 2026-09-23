@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ppt-visual-art-director-os"
-version = "7.3.2"
+version = "8.1.1"
 description = "设计智能优先的 PPT 生产技能包：内容 → 视觉策略 → 原生可编辑 PPTX，单入口执行，最小验证"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,14 +31,13 @@ Source = "https://github.com/cpikeo/ppt-visual-art-director-os"
 
 # 本包不是库，而是一组**同目录平铺的脚本模块**（它们之间按顶层名互相 import，
 # 例如 compiler 里 `from primitives import ...`）。因此显式声明 py-modules：
-# `pip install -e .` 后 `import qa` 等在任意工作目录可用。
+# `pip install -e .` 后 `import vao` 等在任意工作目录可用。
 # 生产入口只有 `scripts/vao.py`——其他模块不暴露 CLI，避免出现第二条执行路径。
 [tool.setuptools]
 package-dir = { "" = "scripts" }
 py-modules = [
-  "asset_prompt", "asset_workflow", "compile_cache", "compiler", "design_intelligence",
-  "design_intelligence_rules", "ghost", "guard", "intent_compiler", "vao",
-  "pipeline", "primitives", "qa", "route", "selftest",
+  "assets", "compiler", "ghost", "intelligence", "primitives", "selftest",
+  "vao", "verify",
 ]
 
 # 参考文档与模板是「随仓库分发」的生产资料，不作为 site-packages 数据安装：

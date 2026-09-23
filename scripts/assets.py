@@ -1,20 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-asset_prompt.py · 视觉资产提示词组装器（纯函数层）
+"""assets.py · 资产一体化：判断 → 卡 → 提示词 → 清单 → 像素 QC → 链核验
 
-职责：把「资产卡（card）」+「页面版面参数（page）」拼接成**确定性**的英文提示词。
+合并自 asset_prompt（提示词翻译 + 像素 QC）与 asset_workflow（清单与链核验）：
+它们是同一条资产链的两半，拆成两个模块只制造 import 往返。
 
-设计约束（与 PPT Design OS 架构一致）：
-  * **不持有任何主题**：本文件不含任何 VP 人格、色板或资产卡数据。
-    资产卡由调用方准备好后传入（必填段见 REQUIRED_SEGMENTS，溯源见 validate_asset_card）。
-  * **不写死设计参数**：留白锚点、光向、能量全部由调用方传入；缺省时才用保守默认。
-  * **不做设计决策**：只拼接与去重，不替调用方挑选资产卡或判断该不该出图。
-  * 与 `compiler.py` 一样支持「参数模块 + CLI」两种调用方式。
-
-组装顺序：
-  subject → color → material → lighting → composition → motion → style
-  → [留白锚点] → [光向] → [能量上限] → [资产功能]
-  → Universal QC → 资产类型后缀
+纪律：
+  * 提示词组装是确定性翻译：不持有主题、不做设计决策（该不该出图由
+    intelligence.media_judgment 判定，本层只翻译与核验）。
+  * 链核验只回答：这张图是不是 QC 通过的那张、绑到正确的页、分辨率够。
+    没有第二重哈希仪式。
 """
 from __future__ import annotations
 
@@ -1509,3 +1503,608 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
 # --------------------------------------------------------------------------
 # CLI：与 compiler.py 一致地读取参数模块
 # --------------------------------------------------------------------------
+
+
+# ══════════════════════════════════════════════════════════════════
+# 资产链（原 asset_workflow：清单 / 核验，删哈希抄写仪式）
+# ══════════════════════════════════════════════════════════════════
+from datetime import datetime, timezone
+from pathlib import Path as _Path
+
+from primitives import file_digest, json_read_cached, json_write
+
+ACCEPTED = {"accept", "accept_with_advisory"}
+ASSET_DECISIONS = {"generate", "existing"}
+QC_REPORT_SCHEMA = "vao-asset-qc-v4"
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def digest(value) -> str:
+    """记录级摘要（唯一实现在 primitives.identity，不带 schema 保持历史兼容）。"""
+    from primitives import identity
+    return identity(value)
+
+
+def read_json(path) -> dict:
+    return json_read_cached(path)
+
+
+def asset_entries(manifest: dict) -> list:
+    entries = [e for e in manifest.get("assets", []) if isinstance(e, dict)
+               and e.get("decision") in ASSET_DECISIONS]
+    ids = [e.get("asset_id") for e in entries]
+    if any(not x for x in ids) or len(set(ids)) != len(ids):
+        raise ValueError("资产清单的主条目必须有唯一 asset_id；reuse_generated 不算主条目")
+    return entries
+
+
+def asset_root(manifest: dict, manifest_path, override=None) -> _Path:
+    parent = _Path(manifest_path).expanduser().resolve().parent
+    value = override or manifest.get("assets_dir") or manifest.get("output_dir")
+    if not value:
+        return parent
+    root = _Path(value).expanduser()
+    return (root.resolve() if override or root.is_absolute() else (parent / root).resolve())
+
+
+def resolve_asset(entry: dict, manifest: dict, manifest_path, override=None) -> _Path:
+    root = asset_root(manifest, manifest_path, override)
+    if entry.get("decision") == "existing":
+        raw = (entry.get("origin") or {}).get("path")
+        if not raw:
+            raise ValueError(f"existing 资产缺 origin.path: {entry.get('asset_id')}")
+        p = _Path(raw).expanduser()
+        return p.resolve() if p.is_absolute() else (
+            _Path(manifest_path).expanduser().resolve().parent / p).resolve()
+    filename = _Path(str(entry.get("expected_filename") or f"{entry['asset_id']}.png"))
+    if filename.is_absolute() or ".." in filename.parts:
+        raise ValueError("生成资产文件名必须位于 assets_dir 内，不能使用绝对路径或 ..")
+    candidate = root / filename
+
+    def confined(path):
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root.resolve()):
+            raise ValueError("生成资产最终路径逃逸 assets_dir（含符号链接）")
+        return resolved
+    confined(candidate)
+    if candidate.is_file():
+        return confined(candidate)
+    alternatives = [candidate.with_suffix(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")
+                    if candidate.with_suffix(ext).is_file()]
+    if len(alternatives) > 1:
+        raise ValueError(f"同一 asset_id 有多个候选文件，请明确 expected_filename: {entry['asset_id']}")
+    return confined(alternatives[0] if alternatives else candidate)
+
+
+def image_elements(spec: dict):
+    slides = spec.get("slides")
+    if not isinstance(slides, list):
+        raise ValueError("spec.slides 必须是数组")
+    for slide in slides:
+        if not isinstance(slide, dict) or not isinstance(slide.get("elements", []), list):
+            raise ValueError("每页须为对象，elements 须为数组")
+        for e in slide.get("elements", []):
+            if not isinstance(e, dict):
+                raise ValueError("elements 内每项须为对象")
+            if e.get("type") == "image":
+                yield str(slide.get("id")), e
+
+
+def prepare_manifest(manifest: dict, need: dict, bundle: dict, brief_path,
+                     plan_path, manifest_path, assets_dir=None) -> dict:
+    """assets 落盘前的最后一步：凭证 + 「字节已存在即登记 existing」。"""
+    if digest(bundle.get("need") if isinstance(bundle, dict) else None) != digest(need) \
+            and bundle.get("schema") == "vao-plan-v1":
+        raise ValueError("ASSET_WORKFLOW_FAIL: plan 与当前 brief 不匹配；先重新执行 vao.py plan")
+    if assets_dir:
+        manifest["assets_dir"] = str(_Path(assets_dir).expanduser().resolve())
+    manifest["schema"] = "vao-assets-v2"
+    manifest["workflow"] = {
+        "schema": "vao-asset-chain-v2", "prepared_at": now(),
+        "brief_path": str(_Path(brief_path).expanduser().resolve()),
+        "brief_sha256": digest(need),
+        "brief_file_sha256": file_digest(_Path(brief_path).expanduser()),
+        "plan_path": str(_Path(plan_path).resolve()) if plan_path else None,
+        "prompt_builder": "assets.build_asset_prompt",
+    }
+    for entry in asset_entries(manifest):
+        if entry["decision"] != "generate":
+            continue
+        path = resolve_asset(entry, manifest, manifest_path)
+        if file_digest(path) is None:
+            continue            # 尚未出图：保持 generate，等外部工具按清单出图
+        entry["decision"] = "existing"
+        entry["origin"] = {"kind": "original", "path": str(path),
+                           "source": "manifest prepare 时字节已存在，自动登记（规划身份保留）"}
+    return manifest
+
+
+def verify_sources(manifest: dict) -> list:
+    """清单自洽性：schema + brief 文件凭证。不重复校验 plan（页绑定由核验直检）。"""
+    wf = manifest.get("workflow") or {}
+    if manifest.get("schema") != "vao-assets-v2" or not str(wf.get("schema", "")).startswith("vao-asset-chain"):
+        return ["缺少 v2 资产链凭证；旧清单须从 brief → plan → assets 重新建立"]
+    problems = []
+    try:
+        raw_hash = file_digest(wf.get("brief_path"))
+        if wf.get("brief_file_sha256") and raw_hash and raw_hash != wf["brief_file_sha256"]:
+            problems.append("brief 文件已变更（资产规划时的需求与现在不同）；建议重新 plan → assets")
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return problems
+
+
+def _inspected_bytes_current(path, inspected: dict) -> bool:
+    from primitives import stat_witness, witness_matches
+    record = inspected.get("witness")
+    if not isinstance(record, dict):
+        return False
+    size, mtime_ns = stat_witness(path)
+    return witness_matches(record, {"size": size, "mtime_ns": mtime_ns})
+
+
+def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
+                 image_bytes: dict | None = None, digests: dict | None = None) -> dict:
+    """资产链核验（唯一实现）：每张图 = QC 通过的那张 + 绑到正确的页 + 分辨率够。
+
+    无图稿件直接 SKIPPED——没有第二重计划哈希仪式；有图稿件的保障由
+    slide_ids 直绑 + QC 摘要比对给出，任何一项不成立即 BLOCK。
+    """
+    images = list(image_elements(spec))
+    if not images:
+        return {"status": "SKIPPED", "issues": [], "reason": "no_image_elements",
+                "image_count": 0, "scope": "native_text_shapes_charts_only"}
+    report = {"status": "BLOCKED", "image_count": len(images), "issues": [],
+              "scope": "local_content_hash_chain_not_generator_attestation"}
+    issues = report["issues"]
+    if not manifest_path:
+        issues.append("含图片的稿件必须传 --assets-manifest；不能用直接 src 绕过资产清单")
+        return report
+    try:
+        path = _Path(manifest_path).expanduser().resolve()
+        manifest = read_json(path)
+        issues.extend(verify_sources(manifest))
+        entries = {e["asset_id"]: e for e in asset_entries(manifest)}
+        qpath = _Path(qc_path).expanduser().resolve() if qc_path else path.with_name(path.stem + ".qc.json")
+        qc = read_json(qpath)
+        report.update(manifest=str(path), manifest_sha256=digest(manifest),
+                      qc_report=str(qpath), qc_sha256=digest(qc))
+        if qc.get("schema") != QC_REPORT_SCHEMA or qc.get("manifest_sha256") != digest(manifest):
+            issues.append("QC 缺少指纹或来自旧资产清单；重新 check 触发核验")
+        if qc.get("status") != "PASS" or any(qc.get(k) for k in
+                ("blocking_assets", "pending_assets", "retry_assets", "workflow_issues")):
+            issues.append("资产 QC 尚未通过；retry / missing / block 均不能进入编排与发布")
+        results = {e.get("asset_id"): e for e in qc.get("results", [])}
+        report["verified_images"] = []
+        for aid, entry in entries.items():
+            actual = resolve_asset(entry, manifest, path, assets_dir)
+            inspected = results.get(aid, {})
+            preloaded = (image_bytes or {}).get(str(actual))
+            if preloaded is not None and not _inspected_bytes_current(actual, inspected):
+                preloaded = None
+            from primitives import digest_bytes
+            recorded = (inspected.get("witness") or {}).get("sha256")
+            known = (digests or {}).get(str(actual))
+            if known is not None and _inspected_bytes_current(actual, inspected) and recorded == known:
+                sha = known
+                blob = preloaded
+            else:
+                blob = preloaded if preloaded is not None else (
+                    actual.read_bytes() if actual.is_file() else None)
+                sha = digest_bytes(blob) if blob is not None else None
+                if sha is not None and digests is not None:
+                    digests[str(actual)] = sha
+            if image_bytes is not None and blob is not None and recorded == sha:
+                image_bytes[str(actual)] = blob
+            report["verified_images"].append({"asset_id": aid, "source": str(actual), "sha256": sha})
+            if not sha or recorded != sha:
+                issues.append(f"{aid}: 图片缺失、损坏或在 QC 后被替换；重新 check")
+            if (inspected.get("policy") or {}).get("action") not in ACCEPTED:
+                issues.append(f"{aid}: 无接受该图片的 QC 结果")
+            if entry["decision"] == "generate":
+                if not entry.get("prompt") or not entry.get("negative"):
+                    issues.append(f"{aid}: 缺少生成提示词/负向提示词")
+            else:
+                origin = entry.get("origin") or {}
+                if origin.get("kind") not in {"provided", "licensed", "original", "reuse"} or not origin.get("source"):
+                    issues.append(f"{aid}: 既有素材缺少 origin.kind/source 来源声明")
+        for sid, e in images:
+            aid = e.get("asset_id")
+            if aid not in entries:
+                issues.append(f"{sid}/{e.get('id')}: 图片未绑定清单中的 asset_id")
+                continue
+            if sid not in entries[aid].get("slide_ids", []):
+                issues.append(f"{sid}/{aid}: 使用页面未列入清单 slide_ids（页面与资产规划不一致）")
+                continue
+            dimensions = (results.get(aid, {}).get("qc") or {}).get("dimensions")
+            if not isinstance(dimensions, list) or len(dimensions) != 2:
+                issues.append(f"{sid}/{aid}: QC 缺少实际图片尺寸；重新检查")
+            else:
+                iw, ih = map(float, dimensions)
+                crop = e.get("crop") or [0, 0, 0, 0]
+                iw *= 1 - float(crop[0]) - float(crop[2])
+                ih *= 1 - float(crop[1]) - float(crop[3])
+                if min(iw, ih) <= 0:
+                    issues.append(f"{sid}/{aid}: 裁切后无有效图像")
+                else:
+                    scale = (min if e.get("fit") == "contain" else max)(
+                        float(e["width"]) / iw, float(e["height"]) / ih)
+                    if scale > 1.01:
+                        issues.append(f"{sid}/{aid}: 有效分辨率低于落位尺寸（放大 {scale:.2f} 倍）；"
+                                      "换高分辨率素材或缩小落位")
+            if _Path(str(e.get("src", ""))).resolve() != resolve_asset(entries[aid], manifest, path, assets_dir):
+                issues.append(f"{sid}/{aid}: 编排图片路径与 QC 资产不一致")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        issues.append(f"资产链记录不可读取或格式不正确: {exc}")
+    report["issues"] = list(dict.fromkeys(issues))
+    report["status"] = "PASS" if not issues else "BLOCKED"
+    if report["status"] == "PASS" and image_bytes is not None:
+        report["compilation_input"] = "verified_in_memory_snapshot"
+    return report
+
+
+def blocked_result(spec: dict, workflow: dict) -> dict:
+    """资产链阻断时的最小判定（由 verify 收口）：一条根因组，内嵌全部明细。"""
+    issues = [str(i) for i in (workflow.get("issues") or []) if str(i).strip()]
+    return {"passed": False, "status": "BLOCKED", "failure_codes": ["ASSET_WORKFLOW_FAIL"],
+            "blocking_items": len(issues),
+            "affected_slides": [],
+            "blocking_detail": [{"rule": "asset_chain", "id": None, "level": "error",
+                                 "msg": m} for m in issues],
+            "fix_plan": {"policy": "本轮一次修完全部问题；出图后复跑同一条 check 命令。",
+                         "groups": [{"root_cause": "ASSET_WORKFLOW_FAIL",
+                                     "count": len(issues), "ids": [],
+                                     "details": [{"id": None, "rule": "asset_chain",
+                                                  "msg": m} for m in issues],
+                                     "fix": "按明细出图/登记/重跑；图片必须是 QC 通过的那一张。"}]},
+            "next_action": "fix: ASSET_WORKFLOW_FAIL",
+            "slides": len(spec.get("slides") or []) if isinstance(spec, dict) else 0}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 资产卡与清单规划（原 vao 内嵌段：规划 → 卡 → 批量清单）
+# ══════════════════════════════════════════════════════════════════
+_NEGATIVE_SPACE_ANCHOR = {"hero": "left", "emotion": "left", "context": "left",
+                          "proof": "right", "direct": "right"}
+
+
+def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
+    """单份页事实（含作者声明）→ (资产卡, 页面几何契约)。
+
+    角色先于用途：asset_role（是什么）→ asset_type，一步到位；
+    未声明不猜（默认 background）；色值跟整副 deck 的种子走。
+    """
+    raw = page.get("declarations") or {}
+    derived = deck.get("direction_execution") or {}
+    asset_role, asset_role_source = resolve_asset_role(raw.get("asset_role"), None)
+    function = str(raw.get("asset_function") or "frame")
+    anchor = str(raw.get("negative_space_anchor")
+                 or _NEGATIVE_SPACE_ANCHOR.get(function, "left")).lower()
+    safe_area = normalize_safe_area(raw.get("safe_area"), anchor)
+    title = str(raw.get("title") or page.get("ref") or "visual context")
+    subject = raw.get("asset_subject")
+    subject_fallback = not subject
+    if not subject:
+        subject = title[:180]
+    direction_family = str(deck.get("direction") or "").strip().lower()
+    visual_world = str(brief.get("visual_world") or "")
+    if visual_world.lower() == "unknown":
+        visual_world = ""
+    seed = ((deck.get("theme") or {}).get("colors_seed") or {})
+    color_cue = list(raw.get("asset_color") or [])
+    if not color_cue:
+        color_cue = ["neutral tonal range with one restrained accent"]
+        if seed.get("accent"):
+            accent_hex = str(seed["accent"])
+            accent_name = hex_to_color_name(accent_hex)
+            color_cue.append(f"accent color {accent_name} ({accent_hex})" if accent_name
+                             else f"accent color {accent_hex}")
+    card = {
+        "apc": f"APC-{str(asset_id).upper().replace('-', '_')}",
+        "asset_type": asset_role,
+        "asset_role": asset_role,
+        "asset_role_source": asset_role_source,
+        "medium": raw.get("medium") or brief.get("asset_medium"),
+        "family": direction_family or str(page.get("family") or "").lower(),
+        "subject": [subject],
+        "subject_source": "title_fallback" if subject_fallback else "declared",
+        "color": color_cue,
+        "material": [str(raw.get("material") or derived.get("material") or "quiet matte surface")],
+        "material_source": ("declared" if raw.get("material")
+                            else "direction" if derived.get("material") else "fallback"),
+        "lighting": [str(raw.get("lighting") or derived.get("light") or "single soft directional light")],
+        "lighting_source": ("declared" if raw.get("lighting")
+                            else "direction" if derived.get("light") else "fallback"),
+        "composition": [grammar_phrase(derived.get("composition_grammar"))],
+        "motion": [str(derived.get("motion"))] if derived.get("motion") else [],
+        "world": [visual_world[:160]] if visual_world else [],
+        "asset_function": function,
+        "fusion_enabled": raw.get("fusion_enabled"),
+        "negative": list(raw.get("negative") or []) + list(brief.get("avoid") or []),
+    }
+    card = enhance_asset_card(card, family=card["family"],
+                              motion=card["motion"] or None,
+                              texture=raw.get("texture") or derived.get("texture_keys"),
+                              fusion=card["fusion_enabled"] is not False)
+    page_contract = {
+        "negative_space_anchor": anchor,
+        "safe_area": safe_area,
+        "text_color": raw.get("text_color") or raw.get("safe_area_text_color"),
+        "light_direction": raw.get("light_direction") or "left",
+        "energy": raw.get("energy") or "low",
+        "asset_function": function,
+        "ratio": str(raw.get("asset_ratio") or brief.get("asset_ratio") or "16:9"),
+    }
+    card = resolve_asset_card(card, page_contract)
+    return card, page_contract
+
+
+def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
+    """brief + 判断面 → 去重的批量资产清单（规划身份 = 指纹）。"""
+    pages = bundle.get("pages") or []
+    plan_deck = bundle.get("deck") or {}
+    hint = bundle.get("assets_hint") or {}
+    generation_ids = set(hint.get("generate") or [])
+    prompt_cache: dict = {}
+    cache_file = _Path(cache_path).expanduser() if cache_path else None
+    if cache_file:
+        try:
+            loaded = json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v2":
+                prompt_cache = loaded.get("entries") or {}
+        except (OSError, ValueError, TypeError):
+            prompt_cache = {}
+    cache_hits = 0
+    quality = str(plan_deck.get("quality") or "fast")
+    cap = int(hint.get("cap") or len(generation_ids) or 0)
+    assets: list = []
+    by_fingerprint: dict = {}
+    generated_count = 0
+    skipped_pages: list = []
+    for page in pages:
+        sid = str(page.get("id"))
+        decision = str((page.get("media") or {}).get("decision") or "none")
+        raw = page.get("declarations") or {}
+        origin = raw.get("asset_source")
+        if origin:
+            if not isinstance(origin, dict) or origin.get("kind") not in {
+                    "provided", "licensed", "original", "reuse"} \
+                    or not origin.get("path") or not origin.get("source"):
+                raise ValueError("asset_source 需要 kind(provided/licensed/original/reuse)、path、source")
+            origin = dict(origin)
+            op = _Path(origin["path"]).expanduser()
+            base = _Path((bundle.get("workflow") or {}).get("brief_path") or ".").resolve().parent
+            origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
+            aid = "existing-" + digest(origin)[:16]
+            assets.append({"asset_id": aid, "slide_ids": [sid], "decision": "existing",
+                           "origin": origin,
+                           "asset_function": raw.get("asset_function", "context"),
+                           "asset_role": str(raw.get("asset_role") or "").strip().lower() or None,
+                           "asset_role_source": ("declared" if raw.get("asset_role") else None),
+                           "safe_area": normalize_safe_area(
+                               raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
+                           "meta": {"text_color": raw.get("text_color")},
+                           "retry_budget": 0,
+                           "background_color": ((plan_deck.get("theme") or {}).get("colors_seed")
+                                                or {}).get("foundation", "#FFFFFF")})
+            continue
+        if decision == "none":
+            skipped_pages.append({"slide_id": sid, "decision": "skip",
+                                  "reason": (page.get("media") or {}).get("reason", "")})
+            continue
+        provisional = f"asset-{sid}"
+        card, page_contract = asset_card(page, brief, plan_deck, provisional)
+        fingerprint = asset_fingerprint(card, page_contract)
+        existing = by_fingerprint.get(fingerprint)
+        if existing:
+            existing["slide_ids"].append(sid)
+            assets.append({"slide_id": sid, "decision": "reuse_generated",
+                           "asset_id": existing["asset_id"], "fingerprint": fingerprint})
+            continue
+        should_generate = sid in generation_ids and generated_count < cap
+        if not should_generate:
+            skipped_pages.append({"slide_id": sid, "decision": "reuse",
+                                  "reason": "asset budget or route policy",
+                                  "fingerprint": fingerprint})
+            continue
+        asset_id = f"asset-{fingerprint.removeprefix('asset-')}"
+        cached = prompt_cache.get(fingerprint)
+        if isinstance(cached, dict) and cached.get("prompt") and cached.get("negative"):
+            result = cached
+            cache_hits += 1
+        else:
+            result = build_asset_prompt(
+                card, page_contract,
+                ratio=str(raw.get("asset_ratio") or brief.get("asset_ratio") or "16:9"),
+                asset_function=page_contract["asset_function"])
+            prompt_cache[fingerprint] = result
+        entry = {
+            "asset_id": asset_id,
+            "slide_ids": [sid],
+            "decision": "generate",
+            "fingerprint": fingerprint,
+            "asset_type": card["asset_type"],
+            "asset_role": card["asset_role"],
+            "asset_role_source": card["asset_role_source"],
+            "asset_function": page_contract["asset_function"],
+            "ratio": page_contract["ratio"],
+            "resolved": card.get("resolved"),
+            "allow_crop": raw.get("asset_allow_crop") is True,
+            "background_color": ((plan_deck.get("theme") or {}).get("colors_seed")
+                                 or {}).get("foundation", "#FFFFFF"),
+            "safe_area": page_contract["safe_area"],
+            "prompt": result["prompt"],
+            "negative": result["negative"],
+            "meta": result["meta"],
+            "expected_filename": f"{asset_id}.png",
+            "retry_budget": 1,
+            "qc_policy": qc_policy(),
+        }
+        by_fingerprint[fingerprint] = entry
+        assets.append(entry)
+        generated_count += 1
+    if cache_file:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v2", "entries": prompt_cache})
+    return {
+        "schema": "vao-assets-v1",
+        "design_direction": plan_deck.get("direction"),
+        "quality_level": quality,
+        "asset_budget": {"planned_route_calls": len(generation_ids),
+                         "unique_generation_calls": generated_count,
+                         "max_asset_calls": cap},
+        "assets": assets,
+        "skipped_pages": skipped_pages,
+        "performance": {"reference_context": "none", "batch": True,
+                        "deduplicated": max(0, len(generation_ids) - generated_count),
+                        "prompt_cache_hits": cache_hits,
+                        "prompt_cache_path": str(cache_file) if cache_file else None},
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+# 资产 QC 报告（一次判定、一条修法；判定复用是真性能）
+# ══════════════════════════════════════════════════════════════════
+def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
+              snapshots=None, decoded=None, digests=None):
+    """资产核验：绑定 → 测量/复用 → 判定。draft 最多一次定向重出。"""
+    from primitives import (digest_bytes, engine_fingerprint, text_is_dark,
+                            witness_matches)
+    from assets import ROLE_AUTHORITATIVE_SOURCES
+    manifest_file = _Path(manifest_path).expanduser().resolve()
+    manifest = json_read_cached(manifest_file)
+    profile = qc_profile(speed)
+    qc_phase = "draft" if str(phase).strip().lower() not in {"draft", "review", "release"} \
+        else str(phase).strip().lower()
+    # 上一轮判定复用前提：同清单 + 同像素预算 + 同判定实现。
+    prev_report: dict = {}
+    reuse_base = None
+    prev_results: dict = {}
+    prev_path = manifest_file.with_name(manifest_file.stem + ".qc.json")
+    try:
+        if prev_path.exists():
+            prev_report = json_read_cached(prev_path)
+    except (OSError, ValueError, TypeError):
+        prev_report = {}
+    if prev_report:
+        if (prev_report.get("manifest_sha256") == digest(manifest)
+                and prev_report.get("pixel_profile") == profile
+                and prev_report.get("qc_engine") == engine_fingerprint("measure")):
+            reuse_base = "sha256" if profile.get("speed") == "strict" else "size+mtime_ns"
+            prev_results = {str(r.get("asset_id")): r for r in (prev_report.get("results") or [])}
+    reused_assets = 0
+    workflow_issues = verify_sources(manifest)
+    results = []
+    actions: dict = {}
+    pending: list = []
+    strict_witness = (reuse_base == "sha256")
+    for entry in asset_entries(manifest):
+        candidate = resolve_asset(entry, manifest, manifest_file, input_dir)
+        try:
+            stat = candidate.stat()
+            size, mtime_ns = stat.st_size, stat.st_mtime_ns
+        except OSError:
+            size, mtime_ns = None, None
+        carried = (prev_results or {}).get(str(entry.get("asset_id"))) or {}
+        carried_witness = carried.get("witness") or {}
+        carried_sha = carried_witness.get("sha256")
+        carried_ok = bool(not strict_witness and carried_sha
+                          and witness_matches(carried_witness,
+                                              {"size": size, "mtime_ns": mtime_ns}))
+
+        def _bytes():
+            return candidate.read_bytes() if candidate.is_file() else None
+
+        blob = None if carried_ok else _bytes()
+        image_sha = carried_sha if carried_ok else (digest_bytes(blob) if blob is not None else None)
+        if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
+            workflow_issues.append(f"{entry['asset_id']}: 缺少 prompt / negative")
+        if entry["decision"] == "existing":
+            origin = entry.get("origin") or {}
+            if origin.get("kind") not in {"provided", "licensed", "original", "reuse"} \
+                    or not origin.get("source"):
+                workflow_issues.append(f"{entry['asset_id']}: 既有素材缺少合法 kind / source 声明")
+        safe = entry.get("safe_area") or {}
+        text_color = ((entry.get("meta") or {}).get("text_color")
+                      or (entry.get("page") or {}).get("text_color"))
+        qc_inputs = {"safe_rect": safe, "text_color": text_color,
+                     "ratio": entry.get("ratio"),
+                     "allow_crop": entry.get("allow_crop") is True,
+                     "background": entry.get("background_color") or "#FFFFFF",
+                     "max_side": profile["max_side"]}
+        previous = (prev_results or {}).get(str(entry.get("asset_id")))
+        reused_qc = None
+        if previous and reuse_base is not None:
+            same_bytes = witness_matches(
+                previous.get("witness") or {},
+                {"size": size, "mtime_ns": mtime_ns, "sha256": image_sha},
+                strict=(reuse_base == "sha256"))
+            if same_bytes and previous.get("qc_inputs") == qc_inputs:
+                reused_qc = dict(previous.get("qc") or {})
+        if reused_qc is None and blob is None:
+            blob = _bytes()
+            if image_sha is None:
+                image_sha = digest_bytes(blob) if blob is not None else None
+        if blob is not None and snapshots is not None:
+            snapshots[str(candidate)] = blob
+        if image_sha is not None and digests is not None:
+            digests[str(candidate)] = image_sha
+        if reused_qc is not None:
+            qc = reused_qc
+            qc["reused"] = True
+            qc["reused_from"] = previous.get("checked_at")
+            reused_assets += 1
+        else:
+            qc = image_qc(str(candidate), safe_rect=safe,
+                          text_is_dark=text_is_dark(text_color),
+                          image_bytes=blob, expected_ratio=entry.get("ratio"),
+                          allow_crop=entry.get("allow_crop") is True,
+                          background=entry.get("background_color") or "#FFFFFF",
+                          max_side=profile["max_side"],
+                          decoded=decoded, decode_key=str(candidate))
+        role_authority = (entry.get("asset_role")
+                          if entry.get("asset_role_source") in ROLE_AUTHORITATIVE_SOURCES
+                          else None)
+        decision = qc_retry_decision(qc, attempt=int(entry.get("attempt", 0) or 0),
+                                     phase=qc_phase, max_retries=entry.get("retry_budget", 1),
+                                     asset_function=entry.get("asset_function"),
+                                     asset_role=role_authority)
+        missing = (qc.get("status") == "error")
+        results.append({"asset_id": entry.get("asset_id"),
+                        "slide_ids": entry.get("slide_ids") or [],
+                        "file": str(candidate),
+                        "qc_inputs": qc_inputs, "checked_at": now(),
+                        "witness": {"size": size, "mtime_ns": mtime_ns, "sha256": image_sha},
+                        "qc": qc, "policy": decision, "missing": missing})
+        actions.setdefault(decision["action"], []).append(str(entry.get("asset_id")))
+        if missing:
+            pending.append(str(entry.get("asset_id")))
+    report = {
+        "schema": QC_REPORT_SCHEMA,
+        "manifest": str(manifest_file),
+        "qc_engine": engine_fingerprint("measure"),
+        "manifest_sha256": digest(manifest), "checked_at": now(),
+        "workflow_issues": workflow_issues,
+        "status": "PASS" if not workflow_issues and all(
+            (r.get("policy") or {}).get("action") in ACCEPTED for r in results) else "BLOCKED",
+        "phase": qc_phase,
+        "pixel_profile": profile,
+        "reuse": ({"assets": reused_assets, "witness": reuse_base} if reused_assets else None),
+        "results": results,
+        "summary": {k: len(v) for k, v in actions.items()},
+        "retry_assets": actions.get("retry", []),
+        "blocking_assets": [a for a in actions.get("block", []) + actions.get("flag", [])
+                            if a not in pending],
+        "pending_assets": pending,
+        "conversation_policy": "only blocking assets become one grouped repair/retry action",
+    }
+    out_path = prev_path
+    report["report_path"] = str(out_path)
+    phase_changed = bool(prev_report) and prev_report.get("phase") != qc_phase
+    if (phase_changed or not (prev_report and reuse_base is not None and results
+                              and reused_assets == len(results))):
+        json_write(out_path, report)
+    return report, 0 if report["status"] == "PASS" else 2

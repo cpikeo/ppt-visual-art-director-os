@@ -293,7 +293,12 @@
     "用低分辨率缩略图裁决截断"
    ],
    "when_not_to": "确认交付环境只走单一阅读器且不做多端预览时（缺陷不触发）",
-   "source_case": "anonymized_validation_fixture"
+   "source_case": "anonymized_validation_fixture",
+   "proven": {
+    "project": "vao-next demo · 12 页品牌升级立项稿（production）",
+    "qa": "修法落地后 release PASS（deck sha256 673312fe9f37…），meta 行在窄盒阅读器无截断",
+    "measurements": "spc ∧ run-alpha 并存时尾部字形丢失由最小探针矩阵逐项开关定位；改预混实色后 150dpi 裁切目检 12/12 页 meta 行完整"
+   }
   },
   {
    "id": "monochrome_photo_carries_color",
@@ -587,6 +592,73 @@
     "critic": null,
     "revisions": "architecture/process_flow 首层默认 accent 面填充 → 用 element 级 primary_color 覆写为 ink/stone（s03 首层=ink 有『调度是主角』语义依据；s05 四步等权=全 stone）",
     "lessons": "问题：三域连续生产中轴位置出现惯性风险 → 决策：把轴判定前移为叙事声音判断（宣言=中轴），锚点系统整体切换 → 理由：Manifesto『每元素须答为什么存在』+ Phase 15 反模板测试槽位 → outcome：三域 8/8 反模板差异确认，同等级质量（release 均一次通过区间），惯性被判断替换。"
+   }
+  },
+  {
+   "id": "full_bleed_paper_not_ink",
+   "pattern": "满幅背景在留白测量里是纸不是墨：读留白读的是内容的呼吸，画布本身不算占",
+   "signature": {
+    "keywords": [
+     "background",
+     "full_bleed",
+     "留白",
+     "封面",
+     "whitespace",
+     "density",
+     "occupancy",
+     "背景"
+    ]
+   },
+   "design_problem": "满幅背景图把墨迹并集撑满整页，密度镜子把有大量呼吸区的封面判成 dense——测量与视觉判断打架，作者按镜子修订会被误导去『给封面减内容』",
+   "judgment": {
+    "space": "留白测量与视觉判断的对象是内容层，不是画布；满幅背景存在的页照样可以是呼吸页",
+    "structure": "背景层单独记账（层叠预算），不与内容占用混在同一本账",
+    "media": "全幅出血是背景的合法形态，出血≠拥挤"
+   },
+   "works_because": "纸墨分开记账后，密度镜子与方向人格一致：证据场读出来密、发布会读出来疏，镜子对修订才有可信度",
+   "avoid": [
+    "把满幅背景当内容占用计账",
+    "用同一条墨迹口径同时判层叠与留白"
+   ],
+   "when_not_to": "背景是半幅拼贴、参与构图阅读时——它同时是内容，应入账",
+   "proven": {
+    "project": "battle board-sea/atlas-launch/esg2026 · 三副 deck 全周期（2026-09-23）",
+    "qa": "修正后三 deck release PASS；镜子读数与方向人格一致（esg 0.45 最密 / atlas 0.31 最疏）",
+    "measurements": "修正前满幅封面 occupancy=1.0 恒 dense；修正后 0.12，与目检呼吸区一致"
+   }
+  },
+  {
+   "id": "declared_paper_dark_image_contract",
+   "pattern": "出图前先读清单声明的纸色：资产与声明纸面物理一致是工程事实，不是口味",
+   "signature": {
+    "keywords": [
+     "brightness",
+     "paper",
+     "暗底",
+     "product_stage",
+     "asset",
+     "QC",
+     "background_color",
+     "纸色"
+    ]
+   },
+   "design_problem": "暗纸方向（如 product_stage 的近黑纸面）按习惯亮调出图，QC brightness_balance 以声明底色为锚判『资产与纸面物理断裂』——画得再好也进不了编排",
+   "judgment": {
+    "media": "出图工序先读清单的 background_color 再落笔，出图与声明是同一份判断的两半",
+    "color_behavior": "暗纸 deck 的画心从暗底起、主体与光斑提亮，而不是亮图压暗底",
+    "space": "暗底画心的文字安全区靠亮度对比承担，不靠压暗角"
+   },
+   "works_because": "画心与声明纸面一致时闸门静默放行，断裂时 draft 一轮就拦下——省掉的是整轮重画加一次发布评审",
+   "avoid": [
+    "按惯用亮调出图再硬套暗纸 deck",
+    "把底色声明留空让闸门猜",
+    "事后把画心整体压暗凑闸门"
+   ],
+   "when_not_to": "声明底色与页内 theme.background 冲突时——先改声明，别改画",
+   "proven": {
+    "project": "battle atlas-launch · product_stage 暗纸方向（2026-09-23）",
+    "qa": "按声明纸色 #0B0B0F 重画后 2/2 QC PASS，release PASS",
+    "measurements": "亮图画心亮度 0.89 vs 声明 0.00（落差 0.89 ≥ 0.50 闸门）被 draft 轮拦截一次"
    }
   }
  ]
