@@ -1,3 +1,83 @@
+## 9.1.0 · 判断深化 + 重复删除（2026-09-23）
+
+在 9.0.0 上继续深化：**不重设架构、不堆能力、不新增文件、不用质量换速度**。
+全部改动落在既有 8 个脚本与 3 份参考文献内；端到端证据 16/16 通过。
+
+### 判断层深化（intelligence.py）
+- **Claim 真结算结论**：话题句（「会议纪要…」）不再冒充结论——话题标记 −2.5、
+  标题化话题尾巴 −0.8、变化词 +0.8 参与打分；抽不出即 `absent` 并要求作者补写。
+- **Information Weight 可删除**：`delete` 档真正可用（重复数字 / 装饰 / 说明性图片 /
+  无结论图表 / 纯装饰容器），删除理由逐条落进判断卡。
+- **Visual Role 内容先决**：ask→summarize、comparison→compare、series/number→prove、
+  structure/sequence→explain、witness(human|scene)→prove；页面索引只做 establish/summarize 兜底。
+- **Composition 只留判断**：构图打分表与理由合并为 `_composition_choice`，
+  分数用完即弃，只输出 `chosen / why / rejected`（每页记录为什么不采用其它形式）。
+- **同一内容 × 不同叙事目标 → 不同世界**（证据：document → stage）。
+- 纸色从 3×7 固定色表改为 `blend(纸锚点, 强调, tint)` 推导；`_NEUTRAL_ACCENT` 改中性灰
+  `#6E6A63`；`_MATERIAL_LEXICON` 收紧单字词（避免「现场」被「场」误命中）。
+- 删：`derive_world` 的 `material/motion/chroma/regime/background/rejected_worlds`、
+  页级 `role/evidence/declarations` 副本、`understanding.text/modes`、`unity/slots`、
+  6 个未消费形参；`assets_hint` 只留 `{generate, cap, deferred}`。
+
+### 资产智能（assets.py）
+- 预算按**视觉价值 × 叙事重要性**排序（witness 3.0 / subject 2.0 + 角色价值），
+  超额页进 `deferred[{slide_id, why}]`——不做按页序截断。
+- 删 `read_json` 别名（与 `json_read_cached` 同实现）、`resolve_asset_role` 的 legacy 分支
+  与 `"legacy"` 权威来源（全库无调用点）、卡片内 `motion`。
+
+### Runtime（primitives / vao / verify / ghost / compiler）
+- `_DIGEST_CACHE` + `_READ_CACHE` 合并为一份键空间 `_file_state`（resolve + stat 一次）；
+  `file_digest` 与 `json_read_cached` 共用；4096 → 512 条上限。
+- 每轮 `spec_fingerprint` 一次，供 `verdict` / `release_manifest` / packet 共用。
+- 预览引擎指纹改为完整 `engine_fingerprint("preview")`；预览标记删重复字段 `sampled_ids`。
+- 删空转参数：`run_check(asset_qc_report=)`、`normalize_spec(fonts=)`、`verdict(output=)` 位置参、
+  4 处 guard 未用形参、`ghost` 的未用 `scale`；删 `verify` 的 `hash_before/after` 死分支。
+- `compiler.py` 仅删 `_textbox` 未用 `alpha`（不改渲染行为，PPTX 字节对拍一致）。
+
+### 文档
+- SKILL.md：核心次序改为「信息层级 > 空间秩序 > 排版 > 视觉表达 > 装饰」，
+  补「高级感不是材料表」；judgment.md 同步；assets.md 收紧 witness/subject 判据与图位分配。
+- selftest 80 → **87** 条断言（页级无重复存储 / 世界无可删键 / 话题句与断言句的 claim 判据 /
+  纯数据页不出图 vs 现场页 witness / 图像页构图即图像叙事 / 图位按价值排序）。
+
+## 9.0.0 · Design Intelligence 重构（2026-09-23）
+
+一次端到端审核：结构化减法 + 判断层重写。总原则 `删除 > 合并 > 简化 > 复用 > 新增`。
+
+### 判断层（intelligence.py）
+- 决策链从「Brief → Question → Layout」升级为「内容理解 → 受众 → 决策 → 结论抽取 →
+  信息权重 → 视觉角色 → 焦点判定 → 构图推理 → 空间结构 → 媒体必要性 → 生产规格」。
+- 每个判断带 `why`；每个形式选择带 `rejected`（被否掉的替代项与理由）。
+- 信息权重成为一等判断：必须最大化 / 必须弱化 / 必须删除，逐条给理由。
+- 视觉角色成为一等判断：establish / explain / compare / prove / persuade / summarize。
+- **删除隐藏设计系统**：14 条命名风格预设（DIRECTIONS）、方向别名表、家族媒体模型
+  （MEDIA_MODEL / TYPE_TO_FAMILY）、通用判断问题模板全部移除。视觉世界由内容推导
+  （受众语域 × 内容里的主题实体 × 证据形态），同类内容允许产生不同世界。
+- 媒体判断改为必要性测试：答不出「没有它这一页会下降在哪里」即不出图，
+  装饰图 / 氛围图 / 无意义背景在结构上无法通过。
+- `page_questions` → 判断卡（`pages[].judgment`）；只在无法闭合时留 `open_questions`。
+- `design_direction` 退役（写了会被点名），保留作者槽位：`visual_world` / `brand_colors` / 逐页声明。
+
+### QA 层（verify.py 2046 → 936 行）
+- 只保留硬错误：schema / 溢出 / 越界 / 退化几何 / 重叠 / 来源区 / 图表类型与载荷 /
+  数据完整性 / 跨页口径 / 出处（release）/ 未知色名。PASS / BLOCK 二态不变。
+- 删除声明执法层与留痕层（密度镜子、主题约束 10 键、色相族、图表风格漂移、字体提示、
+  锚点提示、对比度软信号）——设计判断归设计层，QA 不再产生 warning 噪音。
+- 归一化收敛为单趟幂等变换。
+
+### 生产层
+- `primitives` 身份/凭证 API 收敛：`stat_witness/byte_witness/witness_matches/engine_witness`
+  → `witness/witness_same/engine_fingerprint`；删除未使用导出。
+- `ghost` 采样改为**关键页取证**：封面 / 章节 / 画心 / 密数据 / 收尾，证据里标注职责。
+- `assets` 去掉「页面家族 → 材质/动势」预设表；材质与光随视觉世界，能量只调强弱。
+- 实测：12 页 release 冷启 0.4s、缓存命中 0.03s（2 分钟目标有大量余量）。
+
+### 文档与记忆
+- SKILL.md 收敛为六节（身份 / 哲学 / 判断 / Context / 执行 / QA 边界），具体规则外移或删除；
+  references 4 → 3 份（precedent.md 删除，可迁移原则并入 judgment.md）。
+- Design DNA 16 → 9 条高迁移原则（58KB → 5KB），字段不变、校验不变。
+- brief 模板同步新契约（world / necessity / 退役字段说明）。
+
 # Changelog
 
 ## 8.1.1 · P1 收尾 + 实战证据基线（2026-09-23）
@@ -104,3 +184,4 @@
 ## 7.3.2（基线）
 - 结构化审计版：243 项自检、compile/asset-QC/预览三层缓存、资产链内容哈希核验、
   spec/draft/release 三档、ghost 方向预览。此版本为本次重构的对照基线。
+

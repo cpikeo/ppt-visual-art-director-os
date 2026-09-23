@@ -4,7 +4,7 @@
 
     THINK   plan    brief → 判断面（plan.json）+ build 骨架（+ 资产清单）
     BUILD   作者填骨架（构图/尺度/留白是设计判断，引擎不预设）
-    VERIFY  check   normalize → guard 硬门 → compile → 可选方向预览 → PASS/BLOCK
+    VERIFY  check   normalize → guard 硬门 → compile → 可选关键页取证 → PASS/BLOCK
 
 纪律：
   * 一次调用 = 一趟确定性批处理；无逐条修复循环、无 warning 对话。
@@ -23,7 +23,6 @@ import sys
 import time
 import types
 from pathlib import Path
-from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parent
 GHOST_MIN_BUDGET_S = 4.0
@@ -151,7 +150,7 @@ def bind_asset_manifest(spec, manifest_path, assets_dir=None):
 def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = None,
              assets_out: str | None = None, assets_dir: str | None = None,
              asset_cache: str | None = None) -> dict:
-    from intelligence import SCHEMA, load_brief, think, build_skeleton
+    from intelligence import load_brief, think, build_skeleton
     from assets import build_manifest, prepare_manifest, digest, now
 
     t0 = time.perf_counter()
@@ -273,13 +272,13 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
 
 def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
            decoded=None, *, speed="strict", limit=24, output_sha=None) -> dict:
-    """方向预览证据（PIL 结构预览；页级缓存内建于 ghost 模块）。
+    """关键页取证（PIL 结构预览；页级缓存内建于 ghost 模块）。
 
     整份证据复用凭证只有一个：产物 sha256 + 渲染器指纹 + 速度档一致 ⇒
     上一轮的预览就是这一轮的预览（页缓存保证 0 页重画；联络表本身也是
     页图的纯函数）。凭证不匹配（产物/渲染器变了）即重渲。
     """
-    from ghost import PAGE_CACHE_DIR, ghost_deck, make_contact_sheet, sample_pages
+    from ghost import PAGE_CACHE_DIR, ghost_deck, key_page_roles, key_pages, make_contact_sheet
     from primitives import engine_fingerprint
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
@@ -300,8 +299,8 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
         wanted = [int(n) for n in pages]
         scope = "full" if len(wanted) >= len(slides) else "explicit_subset"
     elif fast:
-        wanted = sample_pages(slides, limit=limit)
-        scope = "full" if len(wanted) >= len(slides) else "sampled"
+        wanted = key_pages(slides, limit=limit)
+        scope = "full" if len(wanted) >= len(slides) else "key_pages"
     else:
         wanted = list(range(1, len(slides) + 1))
         scope = "full"
@@ -322,11 +321,12 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
                                  png_compress_level=1 if fast else 6,
                                  cache_dir=Path(output_dir) / PAGE_CACHE_DIR,
                                  stats=sheet_stats)
-    sampled_ids = [str(slides[n - 1].get("id")) for n in wanted
-                   if 1 <= n <= len(slides) and isinstance(slides[n - 1], dict)]
+    rendered_ids = [str(slides[n - 1].get("id")) for n in wanted
+                    if 1 <= n <= len(slides) and isinstance(slides[n - 1], dict)]
     info = {"type": "ghost_layout_preview", "dir": str(Path(output_dir)),
+            "key_pages": (key_page_roles(slides, wanted) if scope == "key_pages" else None),
             "pages": [str(p) for p in paths], "count": len(paths),
-            "slide_ids": sampled_ids, "sampled_ids": sampled_ids,
+            "slide_ids": rendered_ids,
             "pages_rendered": wanted, "page_count": len(slides),
             "scope": scope, "contact_sheet": str(contact) if contact else None,
             "renderer": "PIL", "supersampled": not fast,
@@ -373,9 +373,8 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
               packet: str | None = None, preview: str | None = None,
               json_output: bool = False,
               assets_manifest: str | None = None, assets_dir: str | None = None,
-              asset_qc_report: str | None = None,
               speed: str = "fast", deadline: float | None = None,
-              ghost_pages: int = 24) -> tuple:
+              ghost_pages: int = 5) -> tuple:
     """一次执行完成交付验证。失败落盘 fail-closed；成功不写假失败。"""
     started = time.perf_counter()
     output_path = Path(output).expanduser()
@@ -403,9 +402,10 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         from assets import (blocked_result, qc_report, verify_chain)
         from verify import (check_spec, mode_profile, normalize_spec,
                             release_guard_rules, verdict)
-        from primitives import byte_witness, spec_fingerprint
+        from primitives import spec_fingerprint
 
         verify = sys.modules["verify"]
+        spec_hash = spec_fingerprint(spec)          # 本轮唯一一次 spec 身份
 
         snapshots: dict = {}   # 本轮唯一一次读图：QC / 核验 / 编译 / 预览共用
         decoded: dict = {}     # 核验解码过的底图：编译期不再重复解码
@@ -436,10 +436,9 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         if workflow.get("status") == "BLOCKED":
             result = blocked_result(spec, workflow)
             result["asset_workflow"] = workflow
-            result["source_spec_hash"] = spec_fingerprint(spec)
+            result["source_spec_hash"] = spec_hash
             _json_write(packet_path, repair_packet(result, mode, build, output_path))
-            _print_line(result, None, None, packet_path, speed,
-                        round(time.perf_counter() - started, 2), mode, json_output)
+            _print_line(result, None, None, packet_path, speed, mode, json_output)
             return result, 2
         normalized, norm = verify.normalize_spec(spec)
         prof = mode_profile(mode)
@@ -468,9 +467,9 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                 image_bytes=snapshots, digests=digests, decoded=decoded)
             timing.update(compile_timing)
         timing["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
-        result = verdict(normalized, output_path, mode=mode, guard_report=guard_report,
-                         compile_report=compile_report, runtime_facts={**timing,
-                                                                       "asset_workflow": workflow})
+        result = verdict(normalized, mode=mode, guard_report=guard_report,
+                         compile_report=compile_report, spec_hash=spec_hash,
+                         runtime_facts={**timing, "asset_workflow": workflow})
         result["asset_workflow"] = workflow
         if asset_binding is not None:
             result["asset_binding"] = asset_binding
@@ -505,7 +504,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         if mode == "release":
             from verify import release_manifest
             manifest = release_manifest(normalized, result, ghost_preview=ghost,
-                                        workflow=workflow)
+                                        workflow=workflow, spec_hash=spec_hash)
             if manifest["status"] == "BLOCKED" and result.get("passed"):
                 from verify import fail_result
                 errors = manifest["validation"]["issues"] or ["发布凭证无效"]
@@ -516,8 +515,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             _json_write(manifest_path, manifest)
             result["manifest_path"] = str(manifest_path)
         _json_write(packet_path, repair_packet(result, mode, build, output_path))
-        _print_line(result, ghost, manifest_path, packet_path, speed,
-                    round(time.perf_counter() - started, 2), mode, json_output)
+        _print_line(result, ghost, manifest_path, packet_path, speed, mode, json_output)
         binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
                                                 or asset_binding.get("missing_files")))
         return result, (0 if result.get("passed") and not binding_block else 2)
@@ -526,7 +524,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
 
 
 def _print_line(result, ghost, manifest_path, packet_path, speed,
-                elapsed_s, mode, json_output) -> None:
+                mode, json_output) -> None:
     """一次执行一条结论；证据在文件里，对话里只有注意力预算内的几行。"""
     if json_output:
         print(json.dumps({"status": result.get("status"),
@@ -567,12 +565,12 @@ def _print_line(result, ghost, manifest_path, packet_path, speed,
 # CLI
 # ══════════════════════════════════════════════════════════════════
 SPEED_PROFILES = {
-    "fast": "两分钟交付档：像素统计降采样、图片只读一次、预览按方向采样、缓存快探",
-    "strict": "严格档：全分辨率 QC、整包缓存核对、全 deck 逐页预览",
+    "fast": "两分钟交付档：像素统计降采样、图片只读一次、预览只画关键页、缓存快探",
+    "strict": "严格档：全分辨率 QC、整包缓存核对、逐页预览（忽略 --ghost-pages）",
 }
 DEFAULT_SPEED = "fast"
 DEFAULT_DEADLINE = 120.0
-DEFAULT_GHOST_PAGES = 24
+DEFAULT_GHOST_PAGES = 5      # fast 档只画关键页（封面/章节/画心/密数据/收尾）
 
 
 def _add_speed_flags(parser):
@@ -581,7 +579,8 @@ def _add_speed_flags(parser):
     parser.add_argument("--deadline", type=float, default=DEFAULT_DEADLINE,
                         help="本次调用墙钟预算（秒，默认 120）；预算不足时跳过可选预览并留痕")
     parser.add_argument("--ghost-pages", type=int, default=DEFAULT_GHOST_PAGES,
-                        help="方向预览采样页数上限（fast 档；不超过时自动全量）")
+                        help="fast 档关键页数量上限（封面/章节/画心/密数据/收尾）；"
+                             "strict 档逐页预览，此参数被忽略")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -672,14 +671,17 @@ def main(argv=None) -> int:
             else:
                 pages = bundle.get("pages") or []
                 media_pages = [p["id"] for p in pages
-                               if (p.get("media") or {}).get("decision") != "none"]
-                print(f"plan: {len(pages)} 页 · 方向 {bundle['deck']['direction']} · "
-                      f"质量 {bundle['deck']['quality']} · 规划 {bundle.get('planning_ms', 0)}ms")
+                               if ((p.get("judgment") or {}).get("media") or {})
+                               .get("decision") not in (None, "none")]
+                world = bundle["deck"].get("world") or {}
+                print(f"plan: {len(pages)} 页 · 视觉世界 {world.get('name')} "
+                      f"({world.get('regime')}) · 质量 {bundle['deck']['quality']} · "
+                      f"规划 {bundle.get('planning_ms', 0)}ms")
                 if bundle.get("warnings"):
                     for w in bundle["warnings"][:4]:
                         print(f"  ⚠ {w.get('msg') or w}")
                 if media_pages:
-                    print(f"  媒体判断需要出图: {','.join(media_pages)}"
+                    print(f"  媒体必要性判断：出图 {','.join(media_pages)}"
                           "（可用 --assets-out 产出清单）")
                 if args.plan_out:
                     print(f"  plan: {args.plan_out}"

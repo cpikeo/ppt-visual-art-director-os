@@ -536,7 +536,7 @@ SHAPE_CHARTS = {
 
 
 def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
-             align=PP_ALIGN.LEFT, bold=False, alpha=None):
+             align=PP_ALIGN.LEFT, bold=False):
     """图表内的可编辑文字块（垂直居中、零内边距）。"""
     cn, latin = ctx.families(element)
     tb = slide.shapes.add_textbox(Emu(emu(x)), Emu(emu(y)), Emu(emu(w)), Emu(emu(h)))

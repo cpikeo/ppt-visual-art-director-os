@@ -68,8 +68,11 @@ def _stamp_after_write(target: Path, before_ns: int | None) -> None:
         pass
 
 
-_DIGEST_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
-DIGEST_CACHE_MAX = 512
+# 进程级的「这一轮文件是什么」：一个键（size + mtime_ns）+ 一份读到的内容。
+# 字节摘要与 JSON 解析共用同一个 stat 与同一个键空间——同一份文件在一轮执行里
+# 只 stat 一次、只判一次新鲜度；两个缓存各写一套是重复劳动。
+_FILE_KEY_CACHE: dict[str, tuple[tuple[int, int], dict]] = {}
+FILE_KEY_CACHE_MAX = 512
 
 
 def file_digest(path) -> str | None:
@@ -80,16 +83,12 @@ def file_digest(path) -> str | None:
     发布证据链要在多处核对同一批产物（预览页、QC 引擎、锁定的产物），它们在一个进程里
     不会变——重算只是把同样的字节再读一遍。字节变了凭证立刻变，重算照旧。
     """
-    try:
-        target = Path(path).expanduser().resolve()
-        stat = target.stat()
-    except (OSError, TypeError, ValueError):
+    hit = _file_state(path)
+    if hit is None:
         return None
-    key = str(target)
-    stamp = (stat.st_size, stat.st_mtime_ns)
-    hit = _DIGEST_CACHE.get(key)
-    if hit is not None and hit[0] == stamp:
-        return hit[1]
+    target, stamp, cached = hit
+    if cached.get("digest") is not None:
+        return cached["digest"]
     try:
         h = hashlib.sha256()
         with target.open("rb") as f:
@@ -98,10 +97,31 @@ def file_digest(path) -> str | None:
         value = h.hexdigest()
     except (OSError, TypeError, ValueError):
         return None
-    if len(_DIGEST_CACHE) >= DIGEST_CACHE_MAX:
-        _DIGEST_CACHE.clear()
-    _DIGEST_CACHE[key] = (stamp, value)
+    cached["digest"] = value
     return value
+
+
+def _file_state(path):
+    """(路径, 当前 key, 该文件的缓存槽)；路径不可用返回 None。
+
+    一轮执行里同一份文件只 stat 一次：新鲜度判据只有一条（size + mtime_ns），
+    写入方全是原子写 + fsync，所以 key 变了就是内容变了。路径先归一化——
+    同一个文件被不同层用相对/绝对路径指向时，缓存必须认出它们是同一份。
+    """
+    try:
+        target = Path(path).expanduser().resolve()
+        stat = target.stat()
+    except (OSError, TypeError, ValueError):
+        return None
+    stamp = (stat.st_size, stat.st_mtime_ns)
+    key = str(target)
+    hit = _FILE_KEY_CACHE.get(key)
+    if hit is None or hit[0] != stamp:
+        if len(_FILE_KEY_CACHE) >= FILE_KEY_CACHE_MAX:
+            _FILE_KEY_CACHE.clear()
+        hit = (stamp, {})
+        _FILE_KEY_CACHE[key] = hit
+    return target, stamp, hit[1]
 
 # ══════════════════════════════════════════════════════════════════════════
 # 身份（Identity）：全库唯一的「同一事实 → 同一个值」入口
@@ -113,7 +133,7 @@ def file_digest(path) -> str | None:
 #      记录级摘要（清单、计划、spec）传 schema=None，字节与历史一致；
 #      缓存键传 schema 字符串，多一层键空间包裹，格式变更时改 schema 即可作废旧键。
 #   2) 字节的身份           digest_bytes(blob) / file_digest(path)
-#   3) 「还是那一份」的凭证  stat_witness(path) + witness_matches(a, b, strict=)
+#   3) 「还是那一份」的凭证  witness(path) + witness_same(a, b, strict=)
 #      size + mtime_ns 是快档凭证，strict 时再比 sha256——**同一套口径**，
 #      报告里也只允许一种写法：witness = {size, mtime_ns, sha256?}
 #
@@ -145,25 +165,19 @@ def digest_bytes(blob: bytes | bytearray | memoryview) -> str:
     return hashlib.sha256(bytes(blob)).hexdigest()
 
 
-def stat_witness(path) -> tuple[int | None, int | None]:
-    """(size, mtime_ns)——「还是那一份」的快档凭证；读不到返回 (None, None)。"""
+def witness(path) -> dict:
+    """规范化字节凭证 {size, mtime_ns}：证据 / 缓存记录里只允许这一种写法。
+
+    读不到时给 None 值——调用方把 None 当「文件不存在」，不当空串。
+    """
     try:
         stat = Path(path).stat()
+        return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
     except (OSError, TypeError, ValueError):
-        return (None, None)
-    return (stat.st_size, stat.st_mtime_ns)
+        return {"size": None, "mtime_ns": None}
 
 
-def byte_witness(path, *, digest: bool = False) -> dict:
-    """规范化字节凭证 {size, mtime_ns, sha256?}：证据 / 缓存记录里只允许这一种写法。"""
-    size, mtime_ns = stat_witness(path)
-    witness: dict = {"size": size, "mtime_ns": mtime_ns}
-    if digest:
-        witness["sha256"] = file_digest(path)
-    return witness
-
-
-def witness_matches(a, b, *, strict: bool = False) -> bool:
+def witness_same(a, b, *, strict: bool = False) -> bool:
     """两份凭证是不是同一份字节。
 
     快档只看 size + mtime_ns；`strict=True` 再比 sha256（缺任一侧的 sha256 即不算匹配）。
@@ -186,27 +200,27 @@ def witness_matches(a, b, *, strict: bool = False) -> bool:
 ENGINE_SCOPES: dict[str, tuple[str, ...]] = {
     "compile": ("compiler.py", "primitives.py", "ghost.py"),   # 出 PPTX 的代码
     "preview": ("ghost.py",),                                  # 出预览像素的代码
-    "measure": ("asset_prompt.py",),                           # 量像素的代码
+    "measure": ("assets.py", "primitives.py"),                 # 量像素的代码
 }
 _ENGINE_CACHE: dict[tuple[str, int | None], str] = {}
 
 
-def engine_witness(scope: str) -> dict:
-    """逐文件凭证：{文件: sha256}——报告里给人看「引擎由哪几份字节构成」。"""
-    files = ENGINE_SCOPES.get(scope)
-    if files is None:
-        raise KeyError(f"未知引擎 scope: {scope}（合法值 {sorted(ENGINE_SCOPES)}）")
-    root = Path(__file__).resolve().parent
-    return {name: file_digest(root / name) for name in files}
-
-
 def engine_fingerprint(scope: str, *, short: int | None = None) -> str:
-    """引擎指纹（进程内一次）：同一份实现只有一个值。"""
+    """引擎指纹（进程内一次）：产出证据的代码变了，指纹就必须变。
+
+    实现 = 该 scope 的文件集合逐文件 sha256 → 一次身份计算；没有第二级见证协议。
+    截断由消费方按需处理（同一 scope 不再各算一份短指纹）。
+    """
     key = (scope, short)
     hit = _ENGINE_CACHE.get(key)
     if hit is not None:
         return hit
-    value = identity(engine_witness(scope), schema=f"vao-engine-{scope}-v1", short=short)
+    files = ENGINE_SCOPES.get(scope)
+    if files is None:
+        raise KeyError(f"未知引擎 scope: {scope}（合法值 {sorted(ENGINE_SCOPES)}）")
+    root = Path(__file__).resolve().parent
+    value = identity({name: file_digest(root / name) for name in files},
+                     schema=f"vao-engine-{scope}-v1", short=short)
     _ENGINE_CACHE[key] = value
     return value
 
@@ -386,7 +400,7 @@ def is_light(hex_color: str) -> bool:
 
 
 def latin_word_match(text: str, term: str) -> bool:
-    """拉丁词的整词匹配（CJK 用子串）。asset_prompt 的术语判定与 route 的 token 判定共用。"""
+    """拉丁词的整词匹配（CJK 用子串）。资产层术语判定与色彩 token 判定共用。"""
     import re
     if all(ord(c) < 128 for c in term):
         return re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", text) is not None
@@ -542,52 +556,6 @@ def is_background_declared(element: dict) -> bool:
     e = element or {}
     return (str(e.get("layer", "")).lower() in BACKGROUND_LAYERS
             or str(e.get("role", "")).lower() in BACKGROUND_LAYERS)
-
-
-def bg_overlay_opacity(element: dict) -> tuple[float | None, str | None]:
-    """背景层内容保护层的不透明度 → (opacity, 缺失原因)。
-
-    按 overlay → content_protection.overlay → content_protection.scrim 的顺序取
-    第一个可用声明；非空字符串简写视为完全不透明 1.0。
-    返回 (None, "missing") 表示未声明；(None, "unparsable") 表示声明了但解析不出
-    数值 —— fail-closed：解析不出即视为无保护（guard 与 QA 单一口径，
-    旧实现里旁路判定曾按 1.0 放行——已封堵）。
-    """
-    e = element or {}
-    srcs = [e.get("overlay")]
-    cp = e.get("content_protection")
-    if isinstance(cp, dict):
-        srcs.append(cp.get("overlay"))
-        srcs.append(cp.get("scrim"))
-    for src in srcs:
-        if src is None:
-            continue
-        if isinstance(src, str):
-            if src.strip():
-                return 1.0, None
-            continue
-        if isinstance(src, dict):
-            try:
-                return float(src.get("opacity", 1.0)), None
-            except (TypeError, ValueError):
-                return None, "unparsable"
-    return None, "missing"
-
-
-def bg_coverage(element: dict, cw: float, ch: float) -> float:
-    """元素面积占画布比例（0–1，非法几何按 0）。背景层资格的第一道门：
-    覆盖不够的「背景层」只是内容对象，不享受任何豁免。"""
-    try:
-        area = (float((element or {}).get("width", 0) or 0)
-                * float((element or {}).get("height", 0) or 0))
-    except (TypeError, ValueError):
-        return 0.0
-    try:
-        denom = float(cw or 0) * float(ch or 0)
-    except (TypeError, ValueError):
-        return 0.0
-    return max(0.0, area / denom) if denom > 0 else 0.0
-
 
 
 def with_alpha(hex_color: str, alpha: float) -> str:
@@ -827,35 +795,19 @@ def stroke_color(line, color, alpha=None, width=None) -> None:
 # 重复劳动的来源，而且三处各解析一次 JSON 迟早会有一处读到半写入的状态。
 # 判据是身份而不是时间：size + mtime_ns 变了就失效（写入方全是原子写 + fsync）。
 # 进程级、上限 64 条：只服务一轮执行，不跨运行做新鲜度假设。
-_READ_CACHE: dict[str, tuple[tuple[int, int], object]] = {}
-READ_CACHE_MAX = 64
-
-
 def json_read_cached(path) -> dict:
-    """读 JSON 一次，随后复用（size+mtime_ns 守卫）。失败一律重读，不吞异常。"""
+    """读 JSON 一次，随后复用（与 file_digest 共用同一份文件状态）。失败一律重读。"""
     import json
-    # 键必须归一化：同一个文件被不同层用相对/绝对路径指向时，缓存要认出它们是同一份，
-    # 否则「读一次」退化成一个调用点一份缓存（实测就是这样，manifest 被读了两遍）。
-    try:
-        target = Path(path).expanduser().resolve()
-    except OSError:
-        target = Path(path)
-    key = str(target)
-    try:
-        stat = target.stat()
-        stamp = (stat.st_size, stat.st_mtime_ns)
-    except OSError:
-        _READ_CACHE.pop(key, None)
-        raise
-    hit = _READ_CACHE.get(key)
-    if hit is not None and hit[0] == stamp:
-        return hit[1]
+    state = _file_state(path)
+    if state is None:
+        raise OSError(f"读不到 JSON: {path}")
+    target, _stamp, cached = state
+    if cached.get("json") is not None:
+        return cached["json"]
     value = json.loads(target.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"JSON 顶层必须为对象: {path}")
-    if len(_READ_CACHE) >= READ_CACHE_MAX:
-        _READ_CACHE.clear()
-    _READ_CACHE[key] = (stamp, value)
+    cached["json"] = value
     return value
 
 
@@ -1199,7 +1151,7 @@ BG_MIN_PROTECT_OPACITY = 0.20    # 内容保护层最低不透明度
 
 # 语义投影 + 引擎指纹 + 产物字节戳一致 ⇒ 跳过重复编译。判断"要不要重编"零成本。
 from primitives import (digest_bytes, engine_fingerprint, file_digest, identity,
-                        json_read_cached, json_write, stat_witness, witness_matches)
+                        json_read_cached, json_write, witness, witness_same)
 
 CACHE_NAME = "compile_cache.json"
 CACHE_VIEW_VERSION = 8
@@ -1325,13 +1277,12 @@ def compile_reuse(work, pptx, view, *, fast_probe=False, speed=None):
                        or "strict")
         if recorded != str(speed):
             return None
-    witness = rec.get("output_witness") or {}
-    stored_sha = str(witness.get("sha256") or "")
+    output_witness = rec.get("output_witness") or {}
+    stored_sha = str(output_witness.get("sha256") or "")
     if len(stored_sha) < 64 or not Path(pptx).exists():
         return None
     if fast_probe:
-        size, mtime_ns = stat_witness(pptx)
-        if not witness_matches(witness, {"size": size, "mtime_ns": mtime_ns}):
+        if not witness_same(output_witness, witness(pptx)):
             return None
         report = dict(rec["report"])
         report.update(reused=True, _cache_probe="size+mtime_ns",
@@ -1350,11 +1301,11 @@ def record_compile(work, pptx, view, report):
     output_sha = str((report or {}).get("output_sha256") or "")
     if len(output_sha) != 64:
         output_sha = file_digest(pptx) or ""
-    size, mtime_ns = stat_witness(pptx)
+    file_witness = witness(pptx)
     _patch_meta(work, compile={
         "semantic_view": view,
         "compile_speed": str(((report or {}).get("performance") or {}).get("speed") or "strict"),
-        "output_witness": {"size": size, "mtime_ns": mtime_ns, "sha256": output_sha},
+        "output_witness": {**file_witness, "sha256": output_sha},
         "pptx_name": Path(pptx).name,
         "report": {k: v for k, v in (report or {}).items()
                    if k not in ("guard", "output_sha256")},

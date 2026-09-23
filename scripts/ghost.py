@@ -149,7 +149,7 @@ def _resolve_color(ctx: RenderContext, token) -> tuple[int, int, int] | None:
 
 
 def _draw_gradient(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
-                   value: Any, scale: float) -> None:
+                   value: Any) -> None:
     """与产物 gradFill 同语义：stop 的 color + alpha 沿 angle 插值（0=左→右，90=上→下）。
     旧实现丢 alpha 且只走纵向——整幅画心的渐变 veil 在预览里变成不透明色块，
     作者被迫去翻产物 XML 才能看到真实页面。"""
@@ -202,7 +202,7 @@ def _fill(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
     if not value:
         return
     if isinstance(value, dict) and str(value.get("type", "")).lower() == "gradient":
-        _draw_gradient(img, box, ctx, value, 1.0)
+        _draw_gradient(img, box, ctx, value)
         return
     token = value.get("color") if isinstance(value, dict) else value
     opacity = value.get("opacity") if isinstance(value, dict) else None
@@ -491,7 +491,7 @@ def _value(row: dict, default=0.0) -> float:
 
 
 # ── 预览覆盖契约（v6.4.3）──────────────────────────────────────────────────
-# ghost 是**方向预览**，不是第二个渲染器：它只画「与产物 mark 结构同形」的图形。
+# ghost 是**结构取证**，不是第二个渲染器：它只画「与产物 mark 结构同形」的图形。
 # 曾经这里有一条兜底分支，把任何合法但未实现的图表类型画成一排柱图。于是
 # big_number_row / steps / timeline / waterfall 在预览里全是**假图**——作者看到的
 # 图形在编译产物里根本不存在（实战案源：2026 年终总结 s03 / s06 / s10，作者按
@@ -523,7 +523,7 @@ PREVIEW_ABSTRACT = frozenset({
 
 
 def _draw_wrapped(d: ImageDraw.ImageDraw, text: str, xy: tuple[int, int], width: int,
-                  font, fill, scale: float, line_gap: float = 1.3) -> None:
+                  font, fill, line_gap: float = 1.3) -> None:
     """按像素宽度折行的小段文本（steps 的 desc 用；与 compiler 文本框同口径）。"""
     line_h = int(font.size * line_gap)
     dy = 0
@@ -821,7 +821,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             desc = str(row.get("desc", "") or "").strip()
             if desc:
                 _draw_wrapped(d, desc, (int(cx), int(y + 48 * scale + h * 0.36)),
-                              int(col_w * 0.9), dfont, _rgba(ctx, "muted", 0.9), scale)
+                              int(col_w * 0.9), dfont, _rgba(ctx, "muted", 0.9))
             if i < n - 1:
                 d.line((int(cx + col_w * 0.9), int(y + 22 * scale),
                         int(cx + col_w), int(y + 22 * scale)),
@@ -951,7 +951,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
 
 def _draw_background(img: Image.Image, bg: Any, ctx: RenderContext) -> None:
     if isinstance(bg, dict) and str(bg.get("type", "")).lower() == "gradient":
-        _draw_gradient(img, (0, 0, img.width, img.height), ctx, bg, 1.0)
+        _draw_gradient(img, (0, 0, img.width, img.height), ctx, bg)
     else:
         color = _rgb(ctx, bg if bg else "background", (255, 255, 255))
         img.paste((*color, 255), (0, 0, img.width, img.height))
@@ -996,37 +996,93 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     return img.convert("RGB")
 
 
-def sample_pages(slides: list, limit: int = 4) -> list[int]:
-    """方向采样的页序（1-based，确定性）：封面 · 最复杂页 · 图片页 · 收尾。
+def _page_shape(slide) -> dict:
+    """一页的结构事实：元素数、图片面积、数值载荷、最大字号。用于挑关键页。"""
+    elements = slide.get("elements") if isinstance(slide, dict) else []
+    elements = elements if isinstance(elements, list) else []
+    image_area = data_rows = 0.0
+    max_size = 0.0
+    for e in elements:
+        if not isinstance(e, dict):
+            continue
+        try:
+            size = float(e.get("width", 0)) * float(e.get("height", 0))
+        except (TypeError, ValueError):
+            size = 0.0
+        if e.get("type") == "image":
+            image_area += size
+        if e.get("type") in ("chart", "native_chart"):
+            rows = e.get("data") if isinstance(e.get("data"), list) else []
+            data_rows += max(len(rows), len(e.get("series") or []) or 0, 1)
+        try:
+            max_size = max(max_size, float(e.get("size") or 0))
+        except (TypeError, ValueError):
+            pass
+    return {"elements": len(elements), "image_area": image_area,
+            "data_rows": data_rows, "max_size": max_size}
 
-    全 deck 逐页 raster 是「像素证明」，而预览要的是「方向证据」——封面看世界观，
-    最复杂页看容量与层级，图片页看画心与文字的关系，收尾看落点。
+
+def key_pages(slides: list, limit: int = 5) -> list[int]:
+    """关键页取证（1-based，确定性）：封面 / 章节 / 画心 / 密数据 / 收尾。
+
+    方向证据要的是「世界、结构、容量、落点」四件事被看到，不是每一页都被 raster。
     页数不超过 limit 时返回全部页（此时是全量证据，不是采样）。
     """
     total = len(slides)
     if total == 0:
         return []
-    if total <= max(1, int(limit)):
+    limit = max(1, int(limit))
+    if total <= limit:
         return list(range(1, total + 1))
+    shapes = [_page_shape(s) for s in slides]
+    picks: list[int] = [1, total]
 
-    def weight(slide) -> tuple:
-        elements = slide.get("elements") if isinstance(slide, dict) else []
-        elements = elements if isinstance(elements, list) else []
-        images = sum(1 for e in elements if isinstance(e, dict) and e.get("type") == "image")
-        return (len(elements), images)
+    def _pick(index: int) -> None:
+        if 1 <= index <= total and index not in picks and len(picks) < limit:
+            picks.append(index)
 
-    order = sorted(range(total), key=lambda i: (-weight(slides[i])[0], -weight(slides[i])[1], i))
-    picks = [1, total]
-    img_page = next((i + 1 for i in order
-                     if weight(slides[i])[1] > 0 and (i + 1) not in picks), None)
-    if img_page:
-        picks.append(img_page)
-    for i in order:                      # 补足：按复杂度降序
-        if len(picks) >= max(1, int(limit)):
+    others = [i for i in range(2, total)]                 # 1-based，去掉封面与收尾
+    section = next((i for i in others
+                    if shapes[i - 1]["elements"] <= 3 and shapes[i - 1]["max_size"] >= 32), None)
+    if section:
+        _pick(section)
+    hero = max(others, key=lambda i: (shapes[i - 1]["image_area"], -i)) if others else None
+    if hero and shapes[hero - 1]["image_area"] > 0:
+        _pick(hero)
+    dense = max(others, key=lambda i: (shapes[i - 1]["data_rows"],
+                                       shapes[i - 1]["elements"], -i)) if others else None
+    if dense and shapes[dense - 1]["data_rows"] > 0:
+        _pick(dense)
+    for i in others:                                       # 补足：按元素数降序
+        if len(picks) >= limit:
             break
-        if (i + 1) not in picks:
-            picks.append(i + 1)
-    return sorted(picks[:max(1, int(limit))])
+        _pick(i)
+    return sorted(picks)
+
+
+def key_page_roles(slides: list, pages: list[int]) -> dict[str, str]:
+    """给取到的关键页贴职责标签（证据要说明「看到了什么」）。"""
+    shapes = {i + 1: _page_shape(s) for i, s in enumerate(slides)}
+    total = len(slides)
+    out: dict[str, str] = {}
+    for n in pages:
+        shape = shapes.get(n, {})
+        if n == 1:
+            label = "cover"
+        elif n == total:
+            label = "closing"
+        elif shape.get("image_area"):
+            label = "hero_image"
+        elif shape.get("data_rows"):
+            label = "dense_data"
+        elif shape.get("elements", 9) <= 3:
+            label = "section"
+        else:
+            label = "content"
+        slide = slides[n - 1] if 1 <= n <= total else {}
+        sid = str(slide.get("id")) if isinstance(slide, dict) and slide.get("id") else f"p{n}"
+        out[sid] = label
+    return out
 
 
 PAGE_CACHE_DIR = "pages"          # 逐页渲染缓存（只缓存被渲染过的页）
@@ -1041,7 +1097,7 @@ def _engine_stamp() -> str:
     页面缓存必须随渲染器一起失效（缓存的是像素，像素由它决定）；进程内算一次。
     """
     from primitives import engine_fingerprint
-    return engine_fingerprint("preview", short=16)
+    return engine_fingerprint("preview")
 
 
 def _page_key(slide: dict, spec: dict, scale: float, supersample: int,

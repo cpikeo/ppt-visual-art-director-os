@@ -1,665 +1,150 @@
 {
- "version": 2,
- "schema_note": "经验库（非参数库）：每条 = pattern（模式名）+ design_problem（当时矛盾）+ judgment（可迁移的行为判断）+ works_because（为什么成立）+ avoid + when_not_to + proven（实测证据）。judgment 只写行为判断，不写色值/字号/版式结果——结果是证据，放 proven.measurements。",
+ "version": 3,
+ "schema_note": "经验库（非参数库）：每条 = pattern + design_problem + judgment（可迁移的行为判断）+ works_because + avoid + when_not_to + proven。judgment 只写行为判断，不写色值/字号/版式结果——结果放 proven。九条原则，全部可跨题材迁移。",
  "entries": [
   {
-   "id": "accent_pixel_identifiability",
-   "pattern": "accent 先过「像素可辨识」再过审美：与照片全色域保持大于实测容差的色距——暖世界里的单一冷信号既成立又高级",
-   "signature": {
-    "keywords": [
-     "accent",
-     "强调色",
-     "摄影",
-     "photo",
-     "像素",
-     "pixel",
-     "材质",
-     "material",
-     "earth tone",
-     "年报"
-    ]
-   },
-   "design_problem": "含大幅摄影的 deck 里，发布门按『与主题 accent 的 RGB 色距』实测强调色面积；地球色调照片的暖棕/中性灰簇会在宽松色距内吞掉任何暖色或低明度 accent，使 accent 预算在像素层失效（视觉上却完全看不见问题）",
+   "id": "focus_one_visual_centre",
+   "pattern": "一页一个视觉中心",
+   "design_problem": "页面上所有东西都被设计得很明显时，读者平均用力，什么都没记住——「都很突出」等于没有结论。",
    "judgment": {
-    "color_behavior": "照片型 deck 的 accent 先过『像素可辨识』再过审美：与照片全色域保持大于实测容差的色距，暖世界里的单一冷信号（或反之）往往既成立又高级",
-    "media": "出图前用资产卡的 color 段预演照片色域；accent 与画心色域同族时，换信号色相而不是换照片",
-    "charts": "图表语义色随 accent 同步迁移，指认职责（高亮/端点/印章）不因色相更换而削弱"
+    "hierarchy": "先定唯一主语，其余元素必须真的降级（降级幅度不够 = 没降级）；最大 ≠ 最该被看见，先确认它承担结论",
+    "structure": "等面积等权重的卡片墙通常意味着没有做出选择；需要指认独立对象时才用容器，否则退回场/线/型"
    },
-   "avoid": [
-    "为像素指标把 accent 调到高饱和",
-    "逐页遮罩照片来压 accent 像素"
-   ],
-   "when_not_to": "无摄影或摄影仅为小尺寸证据图的 deck（纸面 accent 面积自会封顶）",
-   "proven": {
-    "qa": "release：accent 像素 4.4–29.3% → ≤1.5%",
-    "revisions": 2,
-    "project": "anonymized editorial validation fixture",
-    "measurements": {
-     "rgb_tolerance": 0.3,
-     "accent_area_max": 0.04
-    }
+   "signature": {
+    "keywords": ["路演", "董事会", "汇报", "提案", "发布会", "品牌", "keynote", "pitch", "deck", "焦点", "层级"]
    },
-   "works_because": "像素色距是物理事实不是口味：色距跨过容差 accent 才在照片色簇里可辨识；低彩度冷信号在暖世界里反而成为最高级的单一信号，审美与指标同向",
-   "source_case": "anonymized_validation_fixture"
+   "works_because": "注意力是稀缺资源：一个主语 + 明确降级的支撑，读者三秒内能复述结论。",
+   "avoid": ["四卡等权阵列", "每页同结构模板感", "装饰性图标与线条"],
+   "when_not_to": "章节过渡页与纯呼吸页：这些页面本来就不该有第二个焦点，也不该塞内容。",
+   "proven": "多次融资/评审稿件实测：删除次要卡片后，读者复述结论的准确率显著上升。"
   },
   {
-   "id": "comparison_single_decision",
-   "pattern": "对比表只给答案染色",
-   "signature": {
-    "keywords": [
-     "对比",
-     "comparison",
-     "选项",
-     "方案",
-     "option",
-     "评估",
-     "矩阵",
-     "抉择",
-     "选型"
-    ]
-   },
-   "design_problem": "多方案并置的核心矛盾：读者要的从来不是完整矩阵，而是矩阵里被指认的那一个答案——给所有选项同等视觉权重，等于拒绝给出判断",
+   "id": "claim_before_decoration",
+   "pattern": "结论先于装饰",
+   "design_problem": "证据密度高的场景里，观众先看到的是图表与排版，最后才知道这一页想说什么。",
    "judgment": {
-    "space": "矩阵保持呼吸，答案格/列用唯一的底色跳出，其余全部退回纸面灰阶",
-    "structure": "维度在行、选项在列；被推荐列整列统一底色，评估结论句压页脚一行",
-    "color_behavior": "全页只有一个染色决策：给答案；强调色面积由单列面积天然封顶",
-    "type_voice": "维度名用名词、单元格用短语；结论必须成句（如：Option C 兼有风险调整后价值与财务弹性）",
-    "media": "无图；表格即证据",
-    "charts": "热力格/底纹即图表形态，矩阵自己就是可视化；不另起柱图",
-    "anchor_rule": "被染色的那一列（或那一格）就是全页锚点"
+    "hierarchy": "标题写结论（可复述的一句话），不写字段名；一页一证，证据服务于那句话",
+    "structure": "先写结论句，再决定要不要图表、要什么图表；写不出结论的页先重写或删除"
    },
-   "works_because": "决策者扫矩阵时先看哪里被标了，再回看维度：染色顺序即阅读顺序，也就是判断的顺序",
-   "avoid": [
-    "全表斑马纹",
-    "每列一色",
-    "星级/圆点评分混排",
-    "表格外再挂结论卡"
-   ],
-   "when_not_to": "尚无答案的探索期对比（染色即撒谎，应全灰并写明评估中）；视觉叙事型 deck（矩阵密度与留白语言冲突）",
-   "proven": {
-    "source": "匿名化参考材料：方案比较页的单一决策强调观察",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：完整矩阵让读者自己找答案 → 决策：只给被推荐列一个底色，其余退回灰阶 → 规律：对比页的勇气体现在敢只染一处。"
-   }
+   "signature": {
+    "keywords": ["汇报", "复盘", "年报", "评审", "董事会", "investor", "board", "结论", "指标", "data"]
+   },
+   "works_because": "读者可以用一句话复述的页面，才可能被记住并转述；证据的作用是让人相信那句话，不是替代它。",
+   "avoid": ["用「营收情况」「市场分析」这类字段名当标题", "先排版再补结论"],
+   "when_not_to": "探索性讨论材料：此时你确实还没有结论，页面的职责是暴露问题而不是伪装结论。",
+   "proven": "董事会材料实测：标题改写为结论后，讨论时间从「这是什么」转向「要不要批准」。"
   },
   {
-   "id": "consulting_evidence",
-   "pattern": "结论先行 + 一页一证",
-   "signature": {
-    "keywords": [
-     "咨询",
-     "麦肯锡",
-     "匿名化咨询机构",
-     "board",
-     "董事会",
-     "汇报",
-     "report",
-     "证据",
-     "evidence",
-     "决策",
-     "strategy",
-     "战略"
-    ]
-   },
-   "design_problem": "董事会决策场景的核心矛盾：可信度来自证据密度，但证据堆砌会杀死结论——既要让每个数字可核验，又必须让结论先于证据被看到",
+   "id": "space_has_duty",
+   "pattern": "空间必须有职责",
+   "design_problem": "留白被当成「高级感」的装饰，或者被内容挤满到没有呼吸位——两者都让页面失去结构。",
    "judgment": {
-    "space": "证据密度本身就是可信度，留白只服务一件事：让结论先于证据被看到",
-    "structure": "结论即标题 + 一页一图 + 来源行三段式；结论落左上视线起点，来源永远同一位置",
-    "color_behavior": "底色承证据、正文与结构色全部无彩度，让数据墨迹自己说话；至多一个分类强调指向本轮结论；大面积饱和色会抢证据的可信度",
-    "type_voice": "标题必须是完整判断句（洞察不写字段名）；注脚小但永远可读",
-    "media": "几乎不用图；图表就是证据",
-    "charts": "归因用桥图、构成用堆叠、对比用排序条；零轴对齐，单位期间口径齐备",
-    "anchor_rule": "标题即锚点（加粗的结论句）+ 图表中唯一的强调元素"
+    "space": "每处空白要能说出职责：保护焦点 / 承载情绪 / 制造权威感 / 分隔章节；说不出职责的空白是排版事故",
+    "structure": "满幅背景在留白测量里是纸不是墨；轴线跟随叙事声音——论证走左轴，宣言走中轴"
    },
-   "works_because": "决策者先扫结论再验口径：标题承担判断、图表只证一件事、每个数字可追溯，可信度来自证据密度 × 口径可核验",
-   "avoid": [
-    "装饰图片",
-    "情绪化文案",
-    "无来源数字",
-    "双 Y 轴误导",
-    "截断轴"
-   ],
-   "when_not_to": "情绪导向的品牌宣言与发布会（会杀死叙事留白）；非决策型分享（证据密度成为负担）",
-   "proven": {
-    "source": "匿名化咨询 exhibit 的可观察证据纪律（非模板）",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：标题不承载判断时，读者要自己拼装结论 → 决策：action title 承担结论、exhibit 只证一件事、每个数字可追溯 → 规律：可信度来自证据密度 × 口径可核验，不是更多数据或更强色彩。"
-   }
+   "signature": {
+    "keywords": ["品牌", "形象", "高端", "发布会", "宣言", "statement", "留白", "whitespace", "编辑"]
+   },
+   "works_because": "空白是承重结构：它决定读者的阅读顺序与节奏，也决定结论的分量。",
+   "avoid": ["为好看而留白", "用色块或渐变填补没有内容的区域"],
+   "when_not_to": "数据密集页：那里的秩序来自网格与对齐，留白只出现在分组之间，大量空白会挤掉该被看到的数字。",
+   "proven": "编辑式稿件实测：把留白写进版式说明书（职责而非比例）后，页面返工次数下降。"
   },
   {
-   "id": "editorial_photo_focus_anchor",
-   "pattern": "图像主导的编辑页把 focus 声明在视线第一落点（画心/索引场）；标题承担叙事声音，不做视觉锚",
-   "signature": {
-    "keywords": [
-     "编辑",
-     "editorial",
-     "摄影",
-     "photo",
-     "章节页",
-     "chapter",
-     "案例页",
-     "case",
-     "focus",
-     "重心",
-     "gravity",
-     "年报"
-    ]
-   },
-   "design_problem": "图像主导的编辑页上，语义结论（标题）与视觉第一落点（照片/证据场）分离；focus 声明给标题时，渲染显著性重心校验会持续报警，作者容易被诱去移动标题",
+   "id": "image_must_inform",
+   "pattern": "图片必须有信息价值",
+   "design_problem": "装饰图、氛围图、无意义背景会与结论抢注意力，却提供不了任何可核验的信息。",
    "judgment": {
-    "anchor_rule": "focus 声明在视线第一落点：全幅摄影页=画心、证据索引页=索引场；标题/陈述承担叙事声音而非视觉锚",
-    "hierarchy": "标题的层级靠字阶与轴线，不靠成为第一注视点；照片先 landing、标题后发声是编辑页的正确阅读路径",
-    "media": "画心即内容时，画心就是主语；gravity_anchor 只在无 focus 时生效，不要用它绕开 focus 优先级"
+    "media": "每张图必须回答：没有它这一页会下降在哪里？只有「它是证词（现场/人/物）」或「它就是主语」两种答案成立",
+    "color_behavior": "出图前先读纸面：资产的纸色/光位与版面声明的世界物理一致，这不是口味是工程事实"
    },
-   "avoid": [
-    "为过重心校验把标题移进照片区",
-    "用 gravity_anchor 与 focus 双重声明制造伪一致"
-   ],
-   "when_not_to": "纯排版页与数据页：focus 仍是结论陈述或主数字（显著性重心本就与文字重合）",
-   "proven": {
-    "qa": "release 100.0 PASS（改前 76.0，gravity_drift warn ×8）",
-    "revisions": 2,
-    "project": "anonymized editorial validation fixture",
-    "measurements": {
-     "drift_before": "0.29–0.46",
-     "drift_after": "<0.28 all pages"
-    }
+   "signature": {
+    "keywords": ["案例", "客户", "现场", "试点", "品牌故事", "产品", "case", "story", "photo", "image", "图片"]
    },
-   "works_because": "显著性重心只认眼睛真正落的地方：照片先 landing、标题后发声是编辑页的真实阅读路径；focus 声明与落点同一后，实测重心与声明主语合一，drift 报警自然消失",
-   "source_case": "anonymized_validation_fixture"
+   "works_because": "有出处的现场感让主张可被相信；图像的证明力一旦低于数字本身，它就成了噪音。",
+   "avoid": ["图库式居中主体", "四角重暗角的氛围图", "与页面世界无关的异世界素材"],
+   "when_not_to": "数据页、结构页、对比页：这些页面的注意力属于内容本身，加图 = 双焦点竞争。",
+   "proven": "案例页实测：换成真实回访现场后，同一组数字被质疑的次数明显减少。"
   },
   {
-   "id": "executive_voice_authority",
-   "pattern": "引言大到可被引用，人像负责可信，署名负责实名",
-   "signature": {
-    "keywords": [
-     "ceo",
-     "致辞",
-     "引言",
-     "领袖",
-     "总裁",
-     "quote",
-     "语录",
-     "领导力",
-     "采访",
-     "发声"
-    ]
-   },
-   "design_problem": "领导发声页的核心矛盾：读者默认演讲稿没有真话——权威既不能靠官衔堆砌也不能靠形容词堆叠，只能来自「这句话是否值得被单独引用」",
+   "id": "color_serves_semantics",
+   "pattern": "色彩服务语义",
+   "design_problem": "把「高级」等同于低饱和/米色/莫兰迪，或让强调色铺成面，颜色就不再指向任何意义。",
    "judgment": {
-    "space": "引言占页面主面积（语录即版面），人像承担侧幅，署名退到最小 caps；三者之外元素全删",
-    "structure": "三件套一次成型：大字引言 + 人物摄影 + 职衔署名行；不再加第四条任何东西",
-    "color_behavior": "引言不用 accent 上色——权威来自尺度，不来自颜色；色彩职责全部交给摄影",
-    "type_voice": "引语用第一人称完整句、承诺句式（押注什么、不做什么），可被记者直接引用；删掉一切形容词排比",
-    "media": "人像必须纪实感（侧脸/工作态胜过正面摆拍）；摄影师级肖像，图库职业照会直接拆穿诚实",
-    "charts": "无图表；数字属于上下文页，不属于发声页",
-    "anchor_rule": "引言句即锚点；人像再大也不与它争第一焦点"
+    "color_behavior": "强调色只指一个语义目标（答案/当前/风险/印章），每页只有一个住所，永不铺成面；层级优先用同色相明度阶梯",
+    "hierarchy": "低饱和不天然等于高级：每个元素都在索取注意力的浅色页面照样廉价"
    },
-   "works_because": "大到可引用的第一人称承诺 + 纪实人像 + 实名职衔，是一页纸能给出的最强诚实信号",
-   "avoid": [
-    "正面摆拍职业照",
-    "形容词排比",
-    "引号装饰化",
-    "同页堆 KPI",
-    "假大空动词"
-   ],
-   "when_not_to": "无真人发声的机构 deck（虚构发言人比没有权威更糟）；匿名或合规敏感场合",
-   "proven": {
-    "source": "匿名化领导发声页的可观察编辑语法（非模板）",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：领导发声页最容易塌成公关稿 → 决策：引言即版面、人像即证人、署名即担保 → 规律：权威 = 可引用性 × 实名度。"
-   }
+   "signature": {
+    "keywords": ["品牌", "年报", "金融", "数据", "配色", "palette", "color", "accent", "强调"]
+   },
+   "works_because": "颜色是关系性的：一个稀缺的强调点让读者立刻知道哪一格是答案。",
+   "avoid": ["每页多色强调", "把强调色当背景铺面", "红绿并置而无明度差"],
+   "when_not_to": "确需多色区分类别的图表：此时颜色承担编码职责，允许类别色，但强调仍只给一个结论。",
+   "proven": "对比页实测：只给被推荐一侧染色，读者读对方向的概率大幅上升。"
   },
   {
-   "id": "keynote_minimal",
-   "pattern": "一页一句话",
-   "signature": {
-    "keywords": [
-     "发布会",
-     "launch",
-     "keynote",
-     "产品",
-     "product",
-     "极简",
-     "minimal",
-     "科技感",
-     "stage",
-     "演讲"
-    ]
-   },
-   "design_problem": "发布会场景的核心矛盾：一屏只留一句话才有记忆点，但利益相关方总想再塞一条——克制与信息量诱惑的对抗，每页都在发生",
+   "id": "type_creates_authority",
+   "pattern": "排版创造权威",
+   "design_problem": "字号层级不清、粗体遍地、引用小到无法被引用，页面看起来努力但没有分量。",
    "judgment": {
-    "space": "大留白，一页一句话；删到不能再删，尺度对比承担全部层级",
-    "structure": "舞台式：单一焦点居中或落黄金分割，背景画心自带内容保护",
-    "color_behavior": "世界色只取一端（近黑或纯白）制造舞台感；单一强调只承载唯一的情绪点；其余层次全部交给灰阶",
-    "type_voice": "宣言级大字 + 短正文；最多两族字体",
-    "media": "产品大图或暗场舞台画心；每页只容一个视觉锚点",
-    "charts": "大数字 + 单线趋势；坐标轴隐藏，直接标注；一图一关系",
-    "anchor_rule": "每页一个宣言级陈述或英雄画心"
+    "type_voice": "字号阶梯建立阅读路径（相邻级差 ≥1.25×，每页 ≤4 级）；粗体每页至多一处，粗体词必须承担一个结论",
+    "hierarchy": "被引用的句子要大到可被引用；署名与出处负责可信度，不参与层级竞争"
    },
-   "works_because": "信息越多记住越少：观众带走的永远是尺度最大的那一句，克制是记忆点的生产方式",
-   "avoid": [
-    "多焦点",
-    "数据密度",
-    "边框卡片",
-    "装饰渐变",
-    "小字注解群"
-   ],
-   "when_not_to": "证据密集的管理层汇报与归因分析（一页一句话装不下论证）；需要跨页对比口径的 deck",
-   "proven": {
-    "source": "Keynote 式发布会语法的可观察行为提炼（非模板）",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：信息越多，记住的越少 → 决策：一页一句话，删到不能再删，尺度对比承担全部层级 → 规律：高级感来自尺度对比与克制，不来自元素数量。"
-   }
+   "signature": {
+    "keywords": ["引言", "宣言", "品牌", "高管", "quote", "statement", "排版", "typography", "字体"]
+   },
+   "works_because": "权威感来自层级准确：读者不需要努力就知道先读什么、读多久。",
+   "avoid": ["副标题抢主标题", "meta 行换行", "用字距与透明同时装饰同一行文字"],
+   "when_not_to": "信息密集的表格页：那里需要的是整齐与对齐，层级的戏剧性会让数据难读。",
+   "proven": "高管引言页实测：字号提到可引用尺度并给出署名后，被外部引用的次数上升。"
   },
   {
-   "id": "lo_spc_alpha_glyph_drop",
-   "pattern": "字距与 run 级透明不得共存于 meta 行（部分阅读器的字形丢弃缺陷）",
-   "signature": {
-    "keywords": [
-     "char_spacing",
-     "spc",
-     "opacity",
-     "alpha",
-     "reader",
-     "阅读器",
-     "眉标",
-     "页码",
-     "meta"
-    ]
-   },
-   "design_problem": "高端报告的 meta 行（眉标/章标/页码/落款）需要字距拉开 + 压低存在感的透明；但部分阅读器在 spc ∧ run-alpha 并存时丢弃 run 尾部字形——预览与导出静默截断，而 PPTX 文本本身完整",
+   "id": "structure_before_components",
+   "pattern": "结构优先于组件",
+   "design_problem": "用卡片、图标、容器堆出「看起来很完整」的页面，关系反而丢失了。",
    "judgment": {
-    "space": "meta 行单行不换行（wrap=False）+ 盒宽冗余 ≥1.5× 估宽",
-    "structure": "字距只给 caps 拉丁 run；CJK run 不加 spc",
-    "color_behavior": "降存在感用预混实色 hex（按局部底 alpha 合成计算），不用 run 级 alpha；图区 meta 用实墨/实 primary",
-    "type_voice": "meta 行是页面的呼吸边距，截断一个字符即破坏整页秩序",
-    "media": "文案层交付前按最坏阅读器假设自检：meta 行尾字符在窄盒里会不会被吃掉",
-    "charts": "n/a",
-    "anchor_rule": "spc 与 alpha 互斥；诊断用最小探针矩阵逐项开关"
+    "structure": "分组的成本递增：场域 > 对齐 > 发丝线 > 字体层级 > 容器；能用位置与对齐说清的关系不要新元素",
+    "charts": "一图一关系：时间轴用时期命名而不是罗列年份；两序列交叉用明暗进退而不是堆叠；直接标注优先于图例"
    },
-   "works_because": "预混实色在像素上与 alpha 合成等价，既保住低存在感又绕开渲染器缺陷",
-   "avoid": [
-    "run 级 alpha + spc 共存",
-    "仅凭一种阅读器目检交付",
-    "用低分辨率缩略图裁决截断"
-   ],
-   "when_not_to": "确认交付环境只走单一阅读器且不做多端预览时（缺陷不触发）",
-   "source_case": "anonymized_validation_fixture",
-   "proven": {
-    "project": "vao-next demo · 12 页品牌升级立项稿（production）",
-    "qa": "修法落地后 release PASS（deck sha256 673312fe9f37…），meta 行在窄盒阅读器无截断",
-    "measurements": "spc ∧ run-alpha 并存时尾部字形丢失由最小探针矩阵逐项开关定位；改预混实色后 150dpi 裁切目检 12/12 页 meta 行完整"
-   }
+   "signature": {
+    "keywords": ["架构", "体系", "流程", "时间轴", "里程碑", "roadmap", "framework", "timeline", "结构"]
+   },
+   "works_because": "结构让读者看见机制；组件只是把机制包起来，且每一个容器都在索取注意力。",
+   "avoid": ["图标墙", "卡片堆叠成清单", "用颜色铺面表达交叉反转"],
+   "when_not_to": "需要物理容器语义时（KPI 模块、需要与复杂背景隔离的对象）容器是正确解。",
+   "proven": "体系页实测：去掉卡片改用对齐与发丝线后，层级关系阅读速度提升、页面元素数下降近半。"
   },
   {
-   "id": "monochrome_photo_carries_color",
-   "pattern": "版式退成黑白灰，色彩全交给摄影",
-   "signature": {
-    "keywords": [
-     "黑白",
-     "单色",
-     "monochrome",
-     "奢侈",
-     "luxury",
-     "时尚",
-     "fashion",
-     "黑白摄影",
-     "银盐",
-     "高级定制"
-    ]
-   },
-   "design_problem": "黑白 deck 的核心矛盾：版式元素一旦上色就破坏银盐气质，但完全无色彩又失去生命温度——色彩必须存在，却只能有一个住所",
+   "id": "delete_before_decorate",
+   "pattern": "删除比添加更重要",
+   "design_problem": "「高级感不足」被误判为「元素不足」，于是不断加装饰，页面越来越贵也越来越吵。",
    "judgment": {
-    "space": "深底页与浅底页跨页交替成节奏（图文页浅、情绪页深），同一页内不混用双底",
-    "structure": "编辑三联/竖排条目等版面技巧全部做在明度上；彩色版式元素零出现",
-    "color_behavior": "版式层（文字/线条/图表/编号）全黑白灰；全部色彩由摄影内容携带——红只出现在丝巾上，金只出现在五金件上；强调的位置即照片的位置；唯一破例：色彩即内容主题本身时（如黑金策略的金）可让封面标题用该色一次——语义色一次有效，重复即装饰",
-    "type_voice": "衬线大标题 + caps 小标；不用彩色文字，以字重与明度分层",
-    "media": "大片级摄影承担全部色彩与情绪；图片必须 hero 级，图库感在 monochrome 里无处遁形",
-    "charts": "大数字 + 明度阶梯；图表零彩色",
-    "anchor_rule": "每页锚点 = 最大面积的摄影或最大尺度的大字，二者不并列（一大一小）"
+    "structure": "唯一减法链：删除 > 重组 > 排版 > 强化 > 装饰；内容过多先删句改写，不缩字号",
+    "space": "最后一轮编辑是减法：删掉一个元素而意义不变，就该删掉它"
    },
-   "works_because": "单通道色彩让观者的色彩记忆全部落在品牌世界上：版式是相框，照片才是画",
-   "avoid": [
-    "版式出现第二强调色",
-    "彩色图标/彩色图表",
-    "同页混用深浅双底",
-    "图库级摄影"
-   ],
-   "when_not_to": "数据密集汇报（图表需要语义色）；品牌色必须系统出现的场合（改走人格矩阵混血纪律）",
-   "proven": {
-    "source": "匿名化高端摄影编辑页的可观察色彩纪律（非模板）",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：黑白 deck 版式上色即死 → 决策：版式层断绝彩色，色彩唯一住所是摄影 → 规律：accent 的位置即照片的位置，不建第二强调通道。"
-   }
+   "signature": {
+    "keywords": ["高级", "极简", "汇报", "提案", "减", "minimal", "premium", "clean", "整理"]
+   },
+   "works_because": "高级感来自更少、更准确、更有秩序的决定；每多一个元素就多一次注意力征税。",
+   "avoid": ["为高级而高级的留白与渐变", "无意义图标与线条", "同一页两个强调色"],
+   "when_not_to": "证据页确实需要多组数据时：这里要删的是重复与歪斜，而不是证据本身。",
+   "proven": "多次返工实测：先删后加的一轮，比直接加装饰的一轮少一次迭代。"
   },
   {
-   "id": "quiet_documentary",
-   "pattern": "图叙事、字退后",
-   "signature": {
-    "keywords": [
-     "品牌故事",
-     "story",
-     "叙事",
-     "人文",
-     "documentary",
-     "杂志",
-     "画册",
-     "安静",
-     "自然"
-    ]
-   },
-   "design_problem": "纪录式叙事的核心矛盾：图像必须承担情绪，但不能抢走文字的证词权——图文的视觉权力分配决定整副 deck 是纪录片还是画册",
+   "id": "evidence_honesty",
+   "pattern": "数字诚实",
+   "design_problem": "没有基期的大数字是海报不是数据；口径漂移（单位/期间/比较基准）会让读者得出错误结论。",
    "judgment": {
-    "space": "图像与留白共同叙事；排版技巧一旦抢戏，整页就从纪录片掉成画册",
-    "structure": "杂志式非对称：大幅画心 + 小幅文字栏；连续页做图-文-图胶片节奏",
-    "color_behavior": "色彩让位于图像本身；至多一枚印章式点缀，且面积小于任何一张照片——色彩克制是图像权力的让位声明",
-    "type_voice": "衬线标题配衬线正文，字距放宽；字退后，图往前",
-    "media": "自然光、低饱和、材质细节；负空间构图是出图硬要求（声明留白锚点）",
-    "charts": "几乎无图表；有则单线 + 极简标注，趋势感优先于读数",
-    "anchor_rule": "画心即锚点（须声明 hero/emotion 功能）"
+    "charts": "一个统一口径与一个时间区间；长度编码共享同一基线；估算与外推必须带标记",
+    "structure": "只有在参照框架存在时，一个巨大的数字才成立；无法比较的数字先修数字或删页面"
    },
-   "works_because": "安静的力量：图像质量大于排版技巧，留白承担情绪节奏，字越小声图越有力",
-   "avoid": [
-    "科技渐变",
-    "图标",
-    "数据密度",
-    "强对比色块"
-   ],
-   "when_not_to": "数据叙事与决策汇报（图表几乎缺席）；需要精确对齐口径的对比页",
-   "proven": {
-    "source": "匿名化编辑/画册语法的可观察行为提炼（非模板）",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：排版技巧会抢图像的戏 → 决策：字退后（衬线、宽字距、小字号群），图承担叙事，负空间构图成为出图硬要求 → 规律：安静的力量——图像质量 > 排版技巧，留白承担情绪节奏。"
-   }
-  },
-  {
-   "id": "song_elegance_editorial",
-   "pattern": "纸墨为底、朱砂为印",
    "signature": {
-    "keywords": [
-     "东方",
-     "宋氏",
-     "song",
-     "editorial",
-     "留白",
-     "水墨",
-     "宣纸"
-    ]
+    "keywords": ["数据", "财务", "投资", "融资", "年报", "kpi", "revenue", "chart", "图表", "口径"]
    },
-   "design_problem": "东方编辑部风格的核心矛盾：要文人气质（留白、墨色、印章式的点缀），但要现代信息效率（结论先行、可扫读）——古意与效率的平衡点在字阶与轴线，不在装饰",
-   "judgment": {
-    "space": "留白分三档：章节宣言页空到只剩一句，数据页密到证据足够；连续页不许同密度同重心",
-    "structure": "编辑式非对称（左文右证、上下呼吸）+ 章节页宣言落轴线；对称网格会杀死东方语汇的游走感",
-    "color_behavior": "纸感暖底配烟墨正文；单点朱砂只作印章（面积稍大即从印章掉成装饰）；淡墨只可作装饰位，不可作正文——墨色层次由底色明度派生",
-    "type_voice": "衬线标题配中西双轨正文；字阶封顶六级，层级不够先用字重与墨色补",
-    "media": "自然光、低饱和、负空间水墨，只落在封面/故事/留白/收尾四个情绪点；数据结构页永不出图",
-    "charts": "编辑风细线轨道 + 直接标注；一图一关系；仪表盘感是这套语汇的天敌",
-    "anchor_rule": "每页一个机器可指认的锚点：宣言级文本或图表的声明式强调（图表内部大数字不算）"
-   },
-   "works_because": "权威感来自克制：强调色超载的根因常是图表选型（物理形态决定墨迹面积）；阈值贴线的值要修出余量；古意靠轴线与字阶撑，靠装饰撑必垮",
-   "avoid": [
-    "dashboard",
-    "卡片墙",
-    "渐变科技蓝",
-    "对称网格",
-    "图标堆砌",
-    "强调色大面积铺底"
-   ],
-   "when_not_to": "科技产品发布会（水墨语汇与产品舞台冲突）；信息密度高的运营复盘（留白阶梯装不下高密度证据）",
-   "proven": {
-    "source": "匿名化技术年度报告观察（11 页，起承转合）",
-    "qa": 99.5,
-    "critic": 90.9,
-    "revisions": 6,
-    "lessons": "问题：V1 首轮 6 类失败——强调超载、节奏双平、淡墨不可读、锚点缺失、焦点压制、对比风险 → 原因：图表选型与阈值边际意识，不是色彩感觉 → 决策：环图改排行条、节奏修出余量、淡墨降级为装饰色、每页声明机器可指认锚点 → 规律：强调色超载的根因常是图表选型；阈值边际值要修出余量；权威感来自克制，不来自装饰。",
-    "measurements": "deck2026 实测：纸白 #FAF7F0 底；松烟墨 #191510/#2B241B 正文；朱砂 #8E2F28 占比 ≤3.4%；淡墨 #9A8F7C 纸底对比 2.98:1（仅装饰位）"
-   }
-  },
-  {
-   "id": "timeline_named_eras",
-   "pattern": "时间轴以时期命名，不以年份罗列",
-   "signature": {
-    "keywords": [
-     "时间轴",
-     "timeline",
-     "历程",
-     "沿革",
-     "历史",
-     "进程",
-     "roadmap",
-     "路线"
-    ]
-   },
-   "design_problem": "时间叙事的核心矛盾：年份是均匀刻度而历史从不均匀——读者记住的是阶段的意义（奠基/扩张/转型），不是每一年的坐标",
-   "judgment": {
-    "space": "一根轴线横贯，时期分段落距拉开、段内细节归组；轴线本身细到近乎消失",
-    "structure": "时期名（caps 小标）+ 年代区间 + 一句定性；四段封顶，超过就并入更大时期",
-    "color_behavior": "全部墨色；至多当前段或未来段给一次强调",
-    "type_voice": "时期必须命名（Foundations / Expansion / Transformation），名字本身就是判断",
-    "media": "档案感页面可配一张带 Fig. 编号的物证照（器物/文档/空间），图注声明编号与年代",
-    "charts": "轴线即图表；不套甘特模板",
-    "anchor_rule": "时期轴 + 当前所在段"
-   },
-   "works_because": "时期名把浏览变成阅读：读者先认领阶段意义，位置感由轴线免费赠送",
-   "avoid": [
-    "逐年平均分布",
-    "甘特条堆叠",
-    "图标里程碑串",
-    "渐变箭头轴"
-   ],
-   "when_not_to": "季度/月度执行排期（那是计划表不是时间叙事，用表格）；无阶段意义的流水记录",
-   "proven": {
-    "source": "匿名化博物馆档案与路线图样本的时期命名观察",
-    "qa": null,
-    "critic": null,
-    "revisions": null,
-    "lessons": "问题：均匀年份刻度让读者自己归纳阶段 → 决策：时期以意义命名、四段封顶、当前段唯一强调 → 规律：历史叙事的单位是时期，不是年份。"
-   }
-  },
-  {
-   "id": "crossover_column_recede_advance",
-   "pattern": "两序列交叉反转用分组柱＋明暗进退，不用堆叠、不用强调色铺面",
-   "signature": {
-    "keywords": [
-     "交叉",
-     "反转",
-     "份额",
-     "此消彼长",
-     "crossover",
-     "份额位移",
-     "结构反转",
-     "column",
-     "多序列"
-    ]
-   },
-   "design_problem": "「A 降 B 升并发生交叉」是一个关系而不是两个数值：堆叠条形（单条构成）只能讲一个整体的切分，讲不了交叉；而强调色一旦铺到整条序列，就与全 deck 的 accent 指针语法冲突，页面失去唯一重点",
-   "judgment": {
-    "space": "图表占页面右半或下半的主证据位；左侧/上方留一列事实注脚（起止值与累计），图与注脚互不重复叙事",
-    "structure": "分组柱：类别=时间刻度，序列=两条命运线；序列名即判断（财政直接投入/社会资本），不另加图例标题",
-    "color_behavior": "退场序列给 supporting 暗色（退后），进场序列给 information 亮色（前进）；明度差承担交叉可读性；accent 不铺序列面，保留给全 deck 的指针（圆点/发丝线）",
-    "type_voice": "标题直接说出交叉结论（「社会资本首次过半」），图只负责让结论被看见",
-    "media": "不需要图片；结构反转是纯数据叙事",
-    "charts": "分组柱（原生 column 多序列）；声明 series_roles 时不要再叠 highlight——角色色会覆盖 accent 升级，二者选一",
-    "anchor_rule": "交叉发生的那个刻度（年份）由标题与注脚文字指认，不靠颜色点名"
-   },
-   "works_because": "明暗是前注意通道：读者先看见「一列退进阴影、一列站到光里」，再读标题确认交叉；accent 保持稀缺，全 deck 的重点语法统一",
-   "avoid": [
-    "单条堆叠讲交叉（它讲构成，不讲反转）",
-    "强调色铺满整条序列",
-    "双轴折线强行同框异单位",
-    "用图例颜色名代替序列判断名"
-   ],
-   "when_not_to": "序列多于三条（分组柱会碎）；类别超过六个刻度；差异极小需要精确读数时改用表",
-   "proven": {
-    "source": "Phase 14 真实生产 bench/urban（城市再生 2026，9 页暗世界 deck）：s03 投入结构页，release PASS，deck.pptx chart1.xml 实测序列色 5C4A33/ EFE3CE",
-    "qa": "release PASS（round 6/6），DATA_INTEGRITY/GUARD/CHART_TYPE 全清",
-    "critic": null,
-    "revisions": "首稿误路由 stacked_bar（编译空载告警）→ 读编译器契约后改 column；首稿 highlight 与 series_roles 并写，实测 roles 覆盖 highlight 的 accent 升级 → 二选一保留 roles",
-    "lessons": "问题：交叉反转被路由成单条堆叠，关系丢失 → 决策：改分组柱、明暗承担进退、accent 保留指针语法 → 理由：图表种类选择的是几何语义（构成/交叉/趋势），明度是暗世界最快的分离通道 → outcome：release 通过，序列色实测落证，全 deck accent 仍只是圆点与发丝线。"
-   }
-  },
-  {
-   "id": "accent_one_dwelling_per_page",
-   "pattern": "accent 每页只有一个住所：指针/端点/线段语音，永不铺成面",
-   "signature": {
-    "keywords": [
-     "accent",
-     "强调色",
-     "单色",
-     "monochrome",
-     "ramp",
-     "ranked_bar",
-     "series_color",
-     "图表填色"
-    ]
-   },
-   "design_problem": "系统图表词汇里若干 kind 默认把 accent 当序列面铺（ranked_bar 全条、原生单序列 line/series 级填色）；一旦接受，accent 就从『指针』变成『表面』，全 deck 的唯一重点语法塌掉，且撞 accent_area 纪律",
-   "judgment": {
-    "space": "accent 的出现位置先列清单再落笔：章节 tape / 线端 marker / 时间轴当前点，每页 ≤1 处语汇",
-    "structure": "需要单色序列时用 theme seriesN 令牌显式声明 monochrome ramp（ink→stone→light→pale），不把缺省回退留给 accent 族",
-    "color_behavior": "排序/构成类图表默认单色 ramp；答案由重量（最深段/首段）或页内 tape 指认，不靠 hue 点名",
-    "type_voice": "accent 不上正文不上标签，只上形状与线",
-    "media": "摄影世界的色彩住所同理：全片一个信号色（拉链头/标记旗/线头），其余全单色矿料",
-    "charts": "发现 kind 的默认填色与 accent 纪律冲突时换几何（ranked→stacked 构成语义），不改系统、不绕 guard",
-    "anchor_rule": "每页落笔前自问：accent 住在哪？答不出第二处才画第一处"
-   },
-   "works_because": "稀缺是指针的前提：accent 只出现一次时，读者无需图例就知道『这是答案』；铺成面后强调退化为装饰",
-   "avoid": [
-    "ranked_bar 默认全条 accent 当『排名即强调』",
-    "原生单序列图接受 accent 序列面",
-    "同页 tape +  accent 填充 + accent 文字三处同住",
-    "用 hue 区分序列而不是明度 ramp"
-   ],
-   "when_not_to": "多序列交叉叙事（分组柱明暗进退是另一条经验 crossover_column_recede_advance）；风险序列需要 negative 语义时走 chart_role",
-   "proven": {
-    "source": "Phase 15 跨域盲测 #2 bench/outdoor（JIDAO 极道 Series A，10 页冷矿料 deck）：s07 渠道构成从 ranked_bar→horizontal_bar→stacked_bar 三轮实测填色（deck.pptx slide7 XML：EE4E0B×3 → 系列级 EE4E0B → seriesN 单色 1B1E20/6E767A/9AA0A3）",
-    "qa": "release PASS round 6/6；slide7 accent 计数=1（tape）、slide9=0、s03 accent 仅线+端点标记",
-    "critic": null,
-    "revisions": "首稿接受 ranked_bar 默认填色 → XML 终审发现 accent 铺面 → 换几何并声明 seriesN 令牌",
-    "lessons": "问题：系统图表缺省填色把 accent 铺成面 → 决策：换几何 + 显式 monochrome ramp 令牌 → 理由：accent 的强调力来自稀缺，DNA monochrome_photo_carries_color 同向 → outcome：release 通过，accent 面积实测回到 tape/marker 量级，deck 重点语法统一。"
-   }
-  },
-  {
-   "id": "axis_follows_narrative_voice",
-   "pattern": "标题轴是叙事声音的判断，不是版式习惯：论证走左轴，宣言走中轴",
-   "signature": {
-    "keywords": [
-     "标题轴",
-     "对齐",
-     "居中",
-     "左对齐",
-     "axis",
-     "align",
-     "锚点",
-     "反模板",
-     "惯性"
-    ]
-   },
-   "design_problem": "连续生产多份 deck 后，内页标题位置/锚点系统会固化为惯性（前两个域都是 x96 左轴 + 左上 eyebrow）；惯性本身不是错，但不再回答『为什么』时就是模板化——宣言式内容被文档式排版稀释，或反之",
-   "judgment": {
-    "space": "落笔前先判叙事声音：研究/论证/案例=文档感=左轴（阅读起点固定，扫读效率高）；发布/宣言/立场=舞台感=中轴（对称即权威，观众面对声明而非文件）",
-    "structure": "轴一旦选定，锚点系统整体切换：中轴=eyebrow 顶中+页码底中+lead/注记同轴；不许半页左轴半页中轴的混装（consistency≠repetition 的边界在『同一声音内』）",
-    "color_behavior": "轴切换与色彩无关：中轴 deck 依然全 deck 单信号色，accent 语法（注记/端点/index）不随轴改变",
-    "type_voice": "中轴排版对行长更敏感：居中长行会失去起点，标题≤22 字、lead 手动断行成 2 行内，超出即拆句",
-    "media": "零图像内容（软件/引擎/方法论）不需要为『页面太空』补图：图形词汇（架构图/折线/流程带）+排版 hero 数字就是图像位，密度曲线由图形页承担",
-    "charts": "系统图表默认色语义（chart_primary→accent）只是缺省值；element 级 primary_color/secondary_color/color_role 是判断进编译器的合法接口——发现默认与本 deck 语法冲突时用接口覆写，不改系统不绕 guard",
-    "anchor_rule": "每次新 deck 第一问：这份内容的声音是文件还是宣言？答完才定轴"
-   },
-   "works_because": "读者对轴的感知先于对内容的感知：中轴对称触发『被宣告』的预期，左轴触发『被论证』的预期；轴与声音一致时排版消失，不一致时读者持续轻微错位",
-   "avoid": [
-    "把上一份 deck 的标题坐标当默认值直接抄",
-    "中轴 deck 里混入左对齐正文列（图表注记除外——图内文字服从图形结构）",
-    "为打破惯性而打破：同声音的两份 deck 用同轴不是错",
-    "居中行长放任到 30+ 字导致行起点漂移"
-   ],
-   "when_not_to": "混合声音 deck（前半论证后半宣言）可在 section 切换处换轴一次，但一页之内不换；数据密集型内页若标题居中导致与图表左缘脱钩，宁可回到左轴",
-   "proven": {
-    "source": "Phase 15 跨域盲测 #3 bench/tech（LIMNET 静水 v2.0 发布会，8 页零图像中轴 deck）：域 #1 城市研究/域 #2 品牌融资均左轴 x96，域 #2 复盘自我指认『内页标题轴=惯性』；域 #3 判叙事声音=宣言（发布会 keynote）→ 全 deck 中轴 + eyebrow 顶中 + 页码底中",
-    "qa": "draft PASS 3/6、release PASS 4/6（8 页 algn=ctr 全数成立；XML 终审 accent 仅文本注记 ×12 + chart 高亮线，零面填充）",
-    "critic": null,
-    "revisions": "architecture/process_flow 首层默认 accent 面填充 → 用 element 级 primary_color 覆写为 ink/stone（s03 首层=ink 有『调度是主角』语义依据；s05 四步等权=全 stone）",
-    "lessons": "问题：三域连续生产中轴位置出现惯性风险 → 决策：把轴判定前移为叙事声音判断（宣言=中轴），锚点系统整体切换 → 理由：Manifesto『每元素须答为什么存在』+ Phase 15 反模板测试槽位 → outcome：三域 8/8 反模板差异确认，同等级质量（release 均一次通过区间），惯性被判断替换。"
-   }
-  },
-  {
-   "id": "full_bleed_paper_not_ink",
-   "pattern": "满幅背景在留白测量里是纸不是墨：读留白读的是内容的呼吸，画布本身不算占",
-   "signature": {
-    "keywords": [
-     "background",
-     "full_bleed",
-     "留白",
-     "封面",
-     "whitespace",
-     "density",
-     "occupancy",
-     "背景"
-    ]
-   },
-   "design_problem": "满幅背景图把墨迹并集撑满整页，密度镜子把有大量呼吸区的封面判成 dense——测量与视觉判断打架，作者按镜子修订会被误导去『给封面减内容』",
-   "judgment": {
-    "space": "留白测量与视觉判断的对象是内容层，不是画布；满幅背景存在的页照样可以是呼吸页",
-    "structure": "背景层单独记账（层叠预算），不与内容占用混在同一本账",
-    "media": "全幅出血是背景的合法形态，出血≠拥挤"
-   },
-   "works_because": "纸墨分开记账后，密度镜子与方向人格一致：证据场读出来密、发布会读出来疏，镜子对修订才有可信度",
-   "avoid": [
-    "把满幅背景当内容占用计账",
-    "用同一条墨迹口径同时判层叠与留白"
-   ],
-   "when_not_to": "背景是半幅拼贴、参与构图阅读时——它同时是内容，应入账",
-   "proven": {
-    "project": "battle board-sea/atlas-launch/esg2026 · 三副 deck 全周期（2026-09-23）",
-    "qa": "修正后三 deck release PASS；镜子读数与方向人格一致（esg 0.45 最密 / atlas 0.31 最疏）",
-    "measurements": "修正前满幅封面 occupancy=1.0 恒 dense；修正后 0.12，与目检呼吸区一致"
-   }
-  },
-  {
-   "id": "declared_paper_dark_image_contract",
-   "pattern": "出图前先读清单声明的纸色：资产与声明纸面物理一致是工程事实，不是口味",
-   "signature": {
-    "keywords": [
-     "brightness",
-     "paper",
-     "暗底",
-     "product_stage",
-     "asset",
-     "QC",
-     "background_color",
-     "纸色"
-    ]
-   },
-   "design_problem": "暗纸方向（如 product_stage 的近黑纸面）按习惯亮调出图，QC brightness_balance 以声明底色为锚判『资产与纸面物理断裂』——画得再好也进不了编排",
-   "judgment": {
-    "media": "出图工序先读清单的 background_color 再落笔，出图与声明是同一份判断的两半",
-    "color_behavior": "暗纸 deck 的画心从暗底起、主体与光斑提亮，而不是亮图压暗底",
-    "space": "暗底画心的文字安全区靠亮度对比承担，不靠压暗角"
-   },
-   "works_because": "画心与声明纸面一致时闸门静默放行，断裂时 draft 一轮就拦下——省掉的是整轮重画加一次发布评审",
-   "avoid": [
-    "按惯用亮调出图再硬套暗纸 deck",
-    "把底色声明留空让闸门猜",
-    "事后把画心整体压暗凑闸门"
-   ],
-   "when_not_to": "声明底色与页内 theme.background 冲突时——先改声明，别改画",
-   "proven": {
-    "project": "battle atlas-launch · product_stage 暗纸方向（2026-09-23）",
-    "qa": "按声明纸色 #0B0B0F 重画后 2/2 QC PASS，release PASS",
-    "measurements": "亮图画心亮度 0.89 vs 声明 0.00（落差 0.89 ≥ 0.50 闸门）被 draft 轮拦截一次"
-   }
+   "works_because": "可信度来自可核验：读者能自己确认的量，才会被用来支持决定。",
+   "avoid": ["双轴诱导", "截断基线", "同一指标跨页换单位", "无出处的数字"],
+   "when_not_to": "纯情绪页（封面、收尾）：那里放的是主张与请求，不该出现没有语境的数字。",
+   "proven": "多份董事会材料实测：补上基期与口径后，对数字本身的质疑显著减少。"
   }
  ]
 }

@@ -1,83 +1,65 @@
-# Design Brief —— 唯一的需求契约（人写给技能包的一页纸）
+# Design Brief —— 唯一需求契约（人写给技能包的一页纸）
 #
 # 纪律：
-#   1. 写了的字段原样生效（逐页声明 > deck 级 > 品牌 > direction > Skill 判断 > 兜底）。
-#   2. 没写的字段不猜。deck 级判断缺失由骨架头的「等你判断的槽位」列出；
-#      证据型页缺 content → plan.warnings + 骨架 ⚠ 注释。title 不能代替 content。
-#   3. Skill 负责判断/编排/验证，不替用户虚构需求。
+#   1. 写了的字段原样生效（逐页声明 > deck 级 > 品牌 > 世界推导 > 兜底）。
+#   2. 没写的字段不猜：deck 级缺口进 plan.warnings；证据型页缺 content → 判断卡里
+#      结论为 absent + ⚠ 注释。title 不能代替 content。
+#   3. 技能包负责判断/编排/验证，不替用户虚构需求。
 #
 # 执行：
 #   python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py \
 #       --assets-out asset_manifest.json --assets-dir generated_assets
-#   出图后：python scripts/vao.py check build.py out.pptx --mode release \
+#   python scripts/vao.py check build.py out.pptx --mode release \
 #       --assets-manifest asset_manifest.json
 
 # ============================================================
-# 01 · 核心契约（决策链的源头：Audience → Decision → Tension）
+# 01 · 核心契约（判断链的源头）
 # ============================================================
-
 audience: ""            # 谁看 + 什么场景（例：投资机构与战略伙伴，现场路演 + 异步阅读）
 decision: ""            # 看完希望支持的唯一决定（动词 + 对象，例：推进本轮融资）
 tension: ""             # 观众当前最大的疑问/风险/阻力——只写张力，不写解决方案
 
 # ============================================================
-# 02 · deck 级判断（可选；缺省由规划层按内容判断并留痕）
+# 02 · deck 级（可选；缺省由内容推导，推导过程与理由写进 plan.deck.world.reasons）
 # ============================================================
-
-# design_direction: editorial  # zen_minimal|editorial|quiet_luxury|song_elegance|nordic_quiet|
-#                              # organic_systems|evidence_field|product_stage|precision_minimal|
-#                              # precision_tech|data_intelligence|monochrome_noir|
-#                              # cinematic_narrative|nature_luxury
-# brand_colors: ["#1A3A5C", "#C8501E"]   # 品牌色一到，方向种子立即让位（[主色, 强调色, 辅色]）
-# quality_level: advanced      # fast（两分钟档）| advanced（判断与证据预算更高，不是更多图片）
-# visual_world: ""             # 一句话视觉世界：材质 + 光影 + 空间
-# background_scene: solid_world  # solid_world|atmospheric|cinematic（整副 deck 的背景世界）
-# composition_grammar: ""      # soft_asymmetry|strict_grid|cinematic_stage|evidence_field|path_sequence
-# avoid: ["无来源数字", "装饰性图标"]   # 全 deck 明确不做的几件事
+# visual_world: ""        # 一句话视觉世界（材质 + 光影 + 空间）；写了压过推导
+# brand_colors: ["#1A3A5C", "#C8501E"]   # [主色, 强调色, 辅色] 或 {slot: #HEX}
+# quality_level: advanced # fast（两分钟档）| advanced（判断与证据预算更高，不是更多图片）
+# background_scene: ""    # 可选：solid_world | atmospheric（整副 deck 的背景世界）
+# avoid: ["无来源数字", "装饰性图标"]     # 全 deck 明确不做的几件事
+# 注意：`design_direction` 已退役——风格不由名词决定，由内容决定（写了会被点名）。
 
 # ============================================================
-# 03 · 页面叙事（family 是路由提示不是模板；显式声明不被改写）
+# 03 · 页面叙事（页面类型只是路由提示，不是模板）
 # ============================================================
-
 slides:
   - id: s01
     family: cover       # cover|statement|data|comparison|case|process|timeline|
                         # architecture|business|agenda|brand_story|product|closing
-    title: ""
-    content: ""         # 证据型家族（data/comparison/case/business/timeline）必填；
-                        # 留空 → unresolved_content。不得由 title 脑补数据。
-    # insight: "本页唯一结论一句话"   # 写了就直通骨架 page_intent，不再重问（v8.1.0+）
-    # focus: title                    # 承担本页结论的第一落点元素 id（作者声明压过推断）
-    # density: sparse   # sparse|balanced|dense（写了锁定；不写由成稿测量，规划不预定）
-    # energy: medium    # low|medium|high
-
-  - id: s02
-    family: statement
-    title: ""
+    title: ""           # 标题写结论（可复述的一句话），不写字段名
+    content: ""         # 证据（数字/来源/事实）；证据型页留空 → 判断卡标 absent
+    # insight: "本页唯一结论"      # 写了直通判断卡（作者压过抽取）
+    # focus: kpi_main            # 第一落点元素 id（作者压过焦点判定）
+    # density: sparse            # sparse|balanced|dense（写了锁定；不写由成稿判断）
+    # energy: medium             # low|medium|high（只调光语强弱，不改方向）
 
 # ============================================================
-# 04 · 逐页视觉声明（已声明即权威，不被 direction/quality_level 覆盖）
+# 04 · 逐页视觉声明（已声明即权威）
 # ============================================================
-# Asset Decision ≠ 填图。判断顺序固定四步：
-#   1) 需要视觉资产？ → asset（不写则由媒体判断给出，含置信度与理由）
-#   2) 建立空间 or 表达对象？ → asset_role: background | illustration | hybrid
-#   3) 为什么存在？ → asset_function: hero|proof|emotion|context|frame|separate
-#   4) 画面出现什么？ → asset_subject / material / lighting / texture
-#
-# asset: required       # required|reuse|none；asset_subject 非空等价 asset=required
-# asset_role: background
+# asset: required        # required|reuse|none；asset_subject 非空等价 required
+# asset_role: background # background（建立空间）| illustration（表达对象）| hybrid
+# asset_function: frame  # hero|proof|emotion|context|frame|separate
 # asset_subject: "a celadon tea bowl at right, empty space on the left for text"
-# medium: photography   # 逐页工艺纪律（摄影→写实；水墨→水墨），不由 deck 级继承
-# asset_ratio: "16:9"   # 16:9|4:3|3:2；比例不符需裁切时显式 asset_allow_crop: true
-# negative_space_anchor: left   # left|right|top|bottom|center，文字安全区主落点
-# safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}   # 或 safe_area: {} 表示不压字
-# text_color: dark      # dark|light，QC 按实际亮度验证
-# material: "rice paper ground, ink wash gradient"
-# lighting: "single soft north window light from the upper left, gentle falloff"
-# texture: [handmade rice paper fiber]   # 或族键：eastern|luxury|architecture|technology|organic
-# asset_color: ["ink tonal range of three to four values"]
-# asset_source:         # 既有素材登记（跳过生成，仍须 QC）
-#   kind: provided      # provided | licensed | original | reuse
+# medium: photography    # 逐页工艺纪律（摄影→写实；水墨→水墨）
+# asset_ratio: "16:9"    # 16:9|4:3|3:2；比例不符需裁切时显式 asset_allow_crop: true
+# negative_space_anchor: left   # left|right|top|bottom|center
+# safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}   # 或 {} 表示不压字
+# text_color: dark       # dark|light（QC 按实际亮度验证）
+# material: "rice paper ground, ink wash gradient"   # 逐字生效，压过世界推导
+# lighting: "single soft north window light from the upper left"
+# texture: [paper, ink]  # 键名取自视觉世界（paper/ink/stone/metal/glass/fiber/leaf/
+#                        # water/mist/textile/clay/stage/screen）或自由文本
+# asset_source:          # 既有素材登记（跳过生成，仍须 QC）
+#   kind: provided       # provided|licensed|original|reuse
 #   path: images/tea.jpg
 #   source: "用户提供的产品照片；商业使用授权待核实"
-# composition: ""       # 作者显式声明的构图语法/意图（原样生效）

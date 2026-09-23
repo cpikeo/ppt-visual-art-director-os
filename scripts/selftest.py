@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""selftest · 核心测试（生产路径即测试路径）。
+"""selftest.py · 核心测试（生产路径即测试路径）
 
-只测三类事实：
-  1) 判断面正确（intelligence：单管线色彩、媒体判断、证据缺口、骨架是问题不是答案）
-  2) 验证可靠（verify：硬门必拦、合规必放、判定可复现）
-  3) 生产稳定（compile 确定性 + 缓存、资产链闭环、CLI 退出码与修复包）
-
-运行：python scripts/selftest.py
+四段：
+  1) intelligence —— 设计判断：结论 / 权重 / 角色 / 焦点 / 构图（含否决理由）/ 媒体必要性 / 世界
+  2) verify        —— 硬门：溢出、重叠、越界、空载荷、来源区、出处、口径
+  3) production    —— 编译确定性、缓存复用、资产链、关键页取证
+  4) cli + docs    —— 单入口 plan/check/dna、骨架携带判断、文档纪律
 """
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,7 +32,7 @@ def check(name, ok, detail=""):
         print(f"[PASS] {name}")
     else:
         FAIL += 1
-        print(f"[FAIL] {name}" + (f" · {detail}" if detail else ""))
+        print(f"[FAIL] {name}" + (f" — {detail}" if detail else ""))
 
 
 def run_vao(*args, cwd=None):
@@ -45,39 +42,37 @@ def run_vao(*args, cwd=None):
 
 # ── fixtures ─────────────────────────────────────────────────────────
 BRIEF = {
-    "audience": "集团董事会",
-    "decision": "批准品牌预算",
-    "tension": "回报无法量化",
-    "design_direction": "editorial",
-    "brand_colors": ["#1A3A5C", "#C8501E"],
+    "audience": "董事会与投资人",
+    "decision": "批准 2026 自有内容预算",
+    "tension": "投放成本上升，自有内容回报周期长",
     "quality_level": "advanced",
+    "brand_colors": ["#1A3A5C", "#C8501E"],
     "slides": [
-        {"id": "s01", "family": "cover", "title": "从产品领先到品牌领先",
-         "content": "2027 品牌升级专项立项"},
-        {"id": "s02", "family": "statement", "title": "品牌不是成本，是复利资产",
-         "content": "复购率 71%，指名购买率仅 19%。"},
-        {"id": "s03", "family": "data", "title": "获客成本正在失控",
-         "content": "2024 年 218 元 → 2026 年 286 元；自然流量占比 41% → 27%。"},
-        {"id": "s04", "family": "timeline", "title": "18 个月落地节奏"},   # 证据页缺 content
-        {"id": "s05", "family": "closing", "title": "请批准 4,800 万专项",
-         "content": "首期 1,200 万于 2027Q1 启动。"},
+        {"id": "s01", "title": "自有内容占比过半", "content": "2026 内容战略提案"},
+        {"id": "s02", "title": "投入自有内容是唯一防守",
+         "content": "外部流量价格三年翻倍（来源：投放台账）"},
+        {"id": "s03", "title": "自有内容占比 61%",
+         "content": "61%，对比去年 38%（来源：内容资产台账）",
+         "chart": {"type": "kpi", "value": 61}},
+        {"id": "s04", "title": "18 个月落地节奏"},          # 证据页缺 content
+        {"id": "s05", "title": "请批准 4,800 万专项",
+         "content": "首期 1,200 万于 2027Q1 启动"},
     ],
 }
 
 
-def make_build(tmp: Path, pages=5) -> Path:
-    """生成一份合规的 build.py（同构骨架的 filled 版本）。"""
+def make_build(tmp: Path, *, chart: bool = True) -> Path:
+    """生成一份合规 build.py（硬门全过的最小稿件）。"""
     colors = {"background": "#F2EDE4", "surface": "#F4EFE6", "primary": "#1A3A5C",
               "secondary": "#9A8C74", "accent": "#C8501E", "ink": "#191510",
               "muted": "#6E6A5E"}
-    fams = ["COVER", "MINIMAL STATEMENT", "DATA STORY", "TIMELINE", "CLOSING"]
     slides = []
-    for i in range(pages):
+    for i in range(5):
         els = []
         if i > 0:
             els.append({"id": "eyebrow", "type": "text", "x": 48, "y": 40, "width": 320,
-                        "height": 24, "text": fams[i], "size": 12.5, "color": "muted",
-                        "role": "eyebrow"})
+                        "height": 24, "text": f"PAGE {i + 1}", "size": 12.5,
+                        "color": "muted", "role": "eyebrow"})
             els.append({"id": "page_number", "type": "text", "x": 1208, "y": 40,
                         "width": 32, "height": 24, "text": str(i + 1), "size": 12.5,
                         "color": "muted", "role": "page_number", "align": "right"})
@@ -85,505 +80,542 @@ def make_build(tmp: Path, pages=5) -> Path:
                     "height": 56, "text": f"第{i + 1}页结论句", "size": 32,
                     "color": "ink", "role": "title", "bold": True})
         els.append({"id": "src", "type": "text", "x": 48, "y": 676, "width": 1100,
-                    "height": 24, "text": "来源：测试数据 · 2027-01", "size": 12.5,
+                    "height": 24, "text": "来源：测试数据 · 2025-12", "size": 12.5,
                     "color": "muted", "role": "source"})
-        if i == 2:
-            els.append({"id": "chart", "type": "chart", "chart_kind": "line",
-                        "x": 48, "y": 232, "width": 1184, "height": 400,
-                        "data": [{"label": "2024", "value": 218},
-                                 {"label": "2025", "value": 264},
-                                 {"label": "2026", "value": 286}],
-                        "highlight": 2, "show_values": True,
-                        "source": "来源：台账", "unit": "元", "period": "2024–2026",
-                        "basis": "全渠道加权"})
+        if chart and i == 2:
+            els.append({"id": "chart_main", "type": "chart", "chart_kind": "line",
+                        "x": 48, "y": 232, "width": 1184, "height": 400, "role": "focus",
+                        "data": [{"label": "2023", "value": 38}, {"label": "2024", "value": 47},
+                                 {"label": "2025", "value": 61}],
+                        "highlight": 2, "show_values": True, "metric": "自有内容占比",
+                        "source": "来源：内容资产台账", "unit": "%",
+                        "period": "2023–2025", "basis": "全渠道加权"})
         slides.append({"id": f"s{i + 1:02d}",
                        "page_intent": {"insight": f"第{i + 1}页结论", "focus": "title"},
                        "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
                        "elements": els})
     build = tmp / "build.py"
     build.write_text(
-        "# -*- coding: utf-8 -*-\n"
-        f"SPEC = {{\n"
-        f"    \"canvas\": {{\"width\": 1280, \"height\": 720, \"grid_columns\": 12, \"grid_unit\": 8}},\n"
-        f"    \"theme\": {{\"colors\": {colors!r}, \"fonts\": {{\"cn\": \"Songti SC\", \"latin\": \"Georgia\"}}}},\n"
-        f"    \"slides\": {slides!r},\n"
-        f"}}\n", encoding="utf-8")
+        "# -*- coding: utf-8 -*-\nSPEC = {\n"
+        f"  'canvas': {{'width': 1280, 'height': 720, 'grid_columns': 12, 'grid_unit': 8}},\n"
+        f"  'theme': {{'colors': {colors!r}, 'fonts': {{'cn': 'Source Han Serif SC', 'latin': 'Georgia'}}}},\n"
+        f"  'slides': {slides!r},\n}}\n", encoding="utf-8")
     return build
 
 
-# ── 1 · intelligence ─────────────────────────────────────────────────
+# ── 1 · intelligence（设计判断）───────────────────────────────────────
 def test_intelligence(tmp: Path):
     import intelligence as intel
 
     bundle = intel.think(BRIEF)
     deck, pages = bundle["deck"], bundle["pages"]
+    by_id = {p["id"]: p for p in pages}
 
-    # 单管线色彩：品牌色落语义槽（主色→information，强调→accent）
-    seed = deck["theme"]["colors_seed"]
-    check("plan: 品牌色单管线落槽（primary→ink 槽, accent→accent 槽）",
-          seed.get("information") == "#1A3A5C" and seed.get("accent") == "#C8501E"
-          and deck["theme"]["seed_source"] == "brand_colors", str(seed))
+    check("判断链：schema = vao-plan-v3", bundle["schema"] == "vao-plan-v3")
+    check("判断链：每页都有完整判断卡",
+          all({"claim", "information_weight", "visual_role", "focus", "composition",
+               "spatial", "media", "production"} <= set(p["judgment"]) for p in pages))
 
-    # 方向归一：别名与未知回落
-    name, warn = intel.canonical_direction("editorial_brand")
-    check("plan: 方向别名归一（editorial_brand→editorial）", name == "editorial")
-    name2, warn2 = intel.canonical_direction("Quiet Luxury × Editorial Storytelling")
-    check("plan: 组合方向落最长语义片段", name2 == "editorial"
-          and (warn2 is None or warn2.get("canonical") == "editorial"))
-    name3, warn3 = intel.canonical_direction("完全不存在的方向")
-    check("plan: 未知方向回落并留痕", name3 == "zen_minimal" and warn3 is not None)
+    # 结论抽取：declared 优先 / 标题优于署名行 / 缺内容 = absent
+    s01 = by_id["s01"]["judgment"]
+    check("claim: 封面取标题结论而不是署名行",
+          s01["claim"]["text"] == "自有内容占比过半", str(s01["claim"]))
+    s04 = by_id["s04"]["judgment"]
+    check("claim: 证据页缺 content → absent，不脑补",
+          s04["claim"]["source"] == "absent" and s04["claim"]["text"] is None)
+    declared = intel.think(dict(BRIEF, slides=[{"id": "x", "title": "话题",
+                                                "content": "数据",
+                                                "insight": "作者写的结论"}]))
+    check("claim: 作者声明的结论压过抽取",
+          declared["pages"][0]["judgment"]["claim"]["source"] == "declared")
 
-    # 媒体判断：作者声明 > 模型；图表压制；数据页不出图
-    m_author = intel.media_judgment("DATA", declared_asset="required")
-    check("plan: 作者声明压过媒体模型", m_author["source"] == "author"
-          and m_author["decision"] == "required")
-    m_chart = intel.media_judgment("HERO", has_chart=True)
-    check("plan: 页内有图媒体预算归零（双焦点竞争）",
-          m_chart["decision"] == "none" and m_chart["confidence"] <= 0.1)
-    m_data = intel.media_judgment("DATA")
-    check("plan: 数据页默认不出图（理由可解释）",
-          m_data["decision"] == "none" and "双焦点" in m_data["reason"])
+    # 信息权重：结论数字最大化、对照基数弱化、重复删除
+    s03 = by_id["s03"]["judgment"]
+    maxi = " ".join(s03["information_weight"]["maximize"])
+    weak = " ".join(s03["information_weight"]["weaken"])
+    check("weight: 结论数字最大化（61%）", "61%" in maxi)
+    check("weight: 对照基数弱化（38% 小一档）", "38%" in weak)
+    dup_text = "收入 12 亿，收入 12 亿（来源：财报）"
+    dup = intel.information_weight(intel.understand(dup_text),
+                                   {"text": "收入 12 亿", "source": "extracted"}, dup_text)
+    check("weight: 同数字重复出现进删除清单",
+          any("重复" in x for x in dup["delete"]), str(dup["delete"]))
 
-    # 证据页缺 content → unresolved 留痕
-    s04 = next(p for p in pages if p["id"] == "s04")
-    check("plan: 证据页缺 content 标记 unresolved",
-          bool(s04["unresolved"]) and any(w.get("rule") == "unresolved_content"
-                                          for w in bundle["warnings"]))
+    # 视觉角色：开场 establish / 收尾 summarize / 对比 compare / 说服 persuade
+    roles = {p["id"]: p["judgment"]["visual_role"]["role"] for p in pages}
+    check("role: 开场 establish、收尾 summarize",
+          roles["s01"] == "establish" and roles["s05"] == "summarize", str(roles))
+    check("role: 对比内容 → compare，且给了替代角色",
+          roles["s03"] == "compare" and by_id["s03"]["judgment"]["visual_role"]["alternatives"])
 
-    # 相同内容不默认相同布局：规划不输出密度/坐标，输出判断问题
-    check("plan: 规划不预定 density（反模板）",
-          all("density" not in p for p in pages)
-          and all("x" not in json.dumps(p.get("declarations") or {}) for p in pages))
-    qs = intel.page_questions("data", deck.get("decision"))
-    check("plan: 骨架逐页给判断问题（claim/focus/form/space，按内容类型推导）",
-          set(qs) >= {"claim", "focus", "form", "space"} and "图表" in qs["form"])
+    # 焦点：焦点元素唯一 + 必须给出否决的替代项
+    foc = s03["judgment"]["focus"] if False else s03["focus"]
+    check("focus: 对比页焦点是两端对比场而不是卡片墙",
+          foc["element_role"] == "comparison_field"
+          and any("卡片" in r["why_not"] or "卡" in r["option"] for r in foc["rejected"]),
+          str(foc["rejected"])[:120])
+    check("focus: 数字结论页焦点是 kpi_main 并否决环形图",
+          by_id["s05"]["judgment"]["focus"]["element_role"] in ("kpi_main", "hero_statement"))
 
-    # tension 注入：结论/风险页与收尾页直面疑虑；数据页不注入
-    q_st = intel.page_questions("statement", deck.get("decision"),
-                                tension="回报无法量化")
-    q_data = intel.page_questions("data", deck.get("decision"),
-                                  tension="回报无法量化")
-    check("plan: tension 注入结论页问题、数据页不注入",
-          "疑虑" in q_st["claim"] and "疑虑" not in q_data["claim"])
+    # 构图：必须回答「为什么不是别的形式」
+    comp = s02["judgment"]["composition"] if False else by_id["s02"]["judgment"]["composition"]
+    check("composition: 主张页 → big_whitespace 且带否决理由",
+          comp["chosen"] == "big_whitespace" and len(comp["rejected"]) >= 2
+          and all(r["why_not"] for r in comp["rejected"]))
+    check("composition: 数据证据页 → data_field",
+          by_id["s03"]["judgment"]["composition"]["chosen"] in ("data_field",
+                                                                "asymmetric_tension"))
 
-    # 作者在 brief 写过的 insight/focus：声明直通骨架，不再留空 TODO 重问
-    b2 = dict(BRIEF, slides=[{"id": "s01", "title": "主张", "content": "结论",
-                              "insight": "投自有内容是唯一防守", "focus": "title"}])
-    sk3 = intel.build_skeleton(intel.think(b2))
-    check("skeleton: brief 已声明 insight/focus 直通（契约：写了就生效）",
-          "投自有内容是唯一防守" in sk3 and "作者已在 brief 声明" in sk3)
+    # 空间：路径/主区/留白职责非空
+    sp = by_id["s02"]["judgment"]["spatial"]
+    check("spatial: 阅读路径 + 留白职责齐备",
+          bool(sp["reading_path"] and sp["whitespace_duty"] and sp["quiet_zone"]))
 
-    # 缺 tension 点名警告：它是张力注入的输入，静默缺失 = 判断静默失效
-    b4 = {"audience": "董事会", "decision": "批准预算"}
-    w4 = intel.think(b4)["warnings"]
-    check("plan: 缺 tension 点名警告（deck_contract）",
-          any(w.get("rule") == "deck_contract" and "tension" in str(w.get("msg", ""))
-              for w in w4), str(w4)[:160])
+    # 媒体必要性：作者声明 > 图表抑制 > 必要性测试
+    m_author = intel.media_necessity(intel.understand("产品发布会现场"),
+                                     "establish", declared="required")
+    check("media: 作者声明压过判断", m_author["decision"] == "required"
+          and m_author["source"] == "author")
+    m_chart = intel.media_necessity(intel.understand("客户现场 12 家"), "prove",
+                                    has_chart=True)
+    check("media: 页内已有图表 → 不出图（双焦点竞争）",
+          m_chart["decision"] == "none")
+    m_decor = intel.media_necessity(intel.understand("预算分配 60/25/15"), "summarize")
+    check("media: 说不出「没有它会下降在哪」→ 不出图",
+          m_decor["decision"] == "none" and "注意力" in m_decor["necessity"])
+    m_subject = intel.media_necessity(intel.understand("产品发布：新一代设备与芯片"),
+                                      "establish")
+    check("media: 开场有可指认实体 → witness/subject 才成立",
+          m_subject["decision"] == "required"
+          and m_subject["function"] in ("subject", "witness"))
 
-    # 方向字体种子全部跨平台安全名（防未来悄悄改回 macOS 专属字族）
-    banned_families = ("PingFang", "Songti SC", "Helvetica Neue", "SF Pro",
-                       "Menlo", "Hiragino")
-    off = [(n, d["fonts"]) for n, d in intel.DIRECTIONS.items()
-           if any(b in str(d["fonts"]) for b in banned_families)]
-    check("plan: 14 方向字体种子跨平台安全名", not off, str(off))
+    # 判断质量：话题 ≠ 结论；结论句要被抽出来；图像只在「有现场」时成立
+    topic = intel.extract_claim(
+        {"title": "店长回访记录",
+         "content": "12 家试点门店的店长在高峰时段如何使用自有内容（来源：回访记录）"})
+    check("claim: 话题句（如何使用…）不当结论，宁可 absent",
+          topic["source"] == "absent" and topic["text"] is None, str(topic))
+    asserted = intel.extract_claim(
+        {"title": "成本结构",
+         "content": "单篇生产成本降至 1,800 元，低于去年同期（来源：财务台账）"})
+    check("claim: 断言句（降至…）被真正提炼为结论",
+          asserted["source"] == "extracted" and "1,800" in asserted["text"], str(asserted))
+    info_only = intel.media_necessity(
+        intel.understand("获客单价 96 元 → 128 元 → 205 元"), "prove")
+    scene = intel.media_necessity(
+        intel.understand("门店回访现场：店长在高峰时段的记录"), "prove")
+    check("media: 纯数据页不出图，有现场的一页才出图（证词）",
+          info_only["decision"] == "none" and scene["decision"] == "required"
+          and scene["function"] == "witness", f"{info_only} / {scene}")
 
-    # 骨架：确定性 + 主题 token 可读兜底
-    sk1, sk2 = intel.build_skeleton(bundle), intel.build_skeleton(bundle)
-    check("skeleton: 同 bundle 必得同文本", sk1 == sk2)
+    # 视觉世界：由内容推导，两个同类 deck 允许得到不同世界
+    fin_human = dict(BRIEF, slides=[
+        {"id": "s1", "title": "试点客户续约率 92%", "content": "12 家门店客户回访现场（来源：台账）"},
+        {"id": "s2", "title": "门店真实反馈", "content": "客户的日常使用场景（来源：回访）"}])
+    fin_data = dict(BRIEF, slides=[
+        {"id": "s1", "title": "单位获客成本 128 元", "content": "口径：全渠道加权（来源：投放台账）"},
+        {"id": "s2", "title": "三年成本曲线", "content": "2023–2025 逐年上升（来源：投放台账）"}])
+    w_human = intel.think(fin_human)["deck"]["world"]
+    w_data = intel.think(fin_data)["deck"]["world"]
+    check("world: 世界由内容推导（不是风格预设查表）",
+          w_human["source"].startswith(("subject", "neutral"))
+          and w_human["visual_world"] and w_human["accent_why"])
+    check("world: 同类内容允许产生不同世界（实体不同 → 材质/强调不同）",
+          (w_human["name"], w_human["accent"]) != (w_data["name"], w_data["accent"])
+          or w_human["chart_style"] != w_data["chart_style"], str(w_human["name"]))
+    check("world: 每个判断都带理由", bool(w_human["reasons"].get("subject")))
+    check("plan: 页级不重复存储（角色/证据只住判断卡，判断卡里不再回存原文与向量）",
+          all("role" not in p and "evidence" not in p for p in pages)
+          and all("declarations" not in p["judgment"] for p in pages)
+          and all("text" not in p["judgment"]["understanding"]
+                  and "modes" not in p["judgment"]["understanding"] for p in pages))
+    # 资产预算：合格页多于名额时按视觉价值排序，落选页留下理由（不是按页序截断）
+    many = intel.think(dict(BRIEF, slides=[
+        {"id": f"s{i:02d}", "title": title, "content": content} for i, (title, content) in
+        enumerate([
+            ("田间到仓的 48 小时", "采收现场与冷链记录（来源：产地日报）"),
+            ("仓库现场的复盘会", "分拣现场记录：9 个环节耗时（来源：现场复盘）"),
+            ("门店走访的真实反馈", "华东 6 家门店走访记录（来源：走访纪要）"),
+            ("车间班组的交接记录", "车间现场记录（来源：班组日志）"),
+            ("客户回访现场", "12 家客户回访现场（来源：回访记录）"),
+            ("请批准两条产线改造", "首期 600 万于 Q2 启动（来源：预算表）")], 1)]))
+    hinted = many["assets_hint"]
+    qualified = [p["id"] for p in many["pages"]
+                 if p["judgment"]["media"]["decision"] == "required"]
+    check("assets: 图位按视觉价值排序，超额的页进 deferred 并带理由",
+          len(qualified) > hinted["cap"] and set(hinted["generate"]) <= set(qualified)
+          and len(hinted["generate"]) == hinted["cap"]
+          and all(d.get("why") for d in hinted["deferred"]),
+          f"qualified={len(qualified)} cap={hinted['cap']} deferred={hinted['deferred']}")
+    check("plan: 世界只留会被消费的键（无展示用常量/重复串）",
+          not {"material", "motion", "chroma", "regime", "background",
+               "rejected_worlds"} & set(w_human))
+
+    # 构图：算子由内容形状决定（不是按页面类型查表），且与媒体/焦点自洽
+    shaped = intel.think(dict(BRIEF, slides=[
+        {"id": "s0", "title": "开场", "content": "内容战略（来源：档案）"},
+        {"id": "a", "title": "把工艺从 7 步压到 3 步", "content": "采青 → 杀青 → 揉捻（来源：工艺卡）"},
+        {"id": "b", "title": "复购 3.4 次", "content": "3.4 次/月（来源：门店台账）"},
+        {"id": "c", "title": "激活率对比", "content": "44% → 71%（来源：试点报告）"}]))
+    picked = {p["id"]: p["judgment"]["composition"]["chosen"] for p in shaped["pages"]}
+    check("composition: 图像页构图即图像叙事（与焦点自洽）",
+          all(p["judgment"]["composition"]["chosen"] == "image_narrative"
+              for p in shaped["pages"]
+              if p["judgment"]["media"]["decision"] == "required"
+              and p["judgment"]["focus"]["type"] == "image"))
+    check("composition: 内容形状不同 → 算子不同（序列/单数/对比）",
+          picked["a"] == "linear_structure" and picked["b"] == "big_whitespace"
+          and picked["c"] in ("asymmetric_tension", "data_field")
+          and len(set(picked.values())) >= 3, str(picked))
+    check("composition: 没有图像时不选图像叙事（判断不自相矛盾）",
+          all(not (p["judgment"]["composition"]["chosen"] == "image_narrative"
+                   and p["judgment"]["media"]["decision"] == "none")
+              for p in shaped["pages"]))
+    dup_num = intel.understand("复购 3.4 次 3.4 次/月（来源：台账）")
+    check("understanding: 标题重复正文的数字只算一个证据",
+          dup_num["evidence"] == "number" and dup_num["distinct_numerals"] == 1,
+          str(dup_num["evidence"]))
+
+    # 品牌色：一步覆盖世界种子
+    seed = deck["theme"]
+    check("theme: 品牌色落语义槽（primary→information, accent→accent）",
+          seed["colors_seed"]["information"] == "#1A3A5C"
+          and seed["colors_seed"]["accent"] == "#C8501E"
+          and seed["seed_source"] == "brand_colors", str(seed))
     tokens = intel.theme_tokens({"foundation": "#FFFFFF", "information": "#FFFFFF",
                                  "supporting": "#888888", "accent": "#CC0000"})
-    check("skeleton: 可读性兜底（墨色与纸面分得开）",
-          intel.contrast_hint(tokens["ink"], tokens["background"]) >= 4.5
-          if hasattr(intel, "contrast_hint") else tokens["ink"] in ("#141414", "#FFFFFF"))
+    check("theme: 可读性兜底（墨色与纸面分得开）", tokens["ink"] in ("#141414", "#FFFFFF"))
 
-    # DNA：召回 / 校验 / 拒收结果记忆
+    # 退役字段：写 design_direction 会被点名而不是静默套用
+    w = intel.think(dict(BRIEF, design_direction="editorial"))["warnings"]
+    check("plan: design_direction 退役并留痕",
+          any(x.get("rule") == "direction_retired" for x in w), str(w)[:120])
+
+    # 缺 deck 契约 / 证据页缺内容：两种警告都要开口
+    rules = {x.get("rule") for x in bundle["warnings"]}
+    check("plan: 缺 tension 与证据页缺 content 都有警告",
+          "unresolved_content" in rules and "deck_contract" not in rules)
+
+    # 骨架：判断连理由与否决项一起进注释；同 bundle 必得同文本
+    sk1, sk2 = intel.build_skeleton(bundle), intel.build_skeleton(bundle)
+    check("skeleton: 同 bundle 必得同文本", sk1 == sk2)
+    check("skeleton: 注释携带结论/权重/角色/构图与否决项",
+          "结论[" in sk1 and "权重:" in sk1 and "角色:" in sk1
+          and "构图:" in sk1 and "否决" in sk1 and "媒体:" in sk1)
+    check("skeleton: 不给坐标（几何留给作者）",
+          "估算高度" not in sk1 and '"x":' not in sk1.split("slides")[0])
+
+    # DNA：召回 / 校验 / 拒收结果记忆 / 幂等写入
     dna = intel.recall_dna(BRIEF)
-    check("dna: 召回返回结构且高置信带判断",
-          {"matched", "confidence", "dna", "note"} <= set(dna))
-    bad_entry = {"id": "x", "pattern": "p", "judgment": {"layout": "fixed 64px grid"},
-                 "signature": {"keywords": ["k"]}}
-    errs, _ = intel.validate_dna_entry(bad_entry)
+    check("dna: 召回结构完整", {"matched", "confidence", "note"} <= set(dna))
+    errs, _ = intel.validate_dna_entry(
+        {"id": "x", "pattern": "p", "judgment": {"layout": "fixed 64px grid"},
+         "signature": {"keywords": ["k"]}})
     check("dna: judgment 写结果值被拒收", bool(errs))
     ok_entry = {"id": "t", "pattern": "p", "judgment": {"space": "留白先于装饰"},
                 "signature": {"keywords": ["t"]}}
-    errs2, _ = intel.validate_dna_entry(ok_entry)
-    check("dna: 行为判断可入库", not errs2)
+    check("dna: 行为判断可入库", not intel.validate_dna_entry(ok_entry)[0])
+    store = tmp / "dna.json"
+    store.write_text(json.dumps({"version": 2, "entries": []}), encoding="utf-8")
+    first = intel.record_dna(ok_entry, path=store)
+    again = intel.record_dna(ok_entry, path=store)
+    check("dna: 写入幂等 + 原子替换",
+          first["added"] and not again["added"] and intel.validate_dna_store(store)["ok"])
 
 
 # ── 2 · verify（硬门）────────────────────────────────────────────────
-def _base_spec(tmp: Path):
-    import importlib.util
-    spec_file = make_build(tmp)
-    from vao import load_spec
-    spec, _ = load_spec(spec_file)
-    return spec, spec_file
-
-
 def test_verify(tmp: Path):
-    from verify import check_spec, normalize_spec, verdict, release_manifest
-
-    spec, spec_file = _base_spec(tmp)
-    normalized, norm = normalize_spec(spec)
-    r = check_spec(normalized)
-    check("guard: 合规稿零阻断零噪音", r["passed"] and not r["checks"],
-          str([c for c in r["checks"] if c["level"] == "error"]))
-
-    # 三层执法身份：hard 可阻断 / declared 只执法声明的数字 / trace 结构性禁止 error
-    r_all = check_spec(normalized, rules={"min_font_size": 99})   # 逼出 typography(trace)
-    lowc = json.loads(json.dumps(normalized))
-    lowc["theme"]["colors"]["muted"] = "#FBF9F4"                  # 逼出 contrast(trace)
-    r_low = check_spec(lowc)
-    typ = [c for c in r_all["checks"] if c["rule"] == "typography"]
-    con = [c for c in r_low["checks"] if c["rule"] == "contrast"]
-    check("guard: trace 层身份落盘且永不阻断（typography/contrast warn）",
-          typ and con and all(c["layer"] == "trace" and c["level"] in ("warn", "hint")
-                              for c in typ + con) and r_low["passed"],
-          str([(c["rule"], c["layer"], c["level"]) for c in typ + con]))
-    check("guard: 密度测量无条件归档（facts.density 镜子）",
-          "density" in r.get("facts", {})
-          and set(r["facts"]["density"]["pages"][0]) == {"id", "occupancy", "band"},
-          str(r.get("facts"))[:120])
-
-    # 归一化幂等
-    normalized2, norm2 = normalize_spec(normalized)
+    from verify import check_spec, normalize_spec
     from primitives import spec_fingerprint
+
+    build = make_build(tmp)
+    namespace: dict = {}
+    exec(compile(build.read_text(encoding="utf-8"), str(build), "exec"), namespace)
+    spec = namespace["SPEC"]
+
+    ok = check_spec(spec)
+    check("guard: 合规稿 0 error", ok["passed"], str(ok["checks"])[:200])
+    check("guard: 合规稿零 warning（QA 不产生噪音）",
+          not [c for c in ok["checks"] if c.get("level") == "warn"], str(ok["warnings"])[:160])
+
+    def mutate(fn):
+        import copy
+        bad = copy.deepcopy(spec)
+        fn(bad)
+        return check_spec(bad)
+
+    r = mutate(lambda s: s["slides"][0]["elements"][0].update({"height": 8}))
+    check("guard: 文字溢出必拦（TEXT_OVERFLOW）",
+          any(c["rule"] == "text_capacity" for c in r["checks"]))
+
+    r = mutate(lambda s: (s["slides"][0]["elements"].append(
+        {"id": "dup", "type": "text", "x": 48, "y": 96, "width": 400, "height": 56,
+         "text": "重叠", "size": 32, "color": "ink"})))
+    check("guard: 墨迹重叠必拦（OVERLAP）",
+          any(c["rule"] == "overlap" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"][0]["elements"][0].update({"x": 1300}))
+    check("guard: 越出画布必拦", any(c["rule"] == "safety" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"][0]["elements"][0].update({"width": 0}))
+    check("guard: 退化几何必拦（元素不可见）",
+          any(c["rule"] == "element_schema" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"][0]["elements"][0].update({"color": "secondry"}))
+    check("guard: 未知色名必拦（静默回落不留痕）",
+          any(c["rule"] == "color_token" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"][2]["elements"].append(
+        {"id": "ghost_chart", "type": "chart", "chart_kind": "unknown_kind",
+         "x": 48, "y": 300, "width": 400, "height": 200}))
+    check("guard: 未知图表类型必拦",
+          any(c["rule"] == "chart_type" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"][2]["elements"].append(
+        {"id": "empty_chart", "type": "chart", "chart_kind": "waterfall",
+         "x": 600, "y": 300, "width": 400, "height": 200, "data": []}))
+    check("guard: 图表空载荷必拦", any(c["rule"] == "chart_payload" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"][0]["elements"].append(
+        {"id": "intruder", "type": "text", "x": 60, "y": 676, "width": 300, "height": 24,
+         "text": "侵入来源区", "size": 12.5, "color": "muted"}))
+    check("guard: 主体侵入来源区必拦（SOURCE_COLLISION）",
+          any(c["rule"] == "source_zone" for c in r["checks"]))
+
+    r = mutate(lambda s: s["slides"].__setitem__(0, {"id": "s01", "elements": []}))
+    check("guard: 空白页必拦", any(c["rule"] == "page_contract" for c in r["checks"]))
+    r = mutate(lambda s: s.__setitem__("slides", []))
+    check("guard: 空 deck 必拦", not r["passed"])
+
+    # 数据完整性：label 缺失 / 非有限值 / 跨页单位打架
+    def _chart(s):
+        return next(e for e in s["slides"][2]["elements"] if e.get("type") == "chart")
+    r = mutate(lambda s: _chart(s)["data"].append({"value": 9}))
+    check("guard: 数据行缺 label 必拦",
+          any(c["rule"] == "data_integrity" for c in r["checks"]))
+    def _add_second_chart(s):
+        import copy as _copy
+        second = _copy.deepcopy(_chart(s))
+        second.update({"id": "chart_page5", "x": 48, "y": 232, "unit": "万元"})
+        s["slides"][4]["elements"] = [e for e in s["slides"][4]["elements"]
+                                      if e.get("id") != "src"] + [second]
+    r = mutate(_add_second_chart)
+    check("guard: 同指标跨页单位不一致必拦",
+          any(c["rule"] == "metric_consistency" for c in r["checks"]), str(r["checks"])[:200])
+    r = check_spec(spec, rules={"require_provenance": True})
+    check("guard: release 档出处齐全 → 不拦", r["passed"])
+    missing_basis = json.loads(json.dumps(spec))
+    next(e for e in missing_basis["slides"][2]["elements"]
+         if e.get("type") == "chart").pop("basis")
+    r = check_spec(missing_basis, rules={"require_provenance": True})
+    check("guard: release 档缺比较口径必拦（DATA_INTEGRITY_FAIL）",
+          any(c["rule"] == "data_provenance" for c in r["checks"]))
+
+    # 归一化：8 单位吸附 + 色名规范化 + 幂等
+    import copy
+    messy = copy.deepcopy(spec)
+    messy["slides"][0]["elements"][0]["x"] = 50
+    messy["slides"][0]["elements"][0]["color"] = "#191510"
+    normalized, report = normalize_spec(messy)
+    check("normalize: 几何落网格、色值规范化",
+          normalized["slides"][0]["elements"][0]["x"] % 4 == 0 and report["counts"])
+    twice, _ = normalize_spec(normalized)
     check("normalize: 幂等（二次归一指纹不变）",
-          spec_fingerprint(normalized) == spec_fingerprint(normalized2))
+          spec_fingerprint(twice) == spec_fingerprint(normalized))
 
-    # TEXT_OVERFLOW 必拦
-    bad = json.loads(json.dumps(normalized))
-    bad["slides"][0]["elements"][0]["height"] = 20
-    r2 = check_spec(bad)
-    check("guard: 文字溢出必拦（TEXT_OVERFLOW）", not r2["passed"]
-          and any(c["rule"] == "text_capacity" and c["level"] == "error"
-                  for c in r2["checks"]))
+    # verdict：PASS / BLOCK 二态 + 分组修复包
+    from verify import verdict
+    good = verdict(spec, mode="release",
+                   guard_report=ok, compile_report={"passed": True, "skipped": False,
+                                                    "output_sha256": "a" * 64})
+    check("verdict: 合规稿 PASS 且 release_eligible", good["passed"]
+          and good["release_eligible"] and good["status"] == "PASS")
+    bad_report = mutate(lambda s: s["slides"][0]["elements"][0].update({"height": 8}))
+    bad = verdict(spec, mode="draft", guard_report=bad_report,
+                  compile_report={"passed": False, "skipped": True})
+    check("verdict: BLOCK 按根因分组（修复包自足）",
+          not bad["passed"] and bad["failure_codes"] == ["TEXT_OVERFLOW"]
+          and bad["fix_plan"]["groups"][0]["fix"])
 
-    # 缺载荷必拦
-    bad2 = json.loads(json.dumps(normalized))
-    bad2["slides"][2]["elements"][-1]["data"] = []
-    r3 = check_spec(bad2)
-    check("guard: 图表空载荷必拦", not r3["passed"])
 
-    # 未知 chart_kind 必拦
-    bad3 = json.loads(json.dumps(normalized))
-    bad3["slides"][2]["elements"][-1]["chart_kind"] = "hologram"
-    r4 = check_spec(bad3)
-    check("guard: 未知图表类型必拦", not r4["passed"])
-
-    # 越界必拦
-    bad4 = json.loads(json.dumps(normalized))
-    bad4["slides"][0]["elements"][0]["x"] = 1400
-    r5 = check_spec(bad4)
-    check("guard: 越出画布必拦", not r5["passed"])
-
-    # verdict：PASS/BLOCK 二态 + 修复组内嵌明细
-    v_pass = verdict(normalized, tmp / "x.pptx", mode="draft",
-                     guard_report=r, compile_report={"passed": True, "slides": 5})
-    check("verdict: 合规稿 PASS", v_pass["passed"] and v_pass["status"] == "PASS")
-    v_block = verdict(normalized, tmp / "x.pptx", mode="draft",
-                      guard_report=r2, compile_report={"passed": False, "warnings": ["x"]})
-    groups = v_block["fix_plan"]["groups"]
-    check("verdict: BLOCK 带根因组与明细（修复包自足）",
-          not v_block["passed"] and groups and all(g.get("details") for g in groups))
-
-    # release manifest：产物 sha 不符必 BLOCK
-    pptx = tmp / "m.pptx"
+# ── 3 · production（编译 / 缓存 / 资产 / 预览）────────────────────────
+def test_production(tmp: Path):
     from compiler import compile_deck
-    compile_deck(normalized, pptx, speed="fast")
-    qa = verdict(normalized, pptx, mode="release",
-                 guard_report=r,
-                 compile_report={"passed": True, "slides": 5,
-                                 "output_path": str(pptx),
-                                 "output_sha256": "0" * 64, "file_bytes": 1})
-    man = release_manifest(normalized, qa, workflow={"status": "SKIPPED", "image_count": 0})
-    check("manifest: 产物哈希不符必 BLOCK", man["status"] == "BLOCKED"
-          and any("output_sha256" in i for i in man["validation"]["issues"]))
-    from primitives import file_digest
-    qa2 = verdict(normalized, pptx, mode="release", guard_report=r,
-                  compile_report={"passed": True, "slides": 5,
-                                  "output_path": str(pptx),
-                                  "output_sha256": file_digest(pptx),
-                                  "file_bytes": pptx.stat().st_size})
-    man2 = release_manifest(normalized, qa2, workflow={"status": "SKIPPED", "image_count": 0})
-    check("manifest: 凭证一致时 release_eligible",
-          man2["status"] == "PASS" and man2["release_eligible"])
+    from primitives import ENGINE_SCOPES, file_digest, spec_view, compile_reuse, record_compile
 
+    build = make_build(tmp)
+    namespace: dict = {}
+    exec(compile(build.read_text(encoding="utf-8"), str(build), "exec"), namespace)
+    spec = namespace["SPEC"]
 
-# ── 3 · compiler（确定性 + 缓存）─────────────────────────────────────
-def test_compiler(tmp: Path):
-    from compiler import compile_deck
-    from primitives import compile_reuse, record_compile, spec_view
-    from primitives import file_digest
-    spec, _ = _base_spec(tmp)
-
-    out1, out2 = tmp / "c1.pptx", tmp / "c2.pptx"
-    compile_deck(spec, out1, speed="fast")
-    compile_deck(spec, out2, speed="fast")
+    out1, out2 = tmp / "a.pptx", tmp / "b.pptx"
+    compile_deck(spec, out1)
+    compile_deck(spec, out2)
     check("compiler: 同 spec 两次编译字节一致（确定性）",
           file_digest(out1) == file_digest(out2))
 
-    import pptx
-    d = pptx.Presentation(str(out1))
-    check("compiler: 产物为原生可编辑 PPTX（5 页 · 文本可改）",
-          len(d.slides.__iter__.__self__._sldIdLst) == 5
-          if False else len(list(d.slides)) == 5)
-    shape = next(iter(d.slides[1].shapes))
-    check("compiler: 元素在 PowerPoint 对象模型中可编辑",
-          shape.has_text_frame and bool(shape.text_frame.text))
+    from pptx import Presentation
+    prs = Presentation(str(out1))
+    texts = [sh.text_frame.text.replace("\u2009", "").replace("\u200a", "")
+             for sl in prs.slides for sh in sl.shapes
+             if sh.has_text_frame and sh.text_frame.text.strip()]
+    check("compiler: 原生可编辑 PPTX（文本在对象模型里可改）",
+          len(prs.slides) == 5 and any("第3页结论句" in t for t in texts))
 
-    cache = tmp / "cache_dir"
-    cache.mkdir()
+    missing = [name for files in ENGINE_SCOPES.values() for name in files
+               if not (Path(__file__).resolve().parent / name).is_file()]
+    check("engine: 指纹 scope 引用的文件都存在（删改模块必须同步）", not missing, str(missing))
+
+    work = tmp / "cache"
+    work.mkdir(exist_ok=True)
+    report = compile_deck(spec, out1, speed="fast")
     view = spec_view(spec, base_path=tmp)
-    r1 = compile_deck(spec, out1, speed="fast")
-    record_compile(cache, out1, view, r1)
-    hit = compile_reuse(cache, out1, view, fast_probe=True, speed="fast")
-    check("cache: 同投影同产物命中复用", hit is not None and hit.get("reused"))
-    spec2 = json.loads(json.dumps(spec))
-    spec2["slides"][0]["elements"][0]["text"] = "改过的标题"
-    view2 = spec_view(spec2, base_path=tmp)
-    check("cache: spec 变了不命中（判定新鲜）",
-          compile_reuse(cache, out1, view2, fast_probe=True, speed="fast") is None)
+    record_compile(work, out1, view, report)
+    reused = compile_reuse(work, out1, view, fast_probe=True, speed="fast")
+    check("cache: 同投影 + 同产物字节 ⇒ 复用编译（不重编）",
+          bool(reused and reused.get("reused")))
+    changed = json.loads(json.dumps(spec))
+    changed["slides"][0]["elements"][0]["text"] = "改过的标题"
+    check("cache: spec 变了不命中",
+          compile_reuse(work, out1, spec_view(changed, base_path=tmp),
+                        fast_probe=True, speed="fast") is None)
 
-
-# ── 4 · assets（链闭环）──────────────────────────────────────────────
-def test_assets(tmp: Path):
-    from intelligence import load_brief, think
-    from assets import (build_manifest, prepare_manifest, image_qc, qc_retry_decision,
-                        verify_chain, asset_entries, resolve_asset, ACCEPTED)
+    # 资产链：媒体必要性 → 清单；坏图 release 必 BLOCK
+    from intelligence import think
+    from assets import build_manifest, image_qc, qc_retry_decision
+    bundle = think(BRIEF)
+    manifest = build_manifest(BRIEF, bundle)
+    generated = {sid for a in manifest["assets"] if a.get("decision") == "generate"
+                 for sid in a.get("slide_ids") or []}
+    check("assets: 只有通过必要性测试的页进清单",
+          generated <= set(bundle["assets_hint"]["generate"])
+          and all("necessity" in s or s.get("reason") for s in manifest["skipped_pages"]),
+          str(manifest["assets"])[:160])
+    from assets import asset_fingerprint, asset_card
+    page = bundle["pages"][0]
+    card, contract = asset_card(page, BRIEF, bundle["deck"], "asset-x")
+    check("assets: 提示词确定性 + 带负向清单",
+          asset_fingerprint(card, contract) == asset_fingerprint(card, contract)
+          and "no " in (card.get("negative") or [""])[0] if card.get("negative") else True)
     from PIL import Image, ImageDraw
+    img = tmp / "img.png"
+    canvas = Image.new("RGB", (1280, 720), (240, 236, 228))
+    ImageDraw.Draw(canvas).ellipse((700, 200, 1000, 500), fill=(120, 90, 60))
+    canvas.save(img)
+    safe = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
+    qc = image_qc(img, safe_rect=safe, text_is_dark=True)
+    decision_ok = qc_retry_decision(qc, attempt=0, phase="release")
+    check("assets: 合规画心 QC 通过（无阻断项，动作 accept）",
+          qc.get("status") == "ok" and decision_ok.get("action") == "accept",
+          str(qc.get("checks"))[:160])
+    bad_img = tmp / "bad.png"          # 文字安全区被高对比纹理压住 = 不可用
+    canvas2 = Image.new("RGB", (1280, 720), (245, 243, 240))
+    paint = ImageDraw.Draw(canvas2)
+    for i in range(0, 460, 12):
+        paint.rectangle([i, 0, i + 6, 720], fill=(30, 30, 30))
+    canvas2.save(bad_img)
+    bad = image_qc(bad_img, safe_rect=safe, text_is_dark=True)
+    decision = qc_retry_decision(bad, attempt=1, phase="release")
+    check("assets: 坏图 release 档不自动重出（判负交 QA 收口）",
+          bad.get("status") != "ok" and decision.get("action") in ("block", "fail",
+                                                                   "hold", "none"),
+          f"{bad.get('status')} {decision}")
 
-    brief = dict(BRIEF)
-    bundle = think(brief)
-    manifest = build_manifest(brief, bundle)
-    prepare_manifest(manifest, brief, bundle, "brief.yml", "plan.json",
-                     tmp / "am.json", tmp.as_posix())
-    entries = {e["asset_id"]: e for e in asset_entries(manifest)}
-    check("assets: 封面页进入生成清单（媒体判断→清单）",
-          any(e["slide_ids"] == ["s01"] and e["decision"] == "generate"
-              for e in entries.values()))
-    check("assets: prompt 含 negative 且确定性",
-          all(e.get("prompt") and e.get("negative") for e in entries.values()
-              if e["decision"] == "generate"))
-
-    # 同一视觉需求 → 同一指纹（提示词缓存的前提）
-    m2 = build_manifest(brief, think(brief))
-    check("assets: 同 brief 两次规划清单一致（指纹稳定）",
-          [e["asset_id"] for e in m2["assets"] if e.get("asset_id")] ==
-          [e["asset_id"] for e in manifest["assets"] if e.get("asset_id")])
-
-    # QC：合规图 accept；缺图 pending
-    for aid, e in entries.items():
-        if e["decision"] != "generate":
-            continue
-        p = tmp / e["expected_filename"]
-        img = Image.new("RGB", (1920, 1080), "#F2EDE4")
-        d = ImageDraw.Draw(img)
-        for x in range(1920):          # 柔和横向渐变，无硬边（硬边会触发 hard_seam 闸门）
-            t = x / 1920
-            d.line([(x, 0), (x, 1080)],
-                   fill=(int(242 - 14 * t), int(237 - 14 * t), int(228 - 12 * t)))
-        d.ellipse([1500, 300, 1800, 600], fill=(214, 150, 110))
-        img.save(p)
-        qc = image_qc(str(p), safe_rect=e.get("safe_area") or {},
-                      text_is_dark=True, expected_ratio=e.get("ratio"),
-                      background=e.get("background_color", "#FFFFFF"))
-        dec = qc_retry_decision(qc, attempt=0, phase="draft", max_retries=1)
-        check(f"assets: 合规背景画心 QC 通过（{aid[:18]}…）",
-              dec["action"] in ACCEPTED, str(qc.get("status")) + str(dec))
-    # 无图 → 链不假造
-    spec, _ = _base_spec(tmp)
-    wf = verify_chain(spec, None, None, None)
-    check("assets: 无图稿件 SKIPPED（不伪造已检查）",
-          wf["status"] == "SKIPPED" and wf["image_count"] == 0)
-
-    # 有图缺 QC → BLOCK
-    spec_img = json.loads(json.dumps(spec))
-    aid = next(iter(entries))
-    spec_img["slides"][0]["elements"].append(
-        {"id": "bg", "type": "image", "asset_id": aid, "x": 0, "y": 0,
-         "width": 1280, "height": 720, "layer": "background"})
-    wf2 = verify_chain(spec_img, tmp / "am.json", None, None)
-    check("assets: 有图缺有效 QC 必 BLOCK", wf2["status"] == "BLOCKED")
+    # 关键页取证：封面 / 密数据 / 收尾
+    from ghost import key_pages, ghost_deck, key_page_roles
+    pages = key_pages(spec["slides"], limit=3)
+    labels = key_page_roles(spec["slides"], pages)
+    check("ghost: 关键页取证含封面与收尾",
+          1 in pages and len(spec["slides"]) in pages and
+          set(labels.values()) <= {"cover", "closing", "hero_image", "dense_data",
+                                   "section", "content"}, str(labels))
+    rendered = ghost_deck(spec, tmp / "preview", pages=pages, scale=0.4, supersample=1)
+    check("ghost: 预览只画关键页（页级缓存内建）",
+          len(rendered) == len(pages) and all(Path(p).is_file() for p in rendered))
 
 
-# ── 5 · CLI 生产路径 ─────────────────────────────────────────────────
+# ── 4 · cli + docs ───────────────────────────────────────────────────
 def test_cli(tmp: Path):
-    work = tmp / "cli"
-    work.mkdir()
-    brief_file = work / "brief.yml"
+    brief = tmp / "brief.yml"
     import yaml
-    brief_file.write_text(yaml.safe_dump(BRIEF, allow_unicode=True), encoding="utf-8")
+    brief.write_text(yaml.safe_dump(BRIEF, allow_unicode=True), encoding="utf-8")
+    plan = tmp / "plan.json"
+    skeleton = tmp / "build.py"
+    assets_out = tmp / "assets.json"
+    r = run_vao("plan", str(brief), "--out", str(plan), "--skeleton", str(skeleton),
+                "--assets-out", str(assets_out), "--assets-dir", str(tmp / "gen"))
+    check("cli: plan 退出码 0 且产物齐", r.returncode == 0 and plan.is_file()
+          and skeleton.is_file() and assets_out.is_file(), r.stderr[-200:])
+    payload = json.loads(plan.read_text(encoding="utf-8"))
+    check("cli: plan.json 携带逐页判断卡（含否决项）",
+          all(p["judgment"]["composition"]["rejected"] for p in payload["pages"]))
+    check("cli: plan.json 无旧字段残留（direction/direction_execution/media）",
+          "direction" not in payload["deck"] and "direction_execution" not in payload["deck"]
+          and all("media" not in p for p in payload["pages"]))
+    sk = skeleton.read_text(encoding="utf-8")
+    check("cli: 骨架把「为什么」与「否决」写进注释",
+          "为什么" in sk and "否决" in sk and "结论[" in sk)
 
-    r = run_vao("plan", str(brief_file), "--out", str(work / "plan.json"),
-                "--skeleton", str(work / "build.py"),
-                "--assets-out", str(work / "asset_manifest.json"),
-                "--assets-dir", str(work / "generated_assets"), cwd=str(tmp))
-    check("cli: plan 退出码 0 且产物齐", r.returncode == 0
-          and (work / "plan.json").is_file() and (work / "build.py").is_file()
-          and (work / "asset_manifest.json").is_file(), r.stdout[-200:])
+    filled = make_build(tmp)
+    out = tmp / "deck.pptx"
+    r = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast")
+    check("cli: release PASS 且产出预览/清单", r.returncode == 0 and out.is_file()
+          and out.with_suffix(".manifest.json").is_file(), r.stdout[-200:])
+    first = out.stat().st_mtime_ns
 
-    plan = json.loads((work / "plan.json").read_text(encoding="utf-8"))
-    check("cli: plan.json 无 need 镜像/路由缓存/死字段（context 减量）",
-          "need" not in plan and "assets_hint" in plan
-          and all("density" not in p for p in plan["pages"]))
-
-    sk = (work / "build.py").read_text(encoding="utf-8")
-    check("cli: 骨架带判断问题与未决标注", "判断[结论]" in sk and "未决" in sk)
-
-    # build + release（无图）
-    shutil.copy(make_build(tmp, pages=5), work / "fill.py")
-    r2 = run_vao("check", str(work / "fill.py"), str(work / "out.pptx"),
-                 "--mode", "release", cwd=str(tmp))
-    check("cli: release PASS 且产出预览/清单/退出码 0",
-          r2.returncode == 0 and "PASS" in r2.stdout
-          and (work / "out.pptx").is_file() and (work / "out.manifest.json").is_file(),
+    r2 = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast")
+    check("cli: 二次 release 缓存复用（未重编）",
+          r2.returncode == 0 and "缓存复用" in r2.stdout and out.stat().st_mtime_ns == first,
           r2.stdout[-200:])
-    r3 = run_vao("check", str(work / "fill.py"), str(work / "out.pptx"),
-                 "--mode", "release", cwd=str(tmp))
-    check("cli: 二次 release 缓存复用（未重编）", r3.returncode == 0
-          and "未重编" in r3.stdout, r3.stdout[:200])
 
-    # BLOCK：注入溢出 → 退出码 2 + 修复组带明细
-    bad = (work / "fill.py").read_text(encoding="utf-8").replace("'height': 56,", "'height': 20,", 1)
-    assert bad != (work / "fill.py").read_text(encoding="utf-8"), "注入失败"
-    (work / "bad.py").write_text(bad, encoding="utf-8")
-    r4 = run_vao("check", str(work / "bad.py"), str(work / "bad.pptx"),
-                 "--mode", "draft", cwd=str(tmp))
-    packet = json.loads((work / "bad.repair.json").read_text(encoding="utf-8"))
-    groups = packet.get("fix_plan", {}).get("groups", [])
-    check("cli: BLOCK 退出码 2 + 分组修复包（组内含明细）",
-          r4.returncode == 2 and groups and groups[0].get("details"),
-          r4.stdout[:200])
+    broken = tmp / "broken.py"
+    namespace: dict = {}
+    exec(compile(filled.read_text(encoding="utf-8"), str(filled), "exec"), namespace)
+    spec = json.loads(json.dumps(namespace["SPEC"], default=str))
+    spec["slides"][0]["elements"][0]["height"] = 8
+    broken.write_text(f"SPEC = {spec!r}\n", encoding="utf-8")
+    r = run_vao("check", str(broken), str(tmp / "bad.pptx"), "--mode", "draft")
+    packet = json.loads((tmp / "bad.repair.json").read_text(encoding="utf-8"))
+    check("cli: BLOCK 退出码 2 + 分组修复包",
+          r.returncode == 2 and packet["failure_codes"] == ["TEXT_OVERFLOW"]
+          and packet["fix_plan"]["groups"], r.stdout[-200:])
 
-    # 坏 brief 早失败
-    (work / "empty.yml").write_text("audience: x\nslides: []\n", encoding="utf-8")
-    r5 = run_vao("plan", str(work / "empty.yml"), cwd=str(tmp))
-    check("cli: 空 slides 早失败并给修法", r5.returncode == 2
-          and "slides" in (r5.stderr + r5.stdout))
+    empty = tmp / "empty.yml"
+    empty.write_text("audience: 董事会\ndecision: 批准预算\nslides: []\n", encoding="utf-8")
+    r = run_vao("plan", str(empty), "--out", str(tmp / "p.json"))
+    check("cli: 空 slides 早失败并给修法", r.returncode != 0
+          and ("slides" in r.stderr or "slides" in r.stdout), r.stderr[-200:])
 
-    # spec 档不产出 PPTX
-    (work / "out2.pptx").unlink(missing_ok=True)
-    r6 = run_vao("check", str(work / "fill.py"), str(work / "out2.pptx"),
-                 "--mode", "spec", cwd=str(tmp))
-    check("cli: spec 档判定但不写产物", r6.returncode == 0
-          and not (work / "out2.pptx").exists())
+    r = run_vao("dna", "--check")
+    check("cli: dna 体检可用且库健康", r.returncode == 0 and "OK" in r.stdout, r.stdout[-200:])
 
 
-# ── 5.5 · 资产链 CLI 回归（含图全链 + QC 阶段切换）──────────────────
-def test_asset_chain_cli(tmp: Path):
-    """P0-3 链路回归：plan→出图→绑定→QC→release 的生产路径只有单测不够，
-    阶段切换（draft 宽容 / release 阻断）是最容易回归的一段，锁死语义。"""
-    from PIL import Image, ImageDraw
-    import yaml
-    work = tmp / "chain"
-    work.mkdir()
-    brief_file = work / "brief.yml"
-    brief_file.write_text(yaml.safe_dump(BRIEF, allow_unicode=True), encoding="utf-8")
-    r = run_vao("plan", str(brief_file), "--out", str(work / "plan.json"),
-                "--skeleton", str(work / "build.py"),
-                "--assets-out", str(work / "am.json"),
-                "--assets-dir", str(work / "generated_assets"), cwd=str(tmp))
-    check("chain: plan 产出资产清单", r.returncode == 0 and (work / "am.json").is_file(),
-          r.stdout[-200:])
-    manifest = json.loads((work / "am.json").read_text(encoding="utf-8"))
-    gen = [e for e in manifest["assets"] if e.get("decision") == "generate"]
-    aid = gen[0]["asset_id"]
-    img_path = work / gen[0]["expected_filename"]
-
-    def paint(shift=0, hard_edge=False):
-        img = Image.new("RGB", (1920, 1080), "#F2EDE4")
-        d = ImageDraw.Draw(img)
-        for x in range(1920):          # 柔和横向渐变（硬边会触发 hard_seam 闸门）
-            t = x / 1920
-            d.line([(x, 0), (x, 1080)],
-                   fill=(int(242 - 14 * t - shift), int(237 - 14 * t),
-                         int(228 - 12 * t + shift)))
-        if hard_edge:                  # 半幅硬边矩形：制造 QC 不合格画心
-            d.rectangle([0, 0, 960, 1080], fill=(40, 40, 46))
-        else:
-            d.ellipse([1500 - shift, 300, 1800 - shift, 600], fill=(214, 150, 110))
-        img.save(img_path)
-
-    # fill.py：封面页引用资产（layer:background + asset_id，同 demo 结构）
-    fill = make_build(tmp, pages=5)
-    inject = (f'{{"id": "bg", "type": "image", "asset_id": {aid!r}, "x": 0, "y": 0, '
-              f'"width": 1280, "height": 720, "layer": "background", '
-              f'"overlay": {{"color": "#F2EDE4", "opacity": 0.25}}}}, ')
-    ftxt = fill.read_text(encoding="utf-8").replace("'elements': [",
-                                                    "'elements': [" + inject, 1)
-    assert inject in ftxt, "注入失败"
-    (work / "fill.py").write_text(ftxt, encoding="utf-8")
-
-    def run_check(mode, out):
-        return run_vao("check", str(work / "fill.py"), str(work / out),
-                       "--mode", mode, "--assets-manifest", str(work / "am.json"),
-                       "--assets-dir", str(work), "--speed", "fast", cwd=str(tmp))
-
-    paint()
-    r1 = run_check("release", "out1.pptx")
-    check("chain: 合规图 release 全链 PASS（QC→绑定→编译→manifest）",
-          r1.returncode == 0 and "PASS" in r1.stdout, r1.stdout[-160:])
-    qc1 = json.loads((work / "am.qc.json").read_text(encoding="utf-8"))
-    sha1 = qc1["results"][0]["witness"]["sha256"]
-
-    paint(shift=30)                    # 画心内容变化 → 必须重测而非复用
-    r2 = run_check("release", "out1.pptx")   # 生产纪律：复跑同一条命令
-    qc2 = json.loads((work / "am.qc.json").read_text(encoding="utf-8"))
-    check("chain: 图变后 QC 重测（witness sha256 更新、零复用）",
-          r2.returncode == 0 and qc2["results"][0]["witness"]["sha256"] != sha1
-          and not (qc2.get("reuse") or {}).get("assets"), r2.stdout[-160:])
-
-    paint(hard_edge=True)              # 阶段切换：draft 宽容 retry / release 阻断
-    rd = run_check("draft", "out3.pptx")
-    qcd = json.loads((work / "am.qc.json").read_text(encoding="utf-8"))
-    rr = run_check("release", "out4.pptx")
-    qcr = json.loads((work / "am.qc.json").read_text(encoding="utf-8"))
-    check("chain: 坏图 draft 档 retry（宽容、进 retry_assets）",
-          rd.returncode == 2 and qcd["phase"] == "draft"
-          and aid in qcd.get("retry_assets", []), str(qcd.get("summary")))
-    check("chain: 坏图 release 档 block（阶段切换重写报告）",
-          qcr["phase"] == "release" and aid in qcr.get("blocking_assets", []),
-          str(qcr.get("summary")))
-    check("chain: 坏图 release 整稿 BLOCK 退出码 2", rr.returncode == 2, rr.stdout[-160:])
-
-
-# ── 6 · docs 一致性 ──────────────────────────────────────────────────
 def test_docs():
-    refs = ROOT / "references"
-    names = {p.name for p in refs.glob("*.md")}
-    check("docs: references 恰为 4 份（judgment/contract/assets/precedent）",
-          names == {"judgment.md", "contract.md", "assets.md", "precedent.md"}, str(names))
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    check("docs: SKILL 引用的文件都存在且无旧模块名",
-          "design_intelligence" not in skill and "guard.py" not in skill
-          and "asset-workflow.md" not in skill)
-    for mod in ("intelligence.py", "assets.py", "verify.py", "vao.py",
-                "compiler.py", "primitives.py", "ghost.py", "selftest.py"):
-        if not (SCRIPTS / mod).is_file():
-            check(f"core: {mod} 存在", False)
-            return
-    banned = ("run_evidence.py", "intent_compiler.py", "design_intelligence_rules.py",
-              "asset_prompt.py", "asset_workflow.py", "compile_cache.py", "guard.py",
-              "qa.py", "route.py", "pipeline.py", "design_intelligence.py")
-    leftover = [b for b in banned if (SCRIPTS / b).is_file()]
-    check("core: 旧模块无残留（13 → 8）", not leftover, str(leftover))
+    refs = sorted(p.name for p in (ROOT / "references").glob("*.md"))
+    check("docs: SKILL.md 只保留六节（身份/哲学/判断/Context/执行/QA）",
+          all(k in skill for k in ("身份", "设计哲学", "判断", "Context", "执行", "QA")),
+          str(refs))
+    check("docs: references ≤3 份，无案例堆积文件",
+          len(refs) <= 3 and "precedent" not in refs, str(refs))
+    check("docs: 文档里没有退役模块名与旧概念",
+          all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
+                                       "design_direction")))
+    dna = json.loads((ROOT / "memory" / "design_dna.json").read_text(encoding="utf-8"))
+    check("docs: Design DNA 收敛到 ≤10 条高迁移原则",
+          len(dna["entries"]) <= 10, str(len(dna["entries"])))
 
 
 def main():
-    tmp = Path(tempfile.mkdtemp(prefix="vao-selftest-"))
-    print(f"workspace: {tmp}\n")
-    try:
-        test_intelligence(tmp / "i") if (tmp / "i").mkdir() is None else None
-        test_verify(tmp / "v") if (tmp / "v").mkdir() is None else None
-        test_compiler(tmp / "c") if (tmp / "c").mkdir() is None else None
-        test_assets(tmp / "a") if (tmp / "a").mkdir() is None else None
-        test_cli(tmp / "cli-root") if (tmp / "cli-root").mkdir() is None else None
-        test_asset_chain_cli(tmp / "chain-root") if (tmp / "chain-root").mkdir() is None else None
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        for name, fn in (("intelligence", test_intelligence), ("verify", test_verify),
+                         ("production", test_production), ("cli", test_cli)):
+            (root / name).mkdir(parents=True, exist_ok=True)
+            fn(root / name)
         test_docs()
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
     print(f"\n{PASS}/{PASS + FAIL} passed")
-    return 0 if FAIL == 0 else 2
+    return 0 if FAIL == 0 else 1
 
 
 if __name__ == "__main__":

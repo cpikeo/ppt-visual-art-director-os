@@ -6,7 +6,7 @@
 
 纪律：
   * 提示词组装是确定性翻译：不持有主题、不做设计决策（该不该出图由
-    intelligence.media_judgment 判定，本层只翻译与核验）。
+    intelligence.media_necessity 判定，本层只翻译与核验）。
   * 链核验只回答：这张图是不是 QC 通过的那张、绑到正确的页、分辨率够。
     没有第二重哈希仪式。
 """
@@ -372,23 +372,9 @@ ENERGY_PHRASES = {
     "high": "one dramatic light source, cinematic contrast",
 }
 
-# 能量调谐表（v7.3 · 决策期结算）：路由方向预设的四种世界光语，能量只有**强弱**调谐权。
-# 键是 DIRECTION_PRESETS 的 light 原文（route._direction_execution 产出，本函数唯一读者，
-# 与方向预设同一张表不许两个读者）。medium 保留原句不动；自由文本（declared / fallback）
-# 不在表内——作者逐页写下的话逐字赢，能量不得追加一个字（审计裁决）。
-# 实测证据：v7.2 之前光语互斥的无条件缝合把 ENERGY_PHRASES 一起灭口，energy=high
-# 与 energy=low 的 prompt 逐字节相同——页面能量判断被静默吞掉。本表把它还给像素。
-ENERGY_LIGHT_VARIANTS: dict[str, dict[str, str]] = {
-    "flat even ambient":      {"low": "very soft, near-shadowless ambient light",
-                               "high": "even ambient light with one deliberate focal gradient"},
-    "single soft upper-left": {"low": "single soft upper-left light, gentle and even",
-                               "high": "single soft upper-left light with deep gentle falloff"},
-    "one key light":          {"low": "one soft key light, restrained shadow",
-                               "high": "one strong key light with deep shadow falloff"},
-    "flat":                   {"low": "soft flat light, calm and even",
-                               "high": "flat light with one controlled contrast accent"},
-}
-
+# 能量调谐：视觉世界给光的**方向与质感**，页面判断只在 low/high 时追加一句
+# 强弱。两者正交：能量永远没有改方向的权力。作者逐页写下的光句逐字赢，
+# 能量不追加一个字。
 ASSET_FUNCTION_PHRASES = {
     "frame": "the image frames the message without competing with it",
     "separate": "the image separates sections while staying quiet",
@@ -428,16 +414,16 @@ ASSET_FUNCTION_PHRASES = {
 # background」这种写得却没生效的裂缝。
 ASSET_ROLES: tuple[str, ...] = ("background", "illustration", "hybrid")
 DEFAULT_ASSET_ROLE = "background"
-# 解析来源（审计用）：declared 逐页显式声明 · legacy 旧 asset_type 直写 · assumed 未声明。
-# 只有前两种是**作者说过的话**——QC 只承认作者说过的角色；assumed 不得悄悄放宽任何判据。
-ROLE_AUTHORITATIVE_SOURCES: tuple[str, ...] = ("declared", "legacy")
+# 解析来源（审计用）：declared 逐页显式声明 · assumed 未声明。
+# 只有前者是**作者说过的话**——QC 只承认作者声明的角色；assumed 不得悄悄放宽任何判据。
+ROLE_AUTHORITATIVE_SOURCES: tuple[str, ...] = ("declared",)
 
 
-def resolve_asset_role(declared=None, legacy_type=None) -> tuple[str, str]:
-    """逐页 asset_role → (执行类型 asset_type, 来源)。
+def resolve_asset_role(declared=None) -> tuple[str, str]:
+    """逐页 asset_role → (执行类型 asset_type, 来源 declared|assumed)。
 
-    未声明时**不猜**：角色恒有值（默认 background，与执行层历史默认一致），
-    但来源记为 `assumed`——只有作者写下的才算 declared。
+    未声明时**不猜**：角色恒有值（默认 background），但来源记为 `assumed`——
+    只有作者写下的才算 declared。
     刻意不接受 asset_function 作为推导输入：角色不许被用途偷换
     （把 hero 当插图的推导会把摄影主体变成透明剪影，那不是判断，是串轴）。
 
@@ -451,12 +437,6 @@ def resolve_asset_role(declared=None, legacy_type=None) -> tuple[str, str]:
                 "background=承载页面空间 / illustration=表达页面对象 / "
                 "hybrid=同一资产确实同时承担两者")
         return role, "declared"
-    legacy = str(legacy_type or "").strip().lower()
-    if legacy:
-        if legacy not in ASSET_TYPE_SUFFIX:
-            raise ValueError(f"未知 asset_type: {legacy!r}"
-                             f"（可选 {sorted(ASSET_TYPE_SUFFIX)}）")
-        return legacy, "legacy"
     return DEFAULT_ASSET_ROLE, "assumed"
 
 
@@ -542,75 +522,44 @@ REQUIRED_SEGMENTS = ("subject", "color", "material", "lighting", "composition")
 # 全部为弱描述子句；微浮雕纪律：微弱、低对比、近距可感知，禁止明显纹理。
 # --------------------------------------------------------------------------
 MOTION_LAYERS: dict[str, tuple[str, ...]] = {
-    "spatial": (
-        "leading lines drawing the eye toward the negative-space anchor",
-        "architectural perspective receding to a single vanishing point",
-        "flowing composition with deliberate asymmetric balance",
-        "directional light raking across the frame from one side"),
-    "natural": (
-        "slow flowing water with silk-like motion blur",
-        "organic curves and wind movement through foliage",
-        "layered atmosphere with aerial depth and drifting mist",
-        "gentle natural gesture implying quiet movement"),
-    "tech": (
-        "dynamic light trails with restrained velocity",
-        "subtle energy flow along precision-machined edges",
-        "spatial depth through layered translucent glass planes"),
+    "still": ("a single frozen moment, nothing moving in frame",),
+    "reveal": ("motion implied only at the edges, the subject held sharp",),
+    "spatial": ("gentle lateral movement through the space",),
 }
 TEXTURE_LAYERS: dict[str, tuple[str, ...]] = {
-    "eastern": ("handmade paper fiber", "rice paper texture",
-                "subtle ink diffusion at the edges", "natural mineral pigment grain"),
-    "luxury": ("fine leather grain", "brushed metal micro texture",
-               "soft stone surface", "premium packaging emboss with low relief"),
-    "architecture": ("limestone micro texture", "board-formed concrete pore",
-                     "glass reflection with faint refraction"),
-    "technology": ("titanium micro brushing", "precision machining marks",
-                   "anodized surface sheen"),
-    "organic": ("leaf vein macro structure", "woven natural fiber",
-                "moss and lichen micro detail"),
+    "paper": ("handmade paper fiber", "rice paper texture"),
+    "ink": ("pigment settling into fiber", "ink diffusion at the edges"),
+    "stone": ("honed limestone micro texture", "board-formed concrete pore"),
+    "structure": ("cast shadow line across a plane",),
+    "metal": ("titanium micro brushing", "precision machining marks"),
+    "glass": ("glass reflection with faint refraction",),
+    "fiber": ("woven natural fiber", "oat fiber surface"),
+    "leaf": ("leaf vein macro structure",),
+    "water": ("wet stone sheen",),
+    "mist": ("faint mist in the air between planes",),
+    "textile": ("woven textile grain", "worn timber surface"),
+    "clay": ("matte clay surface",),
+    "stage": ("wet black floor reflection",),
+    "screen": ("soft light spill on a dark surface",),
 }
 TEXTURE_DISCIPLINE: tuple[str, ...] = (
     "texture faint and low-contrast, perceivable only at close range",
     "no obvious pattern, no grunge, no heavy grain")
-# 具象主体（hero 产品 / proof 实证）的清晰度与可辨识是硬要求：
-# 「流水运动模糊 / 光轨」这类动势语言注进静物摄影就是废图指令。
-# 键名展开时，静态主体改取各层的静态安全句（自由文本仍原样保留——作者显式写的永远赢）。
-STATIC_MOTION_INDEX: dict[str, int] = {"spatial": 0, "natural": 3, "tech": 1}
-STATIC_SUBJECT_FUNCTIONS = frozenset({"hero", "proof", "direct"})
 FUSION_LAYERS: tuple[str, ...] = (
     "image melts into the layout background, no sticker edges, no hard rectangle",
     "negative space reserved and aligned to the text-safe area",
     "lighting direction consistent with the page light source",
     "depth hierarchy: foreground subject, midground material, background atmosphere",
     "foreground and background separated by gentle defocus")
-FAMILY_MOTION: dict[str, tuple[str, ...]] = {
-    "nature_luxury": ("natural", "spatial"), "nordic_quiet": ("spatial",),
-    "monochrome_noir": ("spatial",), "zen_minimal": ("natural",),
-    "luxury_editorial": ("spatial",), "precision_tech": ("tech",),
-    "organic_systems": ("natural",), "cinematic_narrative": ("spatial", "natural"),
-    "editorial_intelligence": ("spatial",), "quiet_luxury": ("spatial",),
-    "song_elegance": ("natural",), "precision_minimal": ("tech", "spatial"),
-    "data_intelligence": ("tech",),
-}
-FAMILY_TEXTURE: dict[str, tuple[str, ...]] = {
-    "nature_luxury": ("organic", "architecture"), "nordic_quiet": ("architecture",),
-    "monochrome_noir": ("architecture",), "zen_minimal": ("eastern",),
-    "luxury_editorial": ("luxury", "architecture"), "precision_tech": ("technology",),
-    "organic_systems": ("organic",), "cinematic_narrative": ("luxury", "architecture"),
-    "editorial_intelligence": ("eastern",), "quiet_luxury": ("luxury",),
-    "song_elegance": ("eastern",), "precision_minimal": ("technology",),
-    "data_intelligence": ("technology",),
-}
 
 
-def _expand_layer(spec, table: dict, index: dict | None = None) -> list[str]:
+def _expand_layer(spec, table: dict) -> list[str]:
     """把「层键名 or 自由文本」统一展开成可读语言。
 
     键名（`eastern` / `natural` / `luxury` …）查表取句：默认第一句；
-    `index` 给出按层键的替代下标（静物主体避开运动模糊句，见 STATIC_MOTION_INDEX）。
-    自由文本原样保留——调用方显式写下的句子永远赢，这是全包的既有纪律，
-    不在这一层改变。方向族传下来的是键名（见 route._direction_execution），
-    brief 里逐页写的是文本，两种写法都要能用，且展开只发生在这一处。
+    视觉世界传下来的是键名（still/reveal/spatial、paper/stone/metal…），
+    brief 里逐页写的是自由文本，两种写法都要能用，且展开只发生在这一处：
+    自由文本原样保留——调用方显式写下的句子永远赢。
     """
     out: list[str] = []
     for item in _as_list(spec):
@@ -619,44 +568,26 @@ def _expand_layer(spec, table: dict, index: dict | None = None) -> list[str]:
             continue
         key = text.lower()
         if key in table:
-            phrases = table[key]
-            out.append(phrases[min((index or {}).get(key, 0), len(phrases) - 1)])
+            out.append(table[key][0])
         else:
             out.append(text)
     return out
 
 
-def enhance_asset_card(card: dict, family: str | None = None,
-                       motion: list | tuple | None = None,
+def enhance_asset_card(card: dict, motion: list | tuple | None = None,
                        texture: list | tuple | None = None,
                        fusion: bool = True) -> dict:
     """纯函数：为资产卡注入动势/微浮雕/融合三层（确定性、去重、限量）。
 
-    默认 motion 1 句、texture 1 句、fusion 1–2 句——
-    提示词密度也是克制的一部分；调用方显式传入时永远赢。
-
-    `family` 收的是**方向族名**（song_elegance / zen_minimal …），不是页面家族名：
-    FAMILY_MOTION / FAMILY_TEXTURE 的键全是族名，传页面家族名会静默落进
-    ("spatial",) / ("luxury",) 兜底——一份年报里每张图都吃「fine leather grain」。
+    motion / texture 由视觉世界给出（intelligence.derive_world），本函数不再持有
+    「风格族 → 材质」预设表：材质属于内容，不属于风格名。调用方显式传入时永远赢。
+    默认 motion 1 句、texture 1 句 + 2 句纪律、fusion 2 句——提示词密度也是克制的一部分。
     """
     out = dict(card)
-    fam = family or str(card.get("family") or card.get("direction_family") or "")
-    m_keys = FAMILY_MOTION.get(fam, ("spatial",))
-    t_keys = FAMILY_TEXTURE.get(fam, ("luxury",))
-    # 具象主体（hero/proof/direct）不吃运动模糊与光轨：动势语言只属于氛围类资产。
-    static_subject = (str(card.get("asset_function") or "").lower()
-                      in STATIC_SUBJECT_FUNCTIONS)
-    m_index = STATIC_MOTION_INDEX if static_subject else None
-    if motion is None:
-        motion = _expand_layer(m_keys, MOTION_LAYERS, m_index)[:1]
-    else:
-        motion = _expand_layer(motion, MOTION_LAYERS, m_index)
-    if texture is None:
-        texture = _expand_layer(t_keys, TEXTURE_LAYERS)[:1]
-    else:
-        texture = _expand_layer(texture, TEXTURE_LAYERS)
-    out["motion"] = list(motion)
-    out["texture"] = list(texture) + list(TEXTURE_DISCIPLINE)
+    m_keys = motion if motion is not None else card.get("motion") or ("still",)
+    t_keys = texture if texture is not None else card.get("texture")
+    out["motion"] = _expand_layer(m_keys, MOTION_LAYERS)[:1]
+    out["texture"] = _expand_layer(t_keys, TEXTURE_LAYERS)[:1] + list(TEXTURE_DISCIPLINE)
     if fusion:
         out["fusion"] = list(card.get("fusion") or FUSION_LAYERS[:2])
     return out
@@ -727,7 +658,7 @@ def validate_asset_card(card: dict) -> list[str]:
 # 决策期结算（v7.3 · Visual Decision Object）
 # --------------------------------------------------------------------------
 RESOLVED_LIGHT_SOURCES: tuple[str, ...] = (
-    "declared", "direction", "fallback", "photo_discipline", "phrase_fallback")
+    "declared", "world", "fallback", "photo_discipline", "phrase_fallback")
 
 
 def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
@@ -740,7 +671,7 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
     一格条件赋值，互相不可能并存：
 
       declared          作者逐页显式声明 —— 逐字赢，能量不得触碰；
-      direction         路由方向预设光语 —— 能量只允许强弱调谐（变体表替换，不叠加）；
+      world             视觉世界给光 —— 页面能量在 low/high 时追加一句强弱（不叠加同义句）；
       fallback          卡片有光语但既非声明也非方向（保守兜底）—— 冻结原文；
       photo_discipline  摄影写实纪律独家给光（介质说了算）；
       phrase_fallback   卡片完全无光语时，句式光 + 能量句式一起兜底。
@@ -781,13 +712,14 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
         light["card_lines"] = card_lights
     elif card_lights:
         light["card_lines"] = card_lights
-        if source in ("direction", "preset"):
-            light["from"] = "direction"
-            if energy in ("low", "high") and len(card_lights) == 1:
-                variant = ENERGY_LIGHT_VARIANTS.get(card_lights[0], {}).get(energy)
-                if variant:
-                    light["card_lines"] = [variant]
-                    light["energy_applied"] = True   # 页面能量判断真的抵达了像素
+        if source == "world":
+            light["from"] = "world"
+            # 世界给光的**方向与质感**，页面能量只在 low/high 时追加一句强弱——
+            # 两件事正交，各自说话，不再有「预设键 → 变体句」的查表。
+            phrase = ENERGY_PHRASES.get(energy)
+            if energy in ("low", "high") and phrase:
+                light["card_lines"] = card_lights + [phrase]
+                light["energy_applied"] = True   # 页面能量判断真的抵达了像素
         else:
             light["from"] = "fallback"
     else:
@@ -1528,10 +1460,6 @@ def digest(value) -> str:
     return identity(value)
 
 
-def read_json(path) -> dict:
-    return json_read_cached(path)
-
-
 def asset_entries(manifest: dict) -> list:
     entries = [e for e in manifest.get("assets", []) if isinstance(e, dict)
                and e.get("decision") in ASSET_DECISIONS]
@@ -1638,12 +1566,11 @@ def verify_sources(manifest: dict) -> list:
 
 
 def _inspected_bytes_current(path, inspected: dict) -> bool:
-    from primitives import stat_witness, witness_matches
+    from primitives import witness, witness_same
     record = inspected.get("witness")
     if not isinstance(record, dict):
         return False
-    size, mtime_ns = stat_witness(path)
-    return witness_matches(record, {"size": size, "mtime_ns": mtime_ns})
+    return witness_same(record, witness(path))
 
 
 def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
@@ -1665,11 +1592,11 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
         return report
     try:
         path = _Path(manifest_path).expanduser().resolve()
-        manifest = read_json(path)
+        manifest = json_read_cached(path)
         issues.extend(verify_sources(manifest))
         entries = {e["asset_id"]: e for e in asset_entries(manifest)}
         qpath = _Path(qc_path).expanduser().resolve() if qc_path else path.with_name(path.stem + ".qc.json")
-        qc = read_json(qpath)
+        qc = json_read_cached(qpath)
         report.update(manifest=str(path), manifest_sha256=digest(manifest),
                       qc_report=str(qpath), qc_sha256=digest(qc))
         if qc.get("schema") != QC_REPORT_SCHEMA or qc.get("manifest_sha256") != digest(manifest):
@@ -1778,8 +1705,8 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
     未声明不猜（默认 background）；色值跟整副 deck 的种子走。
     """
     raw = page.get("declarations") or {}
-    derived = deck.get("direction_execution") or {}
-    asset_role, asset_role_source = resolve_asset_role(raw.get("asset_role"), None)
+    derived = deck.get("world") or {}
+    asset_role, asset_role_source = resolve_asset_role(raw.get("asset_role"))
     function = str(raw.get("asset_function") or "frame")
     anchor = str(raw.get("negative_space_anchor")
                  or _NEGATIVE_SPACE_ANCHOR.get(function, "left")).lower()
@@ -1789,7 +1716,7 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
     subject_fallback = not subject
     if not subject:
         subject = title[:180]
-    direction_family = str(deck.get("direction") or "").strip().lower()
+    direction_family = str(derived.get("name") or "").strip().lower()
     visual_world = str(brief.get("visual_world") or "")
     if visual_world.lower() == "unknown":
         visual_world = ""
@@ -1808,25 +1735,25 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
         "asset_role": asset_role,
         "asset_role_source": asset_role_source,
         "medium": raw.get("medium") or brief.get("asset_medium"),
-        "family": direction_family or str(page.get("family") or "").lower(),
+        "family": direction_family,
         "subject": [subject],
         "subject_source": "title_fallback" if subject_fallback else "declared",
         "color": color_cue,
-        "material": [str(raw.get("material") or derived.get("material") or "quiet matte surface")],
+        "material": [str(raw.get("material") or derived.get("visual_world")
+                         or "quiet matte surface")],
         "material_source": ("declared" if raw.get("material")
-                            else "direction" if derived.get("material") else "fallback"),
+                            else "world" if derived.get("visual_world") else "fallback"),
         "lighting": [str(raw.get("lighting") or derived.get("light") or "single soft directional light")],
         "lighting_source": ("declared" if raw.get("lighting")
-                            else "direction" if derived.get("light") else "fallback"),
+                            else "world" if derived.get("light") else "fallback"),
         "composition": [grammar_phrase(derived.get("composition_grammar"))],
-        "motion": [str(derived.get("motion"))] if derived.get("motion") else [],
+
         "world": [visual_world[:160]] if visual_world else [],
         "asset_function": function,
         "fusion_enabled": raw.get("fusion_enabled"),
         "negative": list(raw.get("negative") or []) + list(brief.get("avoid") or []),
     }
-    card = enhance_asset_card(card, family=card["family"],
-                              motion=card["motion"] or None,
+    card = enhance_asset_card(card, motion=None,
                               texture=raw.get("texture") or derived.get("texture_keys"),
                               fusion=card["fusion_enabled"] is not False)
     page_contract = {
@@ -1842,12 +1769,25 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
     return card, page_contract
 
 
+def _media_of(page: dict) -> dict:
+    """媒体必要性判断住在逐页判断卡里；缺失即 fail loudly（不静默当作出图 0 张）。"""
+    page = page if isinstance(page, dict) else {}
+    judgment = page.get("judgment") if isinstance(page.get("judgment"), dict) else {}
+    media = judgment.get("media")
+    if not isinstance(media, dict):
+        raise ValueError(f"{page.get('id', '?')}: plan 缺少 media 必要性判断"
+                         "（需 vao-plan-v3 的 plan.json：先跑 vao.py plan）")
+    return media
+
+
 def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     """brief + 判断面 → 去重的批量资产清单（规划身份 = 指纹）。"""
     pages = bundle.get("pages") or []
     plan_deck = bundle.get("deck") or {}
     hint = bundle.get("assets_hint") or {}
     generation_ids = set(hint.get("generate") or [])
+    deferred = {str(d.get("slide_id")): str(d.get("why") or "")
+                for d in (hint.get("deferred") or []) if isinstance(d, dict)}
     prompt_cache: dict = {}
     cache_file = _Path(cache_path).expanduser() if cache_path else None
     if cache_file:
@@ -1858,7 +1798,6 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         except (OSError, ValueError, TypeError):
             prompt_cache = {}
     cache_hits = 0
-    quality = str(plan_deck.get("quality") or "fast")
     cap = int(hint.get("cap") or len(generation_ids) or 0)
     assets: list = []
     by_fingerprint: dict = {}
@@ -1866,7 +1805,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     skipped_pages: list = []
     for page in pages:
         sid = str(page.get("id"))
-        decision = str((page.get("media") or {}).get("decision") or "none")
+        decision = str(_media_of(page).get("decision") or "none")
         raw = page.get("declarations") or {}
         origin = raw.get("asset_source")
         if origin:
@@ -1893,7 +1832,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             continue
         if decision == "none":
             skipped_pages.append({"slide_id": sid, "decision": "skip",
-                                  "reason": (page.get("media") or {}).get("reason", "")})
+                                  "reason": _media_of(page).get("necessity", "")})
             continue
         provisional = f"asset-{sid}"
         card, page_contract = asset_card(page, brief, plan_deck, provisional)
@@ -1904,10 +1843,10 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             assets.append({"slide_id": sid, "decision": "reuse_generated",
                            "asset_id": existing["asset_id"], "fingerprint": fingerprint})
             continue
-        should_generate = sid in generation_ids and generated_count < cap
-        if not should_generate:
+        if sid not in generation_ids:
             skipped_pages.append({"slide_id": sid, "decision": "reuse",
-                                  "reason": "asset budget or route policy",
+                                  "reason": deferred.get(sid) or
+                                            "本轮图位未分配给这一页（按视觉价值排序，非页序）",
                                   "fingerprint": fingerprint})
             continue
         asset_id = f"asset-{fingerprint.removeprefix('asset-')}"
@@ -1951,17 +1890,14 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         json_write(cache_file, {"schema": "vao-asset-prompt-cache-v2", "entries": prompt_cache})
     return {
         "schema": "vao-assets-v1",
-        "design_direction": plan_deck.get("direction"),
-        "quality_level": quality,
-        "asset_budget": {"planned_route_calls": len(generation_ids),
-                         "unique_generation_calls": generated_count,
-                         "max_asset_calls": cap},
+        "visual_world": (plan_deck.get("world") or {}).get("name"),
+        "quality_level": str(plan_deck.get("quality") or "fast"),
+        "cap": cap,
         "assets": assets,
         "skipped_pages": skipped_pages,
-        "performance": {"reference_context": "none", "batch": True,
-                        "deduplicated": max(0, len(generation_ids) - generated_count),
-                        "prompt_cache_hits": cache_hits,
-                        "prompt_cache_path": str(cache_file) if cache_file else None},
+        "deduplicated": max(0, len(generation_ids) - generated_count),
+        "prompt_cache": {"hits": cache_hits,
+                         "path": str(cache_file) if cache_file else None},
     }
 
 
@@ -1971,8 +1907,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
 def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
               snapshots=None, decoded=None, digests=None):
     """资产核验：绑定 → 测量/复用 → 判定。draft 最多一次定向重出。"""
-    from primitives import (digest_bytes, engine_fingerprint, text_is_dark,
-                            witness_matches)
+    from primitives import digest_bytes, engine_fingerprint, text_is_dark, witness_same
     from assets import ROLE_AUTHORITATIVE_SOURCES
     manifest_file = _Path(manifest_path).expanduser().resolve()
     manifest = json_read_cached(manifest_file)
@@ -2012,8 +1947,8 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
         carried_witness = carried.get("witness") or {}
         carried_sha = carried_witness.get("sha256")
         carried_ok = bool(not strict_witness and carried_sha
-                          and witness_matches(carried_witness,
-                                              {"size": size, "mtime_ns": mtime_ns}))
+                          and witness_same(carried_witness,
+                                           {"size": size, "mtime_ns": mtime_ns}))
 
         def _bytes():
             return candidate.read_bytes() if candidate.is_file() else None
@@ -2038,7 +1973,7 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
         previous = (prev_results or {}).get(str(entry.get("asset_id")))
         reused_qc = None
         if previous and reuse_base is not None:
-            same_bytes = witness_matches(
+            same_bytes = witness_same(
                 previous.get("witness") or {},
                 {"size": size, "mtime_ns": mtime_ns, "sha256": image_sha},
                 strict=(reuse_base == "sha256"))
