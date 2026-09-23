@@ -111,7 +111,6 @@ def test_intelligence(tmp: Path):
     deck, pages = bundle["deck"], bundle["pages"]
     by_id = {p["id"]: p for p in pages}
 
-    check("判断链：schema = vao-plan-v3", bundle["schema"] == "vao-plan-v3")
     check("判断链：每页都有完整判断卡",
           all({"claim", "information_weight", "visual_role", "focus", "composition",
                "spatial", "media", "production"} <= set(p["judgment"]) for p in pages))
@@ -159,9 +158,10 @@ def test_intelligence(tmp: Path):
 
     # 构图：必须回答「为什么不是别的形式」
     comp = s02["judgment"]["composition"] if False else by_id["s02"]["judgment"]["composition"]
-    check("composition: 主张页 → big_whitespace 且带否决理由",
-          comp["chosen"] == "big_whitespace" and len(comp["rejected"]) >= 2
-          and all(r["why_not"] for r in comp["rejected"]))
+    check("composition: 主张页 → big_whitespace 且否决项有效（只留真实竞争）",
+          comp["chosen"] == "big_whitespace" and len(comp["rejected"]) <= 2
+          and all(r["why_not"] and r["option"] != comp["chosen"]
+                  for r in comp["rejected"]))
     check("composition: 数据证据页 → data_field",
           by_id["s03"]["judgment"]["composition"]["chosen"] in ("data_field",
                                                                 "asymmetric_tension"))
@@ -317,12 +317,12 @@ def test_intelligence(tmp: Path):
     check("plan: 缺 tension 与证据页缺 content 都有警告",
           "unresolved_content" in rules and "deck_contract" not in rules)
 
-    # 骨架：判断连理由与否决项一起进注释；同 bundle 必得同文本
+    # 骨架：判断连理由进注释（否决项不住这里，canonical owner 是 plan）；同 bundle 必得同文本
     sk1, sk2 = intel.build_skeleton(bundle), intel.build_skeleton(bundle)
     check("skeleton: 同 bundle 必得同文本", sk1 == sk2)
-    check("skeleton: 注释携带结论/权重/角色/构图与否决项",
+    check("skeleton: 注释携带结论/权重/角色/构图（不再复制否决项）",
           "结论[" in sk1 and "权重:" in sk1 and "角色:" in sk1
-          and "构图:" in sk1 and "否决" in sk1 and "媒体:" in sk1)
+          and "构图:" in sk1 and "否决" not in sk1 and "媒体:" in sk1)
     check("skeleton: 不给坐标（几何留给作者）",
           "估算高度" not in sk1 and '"x":' not in sk1.split("slides")[0])
 
@@ -374,8 +374,11 @@ def test_intelligence(tmp: Path):
                                      "whitespace_duty"}
           and set(j0["production"]) == {"must_place", "must_not", "density_target"}
           and set(j0["composition"]) == {"chosen", "why", "rejected"})
-    check("slim: 构图否决项收敛到 2 条（最强的两个替代）",
-          all(len(p["judgment"]["composition"]["rejected"]) == 2 for p in pages))
+    check("slim: 构图否决项至多 2 条（无竞争为空，只留真实竞争）",
+          all(len(p["judgment"]["composition"]["rejected"]) <= 2
+              and all(r["why_not"] and r["option"] != p["judgment"]["composition"]["chosen"]
+                      for r in p["judgment"]["composition"]["rejected"])
+              for p in pages))
 
     # 焦点：年份与编号不当第一落点
     year_focus = intel.focus_of(
@@ -701,14 +704,16 @@ def test_cli(tmp: Path):
     check("cli: plan 退出码 0 且产物齐", r.returncode == 0 and plan.is_file()
           and skeleton.is_file() and assets_out.is_file(), r.stderr[-200:])
     payload = json.loads(plan.read_text(encoding="utf-8"))
-    check("cli: plan.json 携带逐页判断卡（含否决项）",
-          all(p["judgment"]["composition"]["rejected"] for p in payload["pages"]))
+    check("cli: plan.json 携带逐页判断卡（否决项有效、无竞争可空）",
+          all(set(p["judgment"]["composition"]) == {"chosen", "why", "rejected"}
+              and all(r["why_not"] for r in p["judgment"]["composition"]["rejected"])
+              for p in payload["pages"]))
     check("cli: plan.json 无旧字段残留（direction/direction_execution/media）",
           "direction" not in payload["deck"] and "direction_execution" not in payload["deck"]
           and all("media" not in p for p in payload["pages"]))
     sk = skeleton.read_text(encoding="utf-8")
-    check("cli: 骨架把「为什么」与「否决」写进注释",
-          "为什么" in sk and "否决" in sk and "结论[" in sk)
+    check("cli: 骨架写「为什么」但不再复制否决（canonical owner 收口）",
+          "为什么" in sk and "结论[" in sk and "否决" not in sk)
 
     filled = make_build(tmp)
     out = tmp / "deck.pptx"

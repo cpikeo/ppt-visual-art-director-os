@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ppt-visual-art-director-os"
-version = "9.2.0"
+version = "9.4.0"
 description = "设计智能优先的 PPT 技能包：内容 → 逐页判断 → 原生可编辑 PPTX，单入口、一次判断、一次收口"
 readme = "README.md"
 requires-python = ">=3.10"

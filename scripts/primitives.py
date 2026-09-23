@@ -973,7 +973,6 @@ class RenderContext:
         self.warnings: list[str] = []
         # 与 warnings 等长的元素 id（没有身份的条目为 None）。
         # 两个列表必须同步增长——所以除 warn() 外不要直接 append warnings。
-        self.warning_ids: list[str | None] = []
 
     # -- 颜色 -------------------------------------------------------------
     def paint(self, value):
@@ -1048,7 +1047,7 @@ class RenderContext:
             msg = ("theme 未声明 negative 角色（chart_palette.negative 或 colors.negative），"
                    "负值用通用风险红兜底——请为主题显式派生一个风险色")
             if msg not in self.warnings:
-                self.warn(msg)        # 走 warn()，保持 warnings / warning_ids 等长
+                self.warn(msg)
             return self.color(self._NEGATIVE_FALLBACK)
         return None
 
@@ -1129,14 +1128,8 @@ class RenderContext:
         return x, y, w, h
 
     def warn(self, message: str, element_id=None) -> None:
-        """记一条编译期警告。element_id 可选，但**给了就能进 fix_plan 分组**。
-
-        修的是现有链路，不是新建一套：warnings 仍是字符串列表（compile_report
-        与所有下游读法不变），只是额外把元素 id 记进 warning_ids，
-        让 qa 能把「哪一个元素」填进修复包，而不是让 id 埋在文案里被正则猜。
-        """
+        """记一条编译期警告（字符串列表；唯一读法是 compile_report["warnings"]）。"""
         self.warnings.append(message)
-        self.warning_ids.append(str(element_id) if element_id else None)
 
 # （历史：此块曾住背景层免检阈值 BG_MIN_COVERAGE / BG_MIN_PROTECT_OPACITY，
 #   注释声称 guard 经 _cached_gate 读取——该函数不存在，两个常量零消费，已清。）
@@ -1279,15 +1272,13 @@ def compile_reuse(work, pptx, view, *, fast_probe=False, speed=None):
         if not witness_same(output_witness, witness(pptx)):
             return None
         report = dict(rec["report"])
-        report.update(reused=True, _cache_probe="size+mtime_ns",
-                      _cache_verified_sha256=stored_sha, output_sha256=stored_sha)
+        report.update(reused=True, output_sha256=stored_sha)
         return report
     current_sha = file_digest(pptx)
     if current_sha != stored_sha:
         return None
     report = dict(rec["report"])
-    report.update(reused=True, _cache_probe="content_sha256",
-                  _cache_verified_sha256=current_sha, output_sha256=current_sha)
+    report.update(reused=True, output_sha256=current_sha)
     return report
 
 

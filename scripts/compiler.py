@@ -1658,7 +1658,7 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
     （v7.2.0 审计删除了 checks/guard_rules 参数与内置 guard 块：全库 5 个调用点
     全部 checks=False，该路径从未执行，只是第二份治理入口的残骸。）
 
-    返回契约：{"passed","slides","warnings","file_bytes"}。
+    返回契约：{"passed","warnings","file_bytes"}。
 
     speed="fast"（v5.9）时：图片变换用低压缩级别编码，包级后处理仍做
     （时间戳与 XML 规格不变，产物仍确定性），只是不再为媒体条目重复压缩。
@@ -1781,16 +1781,12 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
     package = _postprocess_package(output_path)
     report = {
         "passed": len(ctx.warnings) == 0,
-        "slides": len(slides),
         "warnings": list(ctx.warnings),
-        # 与 warnings 等长的元素 id（无身份处为 None）：让 qa 的 fix_plan
-        # 能按元素分组，而不是从文案里正则猜 id。旧读法读 warnings 即可，不受影响。
-        "warning_ids": list(ctx.warning_ids),
         "file_bytes": output_path.stat().st_size,
         "output_path": str(output_path),
         "output_exists": output_path.exists(),
     }
-    # 编译内部计时：让「慢在哪里」是数出来的，不是猜出来的（进 repair packet.performance）。
+    # 编译内部计时：speed 供缓存复用门核对（其余随缓存报告备查）。
     report["performance"] = {
         "speed": ctx.speed,
         "image_transform_ms": round(ctx.timings.get("image_transform_ms", 0.0), 2),

@@ -1,3 +1,68 @@
+## 9.4.0 · 端到端根因收口（2026-09-23）
+
+总纲审查令执行轮：先追踪完整执行图找 Command/AI 交互膨胀的结构性根因，
+再按「删除 > 合并 > 简化」收口。**零新增**（文件/模块/规则/Warning/Reference/
+Schema 层/评分/缓存/QA 阶段/渲染/新抽象）。selftest 107/107；验收 23/23。
+
+### §01 追踪结论（trace.py，仓外可复跑）
+- 一次理解 / 一次判断 / 一次生产 / 一次验证已成立：12 页稿 think×1、
+  understand 恰 1 次/页、冷编译×1、热复用 0 编译 0 渲染、BLOCK 在 guard 处
+  熔断（0 编译 0 渲染 0 哈希）；修复=同一入口复跑，无 plan→asset→compile
+  级联。CLI=plan×1+check×(1+修复轮数)；Agent 交互只剩填几何与按 packet 修。
+- 真重复只剩 1 处：产物 PPTX 同轮哈希两次（_compile_step + release_manifest）
+  → manifest 加 `output_verified`（同轮信任传入值，直接调用仍现算）。
+  冷 release 11 次哈希→10 次，热复用 2 次→1 次。
+- 证伪的嫌疑：brief 已一轮一算（v9.3）；ghost.py 跨 scope 各算一次是两个问题；
+  预览图哈希是联络表缓存键（命中必需）；引擎指纹进程内缓存有效。
+
+### 删除（全库消费者审计，零读者且零信息）
+- 死 schema 戳：plan workflow、repair packet、think SCHEMA（+ 自测 pin →
+  107 条）、DNA store schema_note。资产链/QC/缓存 schema 有强制门，保留。
+- 死报告键：compile attestation_mode（reused 可推）、packet.facts（恒 {}）、
+  缓存 _cache_probe×2（恒等于 output_sha256）、dependency_missing（文案已载明）。
+- 死机制：warning_ids 全套（fix_plan 从未接线，id 硬编码 None 处不动）；
+  skipped_stages（跳过原因到不了任何输出）；compile reason/slides 明细槽；
+  verdict copier 收成 5 个被消费键。
+- `warn()` 的 element_id 参数保留（调用点多，零运行时成本；存储已删）。
+
+### 审计确认不动
+- 职责硬边界成立：compiler/ghost 零 plan 读取；verify 零 warning；
+  SKILL 6KB + 按需 references（JIT 表驱动）；无模板/组件/预设系统
+  （CARD_SEGMENTS 是资产提示词结构，非设计模板）。
+- performance/timing 遥测块保留：随 packet 给 agent，非 result 内 baggage。
+- DNA 九条冻结依旧（转经验库需新匹配语义=新增规则，本轮禁止）。
+
+## 9.3.0 · 结构减法 / 判断合并（2026-09-23）
+
+消费者审计驱动的减法轮：**不新增文件 / 模块 / 规则 / Warning / Reference /
+Schema 层 / 评分机制 / 缓存机制 / QA 阶段 / 渲染阶段 / 新抽象**。
+selftest 108 条断言全绿；验收 23/23（含 v9.2 十三行为）。
+
+### 唯一竞争证据（rejected 收口：最小改动）
+- `focus.rejected` 与 `composition.rejected` 保留为 Intelligence 的唯一竞争判断证据；
+  下游不再复制：`production.must_not` 只收 `information_weight.delete`（硬约束），
+  skeleton 不再打印否决行；compiler/verify/ghost/assets 从不读 rejected（全库确认）。
+- 构图 rejected 只留真实竞争：复用既有「内容成立」语义（score > 0，无竞争即 []），
+  不新增阈值。focus.rejected 无分制且被防卡片墙断言消费，原样保留。
+
+### 证据去重
+- 删除 dict 级 `brief_sha256`（plan workflow + assets manifest 两处记录，零读取；
+  dict 比对在 v9.2 已删，只剩记录）。文件级 `brief_file_sha256` 是 verify_sources
+  的篡改口径，保留且仍 BLOCK（验收覆盖）。
+- brief 文件哈希同一轮算两次（plan + prepare_manifest）→ 复用 plan 已算值；
+  直接调用（bundle 无 workflow）时才现算。
+
+### DNA 冻结
+- 职责钉死：经验库不是第二套 judgment；存量九条冻结，只修错不扩写。
+  完整转成经验条目留待 v9.4（需要新匹配语义，属新增规则，本轮禁止）。
+
+### 审计确认无需动（不制造 diff）
+- Compiler 从不读 plan 判断（只读 spec 几何/类型），已是哑执行器。
+- Ghost 从不读 plan，只做结构取证；两处 identity 均为缓存键，有真实消费者。
+- Verify 零 warning 输出（只有 error 进 fix_plan）；对话层已是 PASS/BLOCK + 根因组。
+- 全库 272 个函数零死函数；release 链路已是一次读取 / 一次身份 / 一次哈希。
+- `understanding` 占 plan 约 3%，内部回看 + 骨架标量 + selftest 形状断言消费，保留。
+
 ## 9.2.0 · 跨页校准 + 判断再瘦身（2026-09-23）
 
 端到端深度审计后的减法升级：**不新增文件、不新增逐页判断字段、不新增 QA 规则**。

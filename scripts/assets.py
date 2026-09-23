@@ -1531,11 +1531,14 @@ def prepare_manifest(manifest: dict, need: dict, bundle: dict, brief_path,
     if assets_dir:
         manifest["assets_dir"] = str(_Path(assets_dir).expanduser().resolve())
     manifest["schema"] = "vao-assets-v2"
+    _plan_wf = bundle.get("workflow") or {} if isinstance(bundle, dict) else {}
     manifest["workflow"] = {
         "schema": "vao-asset-chain-v2", "prepared_at": now(),
         "brief_path": str(_Path(brief_path).expanduser().resolve()),
-        "brief_sha256": digest(need),
-        "brief_file_sha256": file_digest(_Path(brief_path).expanduser()),
+        # brief 文件同一轮只哈希一次：复用 plan workflow 已算好的值；
+        # 直接调用（bundle 无 workflow）时才现算。dict 级 brief 哈希零消费者，已删。
+        "brief_file_sha256": (_plan_wf.get("brief_file_sha256")
+                              or file_digest(_Path(brief_path).expanduser())),
         "plan_path": str(_Path(plan_path).resolve()) if plan_path else None,
         "prompt_builder": "assets.build_asset_prompt",
     }

@@ -786,9 +786,10 @@ def verdict(spec, *, mode=None, guard_report, compile_report,
         "blocking_detail": [{"rule": c.get("rule"), "id": c.get("id"),
                              "msg": str(c.get("msg") or "")[:220]} for c in blocking],
         "guard": {"checks": len(guard.get("checks", [])), "errors": len(blocking)},
+        # result.compile 只抄被消费的键（打印 + manifest）；其余明细槽零读取，不抄。
         "compile": {k: cr.get(k) for k in
-                    ("passed", "skipped", "reason", "warnings", "slides", "file_bytes",
-                     "output_sha256", "output_path", "performance", "reused")},
+                    ("passed", "file_bytes",
+                     "output_sha256", "output_path", "reused")},
         "fix_plan": build_fix_plan(guard, cr),
         "asset_workflow": facts.get("asset_workflow"),
         "next_action": ("fix: " + ", ".join(codes)) if codes else (
@@ -842,8 +843,11 @@ def preview_issues(ghost, page_ids: list) -> list:
 
 
 def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
-                     workflow: dict | None = None, spec_hash: str | None = None) -> dict:
-    """发布清单：报告可追溯到当前 spec、产物字节与磁盘一致、预览页在稿内。"""
+                     workflow: dict | None = None, spec_hash: str | None = None,
+                     output_verified: bool = False) -> dict:
+    """发布清单：报告可追溯到当前 spec、产物字节与磁盘一致、预览页在稿内。
+
+    output_verified=True：调用方同一轮已哈希过产物字节，信任传入值，跳过二次读盘。"""
     from datetime import datetime, timezone
     from primitives import file_digest
 
@@ -868,6 +872,8 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
     if output_path or output_sha:
         if not output_path or not output_sha:
             issues.append("PPTX 凭证不完整：需要 output_path 与 output_sha256")
+        elif output_verified:
+            pass  # 同一轮 _compile_step 刚哈希过同一字节：信任传入值，不二次读盘
         else:
             try:
                 if file_digest(output_path) != output_sha:

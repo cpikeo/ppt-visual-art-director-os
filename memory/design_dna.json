@@ -1,6 +1,5 @@
 {
  "version": 3,
- "schema_note": "经验库（非参数库）：每条 = pattern + design_problem + judgment（可迁移的行为判断）+ works_because + avoid + when_not_to + proven。judgment 只写行为判断，不写色值/字号/版式结果——结果放 proven。九条原则，全部可跨题材迁移。",
  "entries": [
   {
    "id": "focus_one_visual_centre",

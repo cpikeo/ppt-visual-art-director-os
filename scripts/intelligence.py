@@ -21,7 +21,6 @@ import json
 import re
 from pathlib import Path
 
-SCHEMA = "vao-plan-v3"
 DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json"
 
 # ─────────────────────────────────────────────────────────────────────
@@ -578,6 +577,8 @@ def _composition_rejections(chosen: str, scores: dict) -> list[dict]:
     for option, score in sorted(scores.items(), key=lambda kv: -kv[1]):
         if option == chosen:
             continue
+        if score <= 0:
+            continue      # 内容不成立的算子不是竞争者：无竞争时 rejected 为空
         # 图像叙事 -99（图像没通过必要性测试）时恒为末位，进不了 [:2]，
         # 落选理由只可能是「输给内容成立的算子」——无需单独分支。
         if option == "data_field":
@@ -730,10 +731,10 @@ def production_spec(focus: dict, comp: dict, media: dict, u: dict,
         must.append({"role": "image", "type": "image"})
     if u.get("human") and media["decision"] == "none":
         must.append({"role": "witness_line", "type": "text"})
-    must_not = ([f"{r['option']}：{r['why_not']}" for r in focus.get("rejected") or []][:3]
-                + [f"{r['option']}：{r['why_not']}" for r in comp.get("rejected") or []][:2])
-    for doomed in ((weight or {}).get("delete") or [])[:2]:
-        must_not.append(f"删：{doomed}")
+    # must_not 只收真正独立的硬约束（信息权重的删除清单）：focus/comp 的
+    # rejected 是 Intelligence 的竞争证据，canonical owner 是它们自己——
+    # 生产规格只引用结论（删什么），不复制「为什么不是别的」。
+    must_not = [f"删：{doomed}" for doomed in ((weight or {}).get("delete") or [])[:2]]
     return {
         "must_place": must,
         "must_not": must_not,
@@ -1067,9 +1068,6 @@ RESULT_MEMORY_KEYS = {"palette", "color", "colors", "font", "fonts",
                       "image_style", "layout", "layout_result"}
 JUDGMENT_KEYS = {"hierarchy", "space", "media", "color_behavior",
                  "charts", "anchor_rule", "structure", "type_voice"}
-DNA_SCHEMA_NOTE = ("经验库（非参数库）：每条 = pattern + design_problem + judgment（可迁移的"
-                   "行为判断）+ works_because + avoid + when_not_to + proven。"
-                   "judgment 只写行为判断，不写色值/字号/版式结果——结果放 proven。")
 _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
 
 
@@ -1228,7 +1226,6 @@ def record_dna(entry, path=None, replace=False) -> dict:
         action = "added"
     store["entries"] = entries
     store["version"] = max(int(store.get("version") or 1), 2)
-    store.setdefault("schema_note", DNA_SCHEMA_NOTE)
     from primitives import json_write
     json_write(target, store, indent=1)
     return {"added": True, "action": action, "id": eid, "entries": len(entries),
@@ -1358,7 +1355,6 @@ def think(brief: dict) -> dict:
     coherence["adjustments"] = (budget_adjustments + (coherence["adjustments"] or [])
                                 or None)
     return {
-        "schema": SCHEMA,
         "deck": {
             "audience": audience or None,
             "decision": decision or None,
@@ -1547,11 +1543,7 @@ def build_skeleton(bundle: dict) -> str:
         L.append(f'        #    角色: {role.get("role")} — {role.get("why")}')
         L.append(f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）— '
                  f'{focus.get("why")}')
-        for r in (focus.get("rejected") or [])[:2]:
-            L.append(f'        #          否决 {r.get("option")}：{r.get("why_not")}')
         L.append(f'        #    构图: {comp.get("chosen")} — {comp.get("why")}')
-        for r in (comp.get("rejected") or [])[:2]:
-            L.append(f'        #          否决 {r.get("option")}：{r.get("why_not")}')
         L.append(f'        #    空间: 路径 {spatial.get("reading_path")} · 主区 '
                  f'{spatial.get("primary_zone")} · 留白职责 {spatial.get("whitespace_duty")}')
         L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')

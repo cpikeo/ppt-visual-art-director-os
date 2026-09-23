@@ -65,7 +65,9 @@ scripts/
 ## 设计经验记忆（DNA）
 
 `memory/design_dna.json` 只记录「为什么某个设计判断有效」——九条高迁移原则，
-不记坐标、不记色值、不记版式结果。规划时自动召回，release 通过后鼓励沉淀：
+不记坐标、不记色值、不记版式结果。规划时自动召回，release 通过后鼓励沉淀。
+职责冻结（v9.3 起）：DNA 是经验库不是第二套 judgment——只收真实项目验证过的
+例外/经验，不再新增通用原则；存量九条冻结，只修错不扩写：
 
 ```bash
 python scripts/vao.py dna --check          # 体检

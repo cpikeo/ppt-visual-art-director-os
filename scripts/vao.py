@@ -151,7 +151,7 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
              assets_out: str | None = None, assets_dir: str | None = None,
              asset_cache: str | None = None) -> dict:
     from intelligence import load_brief, think, build_skeleton
-    from assets import build_manifest, prepare_manifest, digest, now
+    from assets import build_manifest, prepare_manifest, now
 
     t0 = time.perf_counter()
     brief = load_brief(brief_path)
@@ -159,9 +159,10 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
     if not bundle.get("pages"):
         raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
                          "请至少给出一页的 title + content，再跑 plan")
-    bundle["workflow"] = {"schema": "vao-plan-chain-v2", "planned_at": now(),
+    # workflow 只留被消费的凭证：dict 级 brief 哈希零消费者（比对早删，只剩记录），已删；
+    # brief 文件哈希是 verify_sources 的篡改口径，保留且只算一次。
+    bundle["workflow"] = {"planned_at": now(),
                           "brief_path": str(Path(brief_path).expanduser().resolve()),
-                          "brief_sha256": digest(brief),
                           "brief_file_sha256": None}
     from primitives import file_digest
     bundle["workflow"]["brief_file_sha256"] = file_digest(Path(brief_path).expanduser())
@@ -226,7 +227,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
                     "passed": False, "slides": len(spec.get("slides") or []),
                     "warnings": [f"缺少编译依赖 {exc.name!r}；请运行 "
                                  "python -m pip install -r requirements.txt"],
-                    "file_bytes": None, "dependency_missing": exc.name}
+                    "file_bytes": None}
             else:
                 raise
     t_compile = time.perf_counter()
@@ -244,9 +245,6 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
             compile_report["output_sha256"] = actual_sha
             compile_report["output_path"] = str(output_path.resolve())
             compile_report["output_exists"] = True
-            compile_report["attestation_mode"] = ("cache_view_match"
-                                                  if compile_report.get("reused")
-                                                  else "content_hash")
         except (OSError, TypeError, ValueError):
             compile_report.setdefault("warnings", []).append(
                 f"编译输出不存在或不可读取: {output_path}")
@@ -350,7 +348,6 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
 def repair_packet(result: dict, mode: str, build, output) -> dict:
     """默认唯一面向作者的产物：BLOCK 时按根因分组（内嵌明细）；PASS 时一行结论。"""
     packet = {
-        "schema": "vao-repair-v2",
         "mode": mode,
         "build": str(build),
         "output": str(output),
@@ -365,7 +362,7 @@ def repair_packet(result: dict, mode: str, build, output) -> dict:
         "release_eligible": result.get("release_eligible", False),
         "next_action": result.get("next_action"),
         "timing": result.get("performance"),
-        "facts": result.get("facts") or {},
+        # 无 facts 键：verdict 不产出自由事实，packet 只收口已定义的修复字段。
     }
     return packet
 
@@ -451,14 +448,12 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                   "speed": speed}
         if not prof["compile"]:
             compile_report = {"passed": True, "skipped": True, "warnings": [],
-                              "slides": len(normalized.get("slides") or []),
-                              "file_bytes": None, "reason": "spec_mode_no_compile",
+                              "file_bytes": None,
                               "output_exists": False, "output_sha256": None}
             timing.update(compile_ms=0, attestation_ms=0, cache_reason="not_compiled")
         elif guard_errors:
             compile_report = {"passed": False, "skipped": True, "warnings": [],
-                              "slides": len(normalized.get("slides") or []),
-                              "file_bytes": None, "reason": "engineering_gate",
+                              "file_bytes": None,
                               "output_exists": False, "output_sha256": None}
             timing.update(compile_ms=0, attestation_ms=0, cache_reason="guard_error")
         else:
@@ -474,27 +469,20 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         if asset_binding is not None:
             result["asset_binding"] = asset_binding
 
-        # 预览证据：release 自动出；draft 只在显式要求时出；预算不足跳过并留痕。
+        # 预览证据：release 自动出；draft 只在显式要求时出；预算不足跳过
+        # （无预览产物即跳过，不单独立账——skipped_stages 零消费者，已删）。
         ghost = None
-        skipped_stages = []
         preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
                                   if mode == "release" else None)
         if preview_dir and result.get("passed") and workflow.get("status") != "BLOCKED":
             left = None if not deadline else (deadline - (time.perf_counter() - started))
-            if left is not None and left < GHOST_MIN_BUDGET_S:
-                skipped_stages.append({"stage": "ghost_preview",
-                                       "reason": f"剩余预算 {left:.1f}s < {GHOST_MIN_BUDGET_S:.0f}s"})
-            else:
+            if left is None or left >= GHOST_MIN_BUDGET_S:
                 t_ghost = time.perf_counter()
                 ghost = _ghost(normalized, preview_dir, base_path=build.parent,
                                image_bytes=snapshots, decoded=decoded,
                                speed=speed, limit=ghost_pages,
                                output_sha=(result.get("compile") or {}).get("output_sha256"))
                 timing["ghost_ms"] = round((time.perf_counter() - t_ghost) * 1000, 1)
-        elif preview_dir:
-            skipped_stages.append({"stage": "ghost_preview",
-                                   "reason": "本轮判定未通过：不为失败的稿子留视觉背书"})
-        result["skipped_stages"] = skipped_stages
         result["performance"] = {**result.get("performance", {}),
                                  "ghost_ms": timing.get("ghost_ms"),
                                  "total_ms": timing["total_ms"]}
@@ -504,13 +492,14 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         if mode == "release":
             from verify import release_manifest
             manifest = release_manifest(normalized, result, ghost_preview=ghost,
-                                        workflow=workflow, spec_hash=spec_hash)
+                                        workflow=workflow, spec_hash=spec_hash,
+                                        output_verified=True)
             if manifest["status"] == "BLOCKED" and result.get("passed"):
                 from verify import fail_result
                 errors = manifest["validation"]["issues"] or ["发布凭证无效"]
                 fail_result(result, errors)
                 manifest = release_manifest(normalized, result, ghost_preview=ghost,
-                                            workflow=workflow)
+                                            workflow=workflow, output_verified=True)
             manifest_path = output_path.with_suffix(".manifest.json")
             _json_write(manifest_path, manifest)
             result["manifest_path"] = str(manifest_path)
