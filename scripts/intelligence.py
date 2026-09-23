@@ -71,9 +71,12 @@ VISUAL_ROLES = ("establish", "explain", "compare", "prove", "persuade", "summari
 _NUM = re.compile(r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*(%|％|pp|倍|万|亿|元|美元|家|人|个|台|次|天|月|年|小时|分钟|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
+_NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|[不未]超[过越]")
 _COMPARISON_WORDS = ("对比", "相比", "vs", " versus ", "高于", "低于", "前者", "后者",
-                     "优于", "落后", "差距", "benchmark", "对标", "增减")
+                     "优于", "落后", "差距", "benchmark", "对标", "增减",
+                     "超过", "超越")
 _SERIES_WORDS = ("趋势", "增长", "下降", "同比", "环比", "逐年", "路径", "曲线",
+                 "涨", "跌", "下滑", "回升", "掉到", "掉至", "跌到", "跌至",
                  "trend", "growth", "yoy", "qoq")
 _SEQUENCE_WORDS = ("步骤", "流程", "阶段", "路径", "迭代", "先", "然后", "接着", "最后",
                    "roadmap", "phase", "step", "milestone", "里程碑")
@@ -103,12 +106,12 @@ _CHANGE_WORDS = ("降至", "降到", "减到", "增至", "提升", "增加", "�
                  "grow", "drop", "reach", "cut", "exceed")
 _ASK_WORDS = ("请批准", "请决定", "请审议", "请确认", "批准", "表决", "approve", "sign off",
               "approval")
-_HUMAN_WORDS = ("客户", "用户", "团队", "员工", "患者", "学生", "伙伴", "受众", "消费者",
+_HUMAN_WORDS = ("客户", "用户", "团队", "员工", "患者", "伙伴", "受众", "消费者",
                 "customer", "user", "team", "people", "community")
 # 内容是不是「实体世界」：只有实体世界的开场才靠图像建立现场；
 # 信息世界（纸/墨）的开场由排版与字阶建立——避免策略稿一律配图。
 _PHYSICAL_SUBJECTS = ("stone_architecture", "metal_glass", "botanical", "water_sky",
-                      "textile_domestic", "stage_screen")
+                      "textile_domestic", "stage_screen", "ceramic_craft")
 
 # 图像名额的价值权重：证词（图像就是证据）> 建立（图像就是主语）> 其余角色。
 # 这不是风格偏好，是「删掉这张图，这一页少掉的是什么」的排序。
@@ -127,7 +130,7 @@ _MATERIAL_LEXICON: dict[str, dict] = {
         "textures": ("paper", "ink"),
     },
     "stone_architecture": {
-        "words": ("建筑", "城市", "场所", "场地", "空间", "结构", "工程", "基础设施", "地产",
+        "words": ("建筑", "城市", "场所", "场地", "空间", "结构", "基础设施", "地产",
                   "园区", "architecture", "city", "infrastructure", "built"),
         "material": "honed stone, board-formed concrete, structural shadow lines",
         "light": "single raking light across a plane",
@@ -168,6 +171,17 @@ _MATERIAL_LEXICON: dict[str, dict] = {
         "material": "light as material on a dark stage, wet black floor, glass reflection",
         "light": "controlled stage key, deep falloff",
         "textures": ("stage", "screen"),
+    },
+    # 手作/器物世界：luxury/museum 两域的主题实体（青瓷/文物/长卷）。
+    # 与 textile_domestic 分工：纺织=生活消费表面，陶瓷=被手长期触摸的器物。
+    "ceramic_craft": {
+        "words": ("青瓷", "瓷器", "陶瓷", "瓷", "釉", "窑", "瓷土", "匠人", "手作",
+                  "漆器", "银壶", "银器", "青铜", "玉器", "书画", "长卷", "卷轴",
+                  "文物", "藏品", "展品",
+                  "ceramic", "porcelain", "kiln", "glaze", "craft", "artifact"),
+        "material": "kiln glaze on clay, matte crackle, pigment settling into earth",
+        "light": "single warm side light, long soft shadows",
+        "textures": ("glaze", "clay"),
     },
 }
 _REGISTER_WORDS = {
@@ -230,6 +244,9 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     # 出处标注（「（来源：门店台账）」）不是内容：世界推导、人物/现场判定、
     # 证据形态都不该被它触发——否则一张台账的名字就能给整页配图。
     body = _SOURCE_TAIL.sub("", text).strip() or text
+    # 「不超过/未超过」是界限不是对比：先剥掉再匹配，否则「误差不超过5%」
+    # 会被判成两端对比（A超过B但C不超过D——真的超过不受影响）。
+    cmp_body = _NEGATED_EXCEED.sub("", body)
     nums = numerals(text)
     ev = [n for n in nums if not n["year"]]   # = evidence_numerals(text)，复用同一次扫描
     # 标题重复正文的数字、同一数字写两遍：那是**同一个事实**，不是两个证据。
@@ -237,7 +254,7 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     distinct = len({(round(n["value"], 6), n.get("unit") or "") for n in ev})
     chars = max(len(text), 1)
     modes: dict[str, float] = {}
-    if _hit(body, _COMPARISON_WORDS) or (distinct >= 2 and has_chart):
+    if _hit(cmp_body, _COMPARISON_WORDS) or (distinct >= 2 and has_chart):
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
     if _hit(text, _SERIES_WORDS) or distinct >= 3:
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
@@ -262,7 +279,7 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
         "subjects": subjects,
         "human": _hit(body, _HUMAN_WORDS),
         "scene": _hit(body, _SCENE_WORDS),
-        "comparison": _hit(body, _COMPARISON_WORDS),
+        "comparison": _hit(cmp_body, _COMPARISON_WORDS),
         "has_chart": bool(has_chart),
     }
 
@@ -274,6 +291,11 @@ _SOURCE_TAIL = re.compile(r"[（(]\s*(来源|数据来源|source)[:：]?.*?[)）
 _META_LINE = re.compile(r"[·｜|]|@|https?://|confidential|机密", re.I)
 _CREDENTIAL_WORDS = ("提案", "汇报人", "主讲", "日期", "部门", "内部资料", "谢谢", "thanks",
                      "subtitle", "presented by")
+
+
+def _fired(sent: str, words) -> str:
+    """命中词回显：claim.why 里点名是哪一个词，不只说有一类词。"""
+    return next((w for w in words if w in sent), "")
 
 
 def extract_claim(item: dict) -> dict:
@@ -298,38 +320,66 @@ def extract_claim(item: dict) -> dict:
         cands.append((title, bonus))
     for rank, sent in enumerate(_sentences(content)):
         cands.append((_SOURCE_TAIL.sub("", sent).strip(), 0.8 if rank == 0 else 0.0))
-    best, best_score = None, 0.0
-    for sent, bonus in cands:
+    best, best_score, best_bits = None, 0.0, []
+    for rank, (sent, bonus) in enumerate(cands):
         if not sent:
             continue
         score = bonus
+        # §03 取舍写到页上：why 不再是同一句套话——哪一句赢、靠哪几个分赢，
+        # 没赢的差在哪，作者照着 why 就能改。
+        is_title = bool(title) and rank == 0
+        bits = ["标题" if is_title else
+                "首句" if rank == (1 if title else 0) else "正文"]
+        if is_title and not content:
+            bits.append("无内容支撑")
+        if is_title and title.endswith(_TOPIC_TAILS):
+            bits.append("话题结尾扣分")
         if _hit(sent, _CONCLUSION_WORDS):
             score += 2.0
-        if evidence_numerals(sent):
+            bits.append(f"结论措辞「{_fired(sent, _CONCLUSION_WORDS)}」")
+        if _hit(sent, _ASK_WORDS):
+            # 要决定的话本身就是结论（「请批准试点预算」没写也得算写了）：
+            # 否则 ask 全在标题里时结论判 absent，role 会把要决定的页判成别的。
+            score += 2.0
+            bits.append(f"要决定「{_fired(sent, _ASK_WORDS)}」")
+        snums = evidence_numerals(sent)
+        if snums:
             # 没有内容时，光是数字说不上是结论（「18 个月落地节奏」是话题不是主张）：
             # 证据缺席的页面只能靠结论措辞立住，或者老实标 absent。
             score += 1.6 if content else 0.0
+            bits.append("数字「" + "/".join(n["raw"] for n in snums[:3]) + "」")
         if _hit(sent, _CHANGE_WORDS):
             score += 0.8
+            bits.append(f"变化「{_fired(sent, _CHANGE_WORDS)}」")
         if len(sent) <= 42:
-            score += 0.4
+            # 标题（rank 0 且有标题时）不吃短句分：短标题是话题标签，
+            # 只能靠结论措辞/数字立住，否则与 43–64 字标题一样止于 1.2 → absent。
+            if rank > 0 or not title:
+                score += 0.4
+                bits.append("短句可复述")
         elif len(sent) > 64:
             # 太长的一句记不住：结论必须是观众离场后可复述的一句话，超长只可能是论述。
             score -= 1.0
+            bits.append("超长难复述扣分")
         if _META_LINE.search(sent) or _hit(sent, _CREDENTIAL_WORDS):
             score -= 2.0     # 署名/提案/日期行不是结论
+            bits.append("署名行扣分")
         if _hit(sent, _TOPIC_MARKERS):
             # 「如何使用/有哪些/概览」是话题：它说了要讲什么，没说结论——
             # 数字与短句都不该把它救成主张。
             score -= 2.5
+            bits.append("话题标签扣分")
         if score > best_score:
-            best, best_score = sent, score
+            best, best_score, best_bits = sent, score, bits
     threshold = 1.2 if content else 2.0
-    if best and best_score >= threshold:
+    if best and round(best_score, 6) > threshold:
         return {"text": best, "source": "extracted",
-                "why": "内容里带结论/数字的一句，可复述；发布前请作者确认口径。"}
+                "why": " ＋ ".join(best_bits) + "；发布前请作者确认口径。"}
+    pos = best_bits[0] if best_bits else "（无候选）"
     return {"text": None, "source": "absent",
-            "why": "内容里没有可复述的结论句：先补一句结论，或把这一页降级为章节/证据页。"}
+            "why": (f"最接近的是{pos}（{' ＋ '.join(best_bits[1:]) or '只有位置分'}，"
+                    f"{round(best_score, 2)}分）：没有结论措辞/数字/决定句——"
+                    "先补一句结论，或把它降级为章节/证据页。")}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -491,7 +541,7 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict
                     ["card_stack", "卡片堆叠把结构压成清单，关系丢失"]]
     elif role == "persuade" or (role == "establish" and len(claim_text) <= 42):
         choice = {"element_role": "statement_text", "type": "text",
-                  "why": "焦点是那句直面疑虑的话：字阶与留白负责它的分量。"}
+                  "why": "焦点是这一页要立住的那句话：字阶与留白负责它的分量。"}
         rejected = [["banner_quote", "色块包一句引用：包起来的句子看起来像广告"],
                     ["stock_photo", "配一张氛围图：把不可回答的问题装饰掉"]]
     else:
@@ -770,14 +820,15 @@ _ACCENT = {"paper_ink": ("#9C3B26", "印泥/朱砂：一句话被盖了章"),
            "botanical": ("#5F7A55", "苔绿：生长一侧的颜色"),
            "water_sky": ("#2F6E78", "深青：冷而深的水色"),
            "textile_domestic": ("#A2563F", "陶土：被手触摸过的颜色"),
-           "stage_screen": ("#3B6FE0", "舞台信号蓝：黑暗里的一束光")}
+           "stage_screen": ("#3B6FE0", "舞台信号蓝：黑暗里的一束光"),
+    "ceramic_craft": ("#4F6E6A", "窑青/铜绿：釉自己的颜色")}
 _NEUTRAL_ACCENT = ("#6E6A63", "中性矿物灰：没有主题实体时最克制的一支（不与任何实体世界撞色）")
 _TYPE_VOICE = {"document": ("austerity with human warmth：窄栏、大字阶、克制的粗体",
                             "serif"), "stage": ("aperture：大尺度、强对比、极少的字",
                                                 "sans"),
                "working": ("clarity：信息优先，字体是最安静的工具", "sans")}
 _FONTS = {"serif": {"cn": "Source Han Serif SC", "latin": "Georgia"},
-          "sans": {"cn": "Source Han Sans SC", "latin": "Arial"}}
+          "sans": {"cn": "Source Han l"}}
 
 
 def derive_world(brief: dict, understanding: list) -> dict:

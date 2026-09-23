@@ -29,11 +29,49 @@ _FONT_CANDIDATES = {
         "/Library/Fonts/Arial.ttf",
         "C:/Windows/Fonts/arial.ttf",
     ),
+    "latin_serif": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+        "/Library/Fonts/Times New Roman.ttf",
+        "C:/Windows/Fonts/times.ttf",
+    ),
     "cjk": (
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
         "/System/Library/Fonts/PingFang.ttc",
         "C:/Windows/Fonts/msyh.ttc",
+    ),
+    "cjk_serif": (
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/System/Library/Fonts/Songti.ttc",
+        "C:/Windows/Fonts/simsun.ttc",
+    ),
+}
+# 粗体候选：产物里 PowerPoint 逐 run 真加粗（set_run_font bold=True），预览此前
+# **从不**换粗体字面（cjk 分支连 candidates 都不动），于是同一页「产物粗、预览细」，
+# 字重反差在预览里根本看不见——保真缺口，与「预览宽容度必须 = 交付链」冲突。
+_FONT_BOLD_CANDIDATES = {
+    "latin": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ),
+    "latin_serif": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+        "/Library/Fonts/Times New Roman Bold.ttf",
+        "C:/Windows/Fonts/timesbd.ttf",
+    ),
+    "cjk": (
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+    ),
+    "cjk_serif": (
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+        "/System/Library/Fonts/Songti.ttc",
+        "C:/Windows/Fonts/simsunb.ttf",
     ),
 }
 
@@ -45,19 +83,27 @@ def _has_cjk(text: str) -> bool:
     return any(_is_cjk(c) for c in str(text))
 
 
-def _font(size: float, *, cjk: bool = False, bold: bool = False) -> ImageFont.ImageFont:
+def _font_family(element: dict, ctx: RenderContext) -> str:
+    """元素字体 → 预览字面族。走主题字体表（与 compiler 同一张表），
+    只分衬线/无衬线两个落点：预览不假装拥有字体，但不该把宋体页画成黑体页。"""
+    fam = str(element.get("font") or "")
+    if not fam:
+        return ""
+    fonts = getattr(ctx, "fonts", None) or {}
+    resolved = str(fonts.get(fam, fam))
+    return "_serif" if "serif" in resolved.lower() or "宋" in resolved or "song" in resolved.lower() else ""
+
+
+def _font(size: float, *, cjk: bool = False, bold: bool = False,
+          family: str = "") -> ImageFont.ImageFont:
     px = max(1, int(round(size)))
-    key = ("cjk" if cjk else "latin", px, bold)
+    base = ("cjk" if cjk else "latin") + ("_serif" if "_serif" in str(family) else "")
+    key = (base, px, bold)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
-    candidates = list(_FONT_CANDIDATES["cjk" if cjk else "latin"])
-    if bold and not cjk:
-        candidates = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-            "/Library/Fonts/Arial Bold.ttf",
-            "C:/Windows/Fonts/arialbd.ttf",
-        ] + candidates
+    candidates = list(_FONT_CANDIDATES[base])
+    if bold:
+        candidates = list(_FONT_BOLD_CANDIDATES[base]) + candidates
     loaded: ImageFont.ImageFont | None = None
     for name in candidates:
         try:
@@ -270,7 +316,8 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
         text = text.upper()
     pad = int(round(float(e.get("padding", 0) or 0) * scale))
     size = float(e.get("size", 18) or 18) * scale
-    font = _font(size, cjk=_has_cjk(text), bold=bool(e.get("bold")))
+    font = _font(size, cjk=_has_cjk(text), bold=bool(e.get("bold")),
+                 family=_font_family(e, ctx))
     color = _rgba(ctx, e.get("color") or "ink", e.get("opacity"), fallback=(24, 24, 24))
     lines = _wrap_lines(text, font, w - 2 * pad) if bool(e.get("wrap", True)) else text.split("\n")
     max_lines = e.get("max_lines")

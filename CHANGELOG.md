@@ -1,3 +1,19 @@
+## 9.5.0 · Intelligence Judgment Quality（2026-09-23）
+
+修正理解层的语义识别与结论判断，使 Visual Art Director 在真实内容中产生更诚实的
+focus、role、composition 与 media judgment；最短执行链、可编辑性、QA、性能与验证
+体系不变。**零新增**（文件/模块/规则/Warning/Reference/Schema/评分/QA 阶段/渲染阶段）。
+selftest 107/107；验收 23/23。
+
+- 理解层：比较否定前缀（不超过→number）、材料/器物识别（窑釉陶瓷≠石材）、
+  裸趋势词（涨跌掉至→series）、去两处子串误撞（学生、工程）、ask 意图（请批准/请决定）。
+- 结论诚实：裸标题不再冒充结论；claim.why 逐页给命中依据（位置＋结论措辞＋数字），
+  无结论时写明最接近者差在哪；focus 措辞去套话。
+- 预览保真（像素验收前提）：ghost 恢复 CJK 粗体字面与元素字族——此前预览永远细体、
+  永远无衬线，字重/世界差异在预览里不可见，与交付链不一致。
+- 像素验收：Build/Pixel Evidence Pass（仓外 harness），5 域 × 6 页真实 build +
+  可编辑 PPTX 抽查。
+
 ## 9.4.0 · 端到端根因收口（2026-09-23）
 
 总纲审查令执行轮：先追踪完整执行图找 Command/AI 交互膨胀的结构性根因，
