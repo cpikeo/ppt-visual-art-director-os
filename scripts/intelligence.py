@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 
@@ -70,7 +69,7 @@ EVIDENCE_MODES = ("comparison", "series", "number", "structure", "sequence",
                   "proposition", "none")
 VISUAL_ROLES = ("establish", "explain", "compare", "prove", "persuade", "summarize")
 
-_NUM = re.compile(r"(-?\d+(?:[.,]\d+)?)\s*(%|％|pp|倍|万|亿|元|美元|家|人|个|台|次|天|月|年|小时|分钟|分|秒)?")
+_NUM = re.compile(r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*(%|％|pp|倍|万|亿|元|美元|家|人|个|台|次|天|月|年|小时|分钟|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
 _COMPARISON_WORDS = ("对比", "相比", "vs", " versus ", "高于", "低于", "前者", "后者",
@@ -205,14 +204,16 @@ def numerals(text: str) -> list[dict]:
     """文本里的数字及其单位（结论的候选承载体）。
 
     年份（1900–2100 的四位无单位数字）单独标记：它是时间坐标，不是证据量——
-    把「2026」当作本页最大的数字是典型的误判。
+    把「2026」当作本页最大的数字是典型的误判。字母紧贴的数字（Q1/V2）是编号
+    不是量，也不进证据。
     """
     out = []
     for m in _NUM.finditer(str(text or "")):
         raw = m.group(0).strip()
         value = float(m.group(1).replace(",", ""))
         unit = (m.group(2) or "").strip()
-        year = (not unit) and 1900 <= value <= 2100 and "." not in m.group(1)
+        # 「2026」「2026 年」都是时间坐标；「3 年」才是时长（值不在年份区间）。
+        year = unit in ("", "年") and 1900 <= value <= 2100 and "." not in m.group(1)
         out.append({"raw": raw, "value": value, "unit": unit, "year": year})
     return out
 
@@ -231,7 +232,7 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     # 证据形态都不该被它触发——否则一张台账的名字就能给整页配图。
     body = _SOURCE_TAIL.sub("", text).strip() or text
     nums = numerals(text)
-    ev = evidence_numerals(text)
+    ev = [n for n in nums if not n["year"]]   # = evidence_numerals(text)，复用同一次扫描
     # 标题重复正文的数字、同一数字写两遍：那是**同一个事实**，不是两个证据。
     # 判断证据形态与密度按去重后的数量算；「重复」这件事本身归信息权重管。
     distinct = len({(round(n["value"], 6), n.get("unit") or "") for n in ev})
@@ -245,8 +246,11 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
         modes["number"] = 0.7
     if _hit(body, _STRUCTURE_WORDS):
         modes["structure"] = 0.65
-    if _hit(body, _SEQUENCE_WORDS) or SEQUENCE_MARKERS & set(body):
+    if _hit(body, _SEQUENCE_WORDS):
         modes["sequence"] = 0.6
+    if SEQUENCE_MARKERS & set(body):
+        # 箭头链本身就是顺序的形状：它比孤立数字更接近这一页的结构。
+        modes["sequence"] = 0.75
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
     dominant = max(modes, key=lambda k: (modes[k], -EVIDENCE_MODES.index(k))) if modes else "none"
@@ -280,7 +284,7 @@ def extract_claim(item: dict) -> dict:
     """
     declared = str(item.get("insight") or "").strip()
     if declared:
-        return {"text": declared, "source": "declared", "verify": False,
+        return {"text": declared, "source": "declared",
                 "why": "作者已在 brief 声明本页结论，规划不重写。"}
     content = str(item.get("content") or "").strip()
     title = str(item.get("title") or "").strip()
@@ -310,6 +314,9 @@ def extract_claim(item: dict) -> dict:
             score += 0.8
         if len(sent) <= 42:
             score += 0.4
+        elif len(sent) > 64:
+            # 太长的一句记不住：结论必须是观众离场后可复述的一句话，超长只可能是论述。
+            score -= 1.0
         if _META_LINE.search(sent) or _hit(sent, _CREDENTIAL_WORDS):
             score -= 2.0     # 署名/提案/日期行不是结论
         if _hit(sent, _TOPIC_MARKERS):
@@ -320,9 +327,9 @@ def extract_claim(item: dict) -> dict:
             best, best_score = sent, score
     threshold = 1.2 if content else 2.0
     if best and best_score >= threshold:
-        return {"text": best, "source": "extracted", "verify": True,
+        return {"text": best, "source": "extracted",
                 "why": "内容里带结论/数字的一句，可复述；发布前请作者确认口径。"}
-    return {"text": None, "source": "absent", "verify": True,
+    return {"text": None, "source": "absent",
             "why": "内容里没有可复述的结论句：先补一句结论，或把这一页降级为章节/证据页。"}
 
 
@@ -450,8 +457,10 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict
     没过测试的页面上根本不存在图像，第一落点自然回到文字。
     """
     media = media or {}
-    carried = numerals(claim.get("text") or "") or (
-        (u.get("numerals") or [])[:1] if u.get("evidence") in ("number", "series") else [])
+    # 承载结论的必须是证据量：年份（2026）与编号（Q1）不当第一落点。
+    carried = evidence_numerals(claim.get("text") or "") or (
+        [n for n in (u.get("numerals") or []) if not n.get("year")][:1]
+        if u.get("evidence") in ("number", "series") else [])
     has_image = media.get("decision") in ("required", "reuse")
     claim_text = (claim.get("text") or "").strip()
     if has_image:
@@ -469,7 +478,7 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict
                     ["radar", "雷达图形状相似度高，差异看不出来"],
                     ["side_by_side_cards", "左右卡片墙：视觉等权，读者得自己找答案"]]
     elif carried and role in ("prove", "summarize", "compare"):
-        raw = carried[0] if isinstance(carried[0], str) else carried[0]["raw"]
+        raw = carried[0]["raw"]
         choice = {"element_role": "kpi_main", "type": "chart",
                   "why": f"「{raw}」就是结论本身：让它成为页面上最大的对象，"
                          "并给出基期参照，读者不需要心算。"}
@@ -497,14 +506,8 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict
 # ─────────────────────────────────────────────────────────────────────
 # 7 · 构图推理（Composition Reasoning）
 # ─────────────────────────────────────────────────────────────────────
-COMPOSITIONS = {
-    "big_whitespace": "大留白：一个主语 + 大片安静，空间本身承担权威感",
-    "editorial": "编辑排版：字阶与栏宽建立阅读节奏，像一本杂志的一页",
-    "data_field": "数据场：区域划分 + 直接标注，证据铺满但秩序在网格里",
-    "image_narrative": "图片叙事：图像承担现场与情绪，文字退到解说位",
-    "linear_structure": "线性结构：位置即步骤，轴与间距说话",
-    "asymmetric_tension": "非对称张力：一大一小、一重一轻，靠尺度对比建立方向",
-}
+# 六个算子的中文释义住文档（references/judgment.md §算子 / SKILL 构图行）：
+# plan 里 chosen 键已唯一确定算子，label 是零信息重复，不再输出。
 
 
 # 构图算子：每个算子只在**内容的形状**合适时成立。没有「页面类型 → 构图」的查表；
@@ -520,12 +523,14 @@ _GRAMMAR_PREFERENCE = {
 }
 
 
-def _composition_choice(u: dict, role: str, media: dict, text_len: int,
-                        grammar: str) -> dict:
-    """一次算完：适配分 → 选中的算子 + 为什么 + 其余五个为什么落选。
+def _composition_scores(u: dict, role: str, media: dict, text_len: int,
+                        grammar: str, claim: dict | None = None) -> dict[str, float]:
+    """各算子的适配分（内部用，用完即弃；plan 里只留 chosen/why/rejected）。
 
-    分来自这一页的事实（证据形态 / 数字个数 / 是否有人 / 图像是否通过必要性测试），
-    不来自页面类型。分数用完即弃——留下的只有**判断与理由**。"""
+    分来自这一页的事实（结论有无 / 证据形态 / 数字个数 / 内容体量 /
+    图像是否通过必要性测试），不来自页面类型。
+    """
+    claim = claim or {}
     ev = str(u.get("evidence") or "")
     n = int(u.get("distinct_numerals") or 0)
     dense = float(u.get("numeric_density") or 0.0)
@@ -535,17 +540,19 @@ def _composition_choice(u: dict, role: str, media: dict, text_len: int,
     # 图像一旦通过必要性测试，它就是这一页的第一落点——构图必须承载它，
     # 否则「焦点是图、构图是留白」自相矛盾。
     s["image_narrative"] = (4.5 if has_image else -99.0) + (1.5 if role == "establish" else 0.0)
-    s["data_field"] = (3.0 if ev in ("data", "series", "comparison") else 0.0) \
+    s["data_field"] = (3.0 if ev in ("series", "comparison") else 0.0) \
         + (2.0 if n >= 3 else 0.0) + (1.0 if dense >= 6 else 0.0) \
         + (0.5 if u.get("comparison") else 0.0)
     s["big_whitespace"] = (3.0 if (n == 1 and ev in ("number", "series")) else 0.0) \
         + (2.0 if role == "persuade" else 0.0) + (1.0 if text_len <= 40 else 0.0) \
         - (1.5 if n >= 3 else 0.0)
-    s["linear_structure"] = (3.0 if ev in ("sequence", "structure") else 0.0) \
-        + (1.0 if u.get("temporal") else 0.0)
+    if not claim.get("text") and ev in ("none", "proposition"):
+        # 无结论页用最少结构：结论没落定之前铺开，只会把缺席藏起来。
+        s["big_whitespace"] += 1.0
+    s["linear_structure"] = (3.0 if ev in ("sequence", "structure") else 0.0)
     s["asymmetric_tension"] = (2.5 if u.get("comparison") else 0.0) \
         + (1.5 if role == "compare" else 0.0) + (1.0 if n >= 2 else 0.0)
-    s["editorial"] = (2.0 if ev in ("prose", "mixed") or text_len > 60 else 0.0) \
+    s["editorial"] = (2.0 if text_len > 60 else 0.0) \
         + (1.5 if role == "summarize" else 0.0) + (1.0 if n == 0 else 0.0) \
         + (0.5 if text_len > 120 else 0.0)
     if role == "establish" and not has_image:
@@ -553,6 +560,13 @@ def _composition_choice(u: dict, role: str, media: dict, text_len: int,
     preferred = _GRAMMAR_PREFERENCE.get(str(grammar or "").strip())
     if preferred and s.get(preferred, -99) > 0:
         s[preferred] += 0.75                     # 世界的构图纪律只做同分倾向
+    return s
+
+
+def _composition_choice(u: dict, role: str, media: dict, text_len: int,
+                        grammar: str, claim: dict | None = None) -> dict:
+    """一次算完：适配分 → 选中的算子 + 为什么 + 落选的为什么落选。"""
+    s = _composition_scores(u, role, media, text_len, grammar, claim)
     order = {name: i for i, name in enumerate(_COMPOSITION_TIEBREAK)}
     chosen = max(s, key=lambda k: (s[k], -order[k]))
     return {"chosen": chosen, "rejected": _composition_rejections(chosen, s)}
@@ -564,9 +578,9 @@ def _composition_rejections(chosen: str, scores: dict) -> list[dict]:
     for option, score in sorted(scores.items(), key=lambda kv: -kv[1]):
         if option == chosen:
             continue
-        if score <= -50:
-            why_not = "本页图像没通过必要性测试：图像叙事在本页不成立"
-        elif option == "data_field":
+        # 图像叙事 -99（图像没通过必要性测试）时恒为末位，进不了 [:2]，
+        # 落选理由只可能是「输给内容成立的算子」——无需单独分支。
+        if option == "data_field":
             why_not = "数字不足或不同基线：铺开只会把结论稀释成背景"
         elif option == "big_whitespace":
             why_not = "这一页需要同屏参照，大留白会把该比的拆散"
@@ -578,8 +592,8 @@ def _composition_rejections(chosen: str, scores: dict) -> list[dict]:
             why_not = "图像只能当氛围用：装饰性图像一律不进这一页"
         else:
             why_not = "这一页的字数与数字撑不起编辑节奏：排版会显得在凑版面"
-        out.append({"option": option, "label": COMPOSITIONS[option], "why_not": why_not})
-    return out[:3]
+        out.append({"option": option, "why_not": why_not})
+    return out[:2]
 
 
 def _composition_why(chosen: str, u: dict, media: dict) -> str:
@@ -601,24 +615,26 @@ def _composition_why(chosen: str, u: dict, media: dict) -> str:
 
 
 def composition_of(role: str, u: dict, *, composition_grammar: str = "",
-                   energy: str = "medium", media: dict | None = None,
-                   claim: dict | None = None) -> dict:
-    """为什么是这种构图，为什么不是其他五种——从这一页的事实推，不查表。"""
+                   media: dict | None = None, claim: dict | None = None,
+                   content_len: int = 0) -> dict:
+    """为什么是这种构图，为什么不是其他几种——从这一页的事实推，不查表。
+
+    体量取整页内容长度（空间需求），不是结论句长度：长内容撑得起编辑节奏，
+    短内容立不住的东西不硬撑。
+    """
     media = media or {}
-    text_len = len((claim or {}).get("text") or "")
-    picked = _composition_choice(u, role, media, text_len, composition_grammar)
+    claim = claim or {}
+    text_len = int(content_len or 0) or len(claim.get("text") or "")
+    picked = _composition_choice(u, role, media, text_len, composition_grammar, claim)
     chosen = picked["chosen"]
-    return {"chosen": chosen, "label": COMPOSITIONS[chosen],
+    return {"chosen": chosen,
             "why": _composition_why(chosen, u, media),
-            "rejected": picked["rejected"], "energy": energy}
+            "rejected": picked["rejected"]}
 
 
 # ─────────────────────────────────────────────────────────────────────
 # 8 · 空间结构（Spatial Structure：职责，不是坐标）
 # ─────────────────────────────────────────────────────────────────────
-_CANVAS_LAYERS = ("背景/环境", "结构/标题", "内容/数据", "焦点")
-
-
 def spatial_of(comp: dict) -> dict:
     """空间职责：主区 / 安静区 / 阅读路径 / 四层权重。坐标由作者给。"""
     chosen = comp.get("chosen")
@@ -640,11 +656,8 @@ def spatial_of(comp: dict) -> dict:
     else:
         path, primary, quiet = "标题 → 论据 → 出处", "标题与导语区", "栏间留白"
         duty = "建立阅读节奏：栏宽与字阶让读者知道先读什么、读多久"
-    weights = ("焦点 60% / 内容 25% / 结构 10% / 背景 5%" if chosen != "data_field"
-               else "内容 50% / 焦点 25% / 结构 15% / 背景 10%")
     return {"reading_path": path, "primary_zone": primary, "quiet_zone": quiet,
-            "whitespace_duty": duty, "layer_weight": weights,
-            "layers": list(_CANVAS_LAYERS)}
+            "whitespace_duty": duty}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -660,33 +673,28 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
     答不出来的，判定为不出图——装饰图、氛围图、无意义背景一律过不了这道测试。
     """
     if declared in ("required", "reuse", "none"):
-        return {"decision": declared, "source": "author", "confidence": 1.0,
-                "function": "declared", "necessity": "作者显式声明：压过一切判断。",
-                "why": "作者说的算。"}
+        return {"decision": declared, "source": "author",
+                "function": "declared", "necessity": "作者显式声明：压过一切判断。"}
     if has_chart:
-        return {"decision": "none", "source": "judgment", "confidence": 0.05,
+        return {"decision": "none", "source": "judgment",
                 "function": None,
-                "necessity": "本页已有图表承担注意力，再放图片＝两个焦点互相削价。",
-                "why": "焦点唯一性优先于画面丰富度。"}
+                "necessity": "本页已有图表承担注意力，再放图片＝两个焦点互相削价。"}
     presence = bool(u.get("human") or u.get("scene"))
     physical = [s for s in (u.get("subjects") or []) if s in _PHYSICAL_SUBJECTS]
     if role == "establish" and presence:
-        return {"decision": "required", "source": "judgment", "confidence": 0.85,
+        return {"decision": "required", "source": "judgment",
                 "function": "subject",
                 "necessity": "开场页要建立世界：内容里有可指认的人/场所，观众先看见它，"
-                             "才愿意读主张。",
-                "why": "内容里的存在（人/现场）本身就是这一页的主语。"}
+                             "才愿意读主张。"}
     if role == "establish" and physical:
-        return {"decision": "required", "source": "judgment", "confidence": 0.7,
+        return {"decision": "required", "source": "judgment",
                 "function": "subject",
                 "necessity": f"这一副讲的是实体世界（{physical[0]}）：开场让材质与光先说话，"
-                             "比一句抽象主张更快建立可信度。",
-                "why": "内容的核心是看得见摸得着的东西，不是信息本身。"}
+                             "比一句抽象主张更快建立可信度。"}
     if role == "prove" and presence and str(u.get("evidence")) not in ("series", "comparison"):
-        return {"decision": "required", "source": "judgment", "confidence": 0.6,
+        return {"decision": "required", "source": "judgment",
                 "function": "witness",
-                "necessity": "这一页靠「确有其事」成立：图像是现场记录，页面上的话才有出处。",
-                "why": "有可指认的人/场所时，证词优于修辞。"}
+                "necessity": "这一页靠「确有其事」成立：图像是现场记录，页面上的话才有出处。"}
     reasons = {
         "compare": "对比页的注意力属于两端本身，图片会把比较读成氛围。",
         "explain": "结构页的注意力属于关系本身，图片无法替代关系。",
@@ -695,42 +703,45 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
         "prove": "这一页的说服力来自可核验的量，图像的证明力低于数字本身。",
         "establish": "内容里没有可指认的人/现场：用排版与字阶建立世界，比塞一张图更诚实。",
     }
-    return {"decision": "none", "source": "judgment", "confidence": 0.85,
+    return {"decision": "none", "source": "judgment",
             "function": None,
-            "necessity": reasons.get(role, "说不出没有它这一页会下降在哪里——那就是装饰。"),
-            "why": "通不过必要性测试的图片一律删除。"}
+            "necessity": reasons.get(role, "说不出没有它这一页会下降在哪里——那就是装饰。")}
 
 
 # ─────────────────────────────────────────────────────────────────────
 # 10 · 生产规格（Production Spec：元素职责与阈值，不含坐标）
 # ─────────────────────────────────────────────────────────────────────
-def production_spec(focus: dict, comp: dict, media: dict, u: dict) -> dict:
-    must = [{"role": focus["element_role"], "type": focus["type"], "why": focus["why"]}]
+def production_spec(focus: dict, comp: dict, media: dict, u: dict,
+                    weight: dict | None = None) -> dict:
+    """生产规格：必落元素 + 明确不做 + 密度目标（无坐标）。
+
+    信息权重的删除清单在这里变成明确禁令——权重不是注释，它直接决定
+    这一页不许出现什么。
+    """
+    # must_place 只留 role/type：理由分别住 focus.why / media.necessity / claim 规则，
+    # 不在生产规格里再存一份（零消费者 + 与上游重复）。
+    must = [{"role": focus["element_role"], "type": focus["type"]}]
     if focus["type"] != "text":
         # 焦点不是文字时，结论句仍须落页；焦点就是那句话时不再重复要求一遍。
-        must.append({"role": "claim_text", "type": "text",
-                     "why": "标题写结论（可复述的一句话），不写字段名"})
+        must.append({"role": "claim_text", "type": "text"})
     if u.get("numerals"):
-        must.append({"role": "source", "type": "text",
-                     "why": "数值必须可见来源/口径/期间；没有出处的数字是海报"})
+        must.append({"role": "source", "type": "text"})
     if media["decision"] in ("required", "reuse"):
-        must.append({"role": "image", "type": "image",
-                     "why": media["necessity"]})
+        must.append({"role": "image", "type": "image"})
     if u.get("human") and media["decision"] == "none":
-        must.append({"role": "witness_line", "type": "text",
-                     "why": "没有图像时，用人/事的具体指认承担可信度"})
+        must.append({"role": "witness_line", "type": "text"})
+    must_not = ([f"{r['option']}：{r['why_not']}" for r in focus.get("rejected") or []][:3]
+                + [f"{r['option']}：{r['why_not']}" for r in comp.get("rejected") or []][:2])
+    for doomed in ((weight or {}).get("delete") or [])[:2]:
+        must_not.append(f"删：{doomed}")
     return {
         "must_place": must,
-        "must_not": [f"{r['option']}：{r['why_not']}" for r in focus.get("rejected") or []][:3]
-                    + [f"{r['option']}：{r['why_not']}" for r in comp.get("rejected") or []][:2],
-        "thresholds": {"focus_vs_body": "≥2.5×（字阶或面积，二者取一）",
-                       "levels_max": 4,
-                       "body_min_px": 16,
-                       "claim_lines_max": 2},
+        "must_not": must_not,
         "density_target": {"big_whitespace": "sparse", "editorial": "balanced",
                            "data_field": "dense", "image_narrative": "sparse",
                            "linear_structure": "balanced",
-                           "asymmetric_tension": "balanced"}[comp["chosen"]],
+                           "asymmetric_tension": "balanced"}.get(comp.get("chosen"),
+                                                                "balanced"),
     }
 
 
@@ -786,7 +797,10 @@ def derive_world(brief: dict, understanding: list) -> dict:
     for u in understanding:
         for s in u.get("subjects") or []:
             hits[s] = hits.get(s, 0) + 1
-    subject = max(hits, key=lambda k: (hits[k], k)) if hits else None
+    # Deck 级世界需要 deck 级证据：单页单个词不足以决定整套的材质与光
+    # （一页提「发布」，整套就变舞台——那是误判）。单页 deck 除外。
+    top = max(hits, key=lambda k: (hits[k], k)) if hits else None
+    subject = top if (top and (hits[top] >= 2 or len(understanding) <= 1)) else None
     human_share = sum(1 for u in understanding if u.get("human")) / max(len(understanding), 1)
     number_share = sum(1 for u in understanding
                        if u.get("evidence") in ("series", "number", "comparison")) / max(len(understanding), 1)
@@ -813,13 +827,22 @@ def derive_world(brief: dict, understanding: list) -> dict:
     else:
         paper = blend(_PAPER_ANCHOR[register], accent, _PAPER_TINT[register])
     ink = "#EFEFEC" if dark else ("#12120F" if register == "document" else "#1A1A1A")
-    if str(brief.get("brand_colors") or "").strip() and (brief.get("brand_colors")):
+    if brief.get("brand_colors"):
         accent_note = "品牌色覆盖：强调色的语义由 deck 决定，色相由品牌决定"
     accent_role = ("指向被批准的那一件事" if _hit(decision, ("批准", "决定", "确认", "approve"))
                    else "标记风险本身" if _hit(tension, ("风险", "疑虑", "担心", "不足"))
                    else "标记当前值/现状")
-    evidence_top = max((u.get("evidence") or "none" for u in understanding),
-                       key=lambda m: EVIDENCE_MODES.index(m)) if understanding else "none"
+    if understanding:
+        # 整套的证据性格取最常见的非空证据（出现次数压过一切；打平按形态序）：
+        # 「没有证据」不能盖过真实存在的证据形态。
+        freq: dict[str, int] = {}
+        for u in understanding:
+            mode = u.get("evidence") or "none"
+            if mode != "none":
+                freq[mode] = freq.get(mode, 0) + 1
+        evidence_top = max(freq, key=lambda m: (freq[m], -EVIDENCE_MODES.index(m))) if freq else "none"
+    else:
+        evidence_top = "none"
     chart_style = {"comparison": "shared baseline, two-tone delta, direct labels",
                    "series": "hairline axis, one highlighted point, direct labels",
                    "number": "single large figure with an explicit baseline",
@@ -876,14 +899,33 @@ def _intent_value(value) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
+def _apply_declared_spot(focus: dict, comp: dict, declared) -> tuple[dict, dict]:
+    """作者声明的第一落点/构图意图原样生效（初判与跨页重算共用同一处）。"""
+    declared = declared if isinstance(declared, dict) else {}
+    spot = str(declared.get("focus") or "").strip()
+    if spot:
+        focus = {**focus, "element_role": spot, "source": "author",
+                 "why": "作者声明第一落点；规划保留其余判断作为对照"}
+    want = str(declared.get("composition") or "").strip()
+    if want:
+        comp = {**comp, "chosen": want, "source": "author",
+                "why": "作者声明构图意图（原样生效）",
+                "rejected": [r for r in comp.get("rejected") or [] if r.get("option") != want]}
+    return focus, comp
+
+
 def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dict,
-                  warnings: list) -> dict:
-    """一页走完决策链：结论 → 权重 → 角色 → 焦点 → 构图 → 空间 → 媒体 → 生产规格。"""
+                  warnings: list, u: dict | None = None) -> dict:
+    """一页走完决策链：结论 → 权重 → 角色 → 焦点 → 构图 → 空间 → 媒体 → 生产规格。
+
+    `u` 由 think 一次算好传进来（整页只理解一次）；直接调用时缺省当场算。
+    """
     title = str(item.get("title") or "").strip()
     content = str(item.get("content") or "").strip()
-    u = understand(f"{title} {content}".strip(), has_chart=bool(item.get("chart")))
+    text = f"{title} {content}".strip()
+    if u is None:
+        u = understand(text, has_chart=bool(item.get("chart")))
     claim = extract_claim(item)
-    declared_focus = str(item.get("focus") or "").strip()
     if claim["source"] == "absent":
         warnings.append({"rule": "unresolved_content", "scope": item.get("id"),
                          "msg": "这一页没有可复述的结论（content 缺失）："
@@ -895,30 +937,127 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                             declared=str(item.get("asset") or "").lower() or None,
                             has_chart=bool(item.get("chart")))
     focus = focus_of(role["role"], u, claim, media)
-    if declared_focus:
-        focus = {**focus, "element_role": declared_focus, "source": "author",
-                 "why": "作者声明第一落点；规划保留其余判断作为对照"}
     comp = composition_of(role["role"], u,
                           composition_grammar=world.get("composition_grammar", ""),
-                          energy=str(item.get("energy") or "medium"),
-                          media=media, claim=claim)
-    if str(item.get("composition") or "").strip():
-        comp = {**comp, "chosen": str(item["composition"]).strip(), "source": "author",
-                "why": "作者声明构图意图（原样生效）",
-                "rejected": [r for r in comp.get("rejected") or []
-                             if r.get("option") != str(item["composition"]).strip()]}
+                          media=media, claim=claim, content_len=len(text))
+    focus, comp = _apply_declared_spot(focus, comp, item)
     spatial = spatial_of(comp)
-    prod = production_spec(focus, comp, media, u)
+    weight = information_weight(u, claim, text)
+    prod = production_spec(focus, comp, media, u, weight)
     open_q = []
     if claim["source"] == "absent":
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
     if media["source"] == "judgment" and media["decision"] == "required":
         open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）")
-    return {"claim": claim,
-            "information_weight": information_weight(u, claim, f"{title} {content}".strip()),
+    return {"claim": claim, "information_weight": weight,
             "visual_role": role, "focus": focus, "composition": comp, "spatial": spatial,
             "media": media, "production": prod, "understanding": u,
             "open_questions": open_q or None}
+
+
+def _rejudge_without_image(entry: dict, *, text: str, world: dict,
+                           budget_why: str) -> dict:
+    """图位落选：media 回 none，焦点/构图/空间/生产随之重算。
+
+    跨页预算校准单页——落选页不再是「要图但没图位」，而是「不要图」：
+    焦点回到文字/数据，构图回到非图像算子，未决事项里不再追问图像主题。
+    """
+    j = entry["judgment"]
+    old_fn = j["media"].get("function")
+    media = {"decision": "none", "source": "judgment", "function": None,
+             "necessity": budget_why}
+    j["media"] = media
+    u = j["understanding"]
+    role = j["visual_role"]["role"]
+    focus = focus_of(role, u, j["claim"], media)
+    comp = composition_of(role, u, composition_grammar=world.get("composition_grammar", ""),
+                          media=media, claim=j["claim"], content_len=len(text))
+    focus, comp = _apply_declared_spot(focus, comp, entry.get("declarations"))
+    j["focus"] = focus
+    j["composition"] = comp
+    j["spatial"] = spatial_of(comp)
+    j["production"] = production_spec(focus, comp, media, u, j["information_weight"])
+    j["open_questions"] = (["本页结论：先写出一句可复述的话（或删掉这一页）"]
+                           if j["claim"].get("source") == "absent" else None)
+    return {"page": entry["id"], "field": "media",
+            "from": f"required:{old_fn}", "to": "none",
+            "why": "跨页预算：图位让给更高价值页，本页由排版与数据承担"}
+
+
+def _repick_avoiding(entry: dict, world: dict, text: str, avoid: str) -> dict | None:
+    """连续同构图时取第二选择：内容不成立就不换（内容契合压过节奏）。"""
+    j = entry["judgment"]
+    u = j["understanding"]
+    role = j["visual_role"]["role"]
+    media = j["media"]
+    grammar = world.get("composition_grammar", "")
+    base = _composition_scores(u, role, media, len(text), grammar, j["claim"])
+    penalized = dict(base)
+    if avoid in penalized:
+        penalized[avoid] -= 2.5
+    order = {name: i for i, name in enumerate(_COMPOSITION_TIEBREAK)}
+    new = max(penalized, key=lambda k: (penalized[k], -order[k]))
+    if new == avoid or base.get(new, 0) <= 0:
+        return None
+    return {"chosen": new,
+            "why": _composition_why(new, u, media) + "（跨页校准：连续同构图时的第二选择）",
+            "rejected": _composition_rejections(new, base)}
+
+
+def _coherence_pass(pages: list, world: dict, texts: dict) -> dict:
+    """整套回看：连续同构图回拨中间页 + 节奏序列 + 焦点连落提醒。
+
+    不是新规则，是单页判断在看到整套之后的重新校准：只改「内容允许第二选择」
+    的页面；作者声明的构图不动；图像叙事不动（每张图各自通过必要性测试，
+    数量由预算管，不由节奏管）。不新增逐页字段。
+    """
+    adjustments: list[dict] = []
+    i = 0
+    while i < len(pages):
+        j = i
+        while (j < len(pages) and pages[j]["judgment"]["composition"]["chosen"]
+               == pages[i]["judgment"]["composition"]["chosen"]):
+            j += 1
+        run = pages[i:j]
+        if len(run) >= 3 and run[0]["judgment"]["composition"]["chosen"] != "image_narrative":
+            for entry in run[1:-1]:
+                if entry["judgment"]["composition"].get("source") == "author":
+                    continue
+                new_comp = _repick_avoiding(entry, world, texts.get(entry["id"], ""),
+                                            run[0]["judgment"]["composition"]["chosen"])
+                if new_comp is None:
+                    continue
+                old = entry["judgment"]["composition"]["chosen"]
+                entry["judgment"]["composition"] = new_comp
+                entry["judgment"]["spatial"] = spatial_of(new_comp)
+                entry["judgment"]["production"] = production_spec(
+                    entry["judgment"]["focus"], new_comp, entry["judgment"]["media"],
+                    entry["judgment"]["understanding"], entry["judgment"]["information_weight"])
+                adjustments.append({"page": entry["id"], "field": "composition",
+                                    "from": old, "to": new_comp["chosen"],
+                                    "why": f"连续 {len(run)} 页同构图，内容允许第二选择"})
+        i = j
+    notes: list[str] = []
+    i = 0
+    while i < len(pages) and len(notes) < 3:
+        j = i
+        while (j < len(pages) and pages[j]["judgment"]["focus"].get("element_role")
+               == pages[i]["judgment"]["focus"].get("element_role")):
+            j += 1
+        if j - i >= 4:
+            notes.append(f"{pages[i]['id']}–{pages[j - 1]['id']} 焦点连续落在 "
+                         f"{pages[i]['judgment']['focus'].get('element_role')}："
+                         "确认每页真的需要同一落点，否则合并页面或改写结论")
+        i = j
+    media_seq = [f"{p['judgment']['media'].get('decision')}"
+                 f":{p['judgment']['media'].get('function') or '-'}"
+                 for p in pages]
+    return {"compositions": [p["judgment"]["composition"]["chosen"] for p in pages],
+            "densities": [p["judgment"]["production"]["density_target"] for p in pages],
+            "roles": [p["judgment"]["visual_role"]["role"] for p in pages],
+            "media": media_seq,
+            "adjustments": adjustments or None,
+            "notes": notes or None}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -936,13 +1075,14 @@ _HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
 
 def _load_store(path=None, strict=False) -> dict:
     target = Path(path) if path else DNA_STORE
+    if not target.exists():
+        return {"version": 1, "entries": []}
     try:
-        value = json.loads(target.read_text(encoding="utf-8"))
+        from primitives import json_read_cached
+        value = json_read_cached(target)
         if not isinstance(value, dict) or not isinstance(value.get("entries"), list):
             raise ValueError("经验库顶层必须是对象且 entries 必须是数组")
         return value
-    except FileNotFoundError:
-        return {"version": 1, "entries": []}
     except Exception as exc:
         if strict:
             raise
@@ -1089,10 +1229,8 @@ def record_dna(entry, path=None, replace=False) -> dict:
     store["entries"] = entries
     store["version"] = max(int(store.get("version") or 1), 2)
     store.setdefault("schema_note", DNA_SCHEMA_NOTE)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(json.dumps(store, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    os.replace(tmp, target)
+    from primitives import json_write
+    json_write(target, store, indent=1)
     return {"added": True, "action": action, "id": eid, "entries": len(entries),
             "warnings": warnings, "note": f"{action} {eid} · 经验库现有 {len(entries)} 条"}
 
@@ -1160,14 +1298,20 @@ def think(brief: dict) -> dict:
                                 "要固定品牌就写 brand_colors"})
 
     pages = []
+    texts: dict[str, str] = {}
     for i, it in enumerate(items):
         sid = str(it.get("id") or f"s{i + 1:02d}")
         declared = {k: it[k] for k in _PAGE_DECLARATIONS if _intent_value(it.get(k))}
         if "asset_subject" in declared and str(declared.get("asset") or "").lower() not in (
                 "required", "reuse", "none"):
+            # 写了画面主题就是要出图（等价 required；显式 none 除外）：注入判断输入，
+            # 不只留在回显里——否则「写了主题却不出图」，声明等于没写。
             declared["asset"] = "required"
-        judgment = page_judgment({**it, "id": sid}, index=i, total=len(items), brief=brief,
-                                 world=world, warnings=warnings)
+        texts[sid] = f"{it.get('title') or ''} {it.get('content') or ''}".strip()
+        judgment = page_judgment({**it, "id": sid,
+                                  "asset": declared.get("asset", it.get("asset"))},
+                                 index=i, total=len(items), brief=brief,
+                                 world=world, warnings=warnings, u=understanding[i])
         anchor = None
         if len(items) >= 4:
             anchor = {"eyebrow": judgment["visual_role"]["role"].upper()}
@@ -1200,6 +1344,19 @@ def think(brief: dict) -> dict:
                  "why": f"图位按视觉价值分配（{cap} 张）：本页的图像价值低于 "
                         f"{'、'.join(s for s, _ in ranked[:cap])}，本页由排版与数据承担注意力。"}
                 for sid, _ in ranked[cap:]]
+    # 跨页预算执行：落选页的判断卡当场改写（media 回 none + 焦点/构图重算），
+    # 而不是「判断说要图、清单说没图位」两张皮。
+    by_id = {p["id"]: p for p in pages}
+    budget_adjustments = []
+    for d in deferred:
+        entry = by_id.get(d["slide_id"])
+        if entry is not None:
+            budget_adjustments.append(
+                _rejudge_without_image(entry, text=texts.get(entry["id"], ""),
+                                       world=world, budget_why=d["why"]))
+    coherence = _coherence_pass(pages, world, texts)
+    coherence["adjustments"] = (budget_adjustments + (coherence["adjustments"] or [])
+                                or None)
     return {
         "schema": SCHEMA,
         "deck": {
@@ -1210,6 +1367,7 @@ def think(brief: dict) -> dict:
             "world": world,
             "theme": _theme_seed(world, brief.get("brand_colors")),
             "dna": dna,
+            "coherence": coherence,
         },
         "pages": pages,
         "assets_hint": {
@@ -1322,7 +1480,7 @@ def build_skeleton(bundle: dict) -> str:
     world = deck.get("world") or {}
     colors = theme_tokens((deck.get("theme") or {}).get("colors_seed") or {})
     dna = deck.get("dna") or {}
-    unity = deck.get("unity") or {}
+    coherence = deck.get("coherence") or {}
 
     facts = [f"受众: {deck.get('audience') or '未声明'} · 决策: {deck.get('decision') or '未声明'}"
              + (f" · 张力: {deck['tension']}" if deck.get("tension") else "")]
@@ -1334,9 +1492,14 @@ def build_skeleton(bundle: dict) -> str:
     reasons = world.get("reasons") or {}
     if reasons:
         facts.append("  为什么: " + "；".join(f"{k}→{v}" for k, v in list(reasons.items())[:3]))
-    if unity.get("same_world"):
-        facts.append("统一契约 · 全 deck 统一: " + " / ".join(map(str, unity["same_world"]))
-                     + "；允许每页不同: " + " / ".join(map(str, unity.get("may_differ") or [])))
+    seq = coherence.get("compositions") or []
+    if seq:
+        facts.append("整套节奏: " + " → ".join(map(str, seq)))
+    for adj in (coherence.get("adjustments") or [])[:4]:
+        facts.append(f"跨页校准: {adj.get('page')} {adj.get('field')} "
+                     f"{adj.get('from')}→{adj.get('to')}（{adj.get('why')}）")
+    for note in (coherence.get("notes") or [])[:2]:
+        facts.append(f"跨页提醒: {note}")
     if dna.get("matched"):
         facts.append(f"经验召回（DNA）: {dna['matched']} · 置信 {dna.get('confidence')}"
                      "——起点不是模板，按本稿内容重组")

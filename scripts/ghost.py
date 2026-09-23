@@ -1022,51 +1022,12 @@ def _page_shape(slide) -> dict:
             "data_rows": data_rows, "max_size": max_size}
 
 
-def key_pages(slides: list, limit: int = 5) -> list[int]:
-    """关键页取证（1-based，确定性）：封面 / 章节 / 画心 / 密数据 / 收尾。
-
-    方向证据要的是「世界、结构、容量、落点」四件事被看到，不是每一页都被 raster。
-    页数不超过 limit 时返回全部页（此时是全量证据，不是采样）。
-    """
-    total = len(slides)
-    if total == 0:
-        return []
-    limit = max(1, int(limit))
-    if total <= limit:
-        return list(range(1, total + 1))
-    shapes = [_page_shape(s) for s in slides]
-    picks: list[int] = [1, total]
-
-    def _pick(index: int) -> None:
-        if 1 <= index <= total and index not in picks and len(picks) < limit:
-            picks.append(index)
-
-    others = [i for i in range(2, total)]                 # 1-based，去掉封面与收尾
-    section = next((i for i in others
-                    if shapes[i - 1]["elements"] <= 3 and shapes[i - 1]["max_size"] >= 32), None)
-    if section:
-        _pick(section)
-    hero = max(others, key=lambda i: (shapes[i - 1]["image_area"], -i)) if others else None
-    if hero and shapes[hero - 1]["image_area"] > 0:
-        _pick(hero)
-    dense = max(others, key=lambda i: (shapes[i - 1]["data_rows"],
-                                       shapes[i - 1]["elements"], -i)) if others else None
-    if dense and shapes[dense - 1]["data_rows"] > 0:
-        _pick(dense)
-    for i in others:                                       # 补足：按元素数降序
-        if len(picks) >= limit:
-            break
-        _pick(i)
-    return sorted(picks)
-
-
-def key_page_roles(slides: list, pages: list[int]) -> dict[str, str]:
+def _label_pages(slides: list, pages: list[int], shapes: list[dict]) -> dict[str, str]:
     """给取到的关键页贴职责标签（证据要说明「看到了什么」）。"""
-    shapes = {i + 1: _page_shape(s) for i, s in enumerate(slides)}
     total = len(slides)
     out: dict[str, str] = {}
     for n in pages:
-        shape = shapes.get(n, {})
+        shape = shapes[n - 1] if 1 <= n <= total else {}
         if n == 1:
             label = "cover"
         elif n == total:
@@ -1083,6 +1044,58 @@ def key_page_roles(slides: list, pages: list[int]) -> dict[str, str]:
         sid = str(slide.get("id")) if isinstance(slide, dict) and slide.get("id") else f"p{n}"
         out[sid] = label
     return out
+
+
+def key_selection(slides: list, limit: int = 5) -> tuple[list[int], dict[str, str]]:
+    """关键页 + 职责标签一次算完（页面结构只扫一遍）。
+
+    取证口径：封面 / 章节 / 画心 / 密数据 / 收尾（1-based，确定性）。
+    方向证据要的是「世界、结构、容量、落点」四件事被看到，不是每一页都被 raster。
+    页数不超过 limit 时返回全部页（此时是全量证据，不是采样）。
+    """
+    total = len(slides)
+    if total == 0:
+        return [], {}
+    limit = max(1, int(limit))
+    shapes = [_page_shape(s) for s in slides]
+    if total <= limit:
+        pages = list(range(1, total + 1))
+    else:
+        picks: list[int] = [1, total]
+
+        def _pick(index: int) -> None:
+            if 1 <= index <= total and index not in picks and len(picks) < limit:
+                picks.append(index)
+
+        others = [i for i in range(2, total)]             # 1-based，去掉封面与收尾
+        section = next((i for i in others
+                        if shapes[i - 1]["elements"] <= 3 and shapes[i - 1]["max_size"] >= 32), None)
+        if section:
+            _pick(section)
+        hero = max(others, key=lambda i: (shapes[i - 1]["image_area"], -i)) if others else None
+        if hero and shapes[hero - 1]["image_area"] > 0:
+            _pick(hero)
+        dense = max(others, key=lambda i: (shapes[i - 1]["data_rows"],
+                                           shapes[i - 1]["elements"], -i)) if others else None
+        if dense and shapes[dense - 1]["data_rows"] > 0:
+            _pick(dense)
+        for i in others:                                   # 补足：按元素数降序
+            if len(picks) >= limit:
+                break
+            _pick(i)
+        pages = sorted(picks)
+    return pages, _label_pages(slides, pages, shapes)
+
+
+def key_pages(slides: list, limit: int = 5) -> list[int]:
+    """关键页取证（1-based，确定性）：封面 / 章节 / 画心 / 密数据 / 收尾。"""
+    pages, _ = key_selection(slides, limit)
+    return pages
+
+
+def key_page_roles(slides: list, pages: list[int]) -> dict[str, str]:
+    """给取到的关键页贴职责标签（证据要说明「看到了什么」）。"""
+    return _label_pages(slides, pages, [_page_shape(s) for s in slides])
 
 
 PAGE_CACHE_DIR = "pages"          # 逐页渲染缓存（只缓存被渲染过的页）

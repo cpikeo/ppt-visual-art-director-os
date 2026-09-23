@@ -200,7 +200,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         except Exception:
             pass
 
-    # ---- 结构扫描（元素形态、几何、文字契约）----
+    # ---- 单趟页面扫描（结构 → 碰撞/来源区/背景资格，同页元素只走一遍）----
     for si, slide in enumerate(slides):
         if not isinstance(slide, dict):
             add("slide_schema", "slides", "error", "每个 slide 必须是对象/dict")
@@ -222,15 +222,8 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         for e in drawable:
             _check_element(e, sid, si, add, known_tokens, cw, ch,
                            require_provenance=require_provenance)
-
-    # ---- 页面级物理事实（碰撞 / 出处区 / 背景资格 / 可读性）----
-    for si, slide in enumerate(slides):
-        if not isinstance(slide, dict):
-            continue
-        sid = str(slide.get("id", f"slide_{si}"))
         _check_collisions(slide, add, cw, ch, overlap_ratio,
                           text_ink_ratio, text_ink_v)
-        _check_background_qualification(slide, add, cw, ch)
 
     # ---- 跨页口径一致（口径打架会误导决策；对比度属设计判断，不在 QA）----
     _check_metric_units(slides, add)
@@ -506,15 +499,18 @@ def _finite(value) -> bool:
 
 def _check_collisions(slide: dict, add, cw: float, ch: float,
                       overlap_ratio: float, text_ink_ratio: float, text_ink_v: float) -> None:
-    """重叠 / 来源区侵入 / 正文可读性底线。"""
+    """重叠 / 来源区侵入 / 背景资格（同页元素一次遍历，背景覆盖只算一次）。"""
     source_zone = slide.get("source_zone")
     boxes = []
     for e in (slide.get("elements") or []):
         if not isinstance(e, dict):
             continue
-        qualified, _ = _bg_qualified(e, cw, ch)
-        if qualified:
-            continue
+        if is_background_declared(e):
+            qualified, note = _bg_qualified(e, cw, ch)
+            if not qualified and note:
+                add("background_layer", e.get("id", "?"), "error", note)
+            if qualified:
+                continue
         if isinstance(source_zone, dict) and e.get("role") not in {"source", "method", "metadata"}:
             try:
                 if _intersects_zone(e, source_zone):
@@ -543,16 +539,6 @@ def _check_collisions(slide: dict, add, cw: float, ch: float,
                 add("overlap", f"{a[1]}∩{b[1]}", "error",
                     f"有效墨迹重叠 {ratio:.0%} > 容忍 {overlap_ratio:.0%}；"
                     "需拆分、缩短或重新布局")
-
-
-def _check_background_qualification(slide: dict, add, cw: float, ch: float) -> None:
-    """伪背景（自称背景却不满幅）＝越界对象；整幅可读性二选一。"""
-    for e in (slide.get("elements") or []):
-        if not isinstance(e, dict) or not is_background_declared(e):
-            continue
-        qualified, note = _bg_qualified(e, cw, ch)
-        if not qualified and note:
-            add("background_layer", e.get("id", "?"), "error", note)
 
 
 def _check_metric_units(slides: list, add) -> None:
@@ -614,7 +600,7 @@ def _canonical_color(value, tokens: dict) -> tuple:
 def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True) -> tuple[dict, dict]:
     """几何落 8/4 单位、颜色/字体名规范化。单趟机械变换：对已规范输入是恒等。"""
     import copy
-    report = {"changes": [], "counts": {}, "idempotent": None}
+    report = {"changes": [], "counts": {}}
     out = copy.deepcopy(spec) if isinstance(spec, dict) else {}
     theme = out.get("theme") or {}
     colors_map = theme.get("colors") if isinstance(theme.get("colors"), dict) else {}
@@ -659,7 +645,6 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True) -> tup
                     if note:
                         record(sid, eid, f"{field}.color", value["color"], new, "color")
                         value["color"] = new
-    report["idempotent"] = None
     return out, report
 
 

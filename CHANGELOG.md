@@ -1,3 +1,66 @@
+## 9.2.0 · 跨页校准 + 判断再瘦身（2026-09-23）
+
+端到端深度审计后的减法升级：**不新增文件、不新增逐页判断字段、不新增 QA 规则**。
+全部改动落在既有 8 个脚本与 3 份参考文献内；selftest 87 → **108** 条断言。
+
+### 跨页智能（intelligence.py：唯一的 deck 级回看）
+- **预算执行**：图位落选页的判断卡当场改写为不要图（media 回 none + 焦点/构图/
+  空间/生产重算 + 未决事项去掉图像追问），不再「判断说要图、清单说没图位」。
+- **节奏回拨**：连续 ≥3 页同构图时回拨中间页——只在内容允许第二选择时换，
+  内容强烈要求同一构图就不换（内容契合压过节奏）；作者声明的构图不动；
+  图像叙事不动（数量由预算管，不由节奏管）。
+- **连落提醒**：焦点连续 ≥4 页同一落点时给作者一句提醒，不硬改焦点。
+- 新增 `deck.coherence`（构图/密度/角色/媒体四条节奏序列 + adjustments + notes）：
+  这是本轮唯一的 deck 级新增能力，无逐页新字段；骨架注释携带节奏与回拨。
+- QA 零新增（刻意）：重复/断裂/失衡不是可交付性硬错误，做成 BLOCK 是错杀、
+  做成 warn 是噪音——跨页事实归设计层（plan + 骨架），QA 边界不变。
+
+### 判断校准（intelligence.py）
+- **Claim**：超长句子减分（>64 字 −1.0，可复述才算记住）；absent 纪律不变。
+- **数字**：字母紧贴的数字是编号不是证据（Q1/V2 不计数）；「2026 年」是时间
+  坐标不是证据量（4 位年份 + 年 = year，与「3 年」时长区分）。
+- **焦点**：承载结论的只取证据量（年份/编号不当第一落点）。
+- **证据形态**：箭头链是顺序的形状（0.75，盖过孤立数字 0.7）。
+- **构图**：体量取整页内容长度（空间需求，不是结论句长度）；无结论 + 弱证据页
+  默认最少结构（big_whitespace +1.0）；作者未知构图不断规划（密度取中性）。
+- **权重真正抵达生产**：删除清单进 `production.must_not`（「删：…」可执行禁令）。
+- **世界**：整套证据性格取最常见的非空证据（「无证据」不再盖过真证据）；
+  主题实体需要 deck 级证据（命中 ≥2 页，单页 deck 除外）——一页提「发布」，
+  整套就变舞台，是误判。
+- **声明即权威**：`asset_subject` 等价 required（注入判断输入，不只留在回显里）。
+
+### 删除（审计确认零消费者 / 死分支 / 重复劳动）
+- 判断卡：`media.why`（与 necessity 重复）、`media.confidence`、`claim.verify`、
+  `spatial.layers`（每页相同的常量）、`spatial.layer_weight`（两值常量）、
+  `production.thresholds`（每页相同的常量；指导值并入 contract.md 一行）、
+  `composition.energy`（与 declarations.energy 重复）。
+- 死分支：构图打分里的 `data/prose/mixed` 标签（证据形态永不取值）、
+  `u.temporal`（永不设置）、骨架里的 `unity` 回显（think 永不产出）、
+  `prepare_manifest` 的 v1 plan/brief 比对（schema 已是 v3，永不触发）、
+  `normalize` 报告的 `idempotent: None` 恒定字段。
+- 重复劳动：每页 `understand` 算两次 → think 一次算好传入；DNA 存取自写
+  JSON/原子写 → 并入 `primitives.json_read_cached/json_write`；verify 两趟
+  页面扫描 → 单趟（碰撞/来源区/背景资格一次遍历）；ghost 关键页与职责标签
+  各扫一遍结构 → `key_selection` 一次算完；`primitives`/`assets` 的自我 import；
+  vao 失败路径的 `repair_packet` 算两次、`sys.modules["verify"]` 别名。
+- 构图否决项 3 → 2 条（最强的两个替代）。
+- 收口轮：`composition.label` + `rejected[].label`（chosen 键已唯一确定算子，
+  中文释义只住文档，plan 不再输出）与 `COMPOSITIONS` 字典；`must_place[].why`
+  （零消费者，且与 focus.why / media.necessity 逐字重复）；`_composition_rejections`
+  的 `score <= -50` 死分支（-99 恒为末位，进不了 [:2]）；`BG_MIN_COVERAGE` /
+  `BG_MIN_PROTECT_OPACITY`（注释声称的 `_cached_gate` 不存在，零消费）；
+  `understand` 内 `numerals` / `evidence_numerals` 同文本扫两遍 → 一次扫描复用。
+
+### 正确性修复（审计发现）
+- CLI `plan` 打印 `视觉世界 … (None)`（9.1 删除 `regime` 后的残留引用）。
+- 编译解码缓存：同源不同裁切会复用已裁切底图（二次裁切像素错误）——
+  只缓存未裁切底图。
+
+### 文档
+- judgment.md：判断链补跨页校准一步 + §8 节奏纪律；contract.md：焦点落差/
+  结论行数/正文下限指导值（原 runtime 常量的唯一去处）；assets.md：落选页
+  改写语义；brief 模板：family 只是人读备注（规划不读）；SKILL/README 同步。
+
 ## 9.1.0 · 判断深化 + 重复删除（2026-09-23）
 
 在 9.0.0 上继续深化：**不重设架构、不堆能力、不新增文件、不用质量换速度**。

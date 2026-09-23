@@ -18,7 +18,9 @@
 **作者声明永远压过判断**：逐页 `asset: required|reuse|none`，或写 `asset_subject` 即视为要出图。
 
 **图位按视觉价值分配，不按页序截断**：qualified 的页按 证词 > 建立 > 其余角色 排序取前
-`cap` 张（fast=2 / advanced=4）；落选页在清单里留下理由（`assets_hint.deferred`）。
+`cap` 张（fast=2 / advanced=4）；落选页在清单里留下理由（`assets_hint.deferred`），
+且判断卡当场改写为不要图（焦点回到文字/数据，构图回到非图像算子）——
+判断与清单永远是同一结论，不出现「判断说要图、清单说没图位」。
 
 ## 2. 四步落笔
 

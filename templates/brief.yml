@@ -34,8 +34,7 @@ tension: ""             # 观众当前最大的疑问/风险/阻力——只写�
 # ============================================================
 slides:
   - id: s01
-    family: cover       # cover|statement|data|comparison|case|process|timeline|
-                        # architecture|business|agenda|brand_story|product|closing
+    family: cover       # LEGACY：仅供人读的备注，规划永不读取；不参与路由、不参与视觉（内容决定一切，同类内容允许不同长相）
     title: ""           # 标题写结论（可复述的一句话），不写字段名
     content: ""         # 证据（数字/来源/事实）；证据型页留空 → 判断卡标 absent
     # insight: "本页唯一结论"      # 写了直通判断卡（作者压过抽取）

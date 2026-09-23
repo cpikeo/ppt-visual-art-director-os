@@ -1138,11 +1138,8 @@ class RenderContext:
         self.warnings.append(message)
         self.warning_ids.append(str(element_id) if element_id else None)
 
-# ── 物理底线阈值（guard 经 _cached_gate 直连读取，单一口径住这里）────────────
-# （历史：此块曾住 art_critic 下沉的整套「设计判断基元」——焦点领先/记忆锚点/
-#   卡片墙/节奏墨差等常量与几何函数。spec 级二审层删除后全部零消费，已清。）
-BG_MIN_COVERAGE = 0.60           # 背景层免检：至少覆盖 60% 画布面积
-BG_MIN_PROTECT_OPACITY = 0.20    # 内容保护层最低不透明度
+# （历史：此块曾住背景层免检阈值 BG_MIN_COVERAGE / BG_MIN_PROTECT_OPACITY，
+#   注释声称 guard 经 _cached_gate 读取——该函数不存在，两个常量零消费，已清。）
 
 
 
@@ -1150,9 +1147,6 @@ BG_MIN_PROTECT_OPACITY = 0.20    # 内容保护层最低不透明度
 # ══════════════════ 编译缓存判定（身份/指纹操作；零 pptx 依赖）══════════════════
 
 # 语义投影 + 引擎指纹 + 产物字节戳一致 ⇒ 跳过重复编译。判断"要不要重编"零成本。
-from primitives import (digest_bytes, engine_fingerprint, file_digest, identity,
-                        json_read_cached, json_write, witness, witness_same)
-
 CACHE_NAME = "compile_cache.json"
 CACHE_VIEW_VERSION = 8
 NON_GEOMETRIC_SLIDE_KEYS = (

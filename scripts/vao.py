@@ -278,7 +278,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     上一轮的预览就是这一轮的预览（页缓存保证 0 页重画；联络表本身也是
     页图的纯函数）。凭证不匹配（产物/渲染器变了）即重渲。
     """
-    from ghost import PAGE_CACHE_DIR, ghost_deck, key_page_roles, key_pages, make_contact_sheet
+    from ghost import PAGE_CACHE_DIR, ghost_deck, key_selection, make_contact_sheet
     from primitives import engine_fingerprint
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
@@ -295,11 +295,12 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
             return info
     fast = str(speed).lower() == "fast"
     slides = spec.get("slides") or []
+    roles = None
     if pages is not None:
         wanted = [int(n) for n in pages]
         scope = "full" if len(wanted) >= len(slides) else "explicit_subset"
     elif fast:
-        wanted = key_pages(slides, limit=limit)
+        wanted, roles = key_selection(slides, limit=limit)
         scope = "full" if len(wanted) >= len(slides) else "key_pages"
     else:
         wanted = list(range(1, len(slides) + 1))
@@ -324,7 +325,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     rendered_ids = [str(slides[n - 1].get("id")) for n in wanted
                     if 1 <= n <= len(slides) and isinstance(slides[n - 1], dict)]
     info = {"type": "ghost_layout_preview", "dir": str(Path(output_dir)),
-            "key_pages": (key_page_roles(slides, wanted) if scope == "key_pages" else None),
+            "key_pages": (roles if scope == "key_pages" else None),
             "pages": [str(p) for p in paths], "count": len(paths),
             "slide_ids": rendered_ids,
             "pages_rendered": wanted, "page_count": len(slides),
@@ -385,9 +386,9 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         from verify import fail_result
         result = fail_result({}, [f"输入或执行失败: {type(exc).__name__}: {exc}"])
         result["performance"] = {"total_ms": round((time.perf_counter() - started) * 1000, 1)}
-        _json_write(packet_path, repair_packet(result, mode, build_path, output_path))
-        line = (json.dumps(packet_path and repair_packet(result, mode, build_path, output_path),
-                           ensure_ascii=False) if json_output else
+        packet_obj = repair_packet(result, mode, build_path, output_path)
+        _json_write(packet_path, packet_obj)
+        line = (json.dumps(packet_obj, ensure_ascii=False) if json_output else
                 f"VAO {mode}: BLOCKED · {result['next_action']}\n  packet: {packet_path}")
         print(line)
         return result, 2
@@ -404,7 +405,6 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                             release_guard_rules, verdict)
         from primitives import spec_fingerprint
 
-        verify = sys.modules["verify"]
         spec_hash = spec_fingerprint(spec)          # 本轮唯一一次 spec 身份
 
         snapshots: dict = {}   # 本轮唯一一次读图：QC / 核验 / 编译 / 预览共用
@@ -440,7 +440,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             _json_write(packet_path, repair_packet(result, mode, build, output_path))
             _print_line(result, None, None, packet_path, speed, mode, json_output)
             return result, 2
-        normalized, norm = verify.normalize_spec(spec)
+        normalized, norm = normalize_spec(spec)
         prof = mode_profile(mode)
         effective_rules = release_guard_rules(prof["mode"], None)
         guard_report = check_spec(normalized, rules=effective_rules)
@@ -675,7 +675,7 @@ def main(argv=None) -> int:
                                .get("decision") not in (None, "none")]
                 world = bundle["deck"].get("world") or {}
                 print(f"plan: {len(pages)} 页 · 视觉世界 {world.get('name')} "
-                      f"({world.get('regime')}) · 质量 {bundle['deck']['quality']} · "
+                      f"· 质量 {bundle['deck']['quality']} · "
                       f"规划 {bundle.get('planning_ms', 0)}ms")
                 if bundle.get("warnings"):
                     for w in bundle["warnings"][:4]:
@@ -683,6 +683,12 @@ def main(argv=None) -> int:
                 if media_pages:
                     print(f"  媒体必要性判断：出图 {','.join(media_pages)}"
                           "（可用 --assets-out 产出清单）")
+                coherence = bundle["deck"].get("coherence") or {}
+                if coherence.get("adjustments"):
+                    shown = "；".join(
+                        f"{a['page']} {a['field']} {a['from']}→{a['to']}"
+                        for a in coherence["adjustments"][:3])
+                    print(f"  跨页校准：{len(coherence['adjustments'])} 处回拨（{shown}）")
                 if args.plan_out:
                     print(f"  plan: {args.plan_out}"
                           + (f" · skeleton: {args.skeleton}" if args.skeleton else ""))

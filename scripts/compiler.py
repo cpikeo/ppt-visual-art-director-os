@@ -365,7 +365,9 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
                 img = img.crop((cx0, cy0, cx1, cy1))
         else:
             img = opened.convert("RGB")
-    if decode_cache is not None and cache_key:
+    if decode_cache is not None and cache_key and crop is None:
+        # 只缓存未裁切的底图：同一源在不同盒子里可能带不同裁切，缓存裁切后的图
+        # 会让第二次命中时在已裁切的图上再裁一次（像素错误，不是性能问题）。
         decode_cache[cache_key] = img
     return _encode_png(img, w, h, fit, bg, speed)
 

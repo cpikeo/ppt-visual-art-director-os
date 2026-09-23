@@ -1523,10 +1523,11 @@ def image_elements(spec: dict):
 
 def prepare_manifest(manifest: dict, need: dict, bundle: dict, brief_path,
                      plan_path, manifest_path, assets_dir=None) -> dict:
-    """assets 落盘前的最后一步：凭证 + 「字节已存在即登记 existing」。"""
-    if digest(bundle.get("need") if isinstance(bundle, dict) else None) != digest(need) \
-            and bundle.get("schema") == "vao-plan-v1":
-        raise ValueError("ASSET_WORKFLOW_FAIL: plan 与当前 brief 不匹配；先重新执行 vao.py plan")
+    """assets 落盘前的最后一步：凭证 + 「字节已存在即登记 existing」。
+
+    plan/brief 一致性由 brief 文件凭证覆盖（verify_sources：文件变了就 BLOCK，
+    dict 级再比一次是重复劳动；v1 的 need 镜像字段在 v3 里已不存在）。
+    """
     if assets_dir:
         manifest["assets_dir"] = str(_Path(assets_dir).expanduser().resolve())
     manifest["schema"] = "vao-assets-v2"
@@ -1908,7 +1909,6 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
               snapshots=None, decoded=None, digests=None):
     """资产核验：绑定 → 测量/复用 → 判定。draft 最多一次定向重出。"""
     from primitives import digest_bytes, engine_fingerprint, text_is_dark, witness_same
-    from assets import ROLE_AUTHORITATIVE_SOURCES
     manifest_file = _Path(manifest_path).expanduser().resolve()
     manifest = json_read_cached(manifest_file)
     profile = qc_profile(speed)
