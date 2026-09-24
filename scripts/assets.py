@@ -1280,6 +1280,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     scale = 1
     if max_side and max(w, h) > int(max_side):
         scale = max(1, -(-max(w, h) // int(max_side)))   # ceil 除法 → 整数箱
+    native_grey = None
     if transparent:
         rgba = native.convert("RGBA")
         if scale > 1:
@@ -1292,7 +1293,8 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
                          dtype=np.float32) / 255.0
     else:
         visible = True
-        grey = native.convert("L")
+        native_grey = native.convert("L")
+        grey = native_grey
         if scale > 1:
             grey = grey.reduce(scale)
         ww, wh = grey.size
@@ -1348,7 +1350,10 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
                 if alpha_min < 250:
                     return True, None, None
             try:
-                seam_arr = np.asarray(native.convert("L"), dtype=np.float32) / 255.0
+                # 不透明图上游已把原生像素转为 L；只降采样工作图，硬缝仍读
+                # 同一张原生灰阶，不为一个判据再次转整幅 4K。
+                seam_arr = np.asarray(native_grey if native_grey is not None
+                                      else native.convert("L"), dtype=np.float32) / 255.0
                 seam_alpha = None
             except (OSError, ValueError, MemoryError):
                 # 内存极限时沿用已算出的工作域；不为可选精度让 QC 变成新失败点。

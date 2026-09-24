@@ -76,12 +76,12 @@ def load_brief(path, *, with_digest: bool = False):
 # ─────────────────────────────────────────────────────────────────────
 # 2 · 内容理解（Content Understanding）
 # ─────────────────────────────────────────────────────────────────────
-# 六种证据形态：结论由哪一种承担，决定了后面的焦点与构图。
-EVIDENCE_MODES = ("comparison", "series", "number", "structure", "sequence",
-                  "proposition", "none")
+# 证据形态：结论由哪一种承担，决定了后面的焦点与构图。
+EVIDENCE_MODES = ("comparison", "series", "part_whole", "number", "structure",
+                  "sequence", "proposition", "none")
 VISUAL_ROLES = ("establish", "explain", "compare", "prove", "persuade", "summarize")
 
-_NUM = re.compile(r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*(%|％|pp|倍|万|亿|元|美元|家|人|个|台|次|天|月|年|小时|分钟|分|秒)?")
+_NUM = re.compile(r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*(亿美元|万美元|亿元|万元|万家|万人|万次|个月|分钟|小时|美元|%|％|pp|倍|万|亿|元|家|人|个|台|名|位|件|次|天|月|年|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
 _NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|[不未]超[过越]")
@@ -90,11 +90,23 @@ _COMPARISON_WORDS = ("对比", "相比", "vs", " versus ", "高于", "低于", "
                      "超过", "超越")
 _SERIES_WORDS = ("趋势", "增长", "下降", "同比", "环比", "逐年", "路径", "曲线",
                  "涨", "跌", "下滑", "回升", "掉到", "掉至", "跌到", "跌至",
-                 "trend", "growth", "yoy", "qoq")
+                 "升至", "升到", "降至", "降到", "增至", "增到", "减至", "回落至",
+                 "trend", "growth", "grew", "rose", "fell", "yoy", "qoq")
 _SEQUENCE_WORDS = ("步骤", "流程", "阶段", "路径", "迭代", "先", "然后", "接着", "最后",
                    "roadmap", "phase", "step", "milestone", "里程碑")
 # 顺序的**形状**标记：箭头链本身就是序列，不需要作者写「步骤」两个字。
 SEQUENCE_MARKERS = {"→", "⇒", "➜", "⇢"} | {"-"}
+_QUANTIFIED_ARROW = re.compile(
+    r"\d+(?:[.,]\d+)?\s*(?:%|％|pp|万|亿|元|家|人|次)?\s*"
+    r"(?:→|⇒|➜|⇢|->)\s*\d+")
+_FROM_TO_QUANTITY = re.compile(
+    r"(?:从|\bfrom\b)\s*\d+(?:[.,]\d+)?\s*(%|％|万元|元|万|亿|家|人|次)"
+    r"\s*(?:到|至|\bto\b)\s*\d+(?:[.,]\d+)?\s*\1", re.I)
+_BETWEEN_METRICS = re.compile(r"(?<!占)(?<!同)比(?![例率值])")
+# 『12 家试点门店中，9 家续约』是总体与子集，不是 12→9 的下降。
+_PART_OF_WHOLE = re.compile(
+    r"(?P<total>\d+(?:[.,]\d+)?\s*(?P<unit>家|人|个|台|名|位|件|%|％))"
+    r"[^。；;!?！？]{0,30}?中[，,\s]*(?P<part>\d+(?:[.,]\d+)?\s*(?P=unit))")
 _STRUCTURE_WORDS = ("体系", "架构", "框架", "模型", "组织", "结构", "模块", "层级",
                     "平台", "中台", "能力", "framework", "architecture", "system")
 _CONCLUSION_WORDS = ("结论", "所以", "因此", "必须", "唯一", "只有", "本质", "关键",
@@ -238,6 +250,11 @@ def numerals(text: str) -> list[dict]:
         raw = m.group(0).strip()
         value = float(m.group(1).replace(",", ""))
         unit = (m.group(2) or "").strip()
+        # 『曲线1/方案2/第3页』是对象编号，不是可比较的数据点。判断证据数量
+        # 不得把标签末尾的索引偷换成不同单位的实测值。
+        prefix = str(text or "")[max(0, m.start() - 4):m.start()]
+        if not unit and re.search(r"(?:曲线|版本|方案|阶段|步骤|第)\s*$", prefix):
+            continue
         # 「2026」「2026 年」都是时间坐标；「3 年」才是时长（值不在年份区间）。
         year = unit in ("", "年") and 1900 <= value <= 2100 and "." not in m.group(1)
         out.append({"raw": raw, "value": value, "unit": unit, "year": year})
@@ -246,6 +263,42 @@ def numerals(text: str) -> list[dict]:
 
 def evidence_numerals(text: str) -> list[dict]:
     return [n for n in numerals(text) if not n["year"]]
+
+
+_ARRIVAL_CUE = re.compile(
+    r"(?:升[至到]|降[至到]|增[至到]|减[至到]|跌[至到]|回落[至到]|提高[至到]|"
+    r"达到|→|->|到(?=\s*(?:20\d{2}\s*年?)?\s*\d)|今年|目前|当前|现为|"
+    r"\b(?:to|now|currently)\b)\s*", re.I)
+
+
+def number_roles(text: str) -> tuple[list[dict], dict | None]:
+    """区分基期和结果：『从 38% 升至 61%』的视觉主语是 61%，不是首个数字。
+
+    只认明确的终值信号；没有信号时保留原始顺序，不擅自把最大值当答案。
+    页判断只调用一次，焦点与信息权重共享；直接调用两者时各自可回退。
+    """
+    text = str(text or "")
+    nums = evidence_numerals(text)
+    if not nums:
+        return nums, None
+    subset = _PART_OF_WHOLE.search(text)
+    if subset:
+        part = evidence_numerals(subset.group("part"))
+        if part:
+            matched = next((n for n in nums if n["value"] == part[0]["value"]
+                            and n["unit"] == part[0]["unit"]), None)
+            if matched:
+                return nums, matched
+    for cue in reversed(list(_ARRIVAL_CUE.finditer(text))):
+        # 离终值太远的数字属于下一句话，不得误认；允许「到 2025 年 61%」。
+        nearby = re.split(r"[，。；;!?！？]", text[cue.end():], maxsplit=1)[0][:32]
+        arrival = next(iter(evidence_numerals(nearby)), None)
+        if arrival:
+            primary = next((n for n in nums if n["value"] == arrival["value"]
+                            and n["unit"] == arrival["unit"]), None)
+            if primary:
+                return nums, primary
+    return nums, nums[0]
 
 
 def understand(text: str, *, has_chart: bool = False) -> dict:
@@ -265,11 +318,17 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     # 标题重复正文的数字、同一数字写两遍：那是**同一个事实**，不是两个证据。
     # 判断证据形态与密度按去重后的数量算；「重复」这件事本身归信息权重管。
     distinct = len({(round(n["value"], 6), n.get("unit") or "") for n in ev})
+    same_unit = len({n.get("unit") or "" for n in ev}) <= 1
     chars = max(len(text), 1)
+    is_subset = distinct >= 2 and bool(_PART_OF_WHOLE.search(body))
+    is_comparison = (_hit(cmp_body, _COMPARISON_WORDS)
+                     or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
     modes: dict[str, float] = {}
-    if _hit(cmp_body, _COMPARISON_WORDS) or (distinct >= 2 and has_chart):
+    if is_comparison or (distinct >= 2 and has_chart):
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
-    if _hit(text, _SERIES_WORDS) or distinct >= 3:
+    if is_subset:
+        modes["part_whole"] = 0.84
+    if _hit(text, _SERIES_WORDS) or distinct >= 3 or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
@@ -278,8 +337,13 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     if _hit(body, _SEQUENCE_WORDS):
         modes["sequence"] = 0.6
     if SEQUENCE_MARKERS & set(body):
-        # 箭头链本身就是顺序的形状：它比孤立数字更接近这一页的结构。
-        modes["sequence"] = 0.75
+        # 两个可比较的量由箭头连起来是变化，不是『步骤模板』；有明确阶段词
+        # 则仍由真实流程承担形状。无数字的箭头链维持原先的顺序判定。
+        phases = _hit(body, ("阶段", "步骤", "流程", "里程碑", "phase", "step"))
+        if distinct >= 2 and not phases and _QUANTIFIED_ARROW.search(body):
+            modes["series"] = max(modes.get("series", 0.0), 0.81)
+        else:
+            modes["sequence"] = 0.75
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
     dominant = max(modes, key=lambda k: (modes[k], -EVIDENCE_MODES.index(k))) if modes else "none"
@@ -292,7 +356,9 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
         "subjects": subjects,
         "human": _hit(body, _HUMAN_WORDS),
         "scene": _hit(body, _SCENE_WORDS),
-        "comparison": _hit(cmp_body, _COMPARISON_WORDS),
+        "comparison": bool(is_comparison and not is_subset),
+        "part_whole": is_subset,
+        "same_unit": same_unit,
         "has_chart": bool(has_chart),
     }
 
@@ -404,23 +470,44 @@ _FILLERS = ("赋能", "助力", "打造", "全方位", "闭环", "抓手", "生�
             "引领", "加持", "焕新", "新高度")
 
 
-def information_weight(u: dict, claim: dict, text: str = "") -> dict:
+def information_weight(u: dict, claim: dict, text: str = "", *,
+                       number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
     """三档权重：必须最大化 / 必须弱化 / 必须删除——每条给出理由。"""
     text = str(text or "")
     claim_text = str(claim.get("text") or "")
     maxi, weak, kill = [], [], []
 
-    claim_nums = evidence_numerals(claim_text)
-    primary = claim_nums[0] if claim_nums else None
+    claim_nums, primary = number_anchor if number_anchor is not None else number_roles(claim_text)
     carried = [n["raw"] for n in claim_nums]
+    comparing = u.get("comparison") or u.get("evidence") == "comparison"
     if primary:
-        maxi.append(f"{primary['raw']} — 结论的数字：本页最大的东西应该是它")
-    for n in claim_nums[1:3]:
-        weak.append(f"{n['raw']} — 对照基数：与结论同屏但小一档，用来把结论放回参照系")
-    if claim_text and not claim_nums:
+        if u.get("part_whole"):
+            why = "子集的实际人数/数量：突出已发生的结果，同时明确给出总体"
+        elif comparing:
+            why = "主张所指的比较侧：与另一指标同屏，先核对指标分母和口径"
+        elif u.get("evidence") == "series":
+            why = "变化后的结果值：本页最大的数字应是它，不是基期"
+        elif _hit(claim_text, _ASK_WORDS):
+            why = "请求的资源量：金额/数量属于要做的决定，而非趋势终值"
+        else:
+            why = "主证据量：让观众看见可核验的量，不替它编造变化"
+        maxi.append(f"{primary['raw']} — {why}")
+    for n in [n for n in claim_nums if n is not primary][:2]:
+        if u.get("part_whole") and primary and n["unit"] == primary["unit"]:
+            why = "总体/分母：和子集同屏，但不是变化前的基期"
+        elif comparing:
+            why = "另一比较对象：注明各自定义，口径不同不得直接相减"
+        elif u.get("evidence") == "series" and primary and n["unit"] == primary["unit"]:
+            why = "变化前的基期：与结果同屏但小一档，让变化有参照"
+        elif n["unit"] in ("天", "月", "个月", "年", "小时", "分钟", "秒"):
+            why = "执行期限：保留在请求旁作条件，不能与金额当作两端"
+        else:
+            why = "支撑条件：不与主数字强行比较，不称作基期"
+        weak.append(f"{n['raw']} — {why}")
+    if claim_text and not primary:
         maxi.append(f"「{claim_text[:26]}」— 结论句，本页第一落点必须落在它身上")
-    if u.get("comparison"):
-        maxi.append("对比的两端与差值 — 张力来自内容本身，读图要能读出方向")
+    if comparing:
+        maxi.append("比较对象与口径 — 两端要能辨认；只有分母一致时才画差值")
     if u.get("evidence") in ("structure", "sequence"):
         maxi.append("关系的形状（层级/顺序）— 结构本身就是这一页的视觉对象")
 
@@ -464,7 +551,7 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
     ev = str(u.get("evidence") or "none")
     witness = bool(u.get("human") or u.get("scene"))
     ask = _hit(str(claim.get("text") or ""), _ASK_WORDS)
-    if u.get("comparison"):
+    if u.get("comparison") or ev == "comparison":
         role = "compare"
         why = "内容本身有两端对比，张力来自内容而不是装饰。"
         alts = [["explain", "把对比讲成并列说明＝抹平了本来存在的选择"]]
@@ -472,7 +559,7 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
         role = "summarize"
         why = "这一页要的是一个决定：把主张收成可执行的一句（做什么、谁来做、什么时候）。"
         alts = [["prove", "在要决定的页面上继续堆证据＝把决定推迟到下一次提问之后"]]
-    elif ev in ("series", "number"):
+    elif ev in ("series", "number", "part_whole"):
         role = "prove"
         why = "数字承担论证：这一页的说服力来自可核验的量，而不是措辞。"
         alts = [["persuade", "用形容词说服＝把可核验的东西换成不可核验的"]]
@@ -511,7 +598,8 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
 # ─────────────────────────────────────────────────────────────────────
 # 6 · 焦点判定（Focus Determination）
 # ─────────────────────────────────────────────────────────────────────
-def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict:
+def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
+             number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
     """第一落点：哪个元素承担结论，以及为什么不是别的元素。
 
     顺序即优先级：**通过必要性测试的图像 > 结论里的数字 > 那句话 > 标题**。
@@ -519,10 +607,12 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict
     没过测试的页面上根本不存在图像，第一落点自然回到文字。
     """
     media = media or {}
-    # 承载结论的必须是证据量：年份（2026）与编号（Q1）不当第一落点。
-    carried = evidence_numerals(claim.get("text") or "") or (
-        [n for n in (u.get("numerals") or []) if not n.get("year")][:1]
-        if u.get("evidence") in ("number", "series") else [])
+    # 结论里的基期不能因为「出现在前」就压过结果；与信息权重同用一份判定。
+    carried, primary = (number_anchor if number_anchor is not None
+                        else number_roles(claim.get("text") or ""))
+    if not carried and u.get("evidence") in ("number", "series"):
+        carried = [n for n in (u.get("numerals") or []) if not n.get("year")][:1]
+        primary = carried[0] if carried else None
     has_image = media.get("decision") in ("required", "reuse")
     claim_text = (claim.get("text") or "").strip()
     if has_image:
@@ -533,17 +623,37 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None) -> dict
                          "文字退到解说位——否则图像就只是背景花纹。"}
         rejected = [["hero_statement", "用一句话当第一落点＝把已经赢得的现场感再退回文字"],
                     ["kpi_row", "把数字排成一行＝观众先看数字后看主张，顺序反了"]]
-    elif u.get("comparison") and int(u.get("distinct_numerals") or 0) >= 2:
-        choice = {"element_role": "comparison_field", "type": "chart",
-                  "why": "两端共享同一基线与单位，差值肉眼可读；比较页的焦点是差，不是两端。"}
+    elif u.get("part_whole") and carried:
+        part = (primary or carried[-1])["raw"]
+        whole = next((n["raw"] for n in carried if n is not primary), "总体")
+        choice = {"element_role": "ratio_main", "type": "text",
+                  "why": f"「{part}」是已经发生的子集；同屏写清「{whole}」的总体，"
+                         "不把整体→子集误画成下降，也不让比例脱离分母。"}
+        rejected = [["trend_line", "总量和子集不是先后两个时间点：折线会虚构下降"],
+                    ["card_grid_4", "一个分子与分母不需要四张等权卡片"]]
+    elif (u.get("comparison") or u.get("evidence") == "comparison") \
+            and int(u.get("distinct_numerals") or 0) >= 2:
+        choice = {"element_role": "comparison_field",
+                  "type": "chart" if u.get("has_chart") else "text",
+                  "why": "把两端的指标名与数值同屏标出；只有同口径才共享轴线并标差值，"
+                         "分母不同时先说明比较边界。"}
         rejected = [["two_pie", "两个饼图：占比比较最不可读的一种形式"],
                     ["radar", "雷达图形状相似度高，差异看不出来"],
                     ["side_by_side_cards", "左右卡片墙：视觉等权，读者得自己找答案"]]
     elif carried and role in ("prove", "summarize", "compare"):
-        raw = carried[0]["raw"]
-        choice = {"element_role": "kpi_main", "type": "chart",
-                  "why": f"「{raw}」就是结论本身：让它成为页面上最大的对象，"
-                         "并给出基期参照，读者不需要心算。"}
+        raw = (primary or carried[0])["raw"]
+        if (_hit(claim_text, _ASK_WORDS)):
+            why = f"「{raw}」是请求的资源量：它和动作同屏，期限不被误称作基期。"
+        elif u.get("evidence") == "series" and len(carried) >= 2 and u.get("same_unit"):
+            why = f"「{raw}」是变化终值：让它先被看见，再给出较小的基期参照。"
+        else:
+            why = f"「{raw}」承担本页证据：保持来源与口径可见，不为数字编造基期。"
+        # 单一结论量或预算请求用原生文字直立；真有时间序列/作者声明图表
+        # 才让图表承担焦点，不能把每一个数字机械地变成一张图。
+        chart_needed = bool(u.get("has_chart") or
+                            (u.get("evidence") == "series" and len(carried) >= 2))
+        choice = {"element_role": "kpi_main",
+                  "type": "chart" if chart_needed else "text", "why": why}
         rejected = [["card_grid_4", "四张等权卡片：等权＝没有结论，观众平均用力后什么都没记住"],
                     ["donut", "把一句话画成一圈：环形图要求读者心算比例，结论被稀释"],
                     ["gauge", "仪表盘指针只表达「好/不好」，不表达「多少」"]]
@@ -602,10 +712,14 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
     # 图像一旦通过必要性测试，它就是这一页的第一落点——构图必须承载它，
     # 否则「焦点是图、构图是留白」自相矛盾。
     s["image_narrative"] = (4.5 if has_image else -99.0) + (1.5 if role == "establish" else 0.0)
-    s["data_field"] = (3.0 if ev in ("series", "comparison") else 0.0) \
-        + (2.0 if n >= 3 else 0.0) + (1.0 if dense >= 6 else 0.0) \
+    # 同一数量轴不能把不一致的单位并成两端；另有图表声明也不替它捏造同口径。
+    s["data_field"] = (3.0 if ev in ("series", "comparison")
+                       and u.get("same_unit", True) else 0.0) \
+        + (2.0 if n >= 3 and u.get("same_unit", True) else 0.0) \
+        + (1.0 if dense >= 6 and u.get("same_unit", True) else 0.0) \
         + (0.5 if u.get("comparison") else 0.0)
     s["big_whitespace"] = (3.0 if (n == 1 and ev in ("number", "series")) else 0.0) \
+        + (3.25 if ev == "part_whole" else 0.0) \
         + (2.0 if role == "persuade" else 0.0) + (1.0 if text_len <= 40 else 0.0) \
         - (1.5 if n >= 3 else 0.0)
     if not claim.get("text") and ev in ("none", "proposition"):
@@ -667,14 +781,18 @@ def _composition_why(chosen: str, u: dict, media: dict) -> str:
         return (f"这一页的{'主语' if media.get('function') != 'witness' else '证词'}是具体实体"
                 f"（{media.get('function')}）：图像承担现场，文字退到解说位。")
     if chosen == "data_field":
-        return f"{n} 个数字共享同一基线：秩序交给网格与对齐，证据自己铺满这一页。"
+        return (f"{n} 个同量纲数字交给对齐与数据场；先核对分母与期间，"
+                "同口径才共用基线，不让装饰抢证据。")
     if chosen == "big_whitespace":
+        if u.get("part_whole"):
+            return "突出已发生的子集，安静地给出总体分母；不把一个证据拆成两块等权卡。"
         return ("只有" + ("一个数字" if n == 1 else "一句话")
                 + "要立住：留白把结论从噪音里隔离出来，空间本身就是分量。")
     if chosen == "linear_structure":
         return "内容本身有序（步骤/阶段/层级）：位置即顺序，轴与间距比装饰准确。"
     if chosen == "asymmetric_tension":
-        return "两方不对等才有结论：让被推荐的一侧拿到尺度与墨色优先，差值自己说话。"
+        return ("两端承载不同主张：让主张侧先被看见，但先核对指标口径，"
+                "不可比时不让空间暗示一个虚假的差值。")
     return "这一页以阅读节奏为主：字阶与栏宽决定先读什么、读多久。"
 
 
@@ -709,8 +827,8 @@ def spatial_of(comp: dict) -> dict:
         path, primary, quiet = "结论 → 对照 → 明细", "上部结论带 + 中部数据场", "分组之间"
         duty = "承载证据密度：秩序来自网格与对齐，留白只出现在分组之间"
     elif chosen == "asymmetric_tension":
-        path, primary, quiet = "重侧 → 轻侧 → 差值", "被推荐的一侧（大尺度）", "轻侧周围"
-        duty = "制造倾向：轻侧的存在是为了让重侧更清楚"
+        path, primary, quiet = "主张侧 → 对照侧 → 比较边界", "被推荐的一侧（大尺度）", "对照侧周围"
+        duty = "使两端关系可读：不靠等权卡片、不凭空间尺度捏造不可比的差值"
     elif chosen == "linear_structure":
         path, primary, quiet = "起点 → 序列 → 终点", "轴线上第一个与当前节点", "节点之间（时间）"
         duty = "分隔与推进：间距表达节奏，节点之间的空白是时间"
@@ -722,6 +840,48 @@ def spatial_of(comp: dict) -> dict:
         duty = "建立阅读节奏：栏宽与字阶让读者知道先读什么、读多久"
     return {"reading_path": path, "primary_zone": primary, "quiet_zone": quiet,
             "whitespace_duty": duty}
+
+
+def tension_of(item: dict, brief: dict, role: str) -> dict:
+    """页面究竟回答哪一道阻力：作者声明优先；不相关时不虚构戏剧冲突。"""
+    local = str(item.get("tension") or "").strip()
+    if local:
+        return {"issue": local, "source": "author",
+                "why": "作者指定本页需要回答的阻力；先把主张对准它，再决定画面力度。"}
+    deck = str(brief.get("tension") or "").strip()
+    if deck and role == "persuade":
+        return {"issue": deck, "source": "deck",
+                "why": "说服页要正面回应整套决定面临的阻力，不能用漂亮画面绕过它。"}
+    return {"issue": None, "source": "not_asserted",
+            "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"}
+
+
+def typography_of(claim: dict, weight: dict, focus: dict, role: str,
+                  u: dict | None = None) -> dict:
+    """把已经做出的信息权重转为阅读路径，不下坐标/字号/字体预设。"""
+    maxi, weak = weight.get("maximize") or [], weight.get("weaken") or []
+    focal = maxi[0].split(" — ", 1)[0] if maxi else (claim.get("text") or "未决结论")
+    secondary = weak[0].split(" — ", 1)[0] if weak else None
+    if focus.get("type") == "image":
+        rule = "让图像先被看见，文字只说明它证明了什么；不要用大标题压住证词主体。"
+    elif focus.get("element_role") == "ratio_main":
+        rule = "子集先读、总体分母紧跟；两者是一份证据，不是两个时间点或两组卡片。"
+    elif focus.get("element_role") == "comparison_field":
+        rule = "直接写清两端指标名与分母/期间；只有同口径才用共享轴与差值。"
+    elif focus.get("element_role") == "structure_map" or role == "explain":
+        rule = "节点名与机制先于解释段；沿关系排字，不把每一步包进等权卡片。"
+    elif focus.get("element_role") == "kpi_main" and role == "summarize":
+        rule = "请求的资源量先于执行期限；两者单位不同，不把期限写成历史基期。"
+    elif focus.get("element_role") == "kpi_main" and (u or {}).get("evidence") == "series":
+        rule = ("结果值与基期拉开权重，数字写单位；基线、期间与出处可核验。"
+                if (u or {}).get("same_unit", True) else
+                "这组量单位不同：先统一口径或拆开说明，不强行共用数量轴。")
+    elif focus.get("element_role") == "kpi_main":
+        rule = "主数字先于支撑口径；只有真实存在的参照才把两个量排成比较。"
+    else:
+        rule = "让结论按语义停顿自然断行；装不下先删句改写，不缩字号填满空白。"
+    return {"lead": focal, "support": secondary,
+            "discipline": rule}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -755,7 +915,7 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
                 "function": "subject",
                 "necessity": f"这一副讲的是实体世界（{physical[0]}）：开场让材质与光先说话，"
                              "比一句抽象主张更快建立可信度。"}
-    if role == "prove" and presence and str(u.get("evidence")) not in ("series", "comparison"):
+    if role == "prove" and presence and str(u.get("evidence")) not in ("series", "comparison", "part_whole"):
         return {"decision": "required", "source": "judgment",
                 "function": "witness",
                 "necessity": "这一页靠「确有其事」成立：图像是现场记录，页面上的话才有出处。"}
@@ -785,8 +945,9 @@ def production_spec(focus: dict, comp: dict, media: dict, u: dict,
     # must_place 只留 role/type：理由分别住 focus.why / media.necessity / claim 规则，
     # 不在生产规格里再存一份（零消费者 + 与上游重复）。
     must = [{"role": focus["element_role"], "type": focus["type"]}]
-    if focus["type"] != "text":
-        # 焦点不是文字时，结论句仍须落页；焦点就是那句话时不再重复要求一遍。
+    if focus["type"] != "text" or focus["element_role"] not in ("statement_text", "headline"):
+        # 数字/比较虽也可以用文字排版，但它不是结论句；主张不能因类型=文本
+        # 就被省略。真正以主张为焦点的页才不用二次重复落结论。
         must.append({"role": "claim_text", "type": "text"})
     if u.get("numerals"):
         must.append({"role": "source", "type": "text"})
@@ -841,7 +1002,7 @@ _TYPE_VOICE = {"document": ("austerity with human warmth：窄栏、大字阶、
                                                 "sans"),
                "working": ("clarity：信息优先，字体是最安静的工具", "sans")}
 _FONTS = {"serif": {"cn": "Source Han Serif SC", "latin": "Georgia"},
-          "sans": {"cn": "Source Han l"}}
+          "sans": {"cn": "Source Han Sans SC", "latin": "Arial"}}
 
 
 def derive_world(brief: dict, understanding: list) -> dict:
@@ -868,7 +1029,7 @@ def derive_world(brief: dict, understanding: list) -> dict:
     subject = top if (top and (hits[top] >= 2 or len(understanding) <= 1)) else None
     human_share = sum(1 for u in understanding if u.get("human")) / max(len(understanding), 1)
     number_share = sum(1 for u in understanding
-                       if u.get("evidence") in ("series", "number", "comparison")) / max(len(understanding), 1)
+                       if u.get("evidence") in ("series", "number", "comparison", "part_whole")) / max(len(understanding), 1)
 
     declared = str(brief.get("visual_world") or "").strip()
     if declared and declared.lower() not in ("unknown", "none"):
@@ -953,8 +1114,9 @@ def derive_world(brief: dict, understanding: list) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # 12 · 逐页判断（judgment = 一次算完的完整判断卡）
 # ─────────────────────────────────────────────────────────────────────
-_PAGE_DECLARATIONS = ("density", "energy", "asset", "asset_role", "asset_function",
-                      "asset_subject", "medium", "material", "lighting", "texture",
+_PAGE_DECLARATIONS = ("audience", "decision", "tension", "density", "energy",
+                      "asset", "asset_role", "asset_function", "asset_subject",
+                      "medium", "material", "lighting", "texture",
                       "asset_color", "safe_area", "text_color", "negative_space_anchor",
                       "asset_ratio", "asset_allow_crop", "asset_source", "composition",
                       "insight", "focus",
@@ -983,9 +1145,10 @@ def _apply_declared_spot(focus: dict, comp: dict, declared) -> tuple[dict, dict]
 
 def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dict,
                   warnings: list, u: dict | None = None) -> dict:
-    """一页走完决策链：结论 → 权重 → 角色 → 焦点 → 构图 → 空间 → 媒体 → 生产规格。
+    """逐页判断：受众/决定/主张/阻力/权重/角色/焦点/空间/构图/排版/媒体/生产。
 
-    `u` 由 think 一次算好传进来（整页只理解一次）；直接调用时缺省当场算。
+    执行依赖允许媒体必要性先于焦点、构图先于由它推导的空间；节奏在整套回看时
+    添加。`u` 由 think 一次算好传进来（整页只理解一次）；直接调用时当场算。
     """
     title = str(item.get("title") or "").strip()
     content = str(item.get("content") or "").strip()
@@ -998,28 +1161,43 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                          "msg": "这一页没有可复述的结论（content 缺失）："
                                 "标题不是证据，不得脑补数据/案例——补真实内容，"
                                 "或把它降级为章节页，或删掉"})
+    audience = str(item.get("audience") or brief.get("audience") or "").strip()
+    decision = str(item.get("decision") or brief.get("decision") or "").strip()
+    page_tension = str(item.get("tension") or brief.get("tension") or "").strip()
     role = visual_role(u, index=index, total=total,
-                       tension=str(brief.get("tension") or ""), claim=claim)
+                       tension=page_tension, claim=claim)
+    tension = tension_of(item, brief, role["role"])
     media = media_necessity(u, role["role"],
                             declared=str(item.get("asset") or "").lower() or None,
                             has_chart=bool(item.get("chart")))
-    focus = focus_of(role["role"], u, claim, media)
+    anchor = number_roles(claim.get("text") or "")
+    if not anchor[0] and role["role"] in ("prove", "compare") \
+            and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
+        anchor = number_roles(content)  # 结论在标题、结果值在证据中
+    focus = focus_of(role["role"], u, claim, media, number_anchor=anchor)
     comp = composition_of(role["role"], u,
                           composition_grammar=world.get("composition_grammar", ""),
                           media=media, claim=claim, content_len=len(text))
     focus, comp = _apply_declared_spot(focus, comp, item)
     spatial = spatial_of(comp)
-    weight = information_weight(u, claim, text)
+    weight = information_weight(u, claim, text, number_anchor=anchor)
+    typography = typography_of(claim, weight, focus, role["role"], u)
     prod = production_spec(focus, comp, media, u, weight)
     open_q = []
     if claim["source"] == "absent":
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
     if media["source"] == "judgment" and media["decision"] == "required":
         open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）")
-    return {"claim": claim, "information_weight": weight,
+    if u.get("evidence") == "comparison" and not u.get("same_unit", True):
+        open_q.append("比较量的单位不同：先统一口径，或在同屏解释两端不可直接相减。")
+    elif (u.get("evidence") == "comparison" and
+          any(n.get("unit") in ("%", "％") for n in u.get("numerals") or [])):
+        open_q.append("比较比例前核对分母/样本与期间；不同指标的百分比不能直接相减。")
+    return {"audience": audience or None, "decision": decision or None,
+            "claim": claim, "tension": tension, "information_weight": weight,
             "visual_role": role, "focus": focus, "composition": comp, "spatial": spatial,
-            "media": media, "production": prod, "understanding": u,
-            "open_questions": open_q or None}
+            "typography": typography, "media": media, "production": prod,
+            "understanding": u, "open_questions": open_q or None}
 
 
 def _rejudge_without_image(entry: dict, *, text: str, world: dict,
@@ -1036,16 +1214,21 @@ def _rejudge_without_image(entry: dict, *, text: str, world: dict,
     j["media"] = media
     u = j["understanding"]
     role = j["visual_role"]["role"]
-    focus = focus_of(role, u, j["claim"], media)
+    anchor = number_roles(j["claim"].get("text") or "")
+    if not anchor[0] and role in ("prove", "compare") \
+            and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
+        anchor = number_roles(text)
+    focus = focus_of(role, u, j["claim"], media, number_anchor=anchor)
     comp = composition_of(role, u, composition_grammar=world.get("composition_grammar", ""),
                           media=media, claim=j["claim"], content_len=len(text))
     focus, comp = _apply_declared_spot(focus, comp, entry.get("declarations"))
     j["focus"] = focus
     j["composition"] = comp
     j["spatial"] = spatial_of(comp)
+    j["typography"] = typography_of(j["claim"], j["information_weight"], focus, role, u)
     j["production"] = production_spec(focus, comp, media, u, j["information_weight"])
-    j["open_questions"] = (["本页结论：先写出一句可复述的话（或删掉这一页）"]
-                           if j["claim"].get("source") == "absent" else None)
+    j["open_questions"] = ([q for q in (j.get("open_questions") or [])
+                            if not q.startswith("图像主题由作者确认")] or None)
     return {"page": entry["id"], "field": "media",
             "from": f"required:{old_fn}", "to": "none",
             "why": "跨页预算：图位让给更高价值页，本页由排版与数据承担"}
@@ -1119,6 +1302,25 @@ def _coherence_pass(pages: list, world: dict, texts: dict) -> dict:
     media_seq = [f"{p['judgment']['media'].get('decision')}"
                  f":{p['judgment']['media'].get('function') or '-'}"
                  for p in pages]
+    # 同一次整套回看，给作者一条跨页呼吸说明；只标注内容已造成的变化，
+    # 不为看起来不一样而强制改构图，也不单独另跑一轮『节奏 AI』。
+    for index, page in enumerate(pages):
+        current = page["judgment"]
+        previous = pages[index - 1]["judgment"] if index else None
+        if previous is None:
+            move, why = "open", "建立整套主张：先让观众知道要判断什么。"
+        elif index == len(pages) - 1:
+            move, why = "close", "回收开场的决定，不用新装饰或谢谢页稀释请求。"
+        elif current["production"]["density_target"] != previous["production"]["density_target"]:
+            move, why = ("breathe", "信息密度变化来自证据体量；用疏密给前一页让出阅读时间。")
+        elif current["media"]["decision"] != previous["media"]["decision"]:
+            move, why = ("turn", "内容决定图像是否在场；视觉重心随证据载体切换。")
+        elif current["composition"]["chosen"] == previous["composition"]["chosen"]:
+            move, why = ("hold", "内容需要相同的表达逻辑；保持关系可比，不凭空换版式。")
+        else:
+            move, why = ("turn", "主张或证据形态变化，阅读路径跟着内容转向。")
+        current["rhythm"] = {"move": move, "previous": pages[index - 1]["id"] if index else None,
+                             "why": why}
     return {"compositions": [p["judgment"]["composition"]["chosen"] for p in pages],
             "densities": [p["judgment"]["production"]["density_target"] for p in pages],
             "roles": [p["judgment"]["visual_role"]["role"] for p in pages],
@@ -1381,7 +1583,8 @@ def think(brief: dict) -> dict:
             if i > 0:
                 anchor["page_number"] = i + 1
         pages.append({"id": sid,
-                      "ref": (f"{it.get('title') or ''} {it.get('content') or ''}").strip()[:120],
+                      # BUILD 不能只看到前 88/120 字后再猜剩余证据；原文只保留一份。
+                      "ref": texts[sid],
                       "judgment": judgment,
                       "anchor": anchor,
                       "declarations": declared or None})
@@ -1532,15 +1735,21 @@ def _fmt_items(items, limit=3) -> str:
     return " / ".join(out) + ("…" if len(items) > limit else "")
 
 
-def build_skeleton(bundle: dict) -> str:
-    """plan bundle → build 模块骨架。确定性：同 bundle 必得同文本。
+def _weight_brief(items, limit=2) -> str:
+    """骨架只抄选择；理由的唯一真源是 plan.json 的权重判断卡。"""
+    return _fmt_items([str(item).split(" — ", 1)[0] for item in (items or [])], limit)
 
-    骨架把**判断连同理由**写进注释（含被否掉的替代项），把几何留给作者。
+
+def build_skeleton(bundle: dict) -> str:
+    """plan bundle → 构图作业稿：简短行动摘要；完整竞争理由只住 plan.json。
+
+    内容原文不截断；几何、字号与媒介落点仍由作者决定，不出模板坐标。
     """
     deck = bundle.get("deck") or {}
     pages = bundle.get("pages") or []
     world = deck.get("world") or {}
     colors = theme_tokens((deck.get("theme") or {}).get("colors_seed") or {})
+    fonts = world.get("fonts") or {"cn": "Source Han Sans SC", "latin": "Arial"}
     dna = deck.get("dna") or {}
     coherence = deck.get("coherence") or {}
 
@@ -1567,22 +1776,35 @@ def build_skeleton(bundle: dict) -> str:
                      "——起点不是模板，按本稿内容重组")
 
     L = ['# -*- coding: utf-8 -*-',
-         '"""plan → build 骨架：判断已由规划层做（含理由与被否掉的替代项），几何由你决定。',
+         '"""plan → build：逐页判断只在 plan.json 有一份完整记录，几何由作者决定。',
          '',
-         '每页注释结构：结论 / 权重 / 角色 / 焦点 / 构图（含为什么不是别的）/ 空间 / 媒体必要性',
-         '落笔顺序：先把每页焦点元素放在它该在的地方，再放支撑信息，最后才考虑装饰。',
-         '字段与阈值速查 → references/contract.md；判断校准 → references/judgment.md。',
+         '作业顺序：受众/决定 → 结论/阻力 → 权重 → 焦点/空间/构图 → 字体/媒体/节奏。',
+         '完整竞争理由在 plan.json；此处只带着原文与为什么这样落笔的短备忘。',
+         '内容必须真实出现，不因骨架省略证据；能删就不加，不能用小字掩盖过载。',
+         '字段契约 → references/contract.md（一次）；判断有真实缺口才读 judgment.md。',
          f'质量档: {deck.get("quality")} · 页数: {len(pages)}']
     L += [f'  {line}' for line in facts]
-    L += ['', '有图页先执行 assets → 出图；图片元素必须写 asset_id（check 时绑定核验）。',
-          '填完后一次收口：',
-          '  python scripts/vao.py check <本文件> out.pptx --mode release '
-          '--assets-manifest asset_manifest.json',
+    has_media = any((p.get("judgment") or {}).get("media", {}).get("decision")
+                    in ("required", "reuse") for p in pages)
+    if has_media:
+        manifest_path = (bundle.get("workflow") or {}).get("assets_manifest_path")
+        manifest = manifest_path or "asset_manifest.json"
+        status = (f'同次 plan 已准备清单 {manifest}' if manifest_path else
+                  '只有 think 判断卡、尚未落盘：用一次 vao.py plan 生成资产清单')
+        L += ['', f'有图：{status}；媒体有证据职责才占画面。',
+              '图像元素写 asset_id；出图按清单一次批量进行，check 时绑定核验。']
+        manifest_flag = f' --assets-manifest "{manifest}"'
+    else:
+        L += ['', '无必要图像：不出图、不加载清单、不为填版造画面。']
+        manifest_flag = ''
+    L += ['填完后一次收口：',
+          '  python scripts/vao.py check <本文件> out.pptx --mode release --speed strict'
+          + manifest_flag,
           '"""', '', 'SPEC = {',
           '    "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},',
           '    "theme": {',
           f'        "colors": {colors!r},',
-          '        "fonts": {},   # TODO: {"cn": ..., "latin": ...}（家族 ≤2）',
+          f'        "fonts": {fonts!r},  # 世界排版语气；作者有依据时可覆盖',
           '    },',
           '    "slides": [']
     for pg in pages:
@@ -1595,29 +1817,42 @@ def build_skeleton(bundle: dict) -> str:
         spatial = j.get("spatial") or {}
         media = j.get("media") or {}
         prod = j.get("production") or {}
-        L.append(f'        # ── {pg.get("id")} · 角色={role.get("role")} · '
+        L.append(f'        # ── {pg.get("id")} · 角色:{role.get("role")} · '
                  f'证据={j.get("understanding", {}).get("evidence")} · '
-                 f'媒体={_fmt_items([media.get("decision")], 1)}')
+                 f'媒体:{_fmt_items([media.get("decision")], 1)}')
         if pg.get("ref"):
-            L.append(f'        #    内容: {pg["ref"][:88]}')
+            # JSON 字面转义换行，避免作者原文里的换行破坏 Python 注释/骨架语法。
+            L.append('        #    内容原文: '
+                     + json.dumps(pg["ref"], ensure_ascii=False))
+        if (pg.get("declarations") or {}).get("audience") \
+                or (pg.get("declarations") or {}).get("decision"):
+            L.append(f'        #    本页受众/决定: {j.get("audience")} → {j.get("decision")}')
         L.append(f'        #    结论[{claim.get("source")}]: '
                  f'{claim.get("text") or "（缺：先写一句可复述的结论，或删掉这一页）"}')
-        L.append(f'        #      理由: {claim.get("why")}')
-        L.append(f'        #    权重: 最大化 {_fmt_items(weight.get("maximize"), 2)}；'
-                 f'弱化 {_fmt_items(weight.get("weaken"), 2)}；'
-                 f'删除 {_fmt_items(weight.get("delete"), 2)}')
-        L.append(f'        #    角色: {role.get("role")} — {role.get("why")}')
+        if claim.get("source") != "declared":
+            L.append(f'        #      理由: {claim.get("why")}')
+        t = j.get("tension") or {}
+        if t.get("issue"):
+            L.append(f'        #    阻力[{t.get("source")}]: {t["issue"]} · {t.get("why")}')
+        L.append(f'        #    权重: 主 {_weight_brief(weight.get("maximize"))}；'
+                 f'次 {_weight_brief(weight.get("weaken"))}；'
+                 f'删除 {_weight_brief(weight.get("delete"))}')
         L.append(f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）— '
                  f'{focus.get("why")}')
         L.append(f'        #    构图: {comp.get("chosen")} — {comp.get("why")}')
         L.append(f'        #    空间: 路径 {spatial.get("reading_path")} · 主区 '
                  f'{spatial.get("primary_zone")} · 留白职责 {spatial.get("whitespace_duty")}')
-        L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
+        typ = j.get("typography") or {}
+        L.append(f'        #    排版: 主语 {typ.get("lead")} · 退后 {typ.get("support") or "无"}；'
+                 f'{typ.get("discipline")}')
+        if media.get("decision") not in (None, "none"):
+            L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
+        rhythm = j.get("rhythm") or {}
+        L.append(f'        #    跨页节奏[{rhythm.get("move")}]：{rhythm.get("why")}')
         if prod.get("must_place"):
             L.append('        #    必落元素: ' + "；".join(
-                f'{x["role"]}({x["type"]})' for x in prod["must_place"]))
-        if prod.get("density_target"):
-            L.append(f'        #    密度目标: {prod["density_target"]}')
+                f'{x["role"]}({x["type"]})' for x in prod["must_place"])
+                + f' · 密度 {prod.get("density_target")}')
         if j.get("open_questions"):
             L.append('        #    ⚠ 未决: ' + "；".join(j["open_questions"]))
         if pg.get("declarations"):

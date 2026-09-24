@@ -155,7 +155,7 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
 
     t = time.perf_counter()
     from intelligence import load_brief, think, build_skeleton
-    from assets import build_manifest, prepare_manifest, now
+    from datetime import datetime, timezone
     timing["module_import_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
     t = time.perf_counter()
@@ -169,9 +169,35 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
         raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
                          "请至少给出一页的 title + content，再跑 plan")
     # 文件凭证直接从 load_brief 已读取的字节计算；解析与 SHA-256 共用一次读取。
-    bundle["workflow"] = {"planned_at": now(),
+    bundle["workflow"] = {"planned_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
                           "brief_path": str(Path(brief_path).expanduser().resolve()),
                           "brief_file_sha256": brief_sha256}
+    has_media = any((page["judgment"]["media"]["decision"] in ("required", "reuse"))
+                    for page in bundle["pages"])
+    # 判断一次即知道有没有图：确需图时同一次 plan 给清单，不要求作者重跑
+    # 带 --assets-out 的第二条命令；无图则绝不写空清单。
+    if has_media and not assets_out:
+        assets_out = str(Path(out or brief_path).expanduser().with_name("asset_manifest.json"))
+    if assets_out:
+        bundle["workflow"]["assets_manifest_path"] = str(Path(assets_out).expanduser().resolve())
+
+    timing["asset_manifest_build_ms"] = 0.0
+    timing["asset_manifest_prepare_ms"] = 0.0
+    timing["asset_manifest_write_ms"] = 0.0
+    if assets_out:
+        # 清单若因无效声明而构造失败，不能先落 plan / 骨架，再让作者拿到
+        # 一个声称已有清单、其实并不存在的半成品。原版真实复现了这种失败。
+        t = time.perf_counter()
+        from assets import build_manifest, prepare_manifest
+        manifest = build_manifest(brief, bundle, cache_path=asset_cache)
+        timing["asset_manifest_build_ms"] = round((time.perf_counter() - t) * 1000, 2)
+        t = time.perf_counter()
+        manifest = prepare_manifest(manifest, brief, bundle, brief_path, out,
+                                    assets_out, assets_dir)
+        timing["asset_manifest_prepare_ms"] = round((time.perf_counter() - t) * 1000, 2)
+        t = time.perf_counter()
+        _json_write(assets_out, manifest)
+        timing["asset_manifest_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
     t = time.perf_counter()
     if out:
@@ -191,21 +217,6 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
         else:
             target.write_text(build_skeleton(bundle), encoding="utf-8")
     timing["plan_artifact_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
-
-    timing["asset_manifest_build_ms"] = 0.0
-    timing["asset_manifest_prepare_ms"] = 0.0
-    timing["asset_manifest_write_ms"] = 0.0
-    if assets_out:
-        t = time.perf_counter()
-        manifest = build_manifest(brief, bundle, cache_path=asset_cache)
-        timing["asset_manifest_build_ms"] = round((time.perf_counter() - t) * 1000, 2)
-        t = time.perf_counter()
-        manifest = prepare_manifest(manifest, brief, bundle, brief_path, out,
-                                    assets_out, assets_dir)
-        timing["asset_manifest_prepare_ms"] = round((time.perf_counter() - t) * 1000, 2)
-        t = time.perf_counter()
-        _json_write(assets_out, manifest)
-        timing["asset_manifest_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
     # 运行遥测只加在返回对象，不写入 plan.json：规划文件仍是确定性判断凭证。
@@ -332,8 +343,12 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     上一轮的预览就是这一轮的预览（页缓存保证 0 页重画；联络表本身也是
     页图的纯函数）。凭证不匹配（产物/渲染器变了）即重渲。
     """
-    from ghost import PAGE_CACHE_DIR, ghost_deck, key_selection, make_contact_sheet
     from primitives import engine_fingerprint
+    fast = str(speed).lower() == "fast"
+    explicit_pages = [int(n) for n in pages] if pages is not None else None
+    # 缓存的证据范围也是输入：同一 PPTX 请求 2 页，不可复用旧的 5 页声明。
+    request = {"pages": explicit_pages,
+               "key_page_limit": max(1, int(limit)) if fast and pages is None else None}
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
     engine = engine_fingerprint("preview")
@@ -348,18 +363,20 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
                        and all(Path(p).is_file() for p in cached_pages)
                        and bool(cached_sheet) and Path(cached_sheet).is_file())
         if (cached.get("output_sha256") == output_sha and cached.get("engine") == engine
-                and cached.get("renderer_speed") == str(speed) and files_valid):
+                and cached.get("renderer_speed") == str(speed)
+                and cached.get("request") == request and files_valid):
             info = dict(cached)
             info["reused"] = True
             info["pages_drawn"] = 0
             info["pages_from_cache"] = int(info.get("count", len(cached_pages)) or 0)
             info["contact_sheet_cached"] = True
             return info
-    fast = str(speed).lower() == "fast"
+    # 只有缺失/失效时才加载 PIL/ghost；暖命中不初始化整套位图渲染器。
+    from ghost import PAGE_CACHE_DIR, ghost_deck, key_selection, make_contact_sheet
     slides = spec.get("slides") or []
     roles = None
-    if pages is not None:
-        wanted = [int(n) for n in pages]
+    if explicit_pages is not None:
+        wanted = explicit_pages
         scope = "full" if len(wanted) >= len(slides) else "explicit_subset"
     elif fast:
         wanted, roles = key_selection(slides, limit=limit)
@@ -400,6 +417,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     info["output_sha256"] = output_sha
     info["engine"] = engine
     info["renderer_speed"] = str(speed)
+    info["request"] = request
     info["reused"] = False
     try:
         target.mkdir(parents=True, exist_ok=True)
@@ -460,12 +478,8 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         load_spec_ms = round((time.perf_counter() - t_load) * 1000, 2)
 
         t_import = time.perf_counter()
-        if mode != "spec":
-            import importlib.util
-            missing = next((n for n in ("pptx",) if importlib.util.find_spec(n) is None), None)
-            if missing:
-                raise ModuleNotFoundError(f"missing compiler dependency: {missing}")
-        from assets import (blocked_result, qc_report, verify_chain)
+        # spec / 无图暖命中不加载资产层，也不预先探测 pptx：编译缺失时由
+        # _compile_step 在真正需要编译的那一刻给出明确诊断。
         from verify import (check_spec, mode_profile, normalize_spec,
                             release_guard_rules, verdict)
         from primitives import spec_fingerprint
@@ -478,18 +492,24 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         snapshots: dict = {}   # 本轮唯一一次读图：QC / 核验 / 编译 / 预览共用
         decoded: dict = {}     # 核验解码过的底图：编译期不再重复解码
         digests: dict = {}     # 本轮唯一一次哈希
+        slides = spec.get("slides")
+        has_images = (isinstance(slides, list) and any(
+            isinstance(slide, dict) and isinstance(slide.get("elements"), list)
+            and any(isinstance(e, dict) and e.get("type") == "image"
+                    for e in slide["elements"]) for slide in slides))
         asset_binding = None
         t_bind = time.perf_counter()
-        if assets_manifest:
+        if has_images and assets_manifest:
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
         asset_bind_ms = round((time.perf_counter() - t_bind) * 1000, 2)
 
-        # 资产链：QC（若有清单）→ 核验。一次执行只给一条修法。
+        # 只有实际使用图片才读取清单与像素；漏传清单的图片在编译前直接阻断。
         workflow = {"status": "SKIPPED", "issues": [], "image_count": 0,
-                    "reason": "no_manifest_provided"}
+                    "reason": "no_image_elements"}
         qc_result: dict = {}
         qc_ms = asset_chain_ms = 0.0
-        if assets_manifest:
+        if has_images and assets_manifest:
+            from assets import qc_report, verify_chain
             t_qc = time.perf_counter()
             qc_result, _ = qc_report(assets_manifest, assets_dir, phase=mode,
                                      speed=speed, snapshots=snapshots,
@@ -507,8 +527,14 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                         asset_binding.get("missing_asset_ids", [])
                         + asset_binding.get("missing_files", [])))
             asset_chain_ms = round((time.perf_counter() - t_chain) * 1000, 2)
+        elif has_images and mode != "spec":
+            from assets import verify_chain
+            t_chain = time.perf_counter()
+            workflow = verify_chain(spec)  # 含图但无清单：不编译伪合格 PPTX
+            asset_chain_ms = round((time.perf_counter() - t_chain) * 1000, 2)
 
         if workflow.get("status") == "BLOCKED":
+            from assets import blocked_result
             result = blocked_result(spec, workflow)
             result["asset_workflow"] = workflow
             result["source_spec_hash"] = spec_hash
@@ -885,8 +911,8 @@ def main(argv=None) -> int:
                     for w in bundle["warnings"][:4]:
                         print(f"  ⚠ {w.get('msg') or w}")
                 if media_pages:
-                    print(f"  媒体必要性判断：出图 {','.join(media_pages)}"
-                          "（可用 --assets-out 产出清单）")
+                    print(f"  媒体必要性判断：出图 {','.join(media_pages)} · "
+                          f"清单 {bundle.get('workflow', {}).get('assets_manifest_path')}")
                 coherence = bundle["deck"].get("coherence") or {}
                 if coherence.get("adjustments"):
                     shown = "；".join(

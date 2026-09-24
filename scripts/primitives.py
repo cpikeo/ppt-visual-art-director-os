@@ -198,9 +198,11 @@ def witness_same(a, b, *, strict: bool = False) -> bool:
 # 一个 scope → 一份文件集合。指纹随实现一起变：文件字节变了，指纹就变。
 # 缓存 / 证据只允许问「哪个 scope」，不允许自己列文件再各算一遍摘要。
 ENGINE_SCOPES: dict[str, tuple[str, ...]] = {
-    "compile": ("compiler.py", "primitives.py", "ghost.py"),   # 出 PPTX 的代码
-    "preview": ("ghost.py",),                                  # 出预览像素的代码
-    "measure": ("assets.py", "primitives.py"),                 # 量像素的代码
+    # 预览代码不参与 OOXML 编译；只动 ghost 不该废掉已验证的原生 PPTX。
+    "compile": ("compiler.py", "primitives.py"),
+    # 预览的颜色/排版原语来自 primitives；只看 ghost 会把原语变化误判为像素未变。
+    "preview": ("ghost.py", "primitives.py"),
+    "measure": ("assets.py", "primitives.py"),
 }
 _ENGINE_CACHE: dict[tuple[str, int | None], str] = {}
 

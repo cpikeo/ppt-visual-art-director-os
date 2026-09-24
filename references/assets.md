@@ -1,7 +1,8 @@
 # Assets（资产必要性 · 提示词 · QC）
 
-资产决策不等于填图。图片工具不在本包：`vao.py plan --assets-out` 产出契约，
-外部工具按契约出图，`check` 完成 QC 与链核验。
+资产决策不等于填图。图片工具不在本包：`vao.py plan` 判断确需图像时，在**同一次执行**
+将 `asset_manifest.json` 写到计划目录（`--assets-out` 仅用于改路径），外部工具按契约准备
+图像或登记已授权素材，`check` 完成 QC 与链核验。无图不生成空清单。
 
 ## 1. 必要性测试（先答这个，再谈风格）
 
@@ -18,8 +19,9 @@
 **作者声明永远压过判断**：逐页 `asset: required|reuse|none`，或写 `asset_subject` 即视为要出图。
 
 **图位按视觉价值分配，不按页序截断**：qualified 的页按 证词 > 建立 > 其余角色 排序取前
-`cap` 张（fast=2 / advanced=4）；落选页在清单里留下理由（`assets_hint.deferred`），
-且判断卡当场改写为不要图（焦点回到文字/数据，构图回到非图像算子）——
+`cap` 张（自动建议预算 fast=2 / advanced=4，作者明确 required/reuse 不因预算被删）；
+自动落选页在清单里留下理由（`assets_hint.deferred`），且判断卡当场改写为不要图
+（焦点回到文字/数据，构图回到非图像算子）——
 判断与清单永远是同一结论，不出现「判断说要图、清单说没图位」。
 
 ## 2. 四步落笔
@@ -44,7 +46,7 @@
 ## 3. 顺序与责任
 
 ```
-brief → plan（--assets-out 产出清单）→ 按清单出图 → 编排 → check（QC + 链核验）→ release
+brief → plan（按需同次准备清单）→ 按清单批量备图/核权 → 编排 → release check（QC + 链核验 + 预览）
 ```
 
 清单条目字段：`asset_id / slide_ids / decision / asset_role / prompt / negative /

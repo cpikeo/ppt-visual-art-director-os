@@ -7,10 +7,10 @@
 #   3. 技能包负责判断/编排/验证，不替用户虚构需求。
 #
 # 执行：
-#   python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py \
-#       --assets-out asset_manifest.json --assets-dir generated_assets
-#   python scripts/vao.py check build.py out.pptx --mode release \
-#       --assets-manifest asset_manifest.json
+#   python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py
+#   若确需图像，plan 同次在计划目录生成 asset_manifest.json；按清单出图/登记既有素材。
+#   python scripts/vao.py check build.py out.pptx --mode release --speed strict
+#   含图时给同一条 check 增加 --assets-manifest <plan 回报的路径>。
 
 # ============================================================
 # 01 · 核心契约（判断链的源头）
@@ -30,11 +30,10 @@ tension: ""             # 观众当前最大的疑问/风险/阻力——只写�
 # 注意：`design_direction` 已退役——风格不由名词决定，由内容决定（写了会被点名）。
 
 # ============================================================
-# 03 · 页面叙事（页面类型只是路由提示，不是模板）
+# 03 · 页面叙事（先填写内容，不填页面模板/家族标签）
 # ============================================================
 slides:
   - id: s01
-    family: cover       # LEGACY：仅供人读的备注，规划永不读取；不参与路由、不参与视觉（内容决定一切，同类内容允许不同长相）
     title: ""           # 标题写结论（可复述的一句话），不写字段名
     content: ""         # 证据（数字/来源/事实）；证据型页留空 → 判断卡标 absent
     # insight: "本页唯一结论"      # 写了直通判断卡（作者压过抽取）

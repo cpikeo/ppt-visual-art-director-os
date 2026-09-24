@@ -13,29 +13,29 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 ## 判断链（逐页一次）
 
 ```
-内容理解 → 受众 → 决策 → 结论抽取 → 信息权重 → 视觉角色
-        → 焦点判定 → 构图推理 → 空间结构 → 媒体必要性 → 生产规格
-        → 跨页校准（整套回看：节奏回拨 + 图位执行，不新增判断字段）
+Context → Audience → Decision → Claim → Tension → Information Weight → Visual Role
+        → Focus → Spatial Structure → Composition → Typography → Media → Rhythm → Production
+        → 整套回看（内容契合压过机械变化，图位执行不造图）
 ```
 
-每个判断都带理由；每个形式选择都带**被否掉的替代项与理由**。视觉世界（纸/墨/强调语义/
-材质/光/字体语气）由内容推导，不查风格预设表——相同内容类型允许产生不同视觉结果。
+逐页判断带来源与理由；**确有竞争时**才记录被否掉的替代项，避免五条套话。
+`plan.json` 是完整理由，骨架保留原文和行动摘要，不为生产重读整个 plan。
+视觉世界（纸/墨/强调语义/材质/光/字体语气）由内容推导，不查风格预设表——
+相同内容类型允许产生不同视觉结果。
 
 ## 生产路径
 
 ```bash
-# 1 · THINK（无图；如确有图像媒体，在同一次 plan 调用中加 --assets-out / --assets-dir）
+# 1 · THINK：先判断是否确需图片；若需图，同一次调用自动输出 asset_manifest.json
 python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py
-# 2 · BUILD：同一轮落完 build.py；有图时将独立 prompt 批量送出图工具
-# 3 · VERIFY（无图稿）
-python scripts/vao.py check build.py out.pptx --mode release --speed fast
-# 有图稿在同一条 check 命令中追加：--assets-manifest asset_manifest.json
+# 2 · BUILD：按骨架原文与判断一次落完；有图时按清单批量出图/登记授权素材
+# 3 · VERIFY：终稿全页取证选 strict；快速迭代可用 fast（只看关键页）
+python scripts/vao.py check build.py out.pptx --mode release --speed strict
+# 含图时为同一条 check 加 --assets-manifest <plan 输出的清单路径>
 ```
 
-性能数字以 [端到端审计](PERFORMANCE_AUDIT.md) 的对照实测为准：12 页无图合成稿，
-`--speed fast` 冷 release 进程 wall paired 中位约 **0.46s**（单轮约 0.39–0.50s），
-缓存命中约 **0.09s**。这是本执行环境和 fixture 的结果，不外推到图像密集稿件，也不含外部出图/模型耗时。
-旧 `0.4s` 冷值在个别轮次可见但不是稳定中位；`0.03s` 缓存值未复现，均不作为性能承诺。
+真实 [端到端 Before/After 审计](PERFORMANCE_AUDIT.md) 区分进程 wall/CPU、分阶段耗时、
+命令次数、I/O、图片 QC/缓存和逐页视觉证据；只对测试环境与样本负责，不含外部 AI 出图或人工设计时间。
 
 ## 架构（8 个模块 · 一条链）
 
@@ -52,7 +52,8 @@ scripts/
 ```
 
 - **QA 只拦硬错误**：编译失败 / 内容缺失 / 溢出 / 越界 / 重叠 / 无效资产 / 无效图表 /
-  来源缺失（release）。输出只有 **PASS / BLOCK**。
+  来源缺失（release）。输出只有 **PASS / BLOCK**；设计质量由逐页判断与作者审阅负责，
+  PIL 结构预览不是 Office 像素忠实证明。
 - **不调用 LibreOffice / soffice / poppler**：方向证据由 `ghost.py` 的确定性结构预览给出。
 - **一次算完多处复用**：编译缓存、资产判定复用、预览页缓存、单趟归一化。
 - **PPT 全程原生可编辑**：文本、形状、图表在 PowerPoint 对象模型中可直接修改。
@@ -71,10 +72,9 @@ scripts/
 
 ## 设计经验记忆（DNA）
 
-`memory/design_dna.json` 只记录「为什么某个设计判断有效」——九条高迁移原则，
-不记坐标、不记色值、不记版式结果。规划时自动召回，release 通过后鼓励沉淀。
-职责冻结（v9.3 起）：DNA 是经验库不是第二套 judgment——只收真实项目验证过的
-例外/经验，不再新增通用原则；存量九条冻结，只修错不扩写：
+`memory/design_dna.json` 记录判断有效的条件、失效边界与可验证出处；当前有**九条通用
+原则 + 两条真实案例经验**，不记坐标/色值/版式结果。DNA 是经验库不是第二套
+judgment：通用原则冻结、只修错；新的条目只收经真实项目验证的例外/经验。
 
 ```bash
 python scripts/vao.py dna --check          # 体检

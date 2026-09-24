@@ -134,6 +134,75 @@ def test_intelligence(tmp: Path):
     weak = " ".join(s03["information_weight"]["weaken"])
     check("weight: 结论数字最大化（61%）", "61%" in maxi)
     check("weight: 对照基数弱化（38% 小一档）", "38%" in weak)
+
+    # 先出现的数字未必是结论：焦点、权重、排版必须共用同一结果值判定。
+    rising = intel.think(dict(BRIEF, slides=[
+        {"id": "rise", "title": "内容占比从 38% 升至 61%",
+         "content": "2023 年 38%，2025 年 61%（来源：内容台账）"}]))["pages"][0]["judgment"]
+    falling = intel.think(dict(BRIEF, slides=[
+        {"id": "fall", "title": "单位成本从 2,800 元降至 1,800 元",
+         "content": "同口径（来源：财务台账）"}]))["pages"][0]["judgment"]
+    check("data: 升至/降至后的结果值为主，基期退后（不让首个数字误导读者）",
+          rising["visual_role"]["role"] == "prove"
+          and rising["understanding"]["evidence"] == "series"
+          and "61%" in rising["focus"]["why"]
+          and rising["typography"]["lead"] == "61%"
+          and any("38%" in x for x in rising["information_weight"]["weaken"])
+          and "1,800 元" in falling["focus"]["why"]
+          and falling["typography"]["lead"] == "1,800 元",
+          f"{rising['information_weight']} / {falling['information_weight']}")
+    check("data: 量化箭头是变化，文字阶段箭头仍是序列；复合单位不被截断",
+          intel.understand("38% → 61%")["evidence"] == "series"
+          and intel.understand("试点 → 复制 → 全量")["evidence"] == "sequence"
+          and intel.understand("从38%到61%")["evidence"] == "series"
+          and intel.numerals("18个月 / 4,800万元 / 30分钟")[0]["unit"] == "个月"
+          and intel.numerals("18个月 / 4,800万元 / 30分钟")[1]["unit"] == "万元")
+    review = intel.think(dict(BRIEF, slides=[
+        {"id": "compare", "title": "留存改善比曝光增长更稳健",
+         "content": "内容回访率 71%，投放再触达率 42%（来源：回访台账）"},
+        {"id": "subset", "title": "试点门店愿意继续共创",
+         "content": "12 家试点门店中，9 家承诺提供记录（来源：回访台账）",
+         "asset": "none"},
+        {"id": "ask", "title": "请批准 4,800 万，启动 18 个月计划",
+         "content": "请求批准 4,800 万，分季度验收（来源：预算草案）"}]))
+    jc, jp, ja = [p["judgment"] for p in review["pages"]]
+    check("data: 两个不同指标是比较，不伪装成同一指标的前后趋势/差值",
+          jc["understanding"]["evidence"] == "comparison"
+          and jc["visual_role"]["role"] == "compare"
+          and "分母" in jc["focus"]["why"]
+          and "基期" not in " ".join(jc["information_weight"]["weaken"])
+          and jc["focus"]["type"] == "text"
+          and any("分母" in q for q in jc["open_questions"]))
+    chart_pair = intel.think(dict(BRIEF, slides=[
+        {"id": "paired", "title": "两个样本的绝对量",
+         "content": "甲组 30 人，乙组 18 人（来源：用户台账）",
+         "chart": {"type": "bar", "values": [30, 18]}}]))["pages"][0]["judgment"]
+    check("data: 作者给出的两个数图表是比较角色，不把第一数字误当趋势结果",
+          chart_pair["visual_role"]["role"] == "compare"
+          and chart_pair["focus"]["element_role"] == "comparison_field"
+          and chart_pair["focus"]["type"] == "chart")
+    mixed = intel.think(dict(BRIEF, slides=[
+        {"id": "units", "title": "收入与人均成本对照",
+         "content": "总收入 480 万元，人均成本 90 元（来源：财务表）",
+         "chart": {"type": "bar", "values": [480, 90]}}]))["pages"][0]["judgment"]
+    check("data: 单位不同不共用数量轴；曲线页编号不是第四个数据点",
+          not mixed["understanding"]["same_unit"]
+          and mixed["composition"]["chosen"] != "data_field"
+          and any("单位不同" in q for q in mixed["open_questions"])
+          and intel.understand("三年曲线1 96元→128元→205元")["distinct_numerals"] == 3)
+    check("data: 9/12 子集突出 9、写明 12 分母，不误读为下降或摆并列卡",
+          jp["understanding"]["evidence"] == "part_whole"
+          and jp["focus"]["element_role"] == "ratio_main"
+          and jp["typography"]["lead"] == "9 家"
+          and jp["typography"]["support"] == "12 家"
+          and jp["composition"]["chosen"] == "big_whitespace"
+          and any(x["role"] == "claim_text" for x in jp["production"]["must_place"]))
+    check("data: 预算和月份是两种量，18个月不是金额的历史基期",
+          ja["typography"]["lead"] == "4,800 万"
+          and ja["typography"]["support"] == "18 个月"
+          and ja["focus"]["type"] == "text"
+          and any("执行期限" in w for w in ja["information_weight"]["weaken"])
+          and any(x["role"] == "claim_text" for x in ja["production"]["must_place"]))
     dup_text = "收入 12 亿，收入 12 亿（来源：财报）"
     dup = intel.information_weight(intel.understand(dup_text),
                                    {"text": "收入 12 亿", "source": "extracted"}, dup_text)
@@ -325,6 +394,36 @@ def test_intelligence(tmp: Path):
           and "构图:" in sk1 and "否决" not in sk1 and "媒体:" in sk1)
     check("skeleton: 不给坐标（几何留给作者）",
           "估算高度" not in sk1 and '"x":' not in sk1.split("slides")[0])
+    sk_vars: dict = {}
+    exec(compile(sk1, "judgment-skeleton.py", "exec"), sk_vars)
+    check("skeleton: 统一字族由世界判断直接落到稿件，终稿默认全页取证",
+          sk_vars["SPEC"]["theme"]["fonts"] == bundle["deck"]["world"]["fonts"]
+          and "--speed strict" in sk1)
+    long_source = "首句是有来源的事实。" + "信息不会为骨架长度而丢失。" * 25 + "\n末句：留给排版处理。"
+    preserved = intel.think(dict(BRIEF, slides=[
+        {"id": "raw", "title": "完整原文必须保留", "content": long_source}]))
+    preserved_sk = intel.build_skeleton(preserved)
+    check("skeleton: 多行/超长原文逐字留在可执行骨架，原文不是视觉主语",
+          long_source in preserved["pages"][0]["ref"]
+          and "首句是有来源的事实。" in preserved_sk
+          and "末句：留给排版处理。" in preserved_sk
+          and "…" not in preserved["pages"][0]["ref"]
+          and compile(preserved_sk, "preserved.py", "exec") is not None)
+    check("skeleton: 无图不添加空资产清单命令（含图命令交由 plan 决定）",
+          "--assets-manifest" not in preserved_sk and "媒体:none" in preserved_sk)
+    raw_media = intel.think(dict(BRIEF, slides=[
+        {"id": "photo", "title": "真实门店的回访记录",
+         "content": "门店现场观察有来源（来源：实地记录）", "asset": "required"}]))
+    check("skeleton: 直接调用 think 不谎称资产清单已经落盘",
+          "尚未落盘" in intel.build_skeleton(raw_media))
+    check("judgment: 受众/决定/阻力/排版/跨页节奏均由逐页判断串起",
+          all(all(p["judgment"].get(key) for key in
+                  ("audience", "decision", "tension", "typography", "rhythm"))
+              for p in bundle["pages"])
+          and all(p["judgment"]["typography"].get("lead")
+                  and p["judgment"]["typography"].get("discipline")
+                  and p["judgment"]["rhythm"].get("move") for p in bundle["pages"])
+          and intel._FONTS["sans"]["cn"] == "Source Han Sans SC")
 
     # 跨页校准：连续同构图回拨中间页（内容允许第二选择时）
     streak = intel.think(dict(BRIEF, slides=[
@@ -438,9 +537,9 @@ def test_intelligence(tmp: Path):
     check("dna: 召回结构完整", {"matched", "confidence", "note"} <= set(dna))
     safe_area_dna = intel.recall_dna({
         "title": "满幅摄影背景的文字安全区纹理过密，safe_area 需要羽化处理"})
-    check("dna: 安全区经验合并后仍可按关键词召回",
-          safe_area_dna.get("matched") == "image_must_inform"
-          and "safe_area" in safe_area_dna.get("judgment", {}).get("structure", ""))
+    check("dna: 安全区例外保留独立案源，按关键词召回而不稀释通用原则",
+          safe_area_dna.get("matched") == "feathered_safe_area_calm"
+          and "safe_area" in safe_area_dna.get("judgment", {}).get("media", ""))
     errs, _ = intel.validate_dna_entry(
         {"id": "x", "pattern": "p", "judgment": {"layout": "fixed 64px grid"},
          "signature": {"keywords": ["k"]}})
@@ -894,6 +993,24 @@ def test_production(tmp: Path):
                     "_image_bytes": {str(media_src): blob_b}}
     key_b = _page_key(media_slide, media_spec_b, 0.5, 1, 1)
     check("ghost: 同一路径的图片字节变化会使页缓存失效", key_a != key_b)
+    # 与先画透明整幅图再合成的旧路径逐像素比对：省掉背景合成不能改变任何墨迹。
+    from ghost import _draw_text, _font, _rgba
+    from primitives import RenderContext
+    ctx = RenderContext(spec.get("theme"), spec.get("canvas"))
+    text_elem = {"id": "probe", "type": "text", "x": 12, "y": 24,
+                 "width": 160, "height": 80, "text": "61%", "size": 32, "color": "ink"}
+    same = True
+    for opacity in (None, 0.52):
+        bg_color = (244, 239, 230, 255)
+        expected = Image.new("RGBA", (240, 130), bg_color)
+        old_overlay = Image.new("RGBA", expected.size, (0, 0, 0, 0))
+        ImageDraw.Draw(old_overlay, "RGBA").text(
+            (12, 24), "61%", font=_font(32), fill=_rgba(ctx, "ink", opacity))
+        expected.alpha_composite(old_overlay)
+        actual = Image.new("RGBA", expected.size, bg_color)
+        _draw_text(actual, {**text_elem, "opacity": opacity}, ctx, 1)
+        same = same and actual.tobytes() == expected.tobytes()
+    check("ghost: 不透明直画与半透明旧合成路径像素一致（速度不能改变设计）", same)
 
 
 # ── 4 · cli + docs ───────────────────────────────────────────────────
@@ -929,6 +1046,50 @@ def test_cli(tmp: Path):
     check("cli: 骨架写「为什么」但不再复制否决（canonical owner 收口）",
           "为什么" in sk and "结论[" in sk and "否决" not in sk)
 
+    # 一次 CLI plan：图是判断所得才准备资产；没有图不产生空清单/额外命令。
+    media_brief = tmp / "media-brief.yml"
+    media_brief.write_text(yaml.safe_dump(dict(BRIEF, slides=[
+        {"id": "witness", "title": "门店回访揭示真实的使用障碍",
+         "content": "门店现场与店长在高峰时段的记录（来源：走访纪要）",
+         "asset": "required", "asset_subject": "店长在门店高峰时段真实记录"}]),
+        allow_unicode=True), encoding="utf-8")
+    media_dir = tmp / "media"
+    media_plan = media_dir / "plan.json"
+    media_sk = media_dir / "build.py"
+    media_run = run_vao("plan", str(media_brief), "--out", str(media_plan),
+                        "--skeleton", str(media_sk), "--json")
+    image_json = json.loads(media_run.stdout) if media_run.returncode == 0 else {}
+    auto_manifest = media_dir / "asset_manifest.json"
+    noimg_plan = tmp / "noimg-plan.json"
+    noimg_sk = tmp / "noimg-build.py"
+    noimg_run = run_vao("plan", str(brief), "--out", str(noimg_plan),
+                         "--skeleton", str(noimg_sk), "--json")
+    noimg_json = json.loads(noimg_run.stdout) if noimg_run.returncode == 0 else {}
+    check("cli: 图片被判断为必要时，同一次 plan 交付可定位的资产清单+构图骨架",
+          media_run.returncode == 0 and auto_manifest.is_file()
+          and image_json.get("workflow", {}).get("assets_manifest_path")
+          == str(auto_manifest.resolve())
+          and "--assets-manifest" in media_sk.read_text(encoding="utf-8")
+          and len(json.loads(auto_manifest.read_text(encoding="utf-8")).get("assets", [])) == 1,
+          str(image_json.get("workflow", {})))
+    check("cli: 无图一次 plan 没有资产清单和清单验证参数",
+          noimg_run.returncode == 0 and not (tmp / "asset_manifest.json").exists()
+          and not noimg_json.get("workflow", {}).get("assets_manifest_path")
+          and "--assets-manifest" not in noimg_sk.read_text(encoding="utf-8"))
+
+    invalid_brief = tmp / "invalid-media.yml"
+    invalid = dict(BRIEF, slides=[dict(BRIEF["slides"][0],
+                                   asset="required", asset_role="cosmic_unrecognized")])
+    invalid_brief.write_text(yaml.safe_dump(invalid, allow_unicode=True), encoding="utf-8")
+    invalid_dir = tmp / "invalid-media"
+    invalid_run = run_vao("plan", str(invalid_brief), "--out", str(invalid_dir / "plan.json"),
+                          "--skeleton", str(invalid_dir / "build.py"), "--json")
+    check("cli: 不合法图片角色 fail-closed，不能留下声称已有清单的半成品 plan/骨架",
+          invalid_run.returncode == 2 and "asset_role" in invalid_run.stderr
+          and not (invalid_dir / "plan.json").exists()
+          and not (invalid_dir / "build.py").exists()
+          and not (invalid_dir / "asset_manifest.json").exists(), invalid_run.stderr[-200:])
+
     filled = make_build(tmp)
     out = tmp / "deck.pptx"
     stale_packet = out.with_suffix(".repair.json")
@@ -953,6 +1114,33 @@ def test_cli(tmp: Path):
     check("cli: 二次 release 缓存复用（未重编）",
           r2.returncode == 0 and "缓存复用" in r2.stdout and out.stat().st_mtime_ns == first,
           r2.stdout[-200:])
+    unused = run_vao("check", str(filled), str(out), "--mode", "release",
+                     "--assets-manifest", str(tmp / "nonexistent-asset.json"), "--json")
+    unused_timing = (json.loads(unused.stdout).get("timing") or {}) if unused.returncode == 0 else {}
+    check("cli: 无图 release 不读取无关清单，也不触发额外像素验证",
+          unused.returncode == 0 and unused_timing.get("asset_bind_ms") == 0
+          and unused_timing.get("qc_ms") == 0 and out.stat().st_mtime_ns == first)
+
+    preview_dir = tmp / "deck_preview"
+    small = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
+                    "--ghost-pages", "2", "--json")
+    small_timing = (json.loads(small.stdout).get("timing") or {}) if small.returncode == 0 else {}
+    small_marker = json.loads((preview_dir / "ghost.meta.json").read_text(encoding="utf-8")) \
+        if (preview_dir / "ghost.meta.json").is_file() else {}
+    check("cli: 5→2 页取证不复用旧的 5 页凭证，不留过期预览图片",
+          small.returncode == 0 and small_timing.get("render_pages") == 2
+          and not small_timing.get("render_bundle_reused")
+          and small_marker.get("request", {}).get("key_page_limit") == 2
+          and len(list(preview_dir.glob("ghost-[0-9]*.png"))) == 2,
+          str(small_timing))
+    restored = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
+                       "--ghost-pages", "5", "--json")
+    restore_timing = (json.loads(restored.stdout).get("timing") or {}) if restored.returncode == 0 else {}
+    check("cli: 2→5 页重新扩大证据范围，逐页缓存复用而非重画/重编",
+          restored.returncode == 0 and restore_timing.get("render_pages") == 5
+          and restore_timing.get("render_pages_drawn") == 0
+          and restore_timing.get("compile_ms") == 0
+          and len(list(preview_dir.glob("ghost-[0-9]*.png"))) == 5)
 
     broken = tmp / "broken.py"
     namespace: dict = {}
@@ -965,6 +1153,20 @@ def test_cli(tmp: Path):
     check("cli: BLOCK 退出码 2 + 分组修复包",
           r.returncode == 2 and packet["failure_codes"] == ["TEXT_OVERFLOW"]
           and packet["fix_plan"]["groups"], r.stdout[-200:])
+    no_manifest = tmp / "image-build.py"
+    with_pic = json.loads(json.dumps(spec))
+    with_pic["slides"][0]["elements"].append(
+        {"id": "missing_picture", "type": "image", "src": "asset:missing",
+         "x": 580, "y": 240, "width": 540, "height": 350, "role": "witness"})
+    no_manifest.write_text(f"SPEC = {with_pic!r}\n", encoding="utf-8")
+    image_out = tmp / "missing-image.pptx"
+    without = run_vao("check", str(no_manifest), str(image_out), "--mode", "release", "--json")
+    blocked = json.loads(without.stdout) if without.returncode == 2 else {}
+    check("cli: 含图但缺清单阻断于编译之前，不输出假的合格 PPTX",
+          without.returncode == 2 and not image_out.exists()
+          and (blocked.get("timing") or {}).get("compile_ms") == 0
+          and "ASSET" in " ".join(blocked.get("failure_codes", [])),
+          str(blocked.get("failure_codes", [])))
 
     empty = tmp / "empty.yml"
     empty.write_text("audience: 董事会\ndecision: 批准预算\nslides: []\n", encoding="utf-8")

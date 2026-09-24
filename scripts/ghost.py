@@ -333,8 +333,12 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     else:
         cy = y + pad
     align = str(e.get("align", "left")).lower()
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay, "RGBA")
+    # 文字通常完全不透明：过去每个小字框都创建一张全画布 RGBA、再全幅合成。
+    # 直接画到已不透明的页面像素完全一致；真正半透明的文字仍走原合成路径，
+    # 不把 alpha=128 的替换当成 alpha_composite（否则会改变叠压与色阶）。
+    opaque = color[3] == 255
+    overlay = None if opaque else Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(img if opaque else overlay, "RGBA")
     for line in lines:
         bbox = d.textbbox((0, 0), line, font=font)
         tw = bbox[2] - bbox[0]
@@ -346,7 +350,8 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
             tx = x + pad
         d.text((int(tx), int(cy)), line, font=font, fill=color)
         cy += line_height
-    img.alpha_composite(overlay)
+    if overlay is not None:
+        img.alpha_composite(overlay)
 
 
 def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> None:
@@ -1315,6 +1320,16 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
             if not copied:
                 image.save(path, "PNG", compress_level=int(png_compress_level))
             paths.append(path)
+    if store:
+        # 这层是可交付的页图集合，不是页缓存：请求 5→2 页时把旧 3 张从输出
+        # 目录移走，否则浏览目录的人会看到本轮未验证的过期证据。缓存仍留在 pages/。
+        wanted_names = {p.name for p in paths}
+        for stale in out.glob("ghost-[0-9]*.png"):
+            if stale.name not in wanted_names:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
     if page_cache:
         _prune_page_cache(cache_dir)
     return paths
