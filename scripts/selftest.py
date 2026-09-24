@@ -436,6 +436,11 @@ def test_intelligence(tmp: Path):
     # DNA：召回 / 校验 / 拒收结果记忆 / 幂等写入
     dna = intel.recall_dna(BRIEF)
     check("dna: 召回结构完整", {"matched", "confidence", "note"} <= set(dna))
+    safe_area_dna = intel.recall_dna({
+        "title": "满幅摄影背景的文字安全区纹理过密，safe_area 需要羽化处理"})
+    check("dna: 安全区经验合并后仍可按关键词召回",
+          safe_area_dna.get("matched") == "image_must_inform"
+          and "safe_area" in safe_area_dna.get("judgment", {}).get("structure", ""))
     errs, _ = intel.validate_dna_entry(
         {"id": "x", "pattern": "p", "judgment": {"layout": "fixed 64px grid"},
          "signature": {"keywords": ["k"]}})
@@ -572,6 +577,88 @@ def test_verify(tmp: Path):
     twice_c, _ = normalize_spec(norm_c)
     check("normalize: 同心吸附幂等（二次归一不再漂移）",
           spec_fingerprint(twice_c) == spec_fingerprint(norm_c))
+
+    # 回归（v9.6.1）：LINE / ARROW 的零厚度轴必须保留为真正的横线/竖线。
+    # 否则零宽竖线会被扩成网格宽度，PPT connector 从左上连到右下，出现轻微斜线。
+    vertical = {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": {}}, "slides": [{"id": "axis", "elements": [
+        {"id": "vertical_axis", "type": "shape", "shape": "line",
+         "x": 93, "y": 278, "width": 0, "height": 239,
+         "stroke": "#C8C2B5", "stroke_width": 1},
+        {"id": "node", "type": "shape", "shape": "ellipse",
+         "x": 88.5, "y": 273.5, "width": 9, "height": 9,
+         "fill": "#713B43", "stroke": "none"},
+    ]}]}
+    norm_v, _ = normalize_spec(vertical)
+    axis_e, node_e = norm_v["slides"][0]["elements"]
+    check("normalize: 零宽竖线保留 width=0，长度按中心吸附",
+          axis_e["width"] == 0 and axis_e["height"] == 240,
+          f'width={axis_e["width"]}, height={axis_e["height"]}')
+    check("normalize: 圆点与零宽竖线保持同一中线",
+          abs(axis_e["x"] - (node_e["x"] + node_e["width"] / 2)) < 1e-9,
+          f'线 x={axis_e["x"]}, 圆点中心={node_e["x"] + node_e["width"] / 2}')
+    accepted_vertical = check_spec(norm_v)
+    check("guard: 单轴为零的竖线合法",
+          accepted_vertical["passed"])
+    from compiler import compile_deck
+    from pptx import Presentation
+    vertical_pptx = tmp / "zero-width-vertical-line.pptx"
+    compile_deck(norm_v, vertical_pptx)
+    compiled_shapes = {sh.name: sh for sh in Presentation(str(vertical_pptx)).slides[0].shapes}
+    compiled_axis, compiled_node = compiled_shapes["vertical_axis"], compiled_shapes["node"]
+    check("compiler: 零宽竖线在 PPTX 中保持竖直且与圆点同心",
+          compiled_axis.width == 0
+          and compiled_axis.left == compiled_node.left + compiled_node.width // 2,
+          f'line width={compiled_axis.width}, node center={compiled_node.left + compiled_node.width // 2}')
+    zero_length = {"canvas": {"width": 1280, "height": 720},
+                   "theme": {"colors": {}}, "slides": [{"id": "zero_line", "elements": [
+        {"id": "zero_length_line", "type": "shape", "shape": "line",
+         "x": 40, "y": 40, "width": 0, "height": 0,
+         "stroke": "#C8C2B5", "stroke_width": 1},
+    ]}]}
+    norm_zero_line, _ = normalize_spec(zero_length)
+    zero_line_report = check_spec(norm_zero_line)
+    check("guard: 零长度线仍由几何门拦截",
+          any(c["rule"] == "element_schema" and "线的 width 与 height 同时为 0" in c["msg"]
+              for c in zero_line_report["checks"]))
+    twice_v, _ = normalize_spec(norm_v)
+    check("normalize: 零宽竖线归一化幂等",
+          spec_fingerprint(twice_v) == spec_fingerprint(norm_v))
+
+    horizontal = {"canvas": {"width": 1280, "height": 720},
+                  "theme": {"colors": {}}, "slides": [{"id": "rule", "elements": [
+        {"id": "horizontal_axis", "type": "shape", "shape": "line",
+         "x": 93, "y": 278, "width": 239, "height": 0,
+         "stroke": "#C8C2B5", "stroke_width": 1},
+        {"id": "node", "type": "shape", "shape": "ellipse",
+         "x": 208, "y": 273.5, "width": 9, "height": 9,
+         "fill": "#713B43", "stroke": "none"},
+    ]}]}
+    norm_h, _ = normalize_spec(horizontal)
+    axis_h, node_h = norm_h["slides"][0]["elements"]
+    check("normalize: 零高横线保留 height=0，长度按中心吸附",
+          axis_h["height"] == 0 and axis_h["width"] == 240,
+          f'width={axis_h["width"]}, height={axis_h["height"]}')
+    check("normalize: 圆点与零高横线保持同一中线",
+          abs(axis_h["y"] - (node_h["y"] + node_h["height"] / 2)) < 1e-9,
+          f'线 y={axis_h["y"]}, 圆点中心={node_h["y"] + node_h["height"] / 2}')
+    check("guard: 单轴为零的横线合法",
+          check_spec(norm_h)["passed"])
+    twice_h, _ = normalize_spec(norm_h)
+    check("normalize: 零高横线归一化幂等",
+          spec_fingerprint(twice_h) == spec_fingerprint(norm_h))
+
+    # 负尺寸/零面积不由归一化器偷偷修成可见对象，仍交给 guard 拦截。
+    collapsed = {"canvas": {"width": 1280, "height": 720},
+                 "theme": {"colors": {}}, "slides": [{"id": "degenerate", "elements": [
+        {"id": "collapsed_rect", "type": "shape", "shape": "rect",
+         "x": 20, "y": 20, "width": 0, "height": 20, "fill": "#713B43"},
+    ]}]}
+    norm_zero, _ = normalize_spec(collapsed)
+    zero_report = check_spec(norm_zero)
+    check("normalize: 零宽非线形保持退化并交由 guard 拦截",
+          norm_zero["slides"][0]["elements"][0]["width"] == 0
+          and any(c["rule"] == "element_schema" for c in zero_report["checks"]))
 
     # verdict：PASS / BLOCK 二态 + 分组修复包
     from verify import verdict
@@ -783,7 +870,7 @@ def test_docs():
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
     dna = json.loads((ROOT / "memory" / "design_dna.json").read_text(encoding="utf-8"))
-    check("docs: Design DNA 收敛到 ≤10 条高迁移原则",
+    check("docs: Design DNA 条目（含经验例外）收敛到 ≤10 条",
           len(dna["entries"]) <= 10, str(len(dna["entries"])))
 
 

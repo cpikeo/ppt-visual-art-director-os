@@ -1,3 +1,15 @@
+## 9.6.2 · DNA Store Compaction（2026-09-24）
+
+将 `feathered_safe_area_calm` 的可迁移做法并入 `image_must_inform`：保留安全区纹理处理的触发条件、羽化方案、边界、检索词与 PPT_CASE_004 实测证据，消除重复独立条目；DNA 总条目由 11 收敛到 10，不放宽数量上限。
+修正 selftest 文案，使其准确表达「条目数（含经验例外）」；新增安全区经验召回回归。DNA store --check 为 10 条 / 0 error / 0 warning；selftest 122/122。
+
+## 9.6.1 · Axis-Preserving Normalization（2026-09-24）
+
+修复网格归一化把零宽竖线扩成网格宽度、在 PPTX 中变为轻微斜线的问题。
+横线与竖线对称处理：合法零厚度轴保留为 0，只吸附轴位置；线长按中心归一。
+真正的零长度线和其他退化尺寸继续交由 guard 拦截，不静默修成可见对象。
+新增横 / 竖线零厚度边界、圆点同心、归一化幂等、零长线与退化矩形拦截，以及 PPTX connector 编译级回归测试。
+
 ## 9.6.0 · Concentric Normalization（2026-09-23）
 
 修正归一化层越权改排版的一处根因：亚网格厚度被抬高、同心关系被吸附拆散。

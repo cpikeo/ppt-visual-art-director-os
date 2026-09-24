@@ -587,9 +587,10 @@ def _snap_size(value: float, grid: int) -> float:
     为什么不再 `max(grid, ...)`（v6.5 修）：发丝线的厚度是作者的设计决定。
     把 1px 的线强行抬到 4px 是 4× 的视觉重量改变，而且没有任何提示——
     「归一化」越权改了排版，不是在对齐节奏。小于一个网格的尺寸一律原样透传；
-    退化（≤0）仍由 guard 的 geometry 硬门拦截，这里不代偿。
+    `0` 也原样透传：它可能是 LINE / ARROW 的合法零厚度轴；其他退化尺寸原样留给 guard 拦截。
     """
-    if 0 < value < grid:
+    if value < grid:
+        # 0 是 LINE / ARROW 的合法零厚度轴；负尺寸与零面积则原样留给 guard 拦截。
         return value
     return max(grid, int(round(value / grid)) * grid)
 
@@ -606,6 +607,7 @@ def _snap_span(pos: float, size: float, grid: int) -> tuple:
       · 厚度 ≥ 一个网格 → 位置与尺寸照常吸附（版面节奏由网格主导）
       · 厚度 < 一个网格（发丝线、细轴）→ 吸附**中心**，厚度原样保留
         这样「1px 线的中心」与「8px 对象的中心」落在同一条网格线上，必然同心。
+      · LINE / ARROW 的零厚度轴 → 保留 0，只吸附轴坐标；竖线不会被扩成有宽度的斜线。
     幂等：第二趟输入的中心已在网格上，吸附是恒等变换。
     """
     size_n = _snap_size(size, grid)
@@ -666,13 +668,8 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True) -> tup
                             record(sid, eid, pos_f, pos, new_pos, "grid")
                             e[pos_f] = new_pos
                         continue
-                    # 线是一维对象：厚度方向本就允许 0，不参与尺寸吸附
-                    if size_f == "height" and _is_rule_shape(e):
-                        new_pos = _snap_pos(float(pos), grid_step)
-                        if new_pos != pos:
-                            record(sid, eid, pos_f, pos, new_pos, "grid")
-                            e[pos_f] = new_pos
-                        continue
+                    # `_snap_size` 保留零厚度轴；`_snap_span` 只吸附其位置，
+                    # 因而横线与竖线完全对称，线长仍按中心归一。
                     new_pos, new_size = _snap_span(float(pos), float(size), grid_step)
                     if new_pos != pos:
                         record(sid, eid, pos_f, pos, new_pos, "grid")
