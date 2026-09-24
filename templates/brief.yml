@@ -58,6 +58,8 @@ slides:
 # lighting: "single soft north window light from the upper left"
 # texture: [paper, ink]  # 键名取自视觉世界（paper/ink/stone/metal/glass/fiber/leaf/
 #                        # water/mist/textile/clay/stage/screen）或自由文本
+# background: "#171310"  # 可选：页级底色（#HEX）。暗色沉浸页声明深底色，
+#                        # 资产 QC 的亮度判据跟随本页声明，不与整副纸面比。
 # asset_source:          # 既有素材登记（跳过生成，仍须 QC）
 #   kind: provided       # provided|licensed|original|reuse
 #   path: images/tea.jpg

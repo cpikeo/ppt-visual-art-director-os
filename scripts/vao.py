@@ -605,6 +605,11 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--assets-manifest")
     v.add_argument("--assets-dir")
 
+    q = sub.add_parser("qc", help="资产离线体检：同判据跑像素 QC + 策略，不写状态、不消耗 retry")
+    q.add_argument("--assets-manifest", required=True)
+    q.add_argument("--assets-dir", default=None)
+    q.add_argument("--speed", choices=["fast", "strict"], default="fast")
+    q.add_argument("--json", action="store_true")
     d = sub.add_parser("dna", help="设计经验记忆：--check 体检 / --add 沉淀一条")
     d.add_argument("--add")
     d.add_argument("--replace", action="store_true")
@@ -646,6 +651,51 @@ def _dna(args) -> int:
         for item in report["warnings"]:
             print(f"  · [{item['id']}] {item['reason']}")
     return 0 if report["ok"] else 2
+
+
+def run_qc(manifest_path: str, assets_dir: str | None = None,
+           speed: str = "fast") -> dict:
+    """资产离线体检：与 check 同一判据（image_qc + qc_retry_decision），
+    但不写 QC 报告、不递增 attempt、不进 deck 结论。
+
+    出图迭代的最短反馈环：作者改一张图，一条命令拿到阻断/建议清单，
+    不必跑全量 check 往返，也不必自建 harness（CASE_004 证据）。
+    """
+    from assets import image_qc, qc_retry_decision, qc_profile
+    mpath = Path(manifest_path).expanduser().resolve()
+    man = json.loads(mpath.read_text(encoding="utf-8"))
+    base = Path(assets_dir).expanduser() if assets_dir \
+        else Path(man.get("assets_dir") or "generated_assets")
+    if not base.is_absolute():
+        base = mpath.parent / base
+    prof = qc_profile(speed)
+    results = []
+    for a in man.get("assets") or []:
+        aid = str(a.get("asset_id"))
+        path = next((base / f"{aid}.{ext}" for ext in ("png", "jpg", "jpeg", "webp")
+                     if (base / f"{aid}.{ext}").is_file()), None)
+        if path is None:
+            results.append({"asset_id": aid, "slide_ids": a.get("slide_ids"),
+                            "status": "missing", "action": "block",
+                            "blocking": ["missing"], "advisory": [], "issues": []})
+            continue
+        meta = a.get("meta") or {}
+        qc = image_qc(str(path), safe_area="left",
+                      text_is_dark=(meta.get("text_color") == "dark")
+                      if meta.get("text_color") else None,
+                      safe_rect=a.get("safe_area"),
+                      background=a.get("background_color") or "#FFFFFF",
+                      max_side=prof["max_side"])
+        pol = qc_retry_decision(qc, attempt=0, phase="draft",
+                                asset_function=a.get("asset_function"),
+                                asset_role=a.get("asset_role"))
+        results.append({"asset_id": aid, "slide_ids": a.get("slide_ids"),
+                        "status": qc.get("status"), "action": pol["action"],
+                        "blocking": pol["blocking_checks"],
+                        "advisory": pol["advisory_checks"],
+                        "issues": [c.get("issue") for c in qc.get("checks", [])
+                                   if c.get("status") == "issue"]})
+    return {"speed": prof["speed"], "assets_dir": str(base), "results": results}
 
 
 def main(argv=None) -> int:
@@ -705,6 +755,10 @@ def main(argv=None) -> int:
                 info["asset_binding"] = binding
             print(json.dumps(info, ensure_ascii=False, indent=2))
             return 2 if binding and binding["status"] == "BLOCK" else 0
+        if args.command == "qc":
+            rep = run_qc(args.assets_manifest, args.assets_dir, args.speed)
+            print(json.dumps(rep, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "dna":
             return _dna(args)
         return 2

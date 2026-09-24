@@ -938,6 +938,10 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         row_h = h / max(len(data), 1)
         bar_h = max(4, min(float(e.get("bar_height", 12)) * scale, row_h * 0.34))
         top_value = max([_value(r) for r in data] or [1.0]) or 1.0
+        # 与产物同一条色链：主叙事色走 chart_primary_color，高亮行才取强调色；
+        # 预览把强调色铺满所有条＝证据在替作者说谎（CASE_004 证据）。
+        prim = ctx.chart_primary_color(e) or ink
+        hl = highlight_index(e, data, -1) if kind == "ranked_bar" else -1
         lfont = _font(px_to_pt(12 * scale), cjk=True)
         vfont = _font(px_to_pt(11 * scale), cjk=False)
         for i, row in enumerate(data):
@@ -949,11 +953,13 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                                     radius=max(1, int(bar_h / 2)), fill=_rgba(ctx, "muted", 0.22))
             d.text((int(x), int(cy)), str(row.get("label", ""))[:14],
                    font=lfont, fill=ink, anchor="lm")
+            bar_color = accent if (kind != "ranked_bar"
+                                   or hl in (i, row.get("_index"))) else prim
             d.rounded_rectangle((int(bar_x), int(cy - bar_h / 2), int(bar_x + filled), int(cy + bar_h / 2)),
-                                radius=max(1, int(bar_h / 2)), fill=accent)
+                                radius=max(1, int(bar_h / 2)), fill=bar_color)
             dot = bar_h + max(2, int(6 * scale))
             d.ellipse((int(bar_x + filled - dot / 2), int(cy - dot / 2),
-                       int(bar_x + filled + dot / 2), int(cy + dot / 2)), fill=accent)
+                       int(bar_x + filled + dot / 2), int(cy + dot / 2)), fill=bar_color)
             shown = row.get("display")
             d.text((int(right), int(cy)),
                    str(shown) if shown is not None else str(_value(row)), font=vfont,

@@ -942,14 +942,14 @@ def asset_fingerprint(card: dict, page: dict | None = None) -> str:
             "asset_function", "fusion_enabled", "style", "world")
     payload = {k: card.get(k) for k in keys if card.get(k) is not None}
     payload["negative_space_anchor"] = page.get("negative_space_anchor") or "left"
-    payload["safe_area"] = normalize_safe_area(
-        page.get("safe_area"), payload["negative_space_anchor"])
+    # safe_area / text_color 是编排侧校准（成图后的压字区 QC），不是视觉需求本身：
+    # 作者校准压字区不应使已出图作废（CASE_004 证据：改 safe_area 触发指纹变化
+    # → 资产整体改名 + 绑定返工）。它们仍进入清单，由 QC 对成图复核。
     payload["light_direction"] = page.get("light_direction") or "left"
     payload["energy"] = page.get("energy") or "low"
     payload["ratio"] = page.get("ratio") or "16:9"
-    payload["text_color"] = page.get("text_color")
     from primitives import identity
-    return "asset-" + identity(payload, schema="vao-asset-fingerprint-v1", short=12)
+    return "asset-" + identity(payload, schema="vao-asset-fingerprint-v2", short=12)
 
 
 # --------------------------------------------------------------------------
@@ -1371,10 +1371,10 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     # 文字安全区的纹理判据必须在**原生分辨率**上量：像素级细密纹理在箱式降采样后
     # 会被平均掉，而它恰是压字可读性最直接的杀手。只裁安全区一块（约占画面 1/3），
     # 成本与全图扫描不在一个量级——所以这一条快速档也不省。
-    if scale > 1:
+    if native is not None:
         native_busy = _native_safe_area_texture(native, w, h, normalized)
         if native_busy is not None:
-            busy = native_busy            # 原生分辨率口径优先（与严格档同一判据）
+            busy = native_busy    # 单一口径：两档都在原生分辨率量，杜绝 fast/strict 分歧
     _add("text_safe_area", busy < 0.15,
          f"文字安全区（{safe_area}）内 {busy:.0%} 的块纹理过密",
          "主体/细节避开安全区，或局部压暗/压平该区域，保证文字落在均匀底上")
@@ -1784,6 +1784,19 @@ def _media_of(page: dict) -> dict:
     return media
 
 
+def _page_background_color(page: dict, plan_deck: dict) -> str:
+    """资产 QC 亮度判据的底色：页级声明的 background 优先于 deck 纸面。
+
+    暗色沉浸页声明深底色时，QC 问的是「图与这一页的落差」，而不是与整副
+    浅色纸面的落差——判据跟随作者声明（CASE_004：酒窖暗图曾因浅色纸面被
+    误判亮度断崖）。只认 #HEX；其他写法回落纸面，不猜。
+    """
+    bg = str((page or {}).get("background") or "").strip()
+    if bg.startswith("#") and len(bg) in (4, 7):
+        return bg
+    return (((plan_deck.get("theme") or {}).get("colors_seed")) or {}).get("foundation", "#FFFFFF")
+
+
 def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     """brief + 判断面 → 去重的批量资产清单（规划身份 = 指纹）。"""
     pages = bundle.get("pages") or []
@@ -1831,8 +1844,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
                                raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
                            "meta": {"text_color": raw.get("text_color")},
                            "retry_budget": 0,
-                           "background_color": ((plan_deck.get("theme") or {}).get("colors_seed")
-                                                or {}).get("foundation", "#FFFFFF")})
+                           "background_color": _page_background_color(raw, plan_deck)})
             continue
         if decision == "none":
             skipped_pages.append({"slide_id": sid, "decision": "skip",
@@ -1876,8 +1888,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             "ratio": page_contract["ratio"],
             "resolved": card.get("resolved"),
             "allow_crop": raw.get("asset_allow_crop") is True,
-            "background_color": ((plan_deck.get("theme") or {}).get("colors_seed")
-                                 or {}).get("foundation", "#FFFFFF"),
+            "background_color": _page_background_color(raw, plan_deck),
             "safe_area": page_contract["safe_area"],
             "prompt": result["prompt"],
             "negative": result["negative"],

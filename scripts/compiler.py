@@ -222,7 +222,13 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
 def add_shape(slide, element: dict, ctx: RenderContext) -> None:
     x, y, w, h = ctx.bounds(element)
     kind = element.get("shape", "rect")
-    stroke, stroke_alpha = ctx.paint(element.get("stroke"))
+    stroke_raw = element.get("stroke")
+    if isinstance(stroke_raw, dict):
+        # 描边只读色值；{"type":"none"}= 显式无描边（与 fill 的同形写法对齐，
+        # 不再把 dict 塞进 paint() 触发 unhashable 崩溃——CASE_004 证据）。
+        stroke_raw = None if str(stroke_raw.get("type")) == "none" \
+            else stroke_raw.get("color")
+    stroke, stroke_alpha = ctx.paint(stroke_raw)
     if stroke_alpha is None and element.get("stroke_opacity") is not None:
         stroke_alpha = float(element["stroke_opacity"])
     sw = float(element.get("stroke_width", 1))

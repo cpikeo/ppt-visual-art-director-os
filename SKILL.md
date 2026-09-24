@@ -80,6 +80,8 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py \
     --assets-out asset_manifest.json --assets-dir generated_assets
 # BUILD：按清单出图（外部工具），按骨架注释落元素
+#   出图迭代离线体检（同判据、零状态、不消耗 retry）：
+#   python scripts/vao.py qc --assets-manifest asset_manifest.json
 # VERIFY：一次收口
 python scripts/vao.py check build.py out.pptx --mode release --assets-manifest asset_manifest.json
 ```

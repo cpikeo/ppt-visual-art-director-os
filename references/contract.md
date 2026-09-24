@@ -76,6 +76,19 @@ steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/execu
 其他对象与之相交即 `SOURCE_COLLISION`。**跨页锚**：`role=eyebrow` 与 `role=page_number`，
 位置全 deck 一致（plan 在 ≥4 页时逐页发）。
 
+## 作者逃生口（生产实证 · 写 spec / 出图前查）
+
+- 页级 `background`（#HEX）参与资产 QC 亮度判据：暗色沉浸页声明深底色，
+  断崖判据问「图与这一页的落差」，不问与整副纸面的落差。
+- 形状类图表（ranked_bar 等）主叙事色默认强调色；作者用 `primary_color` /
+  `color_role` 把非高亮系列压回墨色——强调色只指一个答案，不铺面。
+- `stroke` 只读色值；`{"type":"none"}` = 显式无描边（与 fill 同形写法对齐）。
+- `plan --skeleton` 检测到已填稿（elements 非空）改写 `<name>.new.py`，不覆写作业稿。
+- 资产指纹不含 `safe_area` / `text_color`：校准压字区不使已出图作废；
+  二者仍进清单，QC 对成图复核。
+- `vao.py qc --assets-manifest m.json`：离线像素体检（与 check 同判据），
+  不写状态、不消耗 retry——出图迭代的最短反馈环。
+
 ## 执行模式与速度
 
 | 模式 | 做什么 | 产物 |

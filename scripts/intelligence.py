@@ -944,7 +944,9 @@ _PAGE_DECLARATIONS = ("density", "energy", "asset", "asset_role", "asset_functio
                       "asset_subject", "medium", "material", "lighting", "texture",
                       "asset_color", "safe_area", "text_color", "negative_space_anchor",
                       "asset_ratio", "asset_allow_crop", "asset_source", "composition",
-                      "insight", "focus")
+                      "insight", "focus",
+                      # 页级底色参与资产 QC 亮度参照：声明必须透传到清单（CASE_004）。
+                      "background")
 
 
 def _intent_value(value) -> bool:

@@ -1,3 +1,18 @@
+## 9.7.0 · Declared Promise Drives QC（2026-09-24）
+
+CASE_004（15 页红酒路演）端到端逆向审查后的生产性修复：把「作者声明」接通到它本该驱动的判据，删双口径、收敛经验，不新增规则与模板。
+
+- **页级底色参与资产 QC**：brief 逐页 `background`（#HEX）进入 `_PAGE_DECLARATIONS` 透传清单；`_page_background_color` 使其成为亮度断崖判据的参照。暗色沉浸页不再被浅色纸面误判（此前声明在 spec 层存在、清单层丢失，判据与承诺脱节）。
+- **指纹 v2**：`asset_fingerprint` 不再含 `safe_area` / `text_color`——二者是编排侧校准，由 QC 对成图复核；作者校准压字区不再使已出图作废（CASE_004 曾因此整体改名返工）。
+- **text_safe_area 单口径**：fast/strict 两档统一走原生分辨率测量，删除「降采样域初值 + 原生覆盖」的双路径分歧。
+- **证据不说谎**：ghost 的 ranked_bar 改走 `chart_primary_color` + `highlight_index`，与编译产物同一色链（此前硬编码强调色，预览替作者把答案色铺满所有条）。
+- **stroke 容错**：`{"type":"none"}` = 显式无描边，dict 描边只读 color；不再把 dict 塞进 `paint()` 触发 unhashable 崩溃。
+- **最短反馈环**：新增 `vao.py qc --assets-manifest`（复用 `image_qc` + `qc_retry_decision`，零状态、不消耗 retry），出图迭代不必跑全量 check 往返或自建 harness。
+- **DNA 收敛 11→10**：`dual_chapter_tone_midpoint` 与 case004 条目合并为 `declared_promise_drives_qc`（页级底色 / 图像角色承诺 / 图表主色三处声明驱动判据）。
+- 契约文档补「作者逃生口」六条（均为既有或本次接通的作者声明，非新规则）；brief 模板补 `background` 注释。
+
+selftest 122/122；CASE_004 以升级后链路复跑 release(strict) 一次 PASS；`dna --check` 10 条 / 0 error。
+
 ## 9.6.2 · DNA Store Compaction（2026-09-24）
 
 将 `feathered_safe_area_calm` 的可迁移做法并入 `image_must_inform`：保留安全区纹理处理的触发条件、羽化方案、边界、检索词与 PPT_CASE_004 实测证据，消除重复独立条目；DNA 总条目由 11 收敛到 10，不放宽数量上限。
