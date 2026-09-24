@@ -39,45 +39,52 @@ _COLOR_ROLE_FIELDS = ("color", "fill", "stroke", "border_color", "track_color",
 # 几何与容量（物理事实，不是审美判断）
 # ──────────────────────────────────────────────────────────────────────
 def _text_box_capacity(e: dict) -> dict | None:
-    """文本能不能装进声明的盒子（容量判定的唯一方）。
+    """文本是否装得下：物理容量只在这里判断，错误字段不许静默放行。
 
-    测量原语单源在 primitives（estimate_lines / insert_script_gaps / text_width），
-    compiler.add_text 渲染用的是同一组原语：
-      * 换行按 \\n 拆段，每段用 estimate_lines(插入中西细空格后的文本)；
-      * 需要高度 = 总行数 × size × line_height（默认 1.35）；
-      * 可用高度 = height − 2 × padding，容差 +1px。
+    字距（char_spacing）以 pt 声明，段距由 compiler.pt(px) 写入；
+    段前/段后只计相邻段间一次，末段的 space_after 不占可见文字高度。
+    字体真实换行仍须在目标 Office 里验收。
     """
     try:
         size = float(e.get("size", 18))
         h = float(e.get("height", 0) or 0)
         w = float(e.get("width", 0) or 0)
         pad = float(e.get("padding", 0) or 0)
-        lh = float(e.get("line_height", 1.35) or 1.35)
-    except (TypeError, ValueError):
-        return None
-    if size <= 0 or h <= 0 or w <= 0 or not all(map(math.isfinite, (size, h, w, pad, lh))):
-        return None
+        lh = float(e.get("line_height", 1.35))
+        spacing = float(e.get("char_spacing", 0) or 0)
+        before = float(e.get("space_before", 0) or 0)
+        after = float(e.get("space_after", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+        return {"invalid": "字号/内边距/行距/字距/段距必须是有限数字"}
+    if not all(map(math.isfinite, (size, h, w, pad, lh, spacing, before, after))):
+        return {"invalid": "字号/内边距/行距/字距/段距不得为 NaN 或无穷大"}
+    if size <= 0 or pad < 0 or lh <= 0 or before < 0 or after < 0:
+        return {"invalid": "字号和行高必须为正，内边距与段距不能为负"}
+    declared_max = e.get("max_lines")
+    if declared_max is not None and (isinstance(declared_max, bool)
+                                     or not isinstance(declared_max, int)
+                                     or declared_max < 1):
+        return {"invalid": "max_lines 必须是正整数"}
+    if h <= 0 or w <= 0:
+        return None  # 盒子本身由 element_schema 的退化几何门拦截
     from primitives import estimate_lines, insert_script_gaps, text_width
     wrap = e.get("wrap", True) is not False
     usable_w = w - 2 * pad
     if usable_w <= 0:
-        return None
-    lines = 0
-    for raw_line in str(e.get("text", "")).split("\n"):
-        if not raw_line:
-            lines += 1
-            continue
-        lines += estimate_lines(insert_script_gaps(raw_line), usable_w, size, wrap)
-    width_need = max((text_width(insert_script_gaps(t), size,
-                                 float(e.get("char_spacing", 0) or 0))
-                      for t in str(e.get("text", "")).split("\n")), default=0)
-    need = lines * size * lh
+        return {"invalid": "内边距占满文字框，可用宽度 ≤ 0"}
+    paragraphs = str(e.get("text", "")).split("\n")
+    lines = sum(estimate_lines(insert_script_gaps(p), usable_w, size, wrap, spacing)
+                for p in paragraphs)
+    width_need = max((text_width(insert_script_gaps(p), size, spacing)
+                      for p in paragraphs), default=0)
+    # space_before/after 与字号/盒子同为 spec px（compiler.pt(px) 才转 pt）。
+    paragraph_gap = max(0, len(paragraphs) - 1) * (before + after)
+    need = lines * size * lh + paragraph_gap
     usable_h = h - 2 * pad
-    declared_max = e.get("max_lines")
-    over_max = (isinstance(declared_max, int) and not isinstance(declared_max, bool)
-                and declared_max >= 1 and lines > declared_max)
+    over_max = declared_max is not None and lines > declared_max
     return {"lines": lines, "need": need, "usable": usable_h, "size": size,
             "line_height": lh, "max_lines": declared_max,
+            "paragraph_gap": paragraph_gap,
             "over_height": need > usable_h + 1, "over_max_lines": bool(over_max),
             "over_width": not wrap and width_need > usable_w + 2, "width_need": width_need}
 
@@ -350,7 +357,9 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
                                           wrap=e.get("text_wrap", True),
                                           line_height=e.get("text_line_height", 1.25))
         cap = _text_box_capacity(te)
-        if cap and cap["over_height"]:
+        if cap and cap.get("invalid"):
+            add("text_capacity", eid, "error", cap["invalid"])
+        elif cap and cap["over_height"]:
             add("text_capacity", eid, "error",
                 f"估算高度 {cap['need']:.0f}px 超出文本框可用高度 {cap['usable']:.0f}px"
                 f"（{cap['lines']} 行 × 字号 {cap['size']:g} × 行高 {cap['line_height']:g}）："

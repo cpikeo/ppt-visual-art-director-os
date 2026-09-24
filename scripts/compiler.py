@@ -188,8 +188,10 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
         for rv, iscjk in split_runs(insert_script_gaps(line)):
             run = p.add_run()
             run.text = rv
+            # 作者显式设置的 tracking 在 CJK 与拉丁 run 中都必须兑现；
+            # 旧路径只写拉丁 spc，让中文标题的字距声明无声失效。
             set_run_font(run, cn if iscjk else latin, cn, size_pt, color,
-                         bold, italic, spacing if not iscjk else None, alpha, uppercase)
+                         bold, italic, spacing, alpha, uppercase)
 
 
 # --------------------------------------------------------------------------

@@ -34,8 +34,11 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 # 含图时为同一条 check 加 --assets-manifest <plan 输出的清单路径>
 ```
 
-真实 [端到端 Before/After 审计](PERFORMANCE_AUDIT.md) 区分进程 wall/CPU、分阶段耗时、
-命令次数、I/O、图片 QC/缓存和逐页视觉证据；只对测试环境与样本负责，不含外部 AI 出图或人工设计时间。
+[第一轮端到端审计](PERFORMANCE_AUDIT.md) 与
+[第二轮工作树冻结基线／编辑排版审计](PERFORMANCE_AUDIT_ROUND2.md) 分开记录：第二轮证实
+48 条线的全页 `strict` 发布路径提速，并修复 Guard、原生字距、结构预览和损坏缓存；
+常规稿的 cold 全链路**没有稳定提速证据**。两轮均只对固定样本和本机执行负责，
+不含外部 AI 出图或人工构图时间。
 
 ## 架构（8 个模块 · 一条链）
 

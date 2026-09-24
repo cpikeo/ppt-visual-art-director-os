@@ -821,8 +821,8 @@ def spatial_of(comp: dict) -> dict:
     """空间职责：主区 / 安静区 / 阅读路径 / 四层权重。坐标由作者给。"""
     chosen = comp.get("chosen")
     if chosen == "big_whitespace":
-        path, primary, quiet = "单点 → 参照 → 收束", "焦点区上三分之一至中部", "大面积安静面"
-        duty = "保护焦点：让结论周围无竞争，空白可数、可命名为「参照系」"
+        path, primary, quiet = "焦点 → 真实支撑（若有）→ 收束", "主张或证据的唯一焦点区", "大面积安静面"
+        duty = "保护主语：空白隔开竞争信息，不因版面空就捏造参照或添加装饰"
     elif chosen == "data_field":
         path, primary, quiet = "结论 → 对照 → 明细", "上部结论带 + 中部数据场", "分组之间"
         duty = "承载证据密度：秩序来自网格与对齐，留白只出现在分组之间"
@@ -856,32 +856,51 @@ def tension_of(item: dict, brief: dict, role: str) -> dict:
             "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"}
 
 
+def _weight_label(value) -> str:
+    """从权重「标签 — 理由」提取排版短名；完整理由只留在判断卡。"""
+    text = str(value)
+    if text.startswith("「") and "」— " in text:
+        return text.split("」— ", 1)[0] + "」"
+    return re.split(r"\s*—\s+", text, maxsplit=1)[0]
+
+
 def typography_of(claim: dict, weight: dict, focus: dict, role: str,
-                  u: dict | None = None) -> dict:
-    """把已经做出的信息权重转为阅读路径，不下坐标/字号/字体预设。"""
-    maxi, weak = weight.get("maximize") or [], weight.get("weaken") or []
-    focal = maxi[0].split(" — ", 1)[0] if maxi else (claim.get("text") or "未决结论")
-    secondary = weak[0].split(" — ", 1)[0] if weak else None
+                  u: dict | None = None, *,
+                  number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
+    """把一份数字锚与信息权重转成可执行的编辑次序；不派发坐标/模板。"""
+    weak = weight.get("weaken") or []
+    _, primary = number_anchor if number_anchor is not None else number_roles(claim.get("text") or "")
+    # 以前拿「结论句—理由」的字符串按空格切，分隔符恰好没空格，
+    # 把判断理由当成了将排上页面的主语。主语必须来自 claim/数字事实。
+    focal = primary["raw"] if primary else (claim.get("text") or "未决结论")
+    secondary = _weight_label(weak[0]) if weak else None
     if focus.get("type") == "image":
-        rule = "让图像先被看见，文字只说明它证明了什么；不要用大标题压住证词主体。"
+        rule = ("让现场/物件先被看见；注解贴合图像安全区的轴线与负空间，"
+                "文本框边距保持可读，不用大标题遮住证词主体。")
     elif focus.get("element_role") == "ratio_main":
-        rule = "子集先读、总体分母紧跟；两者是一份证据，不是两个时间点或两组卡片。"
+        rule = ("子集先读、总体分母紧跟；数量与单位不拆行，标签沿同一阅读轴，"
+                "不把一个证据拆成两张等权卡或画成趋势。")
     elif focus.get("element_role") == "comparison_field":
-        rule = "直接写清两端指标名与分母/期间；只有同口径才用共享轴与差值。"
+        rule = ("两端指标名与数字分别对齐；分母/期间就近标注，只有同口径才共享刻度轴。"
+                "不可比时用留白标出边界，不用面积暗示虚构倍数。")
     elif focus.get("element_role") == "structure_map" or role == "explain":
-        rule = "节点名与机制先于解释段；沿关系排字，不把每一步包进等权卡片。"
+        rule = ("节点→机制沿一条清楚的轴线排字；标签、解释共用文字边界，"
+                "在语义节点断行，节点间距比容器与图标更能表达顺序。")
     elif focus.get("element_role") == "kpi_main" and role == "summarize":
-        rule = "请求的资源量先于执行期限；两者单位不同，不把期限写成历史基期。"
+        rule = ("请求动作与资源量同行，数字及单位不拆行；期限在下一阅读层沿同轴退后，"
+                "两种单位不共用数量刻度，不用等权卡片制造第二焦点。")
     elif focus.get("element_role") == "kpi_main" and (u or {}).get("evidence") == "series":
-        rule = ("结果值与基期拉开权重，数字写单位；基线、期间与出处可核验。"
+        rule = ("终值与单位为主轴，基期退一层；可比数字才共享刻度/基线，"
+                "期间与出处就近但不抢主值，勿用线框填空。"
                 if (u or {}).get("same_unit", True) else
-                "这组量单位不同：先统一口径或拆开说明，不强行共用数量轴。")
+                "量纲不同先统一口径或拆开说明；不得为齐版而共用数量轴。")
     elif focus.get("element_role") == "kpi_main":
-        rule = "主数字先于支撑口径；只有真实存在的参照才把两个量排成比较。"
+        rule = ("主数字连同单位先读；说明、出处沿同一阅读轴退后。"
+                "只有真实基期才画比较，用留白而非加字距或卡片填满画面。")
     else:
-        rule = "让结论按语义停顿自然断行；装不下先删句改写，不缩字号填满空白。"
-    return {"lead": focal, "support": secondary,
-            "discipline": rule}
+        rule = ("结论按语义停顿断行，动词与对象相连、数字不与单位拆开；"
+                "标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。")
+    return {"lead": focal, "support": secondary, "discipline": rule}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1181,7 +1200,8 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     focus, comp = _apply_declared_spot(focus, comp, item)
     spatial = spatial_of(comp)
     weight = information_weight(u, claim, text, number_anchor=anchor)
-    typography = typography_of(claim, weight, focus, role["role"], u)
+    typography = typography_of(claim, weight, focus, role["role"], u,
+                                number_anchor=anchor)
     prod = production_spec(focus, comp, media, u, weight)
     open_q = []
     if claim["source"] == "absent":
@@ -1225,7 +1245,8 @@ def _rejudge_without_image(entry: dict, *, text: str, world: dict,
     j["focus"] = focus
     j["composition"] = comp
     j["spatial"] = spatial_of(comp)
-    j["typography"] = typography_of(j["claim"], j["information_weight"], focus, role, u)
+    j["typography"] = typography_of(j["claim"], j["information_weight"], focus, role, u,
+                                    number_anchor=anchor)
     j["production"] = production_spec(focus, comp, media, u, j["information_weight"])
     j["open_questions"] = ([q for q in (j.get("open_questions") or [])
                             if not q.startswith("图像主题由作者确认")] or None)
@@ -1737,7 +1758,7 @@ def _fmt_items(items, limit=3) -> str:
 
 def _weight_brief(items, limit=2) -> str:
     """骨架只抄选择；理由的唯一真源是 plan.json 的权重判断卡。"""
-    return _fmt_items([str(item).split(" — ", 1)[0] for item in (items or [])], limit)
+    return _fmt_items([_weight_label(item) for item in (items or [])], limit)
 
 
 def build_skeleton(bundle: dict) -> str:

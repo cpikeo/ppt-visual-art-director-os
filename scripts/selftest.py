@@ -119,6 +119,10 @@ def test_intelligence(tmp: Path):
     s01 = by_id["s01"]["judgment"]
     check("claim: 封面取标题结论而不是署名行",
           s01["claim"]["text"] == "自有内容占比过半", str(s01["claim"]))
+    check("type: 主语只取可排版的主张，不把权重判断理由贴到页面上",
+          s01["typography"]["lead"] == s01["claim"]["text"]
+          and "结论句" not in s01["typography"]["lead"]
+          and "字距" in s01["typography"]["discipline"])
     s04 = by_id["s04"]["judgment"]
     check("claim: 证据页缺 content → absent，不脑补",
           s04["claim"]["source"] == "absent" and s04["claim"]["text"] is None)
@@ -203,6 +207,10 @@ def test_intelligence(tmp: Path):
           and ja["focus"]["type"] == "text"
           and any("执行期限" in w for w in ja["information_weight"]["weaken"])
           and any(x["role"] == "claim_text" for x in ja["production"]["must_place"]))
+    check("editorial: 不可比指标不共刻度，部分/总体不画趋势，请求金额/期限分层",
+          "同口径" in jc["typography"]["discipline"]
+          and "轴" in jp["typography"]["discipline"]
+          and "期限" in ja["typography"]["discipline"])
     dup_text = "收入 12 亿，收入 12 亿（来源：财报）"
     dup = intel.information_weight(intel.understand(dup_text),
                                    {"text": "收入 12 亿", "source": "extracted"}, dup_text)
@@ -579,6 +587,22 @@ def test_verify(tmp: Path):
     r = mutate(lambda s: s["slides"][0]["elements"][0].update({"height": 8}))
     check("guard: 文字溢出必拦（TEXT_OVERFLOW）",
           any(c["rule"] == "text_capacity" for c in r["checks"]))
+    spaced_paras = mutate(lambda s: s["slides"][0]["elements"][0].update(
+        {"text": "第一段正文\n第二段正文", "size": 20, "width": 400,
+         "height": 59, "space_after": 22, "line_height": 1.35}))
+    tracked = mutate(lambda s: s["slides"][0]["elements"][0].update(
+        {"text": "MMMMMMMM", "size": 28, "width": 245, "height": 52,
+         "max_lines": 1, "char_spacing": 16}))
+    check("guard: 段距/字距真实占位，不能在编译前把会断行的标题错判 PASS",
+          any(c["rule"] == "text_capacity" for c in spaced_paras["checks"])
+          and any(c["rule"] == "text_capacity" for c in tracked["checks"]))
+    invalid_margin = mutate(lambda s: s["slides"][0]["elements"][0].update(
+        {"padding": -44}))
+    invalid_leading = mutate(lambda s: s["slides"][0]["elements"][0].update(
+        {"line_height": -1}))
+    check("guard: 负边距/负行高在 guard 阶段 fail-closed，不靠编译异常止损",
+          any(c["rule"] == "text_capacity" for c in invalid_margin["checks"])
+          and any(c["rule"] == "text_capacity" for c in invalid_leading["checks"]))
 
     r = mutate(lambda s: (s["slides"][0]["elements"].append(
         {"id": "dup", "type": "text", "x": 48, "y": 96, "width": 400, "height": 56,
@@ -797,6 +821,63 @@ def test_production(tmp: Path):
              if sh.has_text_frame and sh.text_frame.text.strip()]
     check("compiler: 原生可编辑 PPTX（文本在对象模型里可改）",
           len(prs.slides) == 5 and any("第3页结论句" in t for t in texts))
+
+    from ghost import ghost_page
+    native = {'canvas': {'width': 500, 'height': 220},
+              'theme': {'colors': {'background': '#FFFFFF', 'ink': '#000000',
+                                   'primary': '#000000', 'secondary': '#555555'}},
+              'slides': [{'id': 'editorial', 'background': '#FFFFFF', 'elements': [
+                  {'id': 'label', 'type': 'shape', 'shape': 'rect', 'x': 40, 'y': 40,
+                   'width': 260, 'height': 100, 'fill': {'type': 'none'},
+                   'stroke': {'type': 'none'}, 'text': 'ALIGN',
+                   'text_size': 30, 'text_color': '#000000', 'padding': 40,
+                   'align': 'left', 'text_anchor': 'top'},
+                  {'id': 'tracking', 'type': 'text', 'text': '编辑排版',
+                   'x': 350, 'y': 80, 'width': 140, 'height': 76, 'size': 24,
+                   'color': '#000000', 'char_spacing': 6}]}]}
+    out_editorial = tmp / 'editorial.pptx'
+    compile_deck(native, out_editorial, speed='fast')
+    prs_editorial = Presentation(str(out_editorial))
+    sh1, sh2 = list(prs_editorial.slides[0].shapes)[:2]
+    proof = ghost_page(native['slides'][0], native, scale=1, supersample=1)
+    ink_x = [x for y in range(40, 140) for x in range(0, 310)
+             if all(c < 120 for c in proof.getpixel((x, y)))]
+    check("editorial: 空心形状不变卡片，内边距/文字主轴与原生 PPTX 对齐",
+          round(sh1.text_frame.margin_left / 9525) == 40
+          and min(ink_x) >= 78 and proof.getpixel((200, 100)) == (255, 255, 255))
+    spc = [run._r.get_or_add_rPr().get('spc')
+           for p in sh2.text_frame.paragraphs for run in p.runs]
+    check("editorial: 作者显式声明的中文字距进入可编辑 OOXML，而非只对拉丁文生效",
+          spc == ['600'], str(spc))
+
+    styled_shape = {'id': 'shape_label', 'type': 'shape', 'shape': 'rect',
+                    'x': 35, 'y': 20, 'width': 430, 'height': 174,
+                    'fill': {'type': 'none'}, 'stroke': {'type': 'none'},
+                    'text': 'AXIS\nBASELINE', 'padding': 12, 'text_size': 28,
+                    'text_color': '#000000', 'text_opacity': .5, 'text_bold': True,
+                    'text_wrap': False, 'text_line_height': 1.85,
+                    'align': 'left', 'text_anchor': 'middle'}
+    styled_text = {'id': 'same_text', 'type': 'text', 'text': styled_shape['text'],
+                   'x': 35, 'y': 20, 'width': 430, 'height': 174, 'padding': 12,
+                   'size': 28, 'color': '#000000', 'opacity': .5, 'bold': True,
+                   'wrap': False, 'line_height': 1.85,
+                   'align': 'left', 'anchor': 'middle'}
+    def styled_spec(e):
+        return dict(native, slides=[{'id': 'styled', 'background': '#FFFFFF',
+                                     'elements': [e]}])
+    shape_deck, text_deck = styled_spec(styled_shape), styled_spec(styled_text)
+    label_image = ghost_page(shape_deck['slides'][0], shape_deck, scale=1, supersample=1)
+    equivalent_image = ghost_page(text_deck['slides'][0], text_deck, scale=1, supersample=1)
+    label_pptx = tmp / 'shape-text.pptx'
+    compile_deck(shape_deck, label_pptx, speed='fast')
+    label_native = Presentation(str(label_pptx)).slides[0].shapes[0]
+    from pptx.oxml.ns import qn
+    native_alpha = label_native.text_frame.paragraphs[0].runs[0]._r.find('.//' + qn('a:alpha'))
+    check("editorial: 形状文字的粗细/行距/不换行/透明度与原生文本语义相同",
+          label_image.tobytes() == equivalent_image.tobytes()
+          and label_native.text_frame.paragraphs[0].runs[0].font.bold is True
+          and native_alpha is not None and native_alpha.get('val') == '50000'
+          and round(label_native.text_frame.paragraphs[0].line_spacing / 9525, 1) == 51.8)
 
     missing = [name for files in ENGINE_SCOPES.values() for name in files
                if not (Path(__file__).resolve().parent / name).is_file()]
@@ -1122,6 +1203,24 @@ def test_cli(tmp: Path):
           and unused_timing.get("qc_ms") == 0 and out.stat().st_mtime_ns == first)
 
     preview_dir = tmp / "deck_preview"
+    contact = preview_dir / "ghost-contact-sheet.png"
+    contact.write_bytes(b"corrupt preview, not a PNG")
+    repaired = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
+                       "--json")
+    repair_timing = (json.loads(repaired.stdout).get("timing") or {}) if repaired.returncode == 0 else {}
+    from PIL import Image
+    png_valid = False
+    try:
+        with Image.open(contact) as sample:
+            sample.verify()
+        png_valid = True
+    except (OSError, ValueError):
+        pass
+    check("cli: 交付 PNG 被破坏不能再凭 marker 假 PASS；复用未变页图修复联络表",
+          repaired.returncode == 0 and png_valid
+          and not repair_timing.get("render_bundle_reused")
+          and repair_timing.get("render_pages_drawn") == 0
+          and repair_timing.get("compile_ms") == 0)
     small = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
                     "--ghost-pages", "2", "--json")
     small_timing = (json.loads(small.stdout).get("timing") or {}) if small.returncode == 0 else {}

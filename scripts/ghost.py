@@ -263,9 +263,11 @@ def _fill(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
     img.alpha_composite(overlay)
 
 
-def _wrap_lines(text: str, font, width: int) -> list[str]:
-    """Wrap by measured width; keep Latin words intact and CJK rhythm clean."""
+def _wrap_lines(text: str, font, width: int, tracking: float = 0) -> list[str]:
+    """按可见字宽折行；显式 tracking 与编译器字距同量纲（px）。"""
     limit = max(1, width)
+    def visible_width(value):
+        return font.getlength(value) + max(0, len(value) - 1) * tracking
     result: list[str] = []
     for raw in str(text).split("\n"):
         if not raw:
@@ -276,26 +278,25 @@ def _wrap_lines(text: str, font, width: int) -> list[str]:
             line = ""
             for word in words:
                 candidate = word if not line else f"{line} {word}"
-                if line and font.getlength(candidate) > limit:
+                if line and visible_width(candidate) > limit:
                     result.append(line)
-                    line = word
-                elif not line and font.getlength(candidate) > limit:
-                    # A single long token is the only case where Latin may
-                    # break; split it at measured glyph boundaries.
+                    line = ""
+                if not line and visible_width(word) > limit:
+                    # 前面即使有普通单词，后一个长词也必须逐字切。
                     for ch in word:
-                        if line and font.getlength(line + ch) > limit:
+                        if line and visible_width(line + ch) > limit:
                             result.append(line)
                             line = ch
                         else:
                             line += ch
                 else:
-                    line = candidate
+                    line = word if not line else f"{line} {word}"
             result.append(line)
             continue
         line = ""
         for ch in raw:
             candidate = line + ch
-            if line and font.getlength(candidate) > limit:
+            if line and visible_width(candidate) > limit:
                 result.append(line.rstrip())
                 line = ch
             else:
@@ -309,17 +310,25 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     if w <= 0 or h <= 0:
         return
     # 文本框底色（标签条 / 染色列）：预览不画，就等于和产物说两件事。
-    if e.get("fill"):
-        _fill(img, (x, y, w, h), ctx, e["fill"], radius=0)
+    text_fill = e.get("fill")
+    if text_fill and not (isinstance(text_fill, dict)
+                          and str(text_fill.get("type", "")).lower() == "none"):
+        _fill(img, (x, y, w, h), ctx, text_fill, radius=0)
     text = str(e.get("text", ""))
     if bool(e.get("uppercase")):
         text = text.upper()
+    spacing_pt = float(e.get("char_spacing", 0) or 0)
+    tracking = spacing_pt / 0.75 * scale
+    if tracking:
+        from primitives import insert_script_gaps
+        text = insert_script_gaps(text)
     pad = int(round(float(e.get("padding", 0) or 0) * scale))
     size = float(e.get("size", 18) or 18) * scale
     font = _font(size, cjk=_has_cjk(text), bold=bool(e.get("bold")),
                  family=_font_family(e, ctx))
     color = _rgba(ctx, e.get("color") or "ink", e.get("opacity"), fallback=(24, 24, 24))
-    lines = _wrap_lines(text, font, w - 2 * pad) if bool(e.get("wrap", True)) else text.split("\n")
+    lines = (_wrap_lines(text, font, w - 2 * pad, tracking)
+             if bool(e.get("wrap", True)) else text.split("\n"))
     max_lines = e.get("max_lines")
     if isinstance(max_lines, int) and max_lines > 0:
         lines = lines[:max_lines]
@@ -341,14 +350,22 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     d = ImageDraw.Draw(img if opaque else overlay, "RGBA")
     for line in lines:
         bbox = d.textbbox((0, 0), line, font=font)
-        tw = bbox[2] - bbox[0]
+        tw = bbox[2] - bbox[0] + max(0, len(line) - 1) * tracking
         if align in {"center", "middle"}:
             tx = x + (w - tw) / 2
         elif align in {"right", "end"}:
             tx = x + w - pad - tw
         else:
             tx = x + pad
-        d.text((int(tx), int(cy)), line, font=font, fill=color)
+        if tracking:
+            # Pillow 不提供 tracking；仅显式声明字距的文本逐 glyph 落位。
+            # 默认（绝大部分文字）维持一整行绘制、没有额外像素开销。
+            cursor = tx
+            for ch in line:
+                d.text((int(cursor), int(cy)), ch, font=font, fill=color)
+                cursor += font.getlength(ch) + tracking
+        else:
+            d.text((int(tx), int(cy)), line, font=font, fill=color)
         cy += line_height
     if overlay is not None:
         img.alpha_composite(overlay)
@@ -359,33 +376,47 @@ def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     shape = str(e.get("shape", "rect")).lower()
 
     if shape in ("line", "arrow"):
-        # 线是一维对象：compiler 走 add_connector，从 (x,y) 画到 (x+w, y+h)，
-        # 所以水平线 height=0 是**正确写法**。此前这里被 `w<=0 or h<=0` 提前 return——
-        # 产物里有线、预览里没有，作者看不到自己刚画的分割线，只好退回画卡片。
-        # 预览宽容度必须 = 交付链：compiler 画得出来的，预览就得画。
-        stroke = e.get("stroke") or e.get("fill") or "hairline"
-        color = _rgba(ctx, stroke, e.get("stroke_opacity") or e.get("opacity"),
+        # 一维线直接沿起点→终点绘制。完全不透明时不为每条细轴分配整幅
+        # 画布 RGBA、再逐像素合成；只有半透明笔触才需要离屏合成。
+        stroke = e.get("stroke")
+        if isinstance(stroke, dict) and str(stroke.get("type")) == "none":
+            return
+        color = _rgba(ctx, stroke or "hairline", e.get("stroke_opacity"),
                       fallback=(170, 170, 170))
         width = max(1, int(round(float(e.get("stroke_width", 1) or 1) * scale)))
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(overlay, "RGBA").line([(x, y), (x + w, y + h)],
-                                             fill=color, width=width)
-        img.alpha_composite(overlay)
+        overlay = None if color[3] == 255 else Image.new("RGBA", img.size, (0, 0, 0, 0))
+        ImageDraw.Draw(img if overlay is None else overlay, "RGBA").line(
+            [(x, y), (x + w, y + h)], fill=color, width=width)
+        if overlay is not None:
+            img.alpha_composite(overlay)
         return
 
     if w <= 0 or h <= 0:
         return
-    fill = e.get("fill") or e.get("color")
+    fill = e.get("fill")   # 缺 fill / {type:none} 在 OOXML 中都是透明，不能画假卡片
     radius = int(round(min(w, h) * 0.12)) if shape == "rounded_rect" else 0
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay, "RGBA")
     xy = (x, y, x + w, y + h)
-    if isinstance(fill, dict) and str(fill.get("type", "")).lower() == "gradient":
-        # Preserve the direction cue for gradients; the shape mask remains a
-        # secondary preview detail and the compiler is the source of truth.
+    gradient = isinstance(fill, dict) and str(fill.get("type", "")).lower() == "gradient"
+    fill_color = None
+    if gradient:
         _fill(img, (x, y, w, h), ctx, fill, radius=radius)
-    else:
-        fill_color = _rgba(ctx, fill or "secondary", e.get("opacity"), fallback=(150, 150, 150))
+    elif isinstance(fill, dict):
+        if str(fill.get("type", "solid")).lower() != "none":
+            fill_color = _rgba(ctx, fill.get("color"), fill.get("opacity"))
+    elif isinstance(fill, (int, float)) and not isinstance(fill, bool):
+        fill_color = _rgba(ctx, e.get("fill_role") or "primary", float(fill))
+    elif fill is not None:
+        fill_color = _rgba(ctx, fill, e.get("fill_opacity"))
+    stroke = e.get("stroke")
+    if isinstance(stroke, dict) and str(stroke.get("type", "")).lower() == "none":
+        stroke = None
+    sw = max(1, int(round(float(e.get("stroke_width", 1) or 1) * scale)))
+    outline = _rgba(ctx, stroke, e.get("stroke_opacity"), fallback=(120, 120, 120)) if stroke else None
+    overlay = (None if (fill_color is None or fill_color[3] == 255)
+               and (outline is None or outline[3] == 255) else
+               Image.new("RGBA", img.size, (0, 0, 0, 0)))
+    d = ImageDraw.Draw(img if overlay is None else overlay, "RGBA")
+    if fill_color:
         if shape == "ellipse":
             d.ellipse(xy, fill=fill_color)
         elif shape == "triangle":
@@ -397,9 +428,6 @@ def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.rounded_rectangle(xy, radius=radius, fill=fill_color)
         else:
             d.rectangle(xy, fill=fill_color)
-    stroke = e.get("stroke")
-    sw = max(1, int(round(float(e.get("stroke_width", 1) or 1) * scale)))
-    outline = _rgba(ctx, stroke, e.get("stroke_opacity"), fallback=(120, 120, 120)) if stroke else None
     if outline:
         if shape == "ellipse":
             d.ellipse(xy, outline=outline, width=sw)
@@ -414,11 +442,17 @@ def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.rounded_rectangle(xy, radius=radius, outline=outline, width=sw)
         else:
             d.rectangle(xy, outline=outline, width=sw)
-    img.alpha_composite(overlay)
+    if overlay is not None:
+        img.alpha_composite(overlay)
     if e.get("text"):
-        text_e = dict(e, type="text", color=e.get("text_color") or "ink",
-                      size=e.get("text_size", 16), padding=e.get("text_padding", 8),
-                      anchor=e.get("text_anchor", "middle"), align=e.get("align", "center"))
+        # 形状内文字有自己的原生属性名（compiler.shape_text）：不要继承
+        # 形状填充/透明度，也不能丢掉 text_bold/line_height/wrap。
+        text_e = dict(e, type="text", fill=None, color=e.get("text_color") or "ink",
+                      size=e.get("text_size", 16), padding=e.get("padding", 0),
+                      anchor=e.get("text_anchor", "middle"), align=e.get("align", "center"),
+                      opacity=e.get("text_opacity"), bold=e.get("text_bold", False),
+                      wrap=e.get("text_wrap", True),
+                      line_height=e.get("text_line_height", 1.25))
         _draw_text(img, text_e, ctx, scale)
 
 

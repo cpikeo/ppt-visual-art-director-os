@@ -339,12 +339,20 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
            decoded=None, *, speed="strict", limit=24, output_sha=None) -> dict:
     """关键页取证（PIL 结构预览；页级缓存内建于 ghost 模块）。
 
-    整份证据复用凭证只有一个：产物 sha256 + 渲染器指纹 + 速度档一致 ⇒
-    上一轮的预览就是这一轮的预览（页缓存保证 0 页重画；联络表本身也是
-    页图的纯函数）。凭证不匹配（产物/渲染器变了）即重渲。
+    只有产物/渲染器/选页/预览文件见证都一致，才复用整份证据。
+    快档 stat、严档逐文件 SHA；输出 PNG 被改坏不能再以 PASS 复用。
+    页级缓存仍负责修复而不重画未变化的页。
     """
-    from primitives import engine_fingerprint
+    from primitives import engine_fingerprint, file_digest, witness, witness_same
     fast = str(speed).lower() == "fast"
+
+    def preview_witness(path):
+        current = witness(path)
+        if current["size"] is None or not Path(path).is_file():
+            return None
+        if not fast:
+            current["sha256"] = file_digest(path)
+        return current
     explicit_pages = [int(n) for n in pages] if pages is not None else None
     # 缓存的证据范围也是输入：同一 PPTX 请求 2 页，不可复用旧的 5 页声明。
     request = {"pages": explicit_pages,
@@ -359,12 +367,24 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
             cached = {}
         cached_pages = cached.get("pages") or []
         cached_sheet = cached.get("contact_sheet")
-        files_valid = (bool(cached_pages)
-                       and all(Path(p).is_file() for p in cached_pages)
-                       and bool(cached_sheet) and Path(cached_sheet).is_file())
-        if (cached.get("output_sha256") == output_sha and cached.get("engine") == engine
-                and cached.get("renderer_speed") == str(speed)
-                and cached.get("request") == request and files_valid):
+        stored = cached.get("file_witnesses") or {}
+
+        def valid_preview(path):
+            expected = stored.get(str(path)) if isinstance(stored, dict) else None
+            # 改名/截断/文件替换先用 stat 拦，严档才花钱哈希现有预览。
+            current = witness(path)
+            if not Path(path).is_file() or not witness_same(expected, current):
+                return False
+            return fast or witness_same(expected,
+                                        {**current, "sha256": file_digest(path)}, strict=True)
+
+        same_request = (cached.get("output_sha256") == output_sha
+                        and cached.get("engine") == engine
+                        and cached.get("renderer_speed") == str(speed)
+                        and cached.get("request") == request)
+        # 不匹配先退场：渲染器/选页变了时根本无需碰旧 PNG，更不必哈希。
+        if (same_request and cached_pages and cached_sheet
+                and all(valid_preview(p) for p in [*cached_pages, cached_sheet])):
             info = dict(cached)
             info["reused"] = True
             info["pages_drawn"] = 0
@@ -418,6 +438,9 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     info["engine"] = engine
     info["renderer_speed"] = str(speed)
     info["request"] = request
+    # 页图与联络表是交付证据，不仅要存在，还得是上轮验证的那份字节。
+    info["file_witnesses"] = {str(p): preview_witness(p)
+                              for p in [*paths, *([contact] if contact else [])]}
     info["reused"] = False
     try:
         target.mkdir(parents=True, exist_ok=True)

@@ -26,9 +26,10 @@ QA 只回答「这份 PPTX 能不能交付」，只有 **PASS / BLOCK** 二态�
 再定字体、字号、行距和断句。**没有 Statement/Display/Title 等固定档、放之四海的字号比、
 粗体配额或指定行数。** 长文字先重写或删减，不能靠缩小到不可读来硬塞。
 
-文本框须容纳真实文字；粗估是 `字号 × 行高 × 行数 + padding`，最终以 `check` 的字体测量和
-实际预览为准。字号和行高取决于阅读距离、信息长度、字体与投影条件；内容本身才是视觉权重
-的来源，不因满足一个数字比例就变成好设计。
+文本框须容纳真实文字；Guard 粗估包含折行、段距与两侧内边距，结构预览不是 Office
+字体测量。终稿仍需在目标 PowerPoint 检查字体替代、换行与裁切。字号和行高取决于
+阅读距离、信息长度、字体与投影条件；内容本身才是视觉权重的来源，不因满足一个数字比例
+就变成好设计。
 
 ## Spec 字段速查
 
@@ -63,9 +64,16 @@ plan 按视觉世界给出种子，作者可覆盖任意一项。**颜色只能�
 
 | type | 专属字段 |
 |---|---|
-| `text` | `text size color align bold italic line_height max_lines wrap padding font family char_spacing uppercase opacity anchor` |
-| `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill stroke stroke_width fill_role text` |
+| `text` | `text size color align bold italic line_height max_lines wrap padding font family char_spacing uppercase opacity anchor space_before space_after` |
+| `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill stroke stroke_width fill_role text padding text_size text_color text_bold text_wrap text_line_height text_opacity text_anchor` |
 | `image` | `asset_id`（必需）`fit`(cover/contain) `crop asset_function overlay` |
+
+**编辑级文字纪律（物理契约，不是字号模板）**：`size/width/height/padding/space_before/space_after`
+按画布 px 填；`line_height` 是相对倍数；显式 `char_spacing` 以 pt 填，中文与拉丁文字均写入
+原生 PPT 字距。每段之间的段前/段后间隔、折行后字距及框内边距都参与 Guard 容量计算；
+不得靠 `max_lines` 把文字裁去。形状内文字**同样**读 `padding`（缺省 0），没有另一套
+`text_padding` 字段。`fill: {type: none}` / 省略 `fill` = 真空心，不能让预览画成实心卡片。
+PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过载先删句改写，不压行距。
 
 `chart_kind` 白名单（括号为每页上限）：bar/horizontal_bar/comparison_bar(8) · column(8) ·
 line/trend/single_trend_line(8) · area(8) · donut/pie(8) · stacked_bar(8) · ranked_bar(8) ·

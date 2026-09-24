@@ -868,8 +868,8 @@ def text_units(value: str) -> float:
     拉丁字母平均宽度与 CJK 字符宽度的经验比值（0.50–0.58 区间的中位）。
     修正点：原 0.53 在大字号下偏低估，密集正文的容量估算易「乐观」，
     表现为 Guard 通过、渲染溢出。把 0.55 设为默认后，估算与渲染
-    可读性复核的对齐误差更小（字号阶梯与回退顺序参见 design-system.md
-    §字号阶梯、design-craft.md §五）。
+    可读性复核的对齐误差更小；字段契约见 references/contract.md。
+    注意该估算不是 Office 字体的精确度量，终稿仍须人工验收。
     中西混排细空格（HAIR_SPACE）计 0.2，使插入脚本间隙后的估算与渲染一致。"""
     total = 0.0
     for c in value:
@@ -891,11 +891,20 @@ def text_width(text: str, size: float, spacing: float = 0) -> float:
     return units * size + max(0, len(text) - 1) * max(0, spacing) / 0.75
 
 
-def estimate_lines(text: str, width: float, size: float, wrap: bool = True) -> int:
+def estimate_lines(text: str, width: float, size: float, wrap: bool = True,
+                   spacing: float = 0) -> int:
+    """估算段内折行；只在作者显式加字距时多算字形与 tracking 的占位。
+
+    未加字距的路径保持旧判据。字距用同一物理口径：spec/OOXML 是 pt，
+    几何是 px，1px=0.75pt。大写宽字母用 text_width 的保守估算，
+    不许靠通用拉丁平均 0.55em 让已经加宽的词假装装得下。
+    """
     if not text or not wrap:
         return 1
-    usable = max(width / max(size, 0.01), 1)
-    return max(1, math.ceil(text_units(text) / usable))
+    used = text_units(text) * size
+    if spacing > 0:
+        used = max(used, text_width(text, size, spacing))
+    return max(1, math.ceil(used / max(width, size)))
 
 
 def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,
