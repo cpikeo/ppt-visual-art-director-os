@@ -63,34 +63,39 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 
 ## 4. Context 使用原则（Just-in-Time）
 
-一次只读一个来源，需要什么读什么：
+一次读对来源，整套复用：
 
 | 需要解决的问题 | 读取 |
 |---|---|
-| 判断校准（焦点 / 留白 / 图像 / 图表 / 排版 / 节奏） | `references/judgment.md` |
-| 精确 spec 字段、元素契约、失败码、速度档 | `references/contract.md` |
-| 资产必要性、提示词、QC、既有文件、裁切 | `references/assets.md` |
+| 判断校准（焦点 / 留白 / 图像 / 图表 / 排版 / 节奏） | `references/judgment.md`（判断未决或要覆盖 plan 时） |
+| 精确 spec 字段、元素契约、失败码、速度档 | `references/contract.md`（BUILD 写 spec 时一次） |
+| 资产必要性、提示词、QC、既有文件、裁切 | `references/assets.md`（plan 确有资产时才读） |
 
-不要预加载整个仓库。`plan.json` 是链路凭证，不是阅读材料；骨架注释已经携带当前页需要的判断。
+`vao.py plan` 是确定性 CPU 规划：不调用 AI、不读取 references；brief 解析与文件哈希共用一次读取。
+同一 deck 不逐页重读文档，不扫描 `scripts/`，不重新打开 `plan.json`；骨架注释是当前判断的规范入口。
+只有判断卡有真实缺口时才读 judgment；没有图像元素就跳过 assets 文档、资产清单与 QC。
 
 ## 5. 执行原则
 
 ```bash
-# THINK：一次规划（判断卡 + 骨架 + 资产清单）
-python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py \
-    --assets-out asset_manifest.json --assets-dir generated_assets
-# BUILD：按清单出图（外部工具），按骨架注释落元素
-#   出图迭代离线体检（同判据、零状态、不消耗 retry）：
-#   python scripts/vao.py qc --assets-manifest asset_manifest.json
-# VERIFY：一次收口
-python scripts/vao.py check build.py out.pptx --mode release --assets-manifest asset_manifest.json
+# THINK：无图稿只跑这一条；有图稿在同一次调用中追加下方资产参数。
+python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py
+# 有图时，给上面的同一条 plan 命令追加：
+#   --assets-out asset_manifest.json --assets-dir generated_assets
+# BUILD：同一轮一次写完 build.py；有图时把所有独立 prompt 一次批量送出图工具。
+# VERIFY：唯一终检；无图稿不传资产参数。
+python scripts/vao.py check build.py out.pptx --mode release --speed fast
+# 有图稿在同一条终检命令中追加：
+#   --assets-manifest asset_manifest.json
 ```
 
+- 生产预算：正常路径 **1 次 plan + 1 次 release check**；plan/build 不逐页发起模型交互。
+  资产参数只在确有图时加入，不要为此重复跑 plan；不为确认而先跑 spec/draft，再跑 release。
+- `release check` 已渲染并缓存关键页；不要紧接着再跑 `preview`。`qc` 不写状态，
+  只用于图片正在迭代时的短反馈；同一张未变化的图不要先单跑 qc 再在终检重复 QC。
+- `BLOCK` 后读取一个修复包，按根因组一次批量修复，再复跑同一条 check；不逐页重试。
+- 速度两档：`--speed fast`（默认，判定口径不变、关键页取证）/ `strict`（全量证据）。
 - 唯一入口 `vao.py`；不逐个调用内部模块，不开第二条流水线。
-- 一次算完、多处复用：判断、指纹、哈希、资产 QC、预览页都在一轮内只算一次。
-- 干净的稿直接进 release；BLOCK 时按修复包根因组一次改完，再复跑同一条命令。
-- 速度两档：`--speed fast`（默认，关键页取证）/ `strict`（全量证据）。判定口径相同。
-- 经验记忆：`vao.py dna --check` 体检、`--add` 沉淀「为什么这个判断有效」。
 
 ## 6. QA 边界
 

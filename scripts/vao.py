@@ -150,22 +150,30 @@ def bind_asset_manifest(spec, manifest_path, assets_dir=None):
 def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = None,
              assets_out: str | None = None, assets_dir: str | None = None,
              asset_cache: str | None = None) -> dict:
+    started = time.perf_counter()
+    timing: dict[str, float] = {}
+
+    t = time.perf_counter()
     from intelligence import load_brief, think, build_skeleton
     from assets import build_manifest, prepare_manifest, now
+    timing["module_import_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    t0 = time.perf_counter()
-    brief = load_brief(brief_path)
+    t = time.perf_counter()
+    brief, brief_sha256 = load_brief(brief_path, with_digest=True)
+    timing["brief_load_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    t = time.perf_counter()
     bundle = think(brief)
+    timing["intelligence_ms"] = round((time.perf_counter() - t) * 1000, 2)
     if not bundle.get("pages"):
         raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
                          "请至少给出一页的 title + content，再跑 plan")
-    # workflow 只留被消费的凭证：dict 级 brief 哈希零消费者（比对早删，只剩记录），已删；
-    # brief 文件哈希是 verify_sources 的篡改口径，保留且只算一次。
+    # 文件凭证直接从 load_brief 已读取的字节计算；解析与 SHA-256 共用一次读取。
     bundle["workflow"] = {"planned_at": now(),
                           "brief_path": str(Path(brief_path).expanduser().resolve()),
-                          "brief_file_sha256": None}
-    from primitives import file_digest
-    bundle["workflow"]["brief_file_sha256"] = file_digest(Path(brief_path).expanduser())
+                          "brief_file_sha256": brief_sha256}
+
+    t = time.perf_counter()
     if out:
         _json_write(out, bundle)
     if skeleton:
@@ -182,12 +190,37 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
                 target.write_text(build_skeleton(bundle), encoding="utf-8")
         else:
             target.write_text(build_skeleton(bundle), encoding="utf-8")
+    timing["plan_artifact_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    timing["asset_manifest_build_ms"] = 0.0
+    timing["asset_manifest_prepare_ms"] = 0.0
+    timing["asset_manifest_write_ms"] = 0.0
     if assets_out:
+        t = time.perf_counter()
         manifest = build_manifest(brief, bundle, cache_path=asset_cache)
+        timing["asset_manifest_build_ms"] = round((time.perf_counter() - t) * 1000, 2)
+        t = time.perf_counter()
         manifest = prepare_manifest(manifest, brief, bundle, brief_path, out,
                                     assets_out, assets_dir)
+        timing["asset_manifest_prepare_ms"] = round((time.perf_counter() - t) * 1000, 2)
+        t = time.perf_counter()
         _json_write(assets_out, manifest)
-    bundle["planning_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        timing["asset_manifest_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
+
+    total_ms = round((time.perf_counter() - started) * 1000, 2)
+    # 运行遥测只加在返回对象，不写入 plan.json：规划文件仍是确定性判断凭证。
+    bundle["planning_ms"] = total_ms
+    bundle["performance"] = {
+        "module_import_ms": timing["module_import_ms"],
+        "brief_load_ms": timing["brief_load_ms"],
+        "intelligence_ms": timing["intelligence_ms"],
+        "plan_artifact_write_ms": timing["plan_artifact_write_ms"],
+        "asset_manifest_build_ms": timing["asset_manifest_build_ms"],
+        "asset_manifest_prepare_ms": timing["asset_manifest_prepare_ms"],
+        "asset_manifest_write_ms": timing["asset_manifest_write_ms"],
+        "reference_files_read": 0,
+        "total_ms": total_ms,
+    }
     return bundle
 
 
@@ -196,13 +229,16 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
 # ══════════════════════════════════════════════════════════════════
 def _compile_step(spec, output_path, *, speed, spec_path=None,
                   image_bytes=None, digests=None, decoded=None):
-    """产物生产：缓存探测 → 编译 → 产物凭证（一次哈希）→ 缓存写入。"""
+    """缓存探测 → 必要时编译 → 产物凭证 → 缓存写入，各阶段独立计时。"""
     from primitives import compile_reuse, record_compile, spec_view, file_digest
 
-    t0 = time.perf_counter()
-    compile_report = None
+    image_bytes = image_bytes if isinstance(image_bytes, dict) else {}
+    digests = digests if isinstance(digests, dict) else {}
     cache_reason = "not_attempted"
     cache_root = output_path.with_name(output_path.stem + "_vao")
+    view = None
+    compile_report = None
+    t_probe = time.perf_counter()
     try:
         cache_root.mkdir(parents=True, exist_ok=True)
         view = spec_view(spec, base_path=output_path.parent, spec_path=spec_path,
@@ -213,8 +249,11 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
     except Exception:
         cache_reason = "probe_failed"
         compile_report = None
-    t_cache = time.perf_counter()
+    cache_probe_ms = (time.perf_counter() - t_probe) * 1000
+
+    compile_ms = 0.0
     if compile_report is None:
+        t_compile = time.perf_counter()
         from compiler import compile_deck      # 惰性导入：缓存命中路径不付 pptx 导入成本
         try:
             compile_report = compile_deck(spec, output_path,
@@ -230,13 +269,19 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
                     "file_bytes": None}
             else:
                 raise
-    t_compile = time.perf_counter()
-    # 产物凭证：报告必须对得上磁盘上那一份 PPTX（一次哈希，无二级见证）。
+        compile_ms = (time.perf_counter() - t_compile) * 1000
+
+    # strict cache probe 已对当前字节做过 SHA，可复用其摘要；fast 只用 size+mtime_ns
+    # 见证缓存，因此仍须在发布前读取/哈希一次，维持产物凭证的完整性。
+    t_attest = time.perf_counter()
     if not compile_report.get("skipped"):
         try:
-            stat = output_path.stat()
-            actual_sha = file_digest(output_path)
             expected_sha = compile_report.get("output_sha256")
+            reused_sha = (expected_sha if compile_report.get("reused")
+                          and speed != "fast"
+                          and isinstance(expected_sha, str) and len(expected_sha) == 64 else None)
+            stat = output_path.stat()
+            actual_sha = reused_sha if reused_sha is not None else file_digest(output_path)
             if expected_sha and expected_sha != actual_sha:
                 compile_report.setdefault("warnings", []).append(
                     "编译报告 output_sha256 与实际 PPTX 不一致")
@@ -251,20 +296,31 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
             compile_report["passed"] = False
             compile_report["output_exists"] = False
             compile_report["output_sha256"] = None
-        if compile_report.get("output_sha256") and compile_report.get("output_exists") \
-                and cache_reason in ("miss", "probe_failed"):
-            try:
-                view = view if cache_reason == "miss" else spec_view(
-                    spec, base_path=output_path.parent, spec_path=spec_path,
-                    image_bytes=image_bytes, digests=digests)
-                record_compile(cache_root, output_path, view, compile_report)
-            except Exception:
-                pass
-    timing = {"cache_ms": int((t_cache - t0) * 1000),
-              "compile_ms": int((t_compile - t0) * 1000),
-              "attestation_ms": int((time.perf_counter() - t_compile) * 1000),
-              "cache_reason": cache_reason, "cache_enabled": True,
-              "cache_dir": str(cache_root)}
+    attestation_ms = (time.perf_counter() - t_attest) * 1000
+
+    cache_write_ms = 0.0
+    if compile_report.get("output_sha256") and compile_report.get("output_exists") \
+            and cache_reason in ("miss", "probe_failed"):
+        t_write = time.perf_counter()
+        try:
+            view = view if cache_reason == "miss" and view is not None else spec_view(
+                spec, base_path=output_path.parent, spec_path=spec_path,
+                image_bytes=image_bytes, digests=digests)
+            record_compile(cache_root, output_path, view, compile_report)
+        except Exception:
+            pass
+        cache_write_ms = (time.perf_counter() - t_write) * 1000
+
+    timing = {
+        "cache_probe_ms": round(cache_probe_ms, 2),
+        "cache_ms": round(cache_probe_ms, 2),  # 向后兼容旧性能字段
+        "compile_ms": round(compile_ms, 2),
+        "attestation_ms": round(attestation_ms, 2),
+        "cache_write_ms": round(cache_write_ms, 2),
+        "cache_reason": cache_reason,
+        "cache_enabled": True,
+        "cache_dir": str(cache_root),
+    }
     return compile_report, timing
 
 
@@ -286,10 +342,18 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
             cached = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             cached = {}
+        cached_pages = cached.get("pages") or []
+        cached_sheet = cached.get("contact_sheet")
+        files_valid = (bool(cached_pages)
+                       and all(Path(p).is_file() for p in cached_pages)
+                       and bool(cached_sheet) and Path(cached_sheet).is_file())
         if (cached.get("output_sha256") == output_sha and cached.get("engine") == engine
-                and cached.get("renderer_speed") == str(speed) and cached.get("pages")):
+                and cached.get("renderer_speed") == str(speed) and files_valid):
             info = dict(cached)
             info["reused"] = True
+            info["pages_drawn"] = 0
+            info["pages_from_cache"] = int(info.get("count", len(cached_pages)) or 0)
+            info["contact_sheet_cached"] = True
             return info
     fast = str(speed).lower() == "fast"
     slides = spec.get("slides") or []
@@ -304,8 +368,8 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
         wanted = list(range(1, len(slides) + 1))
         scope = "full"
     preview_spec = dict(spec)
-    preview_spec["_image_bytes"] = image_bytes or {}
-    preview_spec["_image_decoded"] = decoded or {}
+    preview_spec["_image_bytes"] = image_bytes if image_bytes is not None else {}
+    preview_spec["_image_decoded"] = decoded if decoded is not None else {}
     if base_path:
         preview_spec["_base_path"] = str(Path(base_path).resolve())
     rendered: list = []
@@ -391,7 +455,11 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         return result, 2
 
     try:
+        t_load = time.perf_counter()
         spec, build = load_spec(build_path)
+        load_spec_ms = round((time.perf_counter() - t_load) * 1000, 2)
+
+        t_import = time.perf_counter()
         if mode != "spec":
             import importlib.util
             missing = next((n for n in ("pptx",) if importlib.util.find_spec(n) is None), None)
@@ -401,23 +469,33 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         from verify import (check_spec, mode_profile, normalize_spec,
                             release_guard_rules, verdict)
         from primitives import spec_fingerprint
+        module_import_ms = round((time.perf_counter() - t_import) * 1000, 2)
 
+        t_identity = time.perf_counter()
         spec_hash = spec_fingerprint(spec)          # 本轮唯一一次 spec 身份
+        spec_identity_ms = round((time.perf_counter() - t_identity) * 1000, 2)
 
         snapshots: dict = {}   # 本轮唯一一次读图：QC / 核验 / 编译 / 预览共用
         decoded: dict = {}     # 核验解码过的底图：编译期不再重复解码
         digests: dict = {}     # 本轮唯一一次哈希
         asset_binding = None
-        t_qc = time.perf_counter()
+        t_bind = time.perf_counter()
         if assets_manifest:
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
+        asset_bind_ms = round((time.perf_counter() - t_bind) * 1000, 2)
+
         # 资产链：QC（若有清单）→ 核验。一次执行只给一条修法。
         workflow = {"status": "SKIPPED", "issues": [], "image_count": 0,
                     "reason": "no_manifest_provided"}
+        qc_result: dict = {}
+        qc_ms = asset_chain_ms = 0.0
         if assets_manifest:
+            t_qc = time.perf_counter()
             qc_result, _ = qc_report(assets_manifest, assets_dir, phase=mode,
                                      speed=speed, snapshots=snapshots,
                                      decoded=decoded, digests=digests)
+            qc_ms = round((time.perf_counter() - t_qc) * 1000, 2)
+            t_chain = time.perf_counter()
             workflow = verify_chain(spec, assets_manifest,
                                     qc_result.get("report_path"), assets_dir,
                                     image_bytes=snapshots, digests=digests)
@@ -428,69 +506,131 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                     "asset binding: " + "、".join(
                         asset_binding.get("missing_asset_ids", [])
                         + asset_binding.get("missing_files", [])))
-        qc_ms = round((time.perf_counter() - t_qc) * 1000, 1) if assets_manifest else 0
-        started_guard = time.perf_counter()
+            asset_chain_ms = round((time.perf_counter() - t_chain) * 1000, 2)
+
         if workflow.get("status") == "BLOCKED":
             result = blocked_result(spec, workflow)
             result["asset_workflow"] = workflow
             result["source_spec_hash"] = spec_hash
+            result["performance"] = {
+                "load_spec_ms": load_spec_ms, "module_import_ms": module_import_ms,
+                "spec_identity_ms": spec_identity_ms, "asset_bind_ms": asset_bind_ms,
+                "qc_ms": qc_ms, "asset_chain_ms": asset_chain_ms,
+                "qa_ms": round(qc_ms + asset_chain_ms, 2),
+                "asset_count": len(qc_result.get("results") or []),
+                "asset_retry_count": len(qc_result.get("retry_assets") or []),
+                "asset_qc_reused": sum(1 for item in (qc_result.get("results") or [])
+                                        if (item.get("qc") or {}).get("reused")),
+                "image_source_snapshots": len(snapshots),
+                "image_snapshot_bytes": sum(len(blob) for blob in snapshots.values()
+                                             if isinstance(blob, (bytes, bytearray, memoryview))),
+                "image_decode_seed_entries": len(decoded),
+                "compile_ms": 0, "ghost_ms": 0,
+                "render_pages": 0, "render_pages_drawn": 0,
+                "render_pages_cached": 0, "render_bundle_reused": False,
+                "contact_sheet_cached": False, "render_skipped": "asset_blocked",
+                "total_ms": round((time.perf_counter() - started) * 1000, 2),
+            }
             _json_write(packet_path, repair_packet(result, mode, build, output_path))
             _print_line(result, None, None, packet_path, speed, mode, json_output)
             return result, 2
+
+        t_normalize = time.perf_counter()
         normalized, norm = normalize_spec(spec)
+        normalization_ms = round((time.perf_counter() - t_normalize) * 1000, 2)
         prof = mode_profile(mode)
         effective_rules = release_guard_rules(prof["mode"], None)
+        t_guard = time.perf_counter()
         guard_report = check_spec(normalized, rules=effective_rules)
-        guard_ms = round((time.perf_counter() - started_guard) * 1000, 1)
+        guard_ms = round((time.perf_counter() - t_guard) * 1000, 2)
         guard_errors = [c for c in guard_report.get("checks", []) if c.get("level") == "error"]
-        timing = {"guard_ms": guard_ms, "qc_ms": qc_ms, "normalization": norm,
-                  "provenance_required": bool(effective_rules.get("require_provenance", False)),
-                  "speed": speed}
+        timing = {
+            "load_spec_ms": load_spec_ms,
+            "module_import_ms": module_import_ms,
+            "spec_identity_ms": spec_identity_ms,
+            "asset_bind_ms": asset_bind_ms,
+            "qc_ms": qc_ms,
+            "asset_chain_ms": asset_chain_ms,
+            "asset_count": len(qc_result.get("results") or []),
+            "asset_retry_count": len(qc_result.get("retry_assets") or []),
+            "normalization_ms": normalization_ms,
+            "guard_ms": guard_ms,
+            "normalization": norm,
+            "provenance_required": bool(effective_rules.get("require_provenance", False)),
+            "speed": speed,
+        }
         if not prof["compile"]:
             compile_report = {"passed": True, "skipped": True, "warnings": [],
                               "file_bytes": None,
                               "output_exists": False, "output_sha256": None}
-            timing.update(compile_ms=0, attestation_ms=0, cache_reason="not_compiled")
+            timing.update(cache_probe_ms=0, cache_ms=0, compile_ms=0,
+                          attestation_ms=0, cache_write_ms=0,
+                          cache_reason="not_compiled")
         elif guard_errors:
             compile_report = {"passed": False, "skipped": True, "warnings": [],
                               "file_bytes": None,
                               "output_exists": False, "output_sha256": None}
-            timing.update(compile_ms=0, attestation_ms=0, cache_reason="guard_error")
+            timing.update(cache_probe_ms=0, cache_ms=0, compile_ms=0,
+                          attestation_ms=0, cache_write_ms=0,
+                          cache_reason="guard_error")
         else:
             compile_report, compile_timing = _compile_step(
                 normalized, output_path, speed=speed, spec_path=str(build),
                 image_bytes=snapshots, digests=digests, decoded=decoded)
             timing.update(compile_timing)
-        timing["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        t_verdict = time.perf_counter()
         result = verdict(normalized, mode=mode, guard_report=guard_report,
                          compile_report=compile_report, spec_hash=spec_hash,
                          runtime_facts={**timing, "asset_workflow": workflow})
+        timing["verdict_ms"] = round((time.perf_counter() - t_verdict) * 1000, 2)
         result["asset_workflow"] = workflow
         if asset_binding is not None:
             result["asset_binding"] = asset_binding
 
-        # 预览证据：release 自动出；draft 只在显式要求时出；预算不足跳过
-        # （无预览产物即跳过，不单独立账——skipped_stages 零消费者，已删）。
+        # 预览证据：release 自动出；draft 只在显式要求时出；预算不足跳过。
+        # 不另起 preview 命令，release 的一次 check 已产出页图与联络表。
         ghost = None
+        render_skip_reason = "not_requested"
         preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
                                   if mode == "release" else None)
-        if preview_dir and result.get("passed") and workflow.get("status") != "BLOCKED":
-            left = None if not deadline else (deadline - (time.perf_counter() - started))
-            if left is None or left >= GHOST_MIN_BUDGET_S:
-                t_ghost = time.perf_counter()
-                ghost = _ghost(normalized, preview_dir, base_path=build.parent,
-                               image_bytes=snapshots, decoded=decoded,
-                               speed=speed, limit=ghost_pages,
-                               output_sha=(result.get("compile") or {}).get("output_sha256"))
-                timing["ghost_ms"] = round((time.perf_counter() - t_ghost) * 1000, 1)
-        result["performance"] = {**result.get("performance", {}),
-                                 "ghost_ms": timing.get("ghost_ms"),
-                                 "total_ms": timing["total_ms"]}
+        if preview_dir:
+            if not result.get("passed"):
+                render_skip_reason = "verdict_blocked"
+            elif workflow.get("status") == "BLOCKED":
+                render_skip_reason = "asset_blocked"
+            else:
+                left = None if not deadline else (deadline - (time.perf_counter() - started))
+                if left is None or left >= GHOST_MIN_BUDGET_S:
+                    render_skip_reason = None
+                    t_ghost = time.perf_counter()
+                    ghost = _ghost(normalized, preview_dir, base_path=build.parent,
+                                   image_bytes=snapshots, decoded=decoded,
+                                   speed=speed, limit=ghost_pages,
+                                   output_sha=(result.get("compile") or {}).get("output_sha256"))
+                    timing["ghost_ms"] = round((time.perf_counter() - t_ghost) * 1000, 2)
+                    timing["render_pages"] = int(ghost.get("count", 0) or 0)
+                    timing["render_pages_drawn"] = int(ghost.get("pages_drawn", 0) or 0)
+                    timing["render_pages_cached"] = int(ghost.get("pages_from_cache", 0) or 0)
+                    timing["render_bundle_reused"] = bool(ghost.get("reused"))
+                    timing["contact_sheet_cached"] = bool(ghost.get("contact_sheet_cached"))
+                else:
+                    render_skip_reason = "deadline"
+        if "ghost_ms" not in timing:
+            timing["ghost_ms"] = 0.0
+            timing["render_pages"] = 0
+            timing["render_pages_drawn"] = 0
+            timing["render_pages_cached"] = 0
+            timing["render_bundle_reused"] = False
+            timing["contact_sheet_cached"] = False
+            timing["render_skipped"] = render_skip_reason
+        result["performance"] = {**result.get("performance", {}), **timing}
 
         manifest = None
         manifest_path = None
+        manifest_ms = 0.0
         if mode == "release":
             from verify import release_manifest
+            t_manifest = time.perf_counter()
             manifest = release_manifest(normalized, result, ghost_preview=ghost,
                                         workflow=workflow, spec_hash=spec_hash,
                                         output_verified=True)
@@ -500,9 +640,26 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                 fail_result(result, errors)
                 manifest = release_manifest(normalized, result, ghost_preview=ghost,
                                             workflow=workflow, output_verified=True)
+            manifest_ms = round((time.perf_counter() - t_manifest) * 1000, 2)
             manifest_path = output_path.with_suffix(".manifest.json")
-            _json_write(manifest_path, manifest)
             result["manifest_path"] = str(manifest_path)
+        timing["release_manifest_ms"] = manifest_ms
+        timing["asset_qc_reused"] = sum(1 for item in (qc_result.get("results") or [])
+                                         if (item.get("qc") or {}).get("reused"))
+        timing["image_source_snapshots"] = len(snapshots)
+        timing["image_snapshot_bytes"] = sum(len(blob) for blob in snapshots.values()
+                                             if isinstance(blob, (bytes, bytearray, memoryview)))
+        timing["image_decode_seed_entries"] = len(decoded)
+        timing["qa_ms"] = round(sum(float(timing.get(k, 0) or 0) for k in
+                                    ("qc_ms", "asset_chain_ms", "normalization_ms",
+                                     "guard_ms", "verdict_ms", "release_manifest_ms")), 2)
+        # total_ms 覆盖 load → QA → compile/cache → render → release manifest；
+        # artifact JSON 写入另由进程 wall time覆盖，不把临时文件 flush 算成 QA。
+        timing["total_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        result["performance"].update(timing)
+        if manifest is not None:
+            manifest["qa_summary"]["performance"] = dict(result["performance"])
+            _json_write(manifest_path, manifest)
         _json_write(packet_path, repair_packet(result, mode, build, output_path))
         _print_line(result, ghost, manifest_path, packet_path, speed, mode, json_output)
         binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")

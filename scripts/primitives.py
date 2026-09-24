@@ -1153,10 +1153,12 @@ NON_GEOMETRIC_THEME_KEYS = (
 
 
 def _media_stamp(slide, base_path, spec_path=None, image_bytes=None, digests=None):
-    """图片指纹与编译器的相对路径解析同口径。"""
+    """图片指纹与编译器的相对路径解析同口径；未快照时读一次并把字节交给编译器。"""
     roots = [Path(base_path) if base_path else Path.cwd()]
     if spec_path:
         roots.append(Path(spec_path).parent)
+    image_bytes = image_bytes if isinstance(image_bytes, dict) else {}
+    digests = digests if isinstance(digests, dict) else {}
     stamps = []
     slide = slide if isinstance(slide, dict) else {}
     elements = slide.get("elements", [])
@@ -1170,39 +1172,35 @@ def _media_stamp(slide, base_path, spec_path=None, image_bytes=None, digests=Non
             src = element["asset"].get("src")
         if not src:
             continue
-        path = Path(str(src))
+        path = Path(str(src)).expanduser()
         if not path.is_absolute():
             candidates = [(root / path).resolve() for root in roots]
             path = next((c for c in candidates if c.exists()), candidates[0])
-        known = (digests or {}).get(str(path))
-        if known is None and digests is not None:
-            try:
-                known = digests.get(str(path.resolve()))
-            except OSError:
-                known = None
-        blob = (image_bytes or {}).get(str(path))
+        else:
+            path = path.resolve()
+        key = str(path)
+        known = digests.get(key)
+        blob = image_bytes.get(key)
         if known is not None:
             size = len(blob) if blob is not None else None
             if size is None:
                 try:
                     size = path.stat().st_size
                 except OSError:
-                    stamps.append([str(path), "missing"])
+                    stamps.append([key, "missing"])
                     continue
-            stamps.append([str(path), size, known])
+            stamps.append([key, size, known])
             continue
-        if blob is not None:
-            stamp = digest_bytes(blob)
-            if digests is not None:
-                digests[str(path)] = stamp
-            stamps.append([str(path), len(blob), stamp])
-            continue
-        try:
-            stat = path.stat()
-            stamps.append([str(path.resolve()), stat.st_size, stat.st_mtime_ns,
-                           (file_digest(path) or "unreadable")[:16]])
-        except (OSError, ValueError):
-            stamps.append([str(path.resolve()), "missing"])
+        if blob is None:
+            try:
+                blob = path.read_bytes()
+            except (OSError, ValueError):
+                stamps.append([key, "missing"])
+                continue
+            image_bytes[key] = blob
+        stamp = digest_bytes(blob)
+        digests[key] = stamp
+        stamps.append([key, len(blob), stamp])
     return stamps
 
 

@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -26,14 +27,24 @@ DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json
 # ─────────────────────────────────────────────────────────────────────
 # 1 · Brief 加载（唯一加载器：yml / json / 定义 BRIEF|NEED 的模块）
 # ─────────────────────────────────────────────────────────────────────
-def load_brief(path) -> dict:
+def load_brief(path, *, with_digest: bool = False):
+    """加载 brief；`with_digest=True` 时同一份内存字节同时用于解析与凭证。
+
+    规划路径不能先 read_text 再 file_digest：那会把 brief 完整读两遍。
+    普通调用仍只返回 dict，兼容现有消费者。
+    """
     p = Path(path).expanduser()
     if not p.is_file():
         raise ValueError(f"需求文件不存在: {p}（brief 需为 .yml/.yaml/.json 或定义 BRIEF/NEED 的 .py）")
+    try:
+        raw = p.read_bytes()
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"brief 不是 UTF-8 文本：{p}（{exc.reason}）") from None
     if p.suffix in (".yml", ".yaml"):
         import yaml
         try:
-            value = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            value = yaml.safe_load(text) or {}
         except yaml.YAMLError as exc:
             mark = getattr(exc, "problem_mark", None)
             where = f":{mark.line + 1}:{mark.column + 1}" if mark else ""
@@ -41,14 +52,14 @@ def load_brief(path) -> dict:
                              f"{getattr(exc, 'problem', None) or exc}") from None
     elif p.suffix == ".json":
         try:
-            value = json.loads(p.read_text(encoding="utf-8"))
+            value = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(f"brief JSON 解析失败：{p}:{exc.lineno}:{exc.colno} — {exc.msg}") from None
     elif p.suffix == ".py":
         import types
         mod = types.ModuleType("need_mod")
         mod.__file__ = str(p)
-        exec(compile(p.read_text(encoding="utf-8"), str(p), "exec"), mod.__dict__)
+        exec(compile(text, str(p), "exec"), mod.__dict__)
         value = dict(mod.BRIEF) if hasattr(mod, "BRIEF") else (
             dict(mod.NEED) if hasattr(mod, "NEED") else None)
         if value is None:
@@ -57,6 +68,8 @@ def load_brief(path) -> dict:
         raise ValueError("brief 只接受 .yml/.yaml/.json，或定义 BRIEF/NEED 的 .py")
     if not isinstance(value, dict):
         raise ValueError(f"brief 顶层必须是对象，实际是 {type(value).__name__}：{p}")
+    if with_digest:
+        return value, hashlib.sha256(raw).hexdigest()
     return value
 
 

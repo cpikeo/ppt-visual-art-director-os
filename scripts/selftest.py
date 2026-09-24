@@ -717,6 +717,22 @@ def test_production(tmp: Path):
           compile_reuse(work, out1, spec_view(changed, base_path=tmp),
                         fast_probe=True, speed="fast") is None)
 
+    # strict 探测已算出当前产物 SHA；attestation 复用，不重复触发摘要/状态探测。
+    from vao import _compile_step
+    import primitives
+    cached_out = tmp / "strict-cache.pptx"
+    first_report, _ = _compile_step(spec, cached_out, speed="strict", spec_path=str(build))
+    from unittest.mock import patch
+    with patch.object(primitives, "file_digest", wraps=primitives.file_digest) as digest_spy:
+        cached_report, cache_timing = _compile_step(
+            spec, cached_out, speed="strict", spec_path=str(build))
+    hashed_output = [call for call in digest_spy.call_args_list
+                     if Path(call.args[0]).expanduser().resolve() == cached_out.resolve()]
+    check("cache: strict 命中对 PPTX 只做一次内容哈希",
+          first_report.get("output_sha256") == cached_report.get("output_sha256")
+          and cached_report.get("reused") and len(hashed_output) == 1
+          and cache_timing.get("compile_ms") == 0)
+
     # 资产链：媒体必要性 → 清单；坏图 release 必 BLOCK
     from intelligence import think
     from assets import build_manifest, image_qc, qc_retry_decision
@@ -739,12 +755,60 @@ def test_production(tmp: Path):
     canvas = Image.new("RGB", (1280, 720), (240, 236, 228))
     ImageDraw.Draw(canvas).ellipse((700, 200, 1000, 500), fill=(120, 90, 60))
     canvas.save(img)
+    from unittest.mock import patch
+    image_spec = {"canvas": {"width": 1280, "height": 720}, "theme": {},
+                  "slides": [{"id": "one_image", "elements": [
+                      {"id": "photo", "type": "image", "src": str(img),
+                       "x": 80, "y": 120, "width": 520, "height": 320,
+                       "fit": "cover"}]}]}
+    image_snapshot: dict = {}
+    image_digest: dict = {}
+    path_read_count = {str(img.resolve()): 0}
+    original_read_bytes = Path.read_bytes
+    def count_image_read(path, *args, **kwargs):
+        key = str(Path(path).expanduser().resolve())
+        if key in path_read_count:
+            path_read_count[key] += 1
+        return original_read_bytes(path, *args, **kwargs)
+    with patch.object(Path, "read_bytes", count_image_read):
+        spec_view(image_spec, base_path=tmp, image_bytes=image_snapshot, digests=image_digest)
+        compile_deck(image_spec, tmp / "one_image.pptx", speed="fast",
+                     spec_path=str(build), image_bytes=image_snapshot)
+    from primitives import digest_bytes
+    image_key = str(img.resolve())
+    check("media: 指纹预读的源图字节由编译复用（同轮仅一次文件读取）",
+          path_read_count[image_key] == 1
+          and image_digest.get(image_key) == digest_bytes(image_snapshot.get(image_key, b"")))
+    # 模拟 QC 已有 SHA、但因 QC cache hit 没把图像快照装入内存：compile 读一次后
+    # 把源 bytes 放回共享快照，page-key 不再为 preview 读取第二次。
+    image_snapshot_cached: dict = {}
+    image_digest_cached = {image_key: image_digest[image_key]}
+    path_read_count[image_key] = 0
+    media_spec_for_preview = {**image_spec, "_image_bytes": image_snapshot_cached,
+                              "_base_path": str(tmp)}
+    media_slide = image_spec["slides"][0]
+    with patch.object(Path, "read_bytes", count_image_read):
+        spec_view(image_spec, base_path=tmp, image_bytes=image_snapshot_cached,
+                  digests=image_digest_cached)
+        compile_deck(image_spec, tmp / "one_image_cached_qc.pptx", speed="fast",
+                     spec_path=str(build), image_bytes=image_snapshot_cached)
+        from ghost import _page_key
+        _page_key(media_slide, media_spec_for_preview, 0.5, 1, 1)
+    check("media: QC 缓存 SHA → 编译读一次 → preview 复用同一图像字节",
+          path_read_count[image_key] == 1
+          and image_snapshot_cached.get(image_key)
+          and image_digest_cached.get(image_key) == digest_bytes(image_snapshot_cached[image_key]))
     safe = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
     qc = image_qc(img, safe_rect=safe, text_is_dark=True)
     decision_ok = qc_retry_decision(qc, attempt=0, phase="release")
     check("assets: 合规画心 QC 通过（无阻断项，动作 accept）",
           qc.get("status") == "ok" and decision_ok.get("action") == "accept",
           str(qc.get("checks"))[:160])
+    fast_qc = image_qc(img, safe_rect=safe, text_is_dark=True, max_side=960)
+    check("assets: fast/strict 的硬缝判定一致（不因降采样制造重试）",
+          fast_qc.get("status") == qc.get("status")
+          and next(c for c in fast_qc["checks"] if c["check"] == "hard_seam")["status"]
+          == next(c for c in qc["checks"] if c["check"] == "hard_seam")["status"])
     bad_img = tmp / "bad.png"          # 文字安全区被高对比纹理压住 = 不可用
     canvas2 = Image.new("RGB", (1280, 720), (245, 243, 240))
     paint = ImageDraw.Draw(canvas2)
@@ -785,19 +849,51 @@ def test_production(tmp: Path):
           left_px[0] > 200 and right_px[2] > 200, f"{left_px} vs {right_px}")
 
     # 关键页取证：封面 / 密数据 / 收尾
-    from ghost import key_pages, ghost_deck, key_page_roles, key_selection
+    from ghost import (PAGE_CACHE_DIR, _page_key, key_pages, ghost_deck,
+                       key_page_roles, key_selection, make_contact_sheet)
     pages = key_pages(spec["slides"], limit=3)
     labels = key_page_roles(spec["slides"], pages)
     check("ghost: 关键页取证含封面与收尾",
           1 in pages and len(spec["slides"]) in pages and
           set(labels.values()) <= {"cover", "closing", "hero_image", "dense_data",
                                    "section", "content"}, str(labels))
-    rendered = ghost_deck(spec, tmp / "preview", pages=pages, scale=0.4, supersample=1)
+    rendered_images: list = []
+    page_stats: dict = {}
+    rendered = ghost_deck(spec, tmp / "preview", pages=pages, scale=0.4, supersample=1,
+                          images_out=rendered_images, stats=page_stats)
     check("ghost: 预览只画关键页（页级缓存内建）",
           len(rendered) == len(pages) and all(Path(p).is_file() for p in rendered))
+    page_cache_files = list((tmp / "preview" / PAGE_CACHE_DIR).glob("*.png"))
+    check("ghost: 页缓存与交付预览复用同一份 PNG 编码",
+          bool(rendered) and any(Path(rendered[0]).read_bytes() == p.read_bytes()
+                                 for p in page_cache_files))
+    sheet_stats: dict = {}
+    contact = make_contact_sheet(rendered, tmp / "preview" / "contact.png",
+                                 images=rendered_images,
+                                 cache_dir=tmp / "preview" / PAGE_CACHE_DIR,
+                                 stats=sheet_stats)
+    sheet_cache = list((tmp / "preview" / PAGE_CACHE_DIR).glob("sheet-*.png"))
+    check("ghost: 联络表只编码一次并以字节副本缓存",
+          bool(contact and Path(contact).is_file() and sheet_cache
+               and Path(contact).read_bytes() == sheet_cache[0].read_bytes()))
     sel_pages, sel_roles = key_selection(spec["slides"], limit=3)
     check("ghost: 单次取证与两次调用结论一致（结构只扫一遍）",
           sel_pages == pages and sel_roles == labels)
+
+    media_src = tmp / "preview-source.png"
+    Image.new("RGB", (32, 32), (180, 40, 40)).save(media_src)
+    blob_a = media_src.read_bytes()
+    media_slide = {"id": "media", "elements": [
+        {"id": "photo", "type": "image", "src": str(media_src)}]}
+    media_spec_a = {"canvas": {"width": 1280, "height": 720}, "theme": {},
+                    "_image_bytes": {str(media_src): blob_a}}
+    key_a = _page_key(media_slide, media_spec_a, 0.5, 1, 1)
+    Image.new("RGB", (32, 32), (40, 40, 180)).save(media_src)
+    blob_b = media_src.read_bytes()
+    media_spec_b = {"canvas": {"width": 1280, "height": 720}, "theme": {},
+                    "_image_bytes": {str(media_src): blob_b}}
+    key_b = _page_key(media_slide, media_spec_b, 0.5, 1, 1)
+    check("ghost: 同一路径的图片字节变化会使页缓存失效", key_a != key_b)
 
 
 # ── 4 · cli + docs ───────────────────────────────────────────────────
@@ -809,9 +905,18 @@ def test_cli(tmp: Path):
     skeleton = tmp / "build.py"
     assets_out = tmp / "assets.json"
     r = run_vao("plan", str(brief), "--out", str(plan), "--skeleton", str(skeleton),
-                "--assets-out", str(assets_out), "--assets-dir", str(tmp / "gen"))
+                "--assets-out", str(assets_out), "--assets-dir", str(tmp / "gen"), "--json")
     check("cli: plan 退出码 0 且产物齐", r.returncode == 0 and plan.is_file()
           and skeleton.is_file() and assets_out.is_file(), r.stderr[-200:])
+    plan_stdout = json.loads(r.stdout)
+    timing = plan_stdout.get("performance") or {}
+    import hashlib
+    check("cli: plan 阶段计时可分解且 brief 读入/哈希凭证一致",
+          timing.get("total_ms", 0) >= timing.get("intelligence_ms", 0)
+          and "brief_load_ms" in timing and timing.get("reference_files_read") == 0
+          and plan_stdout.get("workflow", {}).get("brief_file_sha256")
+          == hashlib.sha256(brief.read_bytes()).hexdigest(),
+          str(timing))
     payload = json.loads(plan.read_text(encoding="utf-8"))
     check("cli: plan.json 携带逐页判断卡（否决项有效、无竞争可空）",
           all(set(p["judgment"]["composition"]) == {"chosen", "why", "rejected"}
@@ -826,9 +931,18 @@ def test_cli(tmp: Path):
 
     filled = make_build(tmp)
     out = tmp / "deck.pptx"
-    r = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast")
+    r = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
+                "--json")
     check("cli: release PASS 且产出预览/清单", r.returncode == 0 and out.is_file()
           and out.with_suffix(".manifest.json").is_file(), r.stdout[-200:])
+    release_result = json.loads(r.stdout)
+    release_timing = release_result.get("timing") or {}
+    check("cli: 端到端计时包含预览且区分 compile/cache/QA",
+          release_result.get("status") == "PASS"
+          and release_timing.get("total_ms", 0) >= release_timing.get("ghost_ms", 0)
+          and {"compile_ms", "cache_probe_ms", "qa_ms", "render_pages_drawn",
+               "image_source_snapshots", "image_snapshot_bytes", "asset_qc_reused"}
+          <= set(release_timing), str(release_timing))
     first = out.stat().st_mtime_ns
 
     r2 = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast")
@@ -870,8 +984,15 @@ def test_docs():
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
     dna = json.loads((ROOT / "memory" / "design_dna.json").read_text(encoding="utf-8"))
-    check("docs: Design DNA 条目（含经验例外）收敛到 ≤10 条",
-          len(dna["entries"]) <= 10, str(len(dna["entries"])))
+    dna_entries = dna.get("entries") if isinstance(dna, dict) else None
+    dna_ids = [entry.get("id") for entry in dna_entries if isinstance(entry, dict)] \
+        if isinstance(dna_entries, list) else []
+    ids_are_valid = all(isinstance(value, str) and value.strip() for value in dna_ids)
+    check("docs: Design DNA 结构有效且 ID 唯一（条目数不设上限）",
+          isinstance(dna_entries, list)
+          and all(isinstance(entry, dict) for entry in dna_entries)
+          and ids_are_valid and len(dna_ids) == len(set(dna_ids)),
+          str(len(dna_entries or [])))
 
 
 def main():

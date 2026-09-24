@@ -1166,15 +1166,73 @@ def _engine_stamp() -> str:
     return engine_fingerprint("preview")
 
 
+def _page_media_stamp(slide: dict, spec: dict) -> list:
+    """页面缓存必须包含图片字节身份，而不只是 src 路径。
+
+    QA 传入本轮已读过的 snapshots 时只在内存里哈希，不重读图片；独立 preview
+    则对未快照的文件走统一 file_digest。相同源图跨页只算一次。
+    """
+    from primitives import digest_bytes
+    cache = spec.get("_preview_media_digest_cache")
+    if not isinstance(cache, dict):
+        cache = {}
+        spec["_preview_media_digest_cache"] = cache
+    image_bytes = spec.get("_image_bytes")
+    if not isinstance(image_bytes, dict):
+        image_bytes = {}
+        spec["_image_bytes"] = image_bytes
+    digests = spec.get("_image_digests") or {}
+    roots = [Path(spec.get("_base_path") or Path.cwd()), Path.cwd()]
+    stamps = []
+    for element in (slide.get("elements") or []):
+        if not isinstance(element, dict) or element.get("type") != "image":
+            continue
+        src = element.get("src")
+        if not src and isinstance(element.get("asset"), dict):
+            src = element["asset"].get("src")
+        if not src:
+            stamps.append([str(element.get("id") or "?"), "missing"])
+            continue
+        path = Path(str(src)).expanduser()
+        if not path.is_absolute():
+            candidates = [(root / path).resolve() for root in roots]
+            path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+        else:
+            path = path.resolve()
+        key = str(path)
+        if key not in cache:
+            known = digests.get(key)
+            blob = image_bytes.get(key)
+            if blob is None:
+                blob = image_bytes.get(str(src))
+            if known:
+                sha = str(known)
+            else:
+                if blob is None:
+                    try:
+                        blob = path.read_bytes()
+                    except OSError:
+                        blob = None
+                    if blob is not None:
+                        # preview 也复用为 key 读取的字节，避免随后绘制再读同一图片。
+                        image_bytes[key] = blob
+                        image_bytes[str(src)] = blob
+                sha = digest_bytes(blob) if blob is not None else None
+            cache[key] = sha or "missing"
+        stamps.append([str(element.get("id") or "?"), key, cache[key]])
+    return stamps
+
+
 def _page_key(slide: dict, spec: dict, scale: float, supersample: int,
               compress_level: int) -> str:
-    """一页预览的身份：这一页的内容 + 画布 + 主题 + 渲染口径 + 渲染器指纹。
+    """一页预览的身份：内容/画布/主题/图像字节/渲染口径/渲染器指纹。
 
-    页面没变就不该重画——迭代一轮只改一页时，其余页的像素与上一轮完全一致。
+    页面或其引用图像没变才可复用——同一 src 路径下图片字节换了也必须重画。
     """
     from primitives import identity
     return identity({
         "canvas": spec.get("canvas"), "theme": spec.get("theme"), "page": slide,
+        "media": _page_media_stamp(slide, spec),
         "scale": round(float(scale), 4), "supersample": int(supersample),
         "compress": int(compress_level), "engine": _engine_stamp(),
     }, schema="vao-preview-page-v1", short=20)
@@ -1215,11 +1273,13 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
         cached_file = (cache_dir / f"{key}.png") if key else None
         image = None
         drawn = False
+        cache_valid = False
         if cached_file is not None and cached_file.exists():
             try:
                 with Image.open(cached_file) as handle:
                     image = handle.convert("RGB")
                 image.load()
+                cache_valid = True
             except (OSError, ValueError):
                 image = None                    # 坏缓存文件 = 没缓存，重画
         if image is None:
@@ -1229,6 +1289,7 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
             if cached_file is not None and store:
                 try:
                     image.save(cached_file, "PNG", compress_level=int(png_compress_level))
+                    cache_valid = True
                 except OSError:
                     # 写不进去只影响下一次命中，不影响这一轮的像素；但必须可见——
                     # 「缓存静默失效」会让所有人以为它在工作（这个坑已经踩过一次）。
@@ -1243,7 +1304,16 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
             stats.setdefault("rendered_pages" if drawn else "cached_pages", []).append(n)
         if store:
             path = out / f"ghost-{n:02d}.png"
-            image.save(path, "PNG", compress_level=int(png_compress_level))
+            copied = False
+            if cached_file is not None and cache_valid and cached_file.is_file():
+                try:
+                    # 缓存 PNG 已编码：复制字节作为交付预览，避免同一像素再编码一次。
+                    shutil.copyfile(cached_file, path)
+                    copied = True
+                except OSError:
+                    pass
+            if not copied:
+                image.save(path, "PNG", compress_level=int(png_compress_level))
             paths.append(path)
     if page_cache:
         _prune_page_cache(cache_dir)
@@ -1341,7 +1411,8 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
     if cached is not None:
         try:
             cached.parent.mkdir(parents=True, exist_ok=True)
-            sheet.save(cached, "PNG", compress_level=int(png_compress_level))
+            # 联络表像素只编码一次；缓存副本直接复制 PNG 字节。
+            shutil.copyfile(target, cached)
         except OSError:
             # 写不进缓存只影响下一次命中，不影响这一轮的像素；但要看得见。
             if stats is not None:

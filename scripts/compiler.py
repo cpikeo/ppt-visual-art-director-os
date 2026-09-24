@@ -448,13 +448,23 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
     x, y, w, h = ctx.bounds(element)
     src = _resolve_src(element, base_path, spec_path)
     import io
-    snapshot = getattr(ctx, "image_bytes", {}).get(str(src))
+    image_snapshots = getattr(ctx, "image_bytes", {})
+    snapshot = image_snapshots.get(str(src))
     if snapshot is None and getattr(ctx, "require_snapshot", False):
         ctx.warn(f"image '{element.get('id')}': 缺少核验字节快照", element.get("id"))
         return
     if snapshot is None and not src.exists():
         ctx.warn(f"image '{element.get('id')}': 找不到文件 {src}", element.get("id"))
         return
+    if snapshot is None and isinstance(image_snapshots, dict):
+        try:
+            # 无预存快照时只读一次；后续同页/编译之后的 preview 复用相同字节。
+            snapshot = src.read_bytes()
+            image_snapshots[str(src)] = snapshot
+        except OSError as exc:
+            ctx.warn(f"image '{element.get('id')}': 无法读取文件 {src}（{exc}）",
+                     element.get("id"))
+            return
 
     fit = element.get("fit", "cover")
     crop = element.get("crop")
@@ -1692,7 +1702,7 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
     theme = spec.get("theme") if isinstance(spec.get("theme"), dict) else {}
 
     ctx = RenderContext(theme, canvas)
-    ctx.image_bytes = image_bytes or {}
+    ctx.image_bytes = image_bytes if isinstance(image_bytes, dict) else {}
     # 「核验字节快照」是**给了就必须够用**：调用方声明「这些字节已经读过一遍」时，
     # 缺一份就说明读取与使用不是同一批事实（不许悄悄再读一遍掩盖不一致）。
     # 但「一次也没给」是合法情形——判定被复用时本来就没有读字节，此时编译器

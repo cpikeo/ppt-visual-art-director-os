@@ -1332,6 +1332,29 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
             entry["severity"] = severity     # 条件级阻断（亮度断崖，v7.2.1）
         checks.append(entry)
 
+    def hard_seam_result():
+        """硬缝是宽面拓扑判据：降采样会抹掉真实材质起伏，制造假「平板」。
+
+        复用已解码的 native；仅该阻断判据回看原分辨率，不重新读文件或解码。
+        透明画布仍按原规则跳过，完全不透明的带 alpha 图按亮度测量。
+        """
+        seam_arr, seam_alpha = arr, alpha
+        if scale > 1 and native is not None:
+            if transparent:
+                try:
+                    alpha_min, _ = native.convert("RGBA").getchannel("A").getextrema()
+                except (OSError, ValueError):
+                    alpha_min = 0
+                if alpha_min < 250:
+                    return True, None, None
+            try:
+                seam_arr = np.asarray(native.convert("L"), dtype=np.float32) / 255.0
+                seam_alpha = None
+            except (OSError, ValueError, MemoryError):
+                # 内存极限时沿用已算出的工作域；不为可选精度让 QC 变成新失败点。
+                seam_arr, seam_alpha = arr, alpha
+        return _hard_seam_check(seam_arr, seam_alpha)
+
     _add("image_dimensions", True, None, None)
     _add("visibility", bool(visible), "图片完全透明，无可见内容", "更换可见素材；透明Logo允许保留有效alpha")
     if expected_ratio:
@@ -1352,7 +1375,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         _add("negative_space_ratio", True, None, None)
         _add("subject_position", True, None, None)
         _add("contrast_suitability", True, None, None)
-        _add("hard_seam", *_hard_seam_check(arr, alpha))
+        _add("hard_seam", *hard_seam_result())
         _add("brightness_balance", *_balance_check(arr, background))
         _settle(native, handed)
         return {"file": str(p), "status": "ok", "dimensions": [w, h], "checks": checks,
@@ -1423,7 +1446,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
              f"安全区亮度 {safe_lum:.2f} 处于中间带，深浅文字对比都不足",
              "把安全区推到亮端（>0.7）或暗端（<0.3），给文字明确落点")
 
-    _add("hard_seam", *_hard_seam_check(arr, alpha))
+    _add("hard_seam", *hard_seam_result())
 
     issue_count = sum(1 for c in checks if c["status"] == "issue")
     _settle(native, handed)
@@ -1601,9 +1624,11 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
         entries = {e["asset_id"]: e for e in asset_entries(manifest)}
         qpath = _Path(qc_path).expanduser().resolve() if qc_path else path.with_name(path.stem + ".qc.json")
         qc = json_read_cached(qpath)
-        report.update(manifest=str(path), manifest_sha256=digest(manifest),
-                      qc_report=str(qpath), qc_sha256=digest(qc))
-        if qc.get("schema") != QC_REPORT_SCHEMA or qc.get("manifest_sha256") != digest(manifest):
+        manifest_sha = digest(manifest)
+        qc_sha = digest(qc)
+        report.update(manifest=str(path), manifest_sha256=manifest_sha,
+                      qc_report=str(qpath), qc_sha256=qc_sha)
+        if qc.get("schema") != QC_REPORT_SCHEMA or qc.get("manifest_sha256") != manifest_sha:
             issues.append("QC 缺少指纹或来自旧资产清单；重新 check 触发核验")
         if qc.get("status") != "PASS" or any(qc.get(k) for k in
                 ("blocking_assets", "pending_assets", "retry_assets", "workflow_issues")):

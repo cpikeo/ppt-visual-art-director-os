@@ -24,15 +24,18 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 ## 生产路径
 
 ```bash
-# 1 · THINK
-python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py \
-    --assets-out asset_manifest.json --assets-dir generated_assets
-# 2 · BUILD：按清单出图（外部工具），按骨架注释落元素
-# 3 · VERIFY
-python scripts/vao.py check build.py out.pptx --mode release --assets-manifest asset_manifest.json
+# 1 · THINK（无图；如确有图像媒体，在同一次 plan 调用中加 --assets-out / --assets-dir）
+python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py
+# 2 · BUILD：同一轮落完 build.py；有图时将独立 prompt 批量送出图工具
+# 3 · VERIFY（无图稿）
+python scripts/vao.py check build.py out.pptx --mode release --speed fast
+# 有图稿在同一条 check 命令中追加：--assets-manifest asset_manifest.json
 ```
 
-12 页稿件在本机实测：冷启动 release ≈ 0.4s，缓存命中 ≈ 0.03s（`--speed fast` 默认）。
+性能数字以 [端到端审计](PERFORMANCE_AUDIT.md) 的对照实测为准：12 页无图合成稿，
+`--speed fast` 冷 release 进程 wall paired 中位约 **0.46s**（单轮约 0.39–0.50s），
+缓存命中约 **0.09s**。这是本执行环境和 fixture 的结果，不外推到图像密集稿件，也不含外部出图/模型耗时。
+旧 `0.4s` 冷值在个别轮次可见但不是稳定中位；`0.03s` 缓存值未复现，均不作为性能承诺。
 
 ## 架构（8 个模块 · 一条链）
 
@@ -58,9 +61,13 @@ scripts/
 
 | 需要解决的问题 | 读取 |
 |---|---|
-| 判断校准（焦点/留白/图像/图表/排版/节奏） | `references/judgment.md` |
-| 精确 spec 字段、元素契约、失败码 | `references/contract.md` |
-| 资产必要性、提示词、QC、既有文件 | `references/assets.md` |
+| 判断卡确有缺口时的校准（焦点/留白/图像/图表/排版/节奏） | `references/judgment.md`（按需） |
+| 落 spec 时查字段、元素契约、失败码 | `references/contract.md`（一次） |
+| plan 判定确需图像媒体 | `references/assets.md`；无图稿跳过 |
+
+`vao.py plan` 本身是确定性规划，不读 `references/`、不调用模型；brief 内容解析与 SHA-256
+共用一次文件读取。正常生产预算是 **1 次 plan + 1 次 release check**，不在中间再跑
+`qc`/`preview`；release 已输出关键页预览与发布清单。
 
 ## 设计经验记忆（DNA）
 
