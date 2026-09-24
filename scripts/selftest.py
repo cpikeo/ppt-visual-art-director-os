@@ -931,10 +931,14 @@ def test_cli(tmp: Path):
 
     filled = make_build(tmp)
     out = tmp / "deck.pptx"
+    stale_packet = out.with_suffix(".repair.json")
+    stale_packet.write_text('{"status":"BLOCKED"}', encoding="utf-8")
     r = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
                 "--json")
-    check("cli: release PASS 且产出预览/清单", r.returncode == 0 and out.is_file()
-          and out.with_suffix(".manifest.json").is_file(), r.stdout[-200:])
+    check("cli: release PASS、产出预览/清单且不留多余/过期 repair 包",
+          r.returncode == 0 and out.is_file()
+          and out.with_suffix(".manifest.json").is_file() and not stale_packet.exists(),
+          r.stdout[-200:])
     release_result = json.loads(r.stdout)
     release_timing = release_result.get("timing") or {}
     check("cli: 端到端计时包含预览且区分 compile/cache/QA",

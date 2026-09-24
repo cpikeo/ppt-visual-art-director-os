@@ -410,7 +410,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
 
 
 def repair_packet(result: dict, mode: str, build, output) -> dict:
-    """默认唯一面向作者的产物：BLOCK 时按根因分组（内嵌明细）；PASS 时一行结论。"""
+    """结构化修复包：默认只在 BLOCK 时落盘；显式 --packet 可要求额外导出。"""
     packet = {
         "mode": mode,
         "build": str(build),
@@ -660,11 +660,19 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         if manifest is not None:
             manifest["qa_summary"]["performance"] = dict(result["performance"])
             _json_write(manifest_path, manifest)
-        _json_write(packet_path, repair_packet(result, mode, build, output_path))
-        _print_line(result, ghost, manifest_path, packet_path, speed, mode, json_output)
         binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
                                                 or asset_binding.get("missing_files")))
-        return result, (0 if result.get("passed") and not binding_block else 2)
+        passed = bool(result.get("passed") and not binding_block)
+        if packet or not passed:
+            _json_write(packet_path, repair_packet(result, mode, build, output_path))
+        else:
+            # PASS 没有修复内容；清除上次 BLOCK 的默认文件，避免文件冗余或过期误导。
+            try:
+                packet_path.unlink(missing_ok=True)
+            except OSError as exc:
+                print(f"VAO warning: 无法清理过期修复包 {packet_path}: {exc}", file=sys.stderr)
+        _print_line(result, ghost, manifest_path, packet_path, speed, mode, json_output)
+        return result, (0 if passed else 2)
     except Exception as exc:
         return fail(exc)
 
