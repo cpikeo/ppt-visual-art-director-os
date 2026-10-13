@@ -47,7 +47,9 @@ spec = {
 
 `theme.colors` 六 token：`background / ink / muted / primary / secondary / accent`。
 `surface / dark_surface / premium / optional` 可显式声明；不写时由六 token 派生
-（`panel / hairline / series1–6 / on_*` 等衍生 token 一律自动算，别手写）。
+（`panel / hairline / series1–6 / on_* / negative` 等衍生 token 一律自动算，别手写）。
+`negative` 是图表里 <0 那一段的语义色（损失 / 风险），按主题机械派生；这一套世界
+有自己的风险色相时再显式声明 `colors.negative` 或 `chart_palette.negative` 覆盖它。
 plan 按视觉世界给出种子，作者可覆盖任意一项。**颜色只能写 #HEX 或 token 名**——写错名字会在产物里静默回落，所以必拦。
 
 **元素信封**：`id`（页内唯一）、`type`、`x/y/width/height`（必填）、`role`。

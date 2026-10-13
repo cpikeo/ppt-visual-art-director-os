@@ -811,14 +811,6 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--json", action="store_true")
     _add_speed_flags(c)
 
-    v = sub.add_parser("preview", help="spec/build → ghost contact sheet (PIL only)")
-    v.add_argument("build")
-    v.add_argument("--out", default="vao_preview")
-    v.add_argument("--pages", help="1-based pages, e.g. 1,3,8（默认：全部页）")
-    v.add_argument("--speed", choices=("fast", "strict"), default="fast")
-    v.add_argument("--assets-manifest")
-    v.add_argument("--assets-dir")
-
     q = sub.add_parser("qc", help="资产离线体检：同判据跑像素 QC + 策略，不写状态、不消耗 retry")
     q.add_argument("--assets-manifest", required=True)
     q.add_argument("--assets-dir", default=None)
@@ -912,7 +904,25 @@ def run_qc(manifest_path: str, assets_dir: str | None = None,
     return {"speed": prof["speed"], "assets_dir": str(base), "results": results}
 
 
+def force_utf8_stdio() -> None:
+    """CLI 输出恒为 UTF-8——Windows 上这是正确性问题，不是外观问题。
+
+    Windows 的 Python 只在写**控制台**时用 UTF-16 控制台 API；一旦 stdout 被重定向
+    （管道 / CI / 另一个进程捕获），编码回落到系统 ANSI 代码页：中文 Windows 是
+    cp936，英文是 cp1252。后者的 `print("plan: 5 页…")` 直接抛 UnicodeEncodeError，
+    整条命令以退出码 2 结束，产物还没写完就没了（实测复现）。
+    UTF-8 是本包对所有文件的既有口径（brief / build.py / JSON / 预览），
+    这里只是让**输出**与它一致，重定向方得到稳定可解析的字节。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):   # 非文本流 / 已被替换的流
+            pass
+
+
 def main(argv=None) -> int:
+    force_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
@@ -955,20 +965,6 @@ def main(argv=None) -> int:
                                 speed=args.speed, deadline=args.deadline,
                                 ghost_pages=args.ghost_pages)
             return code
-        if args.command == "preview":
-            spec, _ = load_spec(args.build)
-            binding = None
-            if args.assets_manifest:
-                spec, binding = bind_asset_manifest(spec, args.assets_manifest, args.assets_dir)
-            pages = ([int(x) for x in args.pages.split(",") if x.strip()]
-                     if args.pages else None)
-            info = _ghost(spec, args.out, pages,
-                          base_path=Path(args.build).expanduser().resolve().parent,
-                          speed=args.speed)
-            if binding:
-                info["asset_binding"] = binding
-            print(json.dumps(info, ensure_ascii=False, indent=2))
-            return 2 if binding and binding["status"] == "BLOCK" else 0
         if args.command == "qc":
             rep = run_qc(args.assets_manifest, args.assets_dir, args.speed)
             print(json.dumps(rep, ensure_ascii=False, indent=2))

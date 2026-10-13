@@ -79,7 +79,6 @@ def load_brief(path, *, with_digest: bool = False):
 # 证据形态：结论由哪一种承担，决定了后面的焦点与构图。
 EVIDENCE_MODES = ("comparison", "series", "part_whole", "number", "structure",
                   "sequence", "proposition", "none")
-VISUAL_ROLES = ("establish", "explain", "compare", "prove", "persuade", "summarize")
 
 _NUM = re.compile(r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*(亿美元|万美元|亿元|万元|万家|万人|万次|个月|分钟|小时|美元|%|％|pp|倍|万|亿|元|家|人|个|台|名|位|件|次|天|月|年|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
@@ -243,18 +242,38 @@ def numerals(text: str) -> list[dict]:
 
     年份（1900–2100 的四位无单位数字）单独标记：它是时间坐标，不是证据量——
     把「2026」当作本页最大的数字是典型的误判。字母紧贴的数字（Q1/V2）是编号
-    不是量，也不进证据。
+    不是量，也不进证据。**日期与编号的碎片同样不进证据**：「2026-09」里的
+    「-09」、「2026/03」里的「03」、「2026 年 9 月」里的「9」都是时间坐标的
+    零件，把它们当成第二个数据点会让证据形态、密度与权重同时失真
+    （实测：一张排期页的权重卡出现过「次 -09」）。
     """
     out = []
-    for m in _NUM.finditer(str(text or "")):
+    raw_text = str(text or "")
+    for m in _NUM.finditer(raw_text):
         raw = m.group(0).strip()
         value = float(m.group(1).replace(",", ""))
         unit = (m.group(2) or "").strip()
         # 『曲线1/方案2/第3页』是对象编号，不是可比较的数据点。判断证据数量
         # 不得把标签末尾的索引偷换成不同单位的实测值。
-        prefix = str(text or "")[max(0, m.start() - 4):m.start()]
+        prefix = raw_text[max(0, m.start() - 4):m.start()]
         if not unit and re.search(r"(?:曲线|版本|方案|阶段|步骤|第)\s*$", prefix):
             continue
+        # 日期 / 区间 / 版本号的碎片：'-09'、'/03' 这类数字前面贴着数字或
+        # 年份分隔符，或处于 '1.2.3' 这样的多段编号中。
+        token = m.group(0)
+        before = raw_text[:m.start()].rstrip()
+        prev_char = raw_text[m.start() - 1] if m.start() else ""
+        if token[:1] in ("-", "+") and prev_char.isdigit():
+            continue                                   # 2026-09 / 38-92 的后半段
+        if re.search(r"\d{4}\s*[-/.]$", before):
+            continue                                   # 2026/03 · 2026.09
+        if re.search(r"\d\.\d\s*\.$", before):
+            continue                                   # 1.2.3 版本号中段
+        after = raw_text[m.end():m.end() + 1]
+        if "." in token and after == ".":
+            continue                                   # 1.2.3 版本号首段
+        if unit in ("年", "月") and re.search(r"\d{4}\s*年\s*$", before):
+            continue                                   # 「2026 年 9 月」是日期不是时长
         # 「2026」「2026 年」都是时间坐标；「3 年」才是时长（值不在年份区间）。
         year = unit in ("", "年") and 1900 <= value <= 2100 and "." not in m.group(1)
         out.append({"raw": raw, "value": value, "unit": unit, "year": year})
@@ -313,8 +332,11 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     # 「不超过/未超过」是界限不是对比：先剥掉再匹配，否则「误差不超过5%」
     # 会被判成两端对比（A超过B但C不超过D——真的超过不受影响）。
     cmp_body = _NEGATED_EXCEED.sub("", body)
-    nums = numerals(text)
-    ev = [n for n in nums if not n["year"]]   # = evidence_numerals(text)，复用同一次扫描
+    # 证据量只从**内容本体**扫描：出处标注里的台账编号与日期（「来源：投放台账
+    # 2026Q2」）是档案坐标，不是这一页的证据——把它算进去会让证据数量、
+    # 密度与权重一起虚高。
+    nums = numerals(body)
+    ev = [n for n in nums if not n["year"]]
     # 标题重复正文的数字、同一数字写两遍：那是**同一个事实**，不是两个证据。
     # 判断证据形态与密度按去重后的数量算；「重复」这件事本身归信息权重管。
     distinct = len({(round(n["value"], 6), n.get("unit") or "") for n in ev})
@@ -377,10 +399,58 @@ def _fired(sent: str, words) -> str:
     return next((w for w in words if w in sent), "")
 
 
+def _topic_shaped(title: str) -> bool:
+    """标题是话题标签还是结论句：以「记录/流程/结构/说明…」收尾的是标签。"""
+    return bool(title) and title.endswith(_TOPIC_TAILS)
+
+
+# 标题能当结论的**断言证据**：判断词、变化词、范围词。命中任何一个，
+# 这一句就不只是名词标签（「华东区数据」），而是对内容有主张的一句话。
+_TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足", "超过", "低于", "高于",
+                    "不再", "已经", "正在", "仍未", "尚未", "必须", "需要", "决定", "意味",
+                    "成为", "没有", "不能", "无法", "达到", "降至", "升至", "翻倍",
+                    "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成")
+
+
+def _title_assertive(title: str) -> bool:
+    """标题是否携带主张（而不是一个名词标签）。
+
+    契约说「标题写结论」，但作者也会写标签（「华东区数据」）。标签没有主张，
+    把它当结论等于替作者编了一句他没写下的话——所以只有带断言证据或数字的
+    标题才占结论位，其余退回从内容里抽。
+    """
+    return bool(evidence_numerals(title)) or any(w in title for w in _TITLE_ASSERTION)
+
+
+def _is_data_listing(sent: str) -> bool:
+    """数字列举不是结论：「华东 +42%、华南 +28%、华北 +15%」是证据表的一行。
+
+    判据是**形状**而不是字数：同一量纲的两个以上数字并排、句中没有主张动词
+    （变化/比较/结论/决定），也没有把数字连成一句话的关系词 —— 这样的句子
+    只回答「有多少」，不回答「所以呢」。作者真要它当结论，写 insight 声明即可。
+    """
+    if _hit(sent, _CHANGE_WORDS) or _hit(sent, _CONCLUSION_WORDS) \
+            or _hit(sent, _ASK_WORDS) or _hit(sent, _COMPARISON_WORDS):
+        return False
+    ev = evidence_numerals(sent)
+    if len(ev) < 2:
+        return False
+    units = [n.get("unit") or "" for n in ev]
+    if len(set(units)) != 1:
+        return False
+    # 「从 A 到 B」「A → B」把两个数字说成一个关系：那是断言，不是列举。
+    if _FROM_TO_QUANTITY.search(sent) or _QUANTIFIED_ARROW.search(sent):
+        return False
+    return True
+
+
 def extract_claim(item: dict) -> dict:
     """本页唯一结论：作者写了就用；没写就从内容里抽首句结论。
 
-    抽不出来就 `absent`——**不编造**。摘要是观点不是证据，标题是话题不是结论。
+    抽不出来就 `absent`——**不编造**。摘要是观点不是证据，**标题是结论位**
+    （brief 契约：标题写结论，不写字段名）：只要标题不像话题标签、内容里也没有
+    更强的结论句（决定/结论措辞），就用作者写下的那一句。否则数据列举句会顶掉
+    作者的结论，焦点、构图与排版跟着一起走偏。
     """
     declared = str(item.get("insight") or "").strip()
     if declared:
@@ -394,8 +464,14 @@ def extract_claim(item: dict) -> dict:
         # 只有一句话题词、没有内容的页面，我们并不知道作者想说什么（不编）。
         # 以「记录/流程/结构/说明…」结尾的标题是话题标签，不是结论。
         bonus = 1.2 if content else 0.6
-        if title.endswith(_TOPIC_TAILS):
+        if _topic_shaped(title):
             bonus -= 0.8
+        elif content and _title_assertive(title):
+            # 结论位加权：标题不像标签、内容也在场时，它是作者写下的结论位
+            # （brief 契约：标题写结论）。少了这一档，一句没有数字的结论
+            # （「三年前的第一间门店，今天还在同一个街角」）会被内容里的证据表
+            # 压掉，主张、焦点与构图跟着一起落到「有多少」而不是「所以呢」。
+            bonus += 0.6
         cands.append((title, bonus))
     for rank, sent in enumerate(_sentences(content)):
         cands.append((_SOURCE_TAIL.sub("", sent).strip(), 0.8 if rank == 0 else 0.0))
@@ -422,11 +498,17 @@ def extract_claim(item: dict) -> dict:
             score += 2.0
             bits.append(f"要决定「{_fired(sent, _ASK_WORDS)}」")
         snums = evidence_numerals(sent)
+        listing = bool(snums) and _is_data_listing(sent)
         if snums:
             # 没有内容时，光是数字说不上是结论（「18 个月落地节奏」是话题不是主张）：
             # 证据缺席的页面只能靠结论措辞立住，或者老实标 absent。
-            score += 1.6 if content else 0.0
-            bits.append("数字「" + "/".join(n["raw"] for n in snums[:3]) + "」")
+            # 数字**并排列举**同样不是结论：它回答「有多少」，不回答「所以呢」。
+            if listing:
+                bits.append("数字列举（不是结论）「"
+                            + "/".join(n["raw"] for n in snums[:3]) + "」")
+            else:
+                score += 1.6 if content else 0.0
+                bits.append("数字「" + "/".join(n["raw"] for n in snums[:3]) + "」")
         if _hit(sent, _CHANGE_WORDS):
             score += 0.8
             bits.append(f"变化「{_fired(sent, _CHANGE_WORDS)}」")
@@ -448,10 +530,15 @@ def extract_claim(item: dict) -> dict:
             # 数字与短句都不该把它救成主张。
             score -= 2.5
             bits.append("话题标签扣分")
+        # 打分必须可比较：浮点累积会让两个「2.8 分」分出胜负（实测：标题结论
+        # 1.2+1.6 输给首句 0.8+1.6+0.4，只因为后者的浮点结果大了 4e-16）。
+        # 判断不能由浮点噪声决定——先量化到 6 位再做严格比较，于是同分保持
+        # 候选顺序：标题（作者的结论位）压过正文的列举句。
+        score = round(score, 6)
         if score > best_score:
             best, best_score, best_bits = sent, score, bits
     threshold = 1.2 if content else 2.0
-    if best and round(best_score, 6) > threshold:
+    if best and best_score > threshold:
         return {"text": best, "source": "extracted",
                 "why": " ＋ ".join(best_bits) + "；发布前请作者确认口径。"}
     pos = best_bits[0] if best_bits else "（无候选）"

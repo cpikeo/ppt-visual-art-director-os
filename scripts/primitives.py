@@ -298,9 +298,6 @@ def series_highlight_index(element, names, default: int = -1) -> int:
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
 
-# 设计系统基线网格（8 单位）：guard 归一化确认、normalizer 吸附、SKILL.md 契约三方同源
-GRID_UNIT = 8
-
 _ALIGN_KEYS = {"left", "center", "right", "justify"}
 _ANCHOR_KEYS = {"top", "middle", "bottom"}
 _ALIGN_FALLBACK = {None: "left", "": "left"}
@@ -520,13 +517,6 @@ def contrast(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-# 辅助文字角色：语义上是注记/来源/轴标签/页面家具（眉标·页码），可读性门槛按「非正文」处理
-# （3:1），不参与正文级 4.5:1 判定。**这是唯一真源**：
-# 从这里导入（此前两处各写一份，值相同但注释宣称的同源关系并不存在）。
-AUX_TEXT_ROLES = frozenset({"source", "method", "metadata", "caption", "legend", "axis",
-                            "data_label", "annotation", "page_number", "eyebrow"})
-
-
 def spec_fingerprint(spec: dict) -> str:
     """spec 的规范化内容指纹（16 hex）。
 
@@ -685,6 +675,28 @@ def derive_tokens(base: dict) -> dict:
         ]
     for i, v in enumerate(series, 1):
         put(f"series{i}", v)
+
+    # 风险色（negative）：图表里 <0 的点只有一个语义——损失。它也必须由主题推导，
+    # 否则「六 token 就够」的契约在含负值的图上不成立：作者写完六 token、首轮 check
+    # 被硬门挡住，只为补一个引擎自己就能算出来的槽位再跑一轮。
+    # 推导口径：以通用风险红为语义锚（保住「红＝损失」的普适读法），向本稿墨色拉近，
+    # 落进这一套纸/墨的色相深度里——不是一张从别的稿子飞来的红。
+    # 再走一步：强调色本身就是红时，「风险」与「答案」会撞成同一个颜色，于是颜色
+    # 不再区分任何东西。此时继续向墨色加深，直到与 accent 在 OKLab 上分得开
+    # （阈值取 0.12：实测同族红 t=0.22 只有 0.047，读数上就是同一个色；t≥0.46 起
+    #  可辨，且对浅纸的对比度只增不减）。非红强调色在 t=0.22 就已分得开，不加深。
+    def _oklab_gap(a: str, b: str) -> float:
+        try:
+            x, y = _rgb_to_oklab(_tuple(a)), _rgb_to_oklab(_tuple(b))
+            return sum((i - j) ** 2 for i, j in zip(x, y)) ** 0.5
+        except Exception:
+            return 1.0
+    risk = blend("#B3261E", ink, 0.22)
+    for _t in (0.34, 0.46, 0.58):
+        if _oklab_gap(risk, accent) >= 0.12:
+            break
+        risk = blend("#B3261E", ink, _t)
+    put("negative", risk)
 
     # 特殊表面上的文字色：按对比度自动择优
     pool = [c for c in (bg, surface, primary, secondary, accent, ink) if c]
@@ -1029,8 +1041,8 @@ class RenderContext:
     # neutral=语境 / accent=高亮 / negative=风险。角色由 theme.chart_palette
     # 映射到具体色——主题换了，spec 的图表语义不变、色值随主题派生。
     # 解析链：chart_palette[role] → 旧扁平键（chart_primary 等，向后兼容）→
-    # colors token。negative 未声明时用通用风险红兜底并告警（最后手段，
-    # 不是设计建议——主题作者应显式派生风险色）。
+    # colors token。negative 由 derive_tokens 机械派生（不是兜底告警），
+    # 作者显式声明 colors.negative / chart_palette.negative 时压过推导。
     _CHART_ROLE_FALLBACK = {
         "primary": ("chart_primary", "primary"),
         "secondary": ("chart_secondary", "secondary"),
@@ -1038,7 +1050,6 @@ class RenderContext:
         "accent": ("accent",),
         "negative": ("negative",),
     }
-    _NEGATIVE_FALLBACK = "#B3261E"   # 通用风险红：仅主题未声明 negative 时兜底
 
     def chart_role(self, role: str):
         """语义角色 → 具体色（RGBColor | None）。角色不认识时返回 None。"""
@@ -1054,12 +1065,6 @@ class RenderContext:
             c = self.color(ref)
             if c is not None:
                 return c
-        if role == "negative":
-            msg = ("theme 未声明 negative 角色（chart_palette.negative 或 colors.negative），"
-                   "负值用通用风险红兜底——请为主题显式派生一个风险色")
-            if msg not in self.warnings:
-                self.warn(msg)
-            return self.color(self._NEGATIVE_FALLBACK)
         return None
 
     def chart_primary_color(self, element: dict | None):

@@ -933,6 +933,19 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                 pass
 
         if kind in ("donut", "donut_composition", "pie"):
+            # 构成图的类别名必须**直接标注**：图例被全局关掉（has_legend=False），
+            # 只给数值的话，四个扇区就是四块没有名字的色块——读者看不出哪一块是
+            # 自有内容。这是「空间允许时直接标注，而不是图例」在构成图上的落点。
+            # 只标类别名（值已在 show_values 时标出），类别过多时退回图例式省略。
+            if len(rows) <= 6:
+                try:
+                    labels = chart.plots[0].data_labels
+                    labels.show_category_name = True
+                    labels.show_series_name = False
+                    if getattr(labels, "position", None) is not None:
+                        labels.position = XL_LABEL_POSITION.BEST_FIT
+                except Exception as exc:
+                    ctx.warn(f"chart '{eid}': 构成图类别标注未写入（{exc}）", eid)
             if kind != "pie":
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
             hl = int(highlight_index(element, rows, 0))

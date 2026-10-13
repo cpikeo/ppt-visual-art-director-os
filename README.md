@@ -34,17 +34,15 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 # 含图时为同一条 check 加 --assets-manifest <plan 输出的清单路径>
 ```
 
-[第一轮端到端审计](PERFORMANCE_AUDIT.md) 与
-[第二轮工作树冻结基线／编辑排版审计](PERFORMANCE_AUDIT_ROUND2.md) 分开记录：第二轮证实
-48 条线的全页 `strict` 发布路径提速，并修复 Guard、原生字距、结构预览和损坏缓存；
-常规稿的 cold 全链路**没有稳定提速证据**。两轮均只对固定样本和本机执行负责，
-不含外部 AI 出图或人工构图时间。
+历次提速与修复的实测记录见 [CHANGELOG.md](CHANGELOG.md)（每条都写明样本、测法与边界）。
+口径照旧：数字只对写明的样本与本机执行负责，不含外部出图或人工构图时间；
+没有稳定证据的指标（例如常规稿的 cold 全链路）就写「没有证据」，不写结论。
 
 ## 架构（8 个模块 · 一条链）
 
 ```
 scripts/
-  vao.py          唯一生产入口（plan / check / preview / dna）
+  vao.py          唯一生产入口（plan / check / qc / dna）
   intelligence.py 设计智能：判断链 + 视觉世界推导 + 骨架 + 经验记忆（DNA）
   assets.py       资产必要性 → 提示词 → 清单 → 像素 QC → 链核验
   verify.py       硬错误 Guard → PASS/BLOCK → 发布清单
@@ -70,8 +68,8 @@ scripts/
 | plan 判定确需图像媒体 | `references/assets.md`；无图稿跳过 |
 
 `vao.py plan` 本身是确定性规划，不读 `references/`、不调用模型；brief 内容解析与 SHA-256
-共用一次文件读取。正常生产预算是 **1 次 plan + 1 次 release check**，不在中间再跑
-`qc`/`preview`；release 已输出关键页预览与发布清单。
+共用一次文件读取。正常生产预算是 **1 次 plan + 1 次 release check**，中间不跑
+`qc`——release 那一次已经输出预览与发布清单。
 
 ## 设计经验记忆（DNA）
 

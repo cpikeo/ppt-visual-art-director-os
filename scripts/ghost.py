@@ -584,22 +584,12 @@ def _value(row: dict, default=0.0) -> float:
 # 假预览改了三页构图）。预览的宽容度必须 ≤ 交付链的宽容度，预览的自信度也必须
 # ≤ 它真正实现的程度：宁可说「这里我不渲染」，也不拿一张假图顶替。
 #
-# 两种归宿，必须覆盖 CHART_KINDS 全集（结构断言在 selftest，运行期兜底走 ABSTRACT）：
-PREVIEW_MIRRORED = frozenset({
-    # 原生图表：预览与产物同族几何（同向、零基、同类标签）
-    "bar", "horizontal_bar", "comparison_bar", "column",
-    "line", "area", "trend", "single_trend_line", "sparkline",
-    "donut", "pie", "donut_composition",
-    # 结构类：按编译器的同一组比例画（数字行 / 步 / 轴）
-    "big_number_row", "steps", "timeline", "waterfall",
-    # 象限类：轴 + 点位 + 直接标注（v7.1.0 起真渲染，作者不必翻产物 XML）
-    "matrix",
-    "progress_bar", "ranked_bar", "stacked_bar",
-    # 数字展示：元素级 value/label 两行
-    "kpi", "executive_kpi", "big_number",
-})
-# 不渲染形状的类型：画布上只留一句实话（类型名 + 以产物为准）。
-# 提升进 MIRRORED 需要一次单独决定（那意味着多维护一份同形几何）。
+# 两种归宿，必须覆盖 CHART_KINDS 全集：同形渲染（上面的 if 分支）或**明确声明不渲染**。
+# 声明表只保留「不渲染」这一侧——它才是需要被穷举、被断言、会被漏项的名单；
+# 同形渲染由 _draw_chart 的分支本身实现，再抄一份清单只会与分支漂移
+# （此前那份 PREVIEW_MIRRORED 从未被读取，却让「覆盖全集」看起来已被保证）。
+# 不渲染的类型画布上只留一句实话（类型名 + 以产物为准）。
+# 提升进同形渲染需要一次单独决定（那意味着多维护一份同形几何）。
 # 留在这边的都是**结构图**：它们的价值在空间关系（层级、象限、路线），粗近似
 # 只会让作者按一个不存在的间距做判断——所以如实写「不渲染」，而不是画一个大概。
 PREVIEW_ABSTRACT = frozenset({
@@ -803,9 +793,26 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 把「金色系深浅」误读成「中性灰」。
         hl = int(highlight_index(e, rows, 0))
         palette = [_rgba_color(c, 0.92) for c in ctx.series_palette(len(vals), hl)]
+        # 类别名直接标在扇区上：产物给构成图开了 showCatName（图例全局关闭），
+        # 预览若只画色块，作者看到的就是四块没有名字的颜色——与产物不是一件事。
+        # 位置按扇区中角、半径中点；文字色取背景色（扇区上是实色填充）。
+        label_font = _font(max(9.0, 12.0 * scale), cjk=any(_has_cjk(r.get("label", "")) for r in rows))
+        label_ink = _rgba(ctx, "background", 0.95) or (255, 255, 255, 235)
+        show_values = bool(e.get("show_values", True))
+        cx0, cy0 = (left + right) / 2, (top + bottom) / 2
+        radius = (right - left) / 2
         for i, val in enumerate(vals):
             end = start + 360 * val / total
             d.pieslice((left, top, right, bottom), start=start, end=end, fill=palette[i])
+            if len(rows) <= 6:
+                mid = math.radians((start + end) / 2)
+                lx = cx0 + math.cos(mid) * radius * 0.62
+                ly = cy0 + math.sin(mid) * radius * 0.62
+                text = str(rows[i].get("label", ""))[:10]
+                if show_values:
+                    text += f" {int(val) if float(val).is_integer() else val}"
+                if text.strip():
+                    d.text((lx, ly), text, font=label_font, fill=label_ink, anchor="mm")
             start = end
         hole = max(1, int(min(right - left, bottom - top) * 0.52))
         cx, cy = (left + right) // 2, (top + bottom) // 2
@@ -824,6 +831,15 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         hl = highlight_index(e, rows, -1)
         show_values = bool(e.get("show_values", True))
         vfont = _font(11 * scale)
+        # 零基轴线：条长编码的是**到零的距离**，不是「到最小值」。按最小值起算时，
+        # 最负的一条长度为 0——产物里它是一根可见的负向条，预览里却什么都没有，
+        # 作者会以为那一期没有数据。负值在轴线另一侧生长，两侧共用一把尺。
+        track = max(1, right - bar_left)
+        pos_extent = max([0.0] + [v for v in values if v > 0])
+        neg_extent = max([0.0] + [-v for v in values if v < 0])
+        span_ext = (pos_extent + neg_extent) or 1.0
+        zero_x = bar_left + int(track * (neg_extent / span_ext))
+        has_neg = neg_extent > 0
         # 多序列（comparison_bar）：条色按**序列**取，不能全体墨色——产物里每条
         # <c:ser> 有自己的色（series_roles → series_palette），预览全涂墨色等于把
         # 「山外 vs 同业」读成一堆同色条，作者看到的证据与产物不是同一件事。
@@ -832,24 +848,36 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         roles = e.get("series_roles") or []
         gpalette = ctx.series_palette(n_groups,
                                       series_highlight_index(e, [n for n, _v in groups], -1))
+        # 负值在产物里被染成 negative 角色色（compiler._paint_negative_points），
+        # 预览必须说同一件事：同一张柱图里「亏损」与「中性」不能长得一样，
+        # 否则作者按预览判断「风险色有没有出现」，看到的证据是错的。
+        neg_role = None
+        if e.get("negative_role") is not False and any(v < 0 for v in values):
+            neg_role = ctx.chart_role("negative")
         for i, val in enumerate(values):
             by = top + i * (bh + gap)
-            bw2 = int((val - lo) / span * (right - bar_left))
+            bw2 = int(val / span_ext * track)
             d.text((left, by + bh / 2), str(rows[i].get("label", ""))[:24],
                    font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="lm")
-            if n_groups > 1:
+            if val < 0 and neg_role is not None:
+                col = _rgba_color(neg_role, 0.95)
+            elif n_groups > 1:
                 gi = min(i // per_group, n_groups - 1)
                 role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
                 col = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
                 col = accent if i == hl else ink
-            d.rounded_rectangle((bar_left, by, bar_left + bw2, by + bh),
+            x0, x1 = sorted((zero_x, zero_x + bw2))
+            d.rounded_rectangle((x0, by, x1, by + bh),
                                 radius=max(1, int(4 * scale)), fill=col)
             if show_values:
                 vtext = str(int(val)) if float(val).is_integer() else str(val)
-                d.text((bar_left + bw2 + 4 * scale, by + bh / 2), vtext,
+                d.text((x1 + 4 * scale, by + bh / 2), vtext,
                        font=vfont, fill=ink, anchor="lm")
         d.line((bar_left, top, bar_left, bottom), fill=muted, width=max(1, int(scale)))
+        if has_neg:
+            # 零轴：负值一侧的读法靠它，不是靠颜色（颜色只是冗余编码）。
+            d.line((zero_x, top, zero_x, bottom), fill=muted, width=max(1, int(scale)))
     elif kind == "column":
         # 原生竖柱：与产物同向、同零基、同类目标签（此前它是靠兜底分支"蒙对"的，
         # 现在显式声明——蒙对与实现是两件事，前者随时会因为别人的改动失真）。
@@ -859,19 +887,36 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         show_values = bool(e.get("show_values", True))
         vfont = _font(11 * scale)
         cfont = _font(10 * scale, cjk=any(_has_cjk(r.get("label", "")) for r in rows))
+        neg_role = None
+        if e.get("negative_role") is not False and any(v < 0 for v in values):
+            neg_role = ctx.chart_role("negative")
+        # 零基线：负值柱子向下生长，正负共用一把尺（同 bar 分支的理由）。
+        track = max(1, bottom - top)
+        pos_extent = max([0.0] + [v for v in values if v > 0])
+        neg_extent = max([0.0] + [-v for v in values if v < 0])
+        span_ext = (pos_extent + neg_extent) or 1.0
+        zero_y = top + int(track * (pos_extent / span_ext))
+        has_neg = neg_extent > 0
         for i, val in enumerate(values):
             bx = left + i * (bw + gap)
-            by = bottom - int((val - lo) / span * (bottom - top))
-            d.rounded_rectangle((bx, by, bx + bw, bottom), radius=max(1, int(4 * scale)),
-                                fill=accent if i == hl else ink)
+            by = zero_y - int(val / span_ext * track)
+            if val < 0 and neg_role is not None:
+                fill = _rgba_color(neg_role, 0.95)
+            else:
+                fill = accent if i == hl else ink
+            y0, y1 = sorted((zero_y, by))
+            d.rounded_rectangle((bx, y0, bx + bw, y1), radius=max(1, int(4 * scale)),
+                                fill=fill)
             cx = (bx + bx + bw) / 2
             if show_values:
                 vtext = str(int(val)) if float(val).is_integer() else str(val)
-                d.text((cx, max(y + 2, by - 3 * scale)), vtext,
+                d.text((cx, min(y0, y1) - 3 * scale), vtext,
                        font=vfont, fill=ink, anchor="mb")
             d.text((cx, bottom + 3 * scale), str(rows[i].get("label", "")),
                    font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="mt")
         d.line((left, bottom, right, bottom), fill=muted, width=max(1, int(scale)))
+        if has_neg:
+            d.line((left, zero_y, right, zero_y), fill=muted, width=max(1, int(scale)))
     elif kind == "big_number_row":
         # 与 compiler 同形：值一行 + 标签一行 + 列间发丝竖线（不是柱子！）
         n = min(len(rows), 5)

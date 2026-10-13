@@ -582,7 +582,6 @@ def _check_metric_units(slides: list, add) -> None:
 SPACING_STEP = 4
 _COLOR_FIELDS = ("color", "background", "border_color", "stroke", "accent",
                  "fill_color", "track_color", "label_color")
-_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _REPORT_ITEM_CAP = 200
 
 

@@ -35,9 +35,13 @@ def check(name, ok, detail=""):
         print(f"[FAIL] {name}" + (f" — {detail}" if detail else ""))
 
 
-def run_vao(*args, cwd=None):
+def run_vao(*args, cwd=None, env=None):
+    # 显式 UTF-8：子进程输出恒为 UTF-8（vao.force_utf8_stdio），父进程必须按同一
+    # 口径解码——用默认 text=True 时 Windows 会拿系统 ANSI 代码页解码管道，
+    # 于是断言读到的是乱码或直接抛 UnicodeDecodeError。
     return subprocess.run([sys.executable, str(SCRIPTS / "vao.py"), *args],
-                          capture_output=True, text=True, cwd=cwd or str(ROOT))
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=cwd or str(ROOT), env=env)
 
 
 # ── fixtures ─────────────────────────────────────────────────────────
@@ -472,6 +476,34 @@ def test_intelligence(tmp: Path):
               for p in stubborn["pages"])
           and not stubborn["deck"]["coherence"]["adjustments"])
 
+    # 数字语义：日期/编号的碎片不是证据量（权重卡曾出现「次 -09」）
+    dateless = intel.understand("18 个月分三段落地（来源：项目排期 2026-09）")
+    check("understanding: 日期碎片（2026-09）不进证据量",
+          [(n["raw"], n["unit"]) for n in dateless["numerals"]] == [("18 个月", "个月")]
+          and dateless["distinct_numerals"] == 1, str(dateless["numerals"]))
+    check("understanding: 多处日期形态（2026-09-30 / 2026/03 / 2026 年 9 月）都不算量",
+          intel.evidence_numerals("2026-09-30 上线") == []
+          and intel.evidence_numerals("回访 2026/03") == []
+          and intel.evidence_numerals("2026 年 9 月上线") == []
+          and [n["raw"] for n in intel.evidence_numerals("周期 18 个月")] == ["18 个月"])
+    check("understanding: 出处标注里的数字不进证据（台账编号是档案坐标）",
+          intel.understand("NPS 从 31 提升到 47（来源：客户回访 2026/03）")["distinct_numerals"] == 2)
+
+    # 结论抽取：标题是结论位；数字列举不是结论；同分不由浮点噪声决定
+    titled = intel.extract_claim({"title": "华东贡献 42% 增量，但复购率最低",
+                                  "content": "华东 +42%、华南 +28%、华北 +15%（来源：BI 2026Q3）"})
+    check("claim: 标题（作者的结论位）不被内容里的数字列举顶掉",
+          titled["text"] == "华东贡献 42% 增量，但复购率最低", str(titled))
+    listing_only = intel.extract_claim({"title": "华东区数据",
+                                        "content": "华东 +42%、华南 +28%、华北 +15%"})
+    check("claim: 只有数字列举的句子不当结论（没有主张就是 absent）",
+          listing_only["text"] is None and listing_only["source"] == "absent",
+          str(listing_only))
+    topic_title = intel.extract_claim({"title": "成本结构",
+                                       "content": "单篇生产成本降至 1,800 元，低于去年同期"})
+    check("claim: 标题仍是话题标签时照旧从内容抽结论",
+          topic_title["text"] == "单篇生产成本降至 1,800 元，低于去年同期", str(topic_title))
+
     # 运行数据最小化：判断卡只留被消费的键
     j0 = bundle["pages"][0]["judgment"]
     check("slim: 判断卡无解释性冗余字段",
@@ -879,6 +911,87 @@ def test_production(tmp: Path):
           and native_alpha is not None and native_alpha.get('val') == '50000'
           and round(label_native.text_frame.paragraphs[0].line_spacing / 9525, 1) == 51.8)
 
+    # 预览诚实度：声明「不渲染」的名单之外，每一个图表类型都必须真的画出来。
+    # 断言方式是在占位函数上装探针：走占位分支的类型 == 声明表里的类型，
+    # 一个不多一个不少。漏声明 → 预览画的是不存在的图形（作者按假图改构图）；
+    # 声明了却仍渲染 → 声明表在骗人。
+    import ghost as _ghost
+    from primitives import CHART_KINDS
+    base_spec = {'canvas': {'width': 480, 'height': 260},
+                 'theme': {'colors': {'background': '#FFFFFF', 'ink': '#000000',
+                                      'primary': '#111111', 'secondary': '#555555',
+                                      'accent': '#9C3B26'}},
+                 'fonts': {'cn': 'Source Han Sans SC', 'latin': 'Arial'}}
+    placeholder_calls: list = []
+    _real_unrendered = _ghost._draw_unrendered
+
+    def _probe_unrendered(d, box, kind, scale):
+        placeholder_calls.append(str(kind))
+        return _real_unrendered(d, box, kind, scale)
+
+    _ghost._draw_unrendered = _probe_unrendered
+    try:
+        for kind in sorted(CHART_KINDS):
+            element = {'id': 'c', 'type': 'chart', 'chart_kind': kind, 'x': 20, 'y': 20,
+                       'width': 440, 'height': 220, 'value': 7, 'label': 'A',
+                       'data': [{'label': 'A', 'value': 3}, {'label': 'B', 'value': 7},
+                                {'label': 'C', 'value': 5}]}
+            slide = {'id': 'k', 'background': '#FFFFFF', 'elements': [element]}
+            _ghost.ghost_page(slide, dict(base_spec, slides=[slide]), scale=1, supersample=1)
+    finally:
+        _ghost._draw_unrendered = _real_unrendered
+    abstracted = set(placeholder_calls)
+    check("ghost: 「不渲染」声明表与实际渲染一一对应（预览不替假图背书）",
+          abstracted == set(_ghost.PREVIEW_ABSTRACT) <= set(CHART_KINDS),
+          f"声明={sorted(_ghost.PREVIEW_ABSTRACT)} 实际占位={sorted(abstracted)}")
+
+    # 风险色（negative）由主题推导：含负值的图表不再因「主题未声明风险色」被硬门挡住，
+    # 作者显式声明的风险色仍然压过推导。
+    neg_spec = {'canvas': {'width': 480, 'height': 260},
+                'theme': {'colors': dict(base_spec['theme']['colors'])},
+                'slides': [{'id': 'neg', 'background': '#FFFFFF', 'elements': [
+                    {'id': 'loss', 'type': 'chart', 'chart_kind': 'bar', 'x': 20, 'y': 20,
+                     'width': 440, 'height': 220, 'show_values': True, 'metric': '净收益',
+                     'unit': '万元', 'source': '来源：财务测算', 'period': '2027–2029',
+                     'basis': '含折现',
+                     'data': [{'label': 'M6', 'value': -820}, {'label': 'M36', 'value': 1480}]}]}]}
+    neg_out = tmp / 'negative.pptx'
+    neg_report = compile_deck(neg_spec, neg_out, speed='fast')
+    check("compiler: 六 token 主题也能画负值图（风险色由主题派生，不逼作者补一轮）",
+          neg_report["passed"] and not neg_report["warnings"], str(neg_report["warnings"]))
+    from primitives import RenderContext, contrast, _rgb_to_oklab, _tuple
+    ctx_neg = RenderContext(neg_spec["theme"], neg_spec["canvas"])
+    derived = ctx_neg.chart_role("negative")
+    check("compiler: 派生风险色与纸面的对比度足够（不是看不见的一档）",
+          derived is not None
+          and contrast("#" + str(derived), neg_spec["theme"]["colors"]["background"]) >= 3.0)
+    # 强调色本身就是红时，风险色必须继续加深到与它分得开：否则「亏损」与
+    # 「被强调的答案」在读数上是同一个色，颜色不再区分任何东西。
+    red_accent = json.loads(json.dumps(neg_spec))
+    red_accent["theme"]["colors"]["accent"] = "#9C3B26"
+    red_ctx = RenderContext(red_accent["theme"], red_accent["canvas"])
+    gap = sum((i - j) ** 2 for i, j in zip(
+        _rgb_to_oklab(_tuple(str(red_ctx.chart_role("negative")))),
+        _rgb_to_oklab(_tuple(red_ctx.colors["accent"])))) ** 0.5
+    check("compiler: 红强调色主题下风险色与强调色 OKLab 可分（风险 ≠ 答案）",
+          gap >= 0.12, f"OKLab 距离={gap:.3f} ≠ {red_ctx.chart_role('negative')} / "
+                       f"{red_ctx.colors['accent']}")
+    declared_spec = json.loads(json.dumps(neg_spec))
+    declared_spec["theme"]["chart_palette"] = {"negative": "#6A1B1B"}
+    declared = RenderContext(declared_spec["theme"], declared_spec["canvas"]).chart_role("negative")
+    check("compiler: 作者声明的风险色压过派生",
+          str(declared).upper().endswith("6A1B1B"), str(declared))
+
+    # 预览与产物必须说同一件事：负值条既要有长度（零基），也要是风险色。
+    neg_image = ghost_page(neg_spec["slides"][0], neg_spec, scale=1, supersample=1).convert("RGB")
+    role = RenderContext(neg_spec["theme"], neg_spec["canvas"]).chart_role("negative")
+    want = tuple(int(v, 16) for v in (str(role).zfill(6)[i:i + 2] for i in (0, 2, 4)))
+    want = tuple(round(c * 0.95 + 255 * 0.05) for c in want)
+    band = [neg_image.getpixel((x_col, 60)) for x_col in range(150, 240)]
+    hit = next((c for c in band if sum(abs(a - b) for a, b in zip(c, want)) <= 6), None)
+    check("ghost: 负值条在预览里有长度且用与产物相同的风险色（预览不替亏损改口径）",
+          hit is not None, f"want={want} band={band[:4]}")
+
     missing = [name for files in ENGINE_SCOPES.values() for name in files
                if not (Path(__file__).resolve().parent / name).is_file()]
     check("engine: 指纹 scope 引用的文件都存在（删改模块必须同步）", not missing, str(missing))
@@ -1099,6 +1212,22 @@ def test_cli(tmp: Path):
     brief = tmp / "brief.yml"
     import yaml
     brief.write_text(yaml.safe_dump(BRIEF, allow_unicode=True), encoding="utf-8")
+
+    # Windows 默认 ANSI 代码页（管道重定向时 Python 用它写 stdout）不得让命令崩掉：
+    # cp1252 下 `print("plan: 5 页…")` 曾经直接 UnicodeEncodeError、退出码 2，
+    # 产物还没落盘就结束——这正是 CI Windows 作业全红的根因。
+    import os as _os
+    ascii_pipe = dict(_os.environ, PYTHONIOENCODING="cp1252")
+    wide = tmp / "ascii-plan.json"
+    r_ascii = run_vao("plan", str(brief), "--out", str(wide), env=ascii_pipe)
+    check("cli: 非 UTF-8 控制台/管道下 plan 不崩且产物落盘（Windows 默认代码页）",
+          r_ascii.returncode == 0 and wide.is_file() and "plan:" in r_ascii.stdout,
+          (r_ascii.stderr or r_ascii.stdout)[-200:])
+    r_strict = run_vao("plan", str(brief), "--out", str(tmp / "ascii-plan2.json"),
+                       env=dict(_os.environ, PYTHONIOENCODING="ascii"))
+    check("cli: 连 ASCII 管道也不崩（输出恒为 UTF-8）",
+          r_strict.returncode == 0 and "视觉世界" in r_strict.stdout,
+          (r_strict.stderr or "")[-200:])
     plan = tmp / "plan.json"
     skeleton = tmp / "build.py"
     assets_out = tmp / "assets.json"
@@ -1276,6 +1405,18 @@ def test_cli(tmp: Path):
     r = run_vao("dna", "--check")
     check("cli: dna 体检可用且库健康", r.returncode == 0 and "OK" in r.stdout, r.stdout[-200:])
 
+    # CLI 面就是这套体系对外暴露的全部动作。多一个子命令 = 多一条 Agent 会调用、
+    # 却没有文档与消费者支持的路径（`preview` 曾是这种残骸：SKILL 明说别跑它）。
+    # 断言在这里锁住，新增入口必须是有意决定，而不是顺手。
+    r_help = run_vao("--help")
+    import re as _re
+    _m = _re.search(r"\{([\w,]+)\}", r_help.stdout)
+    listed = set(_m.group(1).split(",")) if _m else set()
+    check("cli: 入口面恰好是 plan/check/qc/dna（无第二执行路径）",
+          listed == {"plan", "check", "qc", "dna"}, str(sorted(listed)))
+    check("cli: 已删除的 preview 子命令确实不存在",
+          run_vao("preview", "x.py").returncode != 0)
+
 
 def test_docs():
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -1301,6 +1442,14 @@ def test_docs():
 
 
 def main():
+    # 测试自己的输出也是 UTF-8：Windows 上 `python scripts/selftest.py` 被管道捕获时
+    # Python 用系统 ANSI 代码页写 stdout，第一行 `[PASS] …中文…` 就抛
+    # UnicodeEncodeError，整轮测试以 1 结束——CI 的 Windows 作业曾经全红在这上面。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         for name, fn in (("intelligence", test_intelligence), ("verify", test_verify),
