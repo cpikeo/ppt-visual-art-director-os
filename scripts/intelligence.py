@@ -274,6 +274,16 @@ def numerals(text: str) -> list[dict]:
             continue                                   # 1.2.3 版本号首段
         if unit in ("年", "月") and re.search(r"\d{4}\s*年\s*$", before):
             continue                                   # 「2026 年 9 月」是日期不是时长
+        # 列表编号不是数据：「1）汇率…/2)…/3、…/1. …/(1)/①」这种枚举前缀本身不是量，
+        # 把它当成「本页最大的数字」会让列表开头的风险页/方法页错把序号当 KPI。
+        # 判据：数字后面紧跟 ）)、.．:：或全角右括号/顿号/点，且数字无单位，且
+        # 前面非小数点/数位（不是 3.14 这种数）。
+        after_chars = raw_text[m.end():m.end() + 2]
+        if not unit and re.match(r"^[）)、\.．:：\)\s]", after_chars) \
+                and not prev_char.isdigit() and prev_char != ".":
+            # 允许「1.5」「0.8」这种真正的小数：只有整数后直接跟枚举分隔符才算编号。
+            if "." not in m.group(1):
+                continue
         # 「2026」「2026 年」都是时间坐标；「3 年」才是时长（值不在年份区间）。
         year = unit in ("", "年") and 1900 <= value <= 2100 and "." not in m.group(1)
         out.append({"raw": raw, "value": value, "unit": unit, "year": year})
@@ -392,6 +402,12 @@ _SOURCE_TAIL = re.compile(r"[（(]\s*(来源|数据来源|source)[:：]?.*?[)）
 _META_LINE = re.compile(r"[·｜|]|@|https?://|confidential|机密", re.I)
 _CREDENTIAL_WORDS = ("提案", "汇报人", "主讲", "日期", "部门", "内部资料", "谢谢", "thanks",
                      "subtitle", "presented by")
+# 句首列表编号（「1）」「2)」「3.」「1、」「①」「(1)」「（2）」）是枚举顺序标记，
+# 不是主张本身；不剥掉会把「1）汇率波动…」的首词当成「短可复述的结论」，
+# 并让信息权重把无单位的编号「1」当 KPI。
+_LIST_PREFIX = re.compile(
+    r"^\s*(?:[(（]\s*\d{1,2}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩⑪⑫]"
+    r"|\d{1,2}\s*[)）、\.．:：])\s*")
 
 
 def _fired(sent: str, words) -> str:
@@ -474,7 +490,8 @@ def extract_claim(item: dict) -> dict:
             bonus += 0.6
         cands.append((title, bonus))
     for rank, sent in enumerate(_sentences(content)):
-        cands.append((_SOURCE_TAIL.sub("", sent).strip(), 0.8 if rank == 0 else 0.0))
+        cleaned = _LIST_PREFIX.sub("", _SOURCE_TAIL.sub("", sent)).strip()
+        cands.append((cleaned, 0.8 if rank == 0 else 0.0))
     best, best_score, best_bits = None, 0.0, []
     for rank, (sent, bonus) in enumerate(cands):
         if not sent:

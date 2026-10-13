@@ -280,9 +280,17 @@ def add_shape(slide, element: dict, ctx: RenderContext) -> None:
 # --------------------------------------------------------------------------
 def _resolve_src(element: dict, base_path: str | None,
                  spec_path: str | None = None) -> Path:
-    src = Path(element["src"])
+    """Resolve image src to a canonical absolute Path.
+
+    关键约束：无论相对还是绝对路径，返回值必须经过 ``.resolve()`` 规范化。
+    primitives._media_stamp / ghost._page_media_stamp 都以 resolve() 后的字符串
+    作为共享快照字典的 key；任何分支漏掉 resolve 都会让 compiler 用不同的 key
+    查不到 pre-populated snapshot，从而在 Windows（大小写不敏感、盘符斜杠、
+    8.3 短名等差异）下重复读盘，违反「同轮仅一次文件读取」的缓存契约。
+    """
+    src = Path(str(element["src"])).expanduser()
     if src.is_absolute():
-        return src
+        return src.resolve()
     # 相对路径：先按输出目录解析（既有行为），再回退到 spec 文件所在目录
     # （作者更直觉的写法；两个都不存在时按输出目录报错，保持旧语义）。
     roots = [Path(base_path).parent if base_path else Path.cwd()]
@@ -451,7 +459,14 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
     src = _resolve_src(element, base_path, spec_path)
     import io
     image_snapshots = getattr(ctx, "image_bytes", {})
-    snapshot = image_snapshots.get(str(src))
+    # 同时用 canonical (resolve 后) key 与用户原始 src 字符串查快照，
+    # 与 ghost._page_media_stamp 的双 key 写入口径一致；
+    # Windows 下 resolve 前后大小写/斜杠不一致时也不会丢失预填充字节。
+    raw_src_key = str(element.get("src", "") or "")
+    canonical_key = str(src)
+    snapshot = image_snapshots.get(canonical_key)
+    if snapshot is None and raw_src_key:
+        snapshot = image_snapshots.get(raw_src_key)
     if snapshot is None and getattr(ctx, "require_snapshot", False):
         ctx.warn(f"image '{element.get('id')}': 缺少核验字节快照", element.get("id"))
         return
@@ -462,7 +477,9 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
         try:
             # 无预存快照时只读一次；后续同页/编译之后的 preview 复用相同字节。
             snapshot = src.read_bytes()
-            image_snapshots[str(src)] = snapshot
+            image_snapshots[canonical_key] = snapshot
+            if raw_src_key and raw_src_key != canonical_key:
+                image_snapshots[raw_src_key] = snapshot
         except OSError as exc:
             ctx.warn(f"image '{element.get('id')}': 无法读取文件 {src}（{exc}）",
                      element.get("id"))

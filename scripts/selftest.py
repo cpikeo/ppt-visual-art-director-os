@@ -531,6 +531,18 @@ def test_intelligence(tmp: Path):
     check("numerals: 字母紧贴的数字是编号不是证据（Q1 不计数）",
           intel.understand("2027Q1 启动")["distinct_numerals"] == 0
           and intel.understand("Q2 末交付 600 万")["distinct_numerals"] == 1)
+    # 列表前缀「1）/2）/1. /(1)」是顺序枚举标记，不是可比较的数字——
+    # 否则三大风险/三条规矩/四步法的第一行会错把「1」当成 KPI。
+    check("numerals: 句首列表枚举序号（1）/1）/1. 不是证据量",
+          # 1）2）3）被剥离 → 剩 60%、2家；③无后续数字。
+          intel.understand("1）汇率波动覆盖60%；2）本地竞争并购2家；3）政策变化。")[
+              "distinct_numerals"] == 2
+          and intel.understand("(1) 试点 80% (2) 复制 100%")["distinct_numerals"] == 2
+          and intel.understand("①A ②B ③C")["distinct_numerals"] == 0
+          and intel.understand("1. 试点 2. 复制 3. 全量")["distinct_numerals"] == 0)
+    check("claim: 列表项结论会剥掉序号前缀（不把「1）」当开头）",
+          intel.extract_claim({"content": "1）汇率波动：对冲策略覆盖首年60%支出；2）…"})["text"]
+          == "汇率波动：对冲策略覆盖首年60%支出")
     check("understanding: 箭头链是顺序的形状（盖过孤立数字）",
           intel.understand("18 个月：试点 → 复制 → 全量")["evidence"] == "sequence")
 
@@ -1069,9 +1081,12 @@ def test_production(tmp: Path):
                      spec_path=str(build), image_bytes=image_snapshot)
     from primitives import digest_bytes
     image_key = str(img.resolve())
+    diag1_read = path_read_count[image_key]
+    diag1_sha = image_digest.get(image_key) == digest_bytes(image_snapshot.get(image_key, b""))
     check("media: 指纹预读的源图字节由编译复用（同轮仅一次文件读取）",
-          path_read_count[image_key] == 1
-          and image_digest.get(image_key) == digest_bytes(image_snapshot.get(image_key, b"")))
+          diag1_read == 1 and diag1_sha,
+          f"read_count={diag1_read} (expect 1), sha_match={diag1_sha}, "
+          f"snapshot_keys={sorted(image_snapshot.keys())}, digest_keys={sorted(image_digest.keys())}")
     # 模拟 QC 已有 SHA、但因 QC cache hit 没把图像快照装入内存：compile 读一次后
     # 把源 bytes 放回共享快照，page-key 不再为 preview 读取第二次。
     image_snapshot_cached: dict = {}
@@ -1087,10 +1102,18 @@ def test_production(tmp: Path):
                      spec_path=str(build), image_bytes=image_snapshot_cached)
         from ghost import _page_key
         _page_key(media_slide, media_spec_for_preview, 0.5, 1, 1)
+    # 拆分组合断言，Windows CI 失败时能直接看到哪个环节断链：
+    #   1) 读盘次数（1 = compiler 首次读，后续 preview 走快照）
+    #   2) compiler 读后 canonical key 是否回灌到共享快照
+    #   3) 共享快照里的字节 SHA 是否与预缓存的 digest 一致
+    diag_read = path_read_count[image_key]
+    diag_snap = bool(image_snapshot_cached.get(image_key))
+    diag_sha = image_digest_cached.get(image_key) == digest_bytes(image_snapshot_cached.get(image_key, b""))
+    extra_keys = sorted(set(image_snapshot_cached.keys()) - {image_key})
     check("media: QC 缓存 SHA → 编译读一次 → preview 复用同一图像字节",
-          path_read_count[image_key] == 1
-          and image_snapshot_cached.get(image_key)
-          and image_digest_cached.get(image_key) == digest_bytes(image_snapshot_cached[image_key]))
+          diag_read == 1 and diag_snap and diag_sha,
+          f"read_count={diag_read} (expect 1), snapshot_hit={diag_snap}, sha_match={diag_sha}, "
+          f"canonical_key={image_key!r}, extra_keys_in_snapshot={extra_keys}")
     safe = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
     qc = image_qc(img, safe_rect=safe, text_is_dark=True)
     decision_ok = qc_retry_decision(qc, attempt=0, phase="release")

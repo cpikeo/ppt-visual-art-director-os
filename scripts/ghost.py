@@ -457,11 +457,23 @@ def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
 
 
 def _resolve_image(src: Any, roots: list[Path]) -> Path | None:
+    """Resolve image src to a canonical Path.
+
+    与 primitives._media_stamp / compiler._resolve_src 保持同一口径：
+    返回值必须经过 ``.resolve()`` 规范化，保证三处共享 ``image_bytes`` 快照
+    字典时使用完全一致的 key。返回 None 代表文件不存在。
+    """
     if not src:
         return None
-    raw = Path(str(src))
-    candidates = [raw] if raw.is_absolute() else [r / raw for r in roots]
-    return next((p for p in candidates if p.exists() and p.is_file()), None)
+    raw = Path(str(src)).expanduser()
+    if raw.is_absolute():
+        resolved = raw.resolve()
+        return resolved if resolved.exists() and resolved.is_file() else None
+    for r in roots:
+        cand = (r / raw).resolve()
+        if cand.exists() and cand.is_file():
+            return cand
+    return None
 
 
 def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
@@ -471,8 +483,19 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
         return
     source = e.get("src") or ((e.get("asset") or {}).get("src") if isinstance(e.get("asset"), dict) else None)
     import io
-    blob = getattr(ctx, "image_bytes", {}).get(str(Path(str(source))))
-    path = Path(str(source)) if blob is not None else _resolve_image(source, roots)
+    image_bytes_map = getattr(ctx, "image_bytes", {}) or {}
+    # 先按 canonical resolve key 查，再按用户原始 src 字符串兜底，
+    # 与 compiler.add_image / _page_media_stamp 写入口径一致。
+    raw_key = str(Path(str(source))) if source else ""
+    resolved_path = _resolve_image(source, roots)
+    canonical_key = str(resolved_path) if resolved_path is not None else ""
+    blob = None
+    for k in (canonical_key, raw_key):
+        if k:
+            blob = image_bytes_map.get(k)
+            if blob is not None:
+                break
+    path = resolved_path if (blob is not None or resolved_path is not None) else None
     if path:
         try:
             fit = str(e.get("fit", "cover")).lower()
