@@ -459,10 +459,97 @@ def test_intelligence(tmp: Path):
     anchors = [s.get("anchor") for s in four_vars["SPEC"]["slides"]]
     role_1 = four_pages["pages"][1]["judgment"]["visual_role"]["role"].upper()
     check("skeleton: 跨页锚以判断对象落进 spec（不是散文提醒），spec 不留第二个结论位",
-          isinstance(anchors[1], dict) and anchors[1].get("eyebrow") == role_1
+          isinstance(anchors[1], dict) and bool(anchors[1].get("eyebrow"))
+          # 眉标是**内容派生**的短标，不是视觉角色的英文枚举（枚举 12 页里
+          # 会有 7 页同为 PROVE，读起来就是模板）
+          and anchors[1].get("eyebrow") != role_1
           and anchors[1].get("page_number") == 2 and anchors[0].get("page_number") is None
           and all("page_intent" not in s for s in four_vars["SPEC"]["slides"]),
           str(anchors))
+    # 眉标：内容派生 + 作者声明压过推导 + 不输出半截词
+    eyebrow_deck = intel.think(dict(BRIEF, slides=[
+        {"id": f"e{i}", "title": f"东南亚市场{i}是我们唯一的结构性增长来源",
+         "content": "履约成本 11.2 元（来源：自营财务口径）"} for i in range(1, 5)]))
+    labels = [(p.get("anchor") or {}).get("eyebrow") for p in eyebrow_deck["pages"]]
+    declared_eyebrow = intel.think(dict(BRIEF, slides=[
+        {"id": "x1", "title": "标题", "content": "证据", "eyebrow": "单位经济"},
+        {"id": "x2", "title": "标题", "content": "证据", "eyebrow": "清关与用工"},
+        {"id": "x3", "title": "标题", "content": "证据", "eyebrow": "释放条件"},
+        {"id": "x4", "title": "标题", "content": "证据", "eyebrow": "复盘节点"}]))
+    check("眉标: 由本页结论派生（不是角色枚举），作者声明原样生效",
+          all(lbl and not lbl.isupper() and len(lbl) <= 6 for lbl in labels)
+          and len(set(labels)) == 1 and labels[0] == "东南亚市场"
+          and [(p.get("anchor") or {}).get("eyebrow") for p in declared_eyebrow["pages"]]
+          == ["单位经济", "清关与用工", "释放条件", "复盘节点"], str(labels))
+    # 封面 / 收尾是**陈述位**：没有证据不等于没有主张。
+    # 实测（CASE_006）：一句封面主张被判成「结构说明页」，焦点落到一张并不存在的
+    # 层级图上，收尾页则被判 absent 并告警，逼作者给封面补数据。
+    statement_deck = intel.think(dict(BRIEF, slides=[
+        {"id": "cover", "title": "东南亚是我们未来五年唯一还能拿到结构性增长的战场"},
+        {"id": "mid", "title": "复购率由 21.4% 升至 41.7%",
+         "content": "同期补贴占收入比由 22.4% 降至 6.1%（来源：运营系统）"},
+        {"id": "close", "title": "我们不是在赌一个市场，是在买一条可以复制到第三个国家的履约能力"}]))
+    cov, clo = (statement_deck["pages"][0]["judgment"],
+                statement_deck["pages"][-1]["judgment"])
+    check("首末页: 陈述位按叙事位置取角色，不派发结构图、不误报告警",
+          cov["visual_role"]["role"] == "establish"
+          and clo["visual_role"]["role"] == "summarize"
+          and cov["focus"]["element_role"] == "statement_text"
+          and clo["focus"]["element_role"] != "structure_map"
+          and cov["claim"]["text"].startswith("东南亚")
+          and clo["claim"]["text"].startswith("我们不是在赌")
+          and not [w for w in statement_deck["warnings"]
+                   if w.get("rule") == "unresolved_content"],
+          str([cov["visual_role"]["role"], clo["visual_role"]["role"],
+               cov["focus"]["element_role"], clo["focus"]["element_role"]]))
+    check("understanding: 「结构性增长」是复合名词，不产生结构/序列证据形态",
+          intel.understand("东南亚是我们未来五年唯一还能拿到结构性增长的战场")["evidence"]
+          in ("none", "proposition"))
+
+    # 焦点数字＝主张所指的那个量（不是第一个、也不是最大的那个）
+    unit_econ = ("印尼雅加达自营仓：单均履约成本从 2024Q1 的 19.4 元降至 2025Q4 的 "
+                 "11.2 元，降幅 42.3%；同期客单价由 68 元升至 83 元。泰国曼谷加盟："
+                 "单均履约成本 16.8 元。")
+    claim_ue = "三个市场里只有印尼跑通了单位经济，而且是靠自营履约跑通的"
+    check("number_roles: 焦点取主张点名的那个指标（履约成本 11.2 元，不是客单价 83 元）",
+          intel.number_roles(unit_econ)[1]["raw"] == "83 元"
+          and intel.number_roles(unit_econ, claim_ue)[1]["raw"] == "11.2 元",
+          str(intel.number_roles(unit_econ, claim_ue)[1]))
+    risk = ("清关环节：口岸清关时效在 1.8 至 6.4 天之间波动，波动幅度 256%，"
+            "库存周转天数在 21 至 47 天之间摆动。用工环节：一线分拣人力成本同比上升 18.6%。")
+    check("number_roles: 区间下界不是可以立住的量（1.8 出局，取 6.4 天）",
+          intel.number_roles(risk)[1]["raw"] == "1.8"
+          and intel.number_roles(risk, "清关与用工是无法靠补贴解决的结构性约束")[1]["raw"]
+          == "6.4 天")
+    years = ("2026 年：收入 4.6 亿元，毛利率 -8.4%。2027 年：收入 12.8 亿元，"
+             "毛利率 6.2%。2028 年：收入 27.4 亿元，毛利率 17.6%。")
+    check("number_roles: 主张用序数点名某年时，焦点落在该年（第二年 → 2027 年的 12.8 亿元）",
+          intel.number_roles(years)[1]["raw"] == "4.6 亿元"
+          and intel.number_roles(years, "三年测算里最关键的是第二年")[1]["raw"] == "12.8 亿元")
+    # 多量纲 + 主张无量 → 数字退为支撑，第一落点回到那句话
+    mixed = intel.think(dict(BRIEF, slides=[
+        {"id": "m1", "title": "真正的阻力不是竞争，是清关与用工这两件我们无法靠补贴解决的事",
+         "content": risk}]))
+    check("focus: 主张无量且证据横跨多量纲时，数字退为支撑（不拿波动下界当主语）",
+          mixed["pages"][0]["judgment"]["focus"]["element_role"] == "statement_text")
+    concentrated = intel.think(dict(BRIEF, slides=[
+        {"id": "m2", "title": "三个市场里只有印尼跑通了单位经济",
+         "content": unit_econ}]))
+    check("focus: 页面由同一指标占住时数字仍是主语（集中度 ≥50% 不降级）",
+          concentrated["pages"][0]["judgment"]["focus"]["element_role"] == "kpi_main")
+
+    # 排版尺度：把纪律落成可核对的数字（行长/行距/内边距/断行）
+    scale_page = intel.think(dict(BRIEF, slides=[
+        {"id": "sc", "title": "真正的阻力不是竞争，是清关与用工这两件我们无法靠补贴解决的事",
+         "content": risk}]))["pages"][0]["judgment"]["typography"]["scale"]
+    check("typography: 排版尺度由本页内容量派生（行长上限/行距域/内边距/断行）",
+          scale_page["body_measure_cjk"] <= 45 and scale_page["line_height"]["body"]
+          and scale_page["padding"] and scale_page["lead_break"]
+          and "｜" in scale_page["lead_break"]
+          and not scale_page["lead_break"].split("｜")[1].startswith(("，", "。"))
+          and not scale_page["lead_break"].split("｜")[0][-1:].isdigit(),
+          str(scale_page.get("lead_break")))
+
     raw_media = intel.think(dict(BRIEF, slides=[
         {"id": "photo", "title": "真实门店的回访记录",
          "content": "门店现场观察有来源（来源：实地记录）", "asset": "required"}]))
@@ -1305,11 +1392,14 @@ def test_production(tmp: Path):
         same = same and actual.tobytes() == expected.tobytes()
     check("ghost: 不透明直画与半透明旧合成路径像素一致（速度不能改变设计）", same)
 
-    # CJK 折行二分拟合与逐字贪心同断点：visible_width 随前缀长度单调，
-    # 二分与线性扫描找到同一个「最长可容纳前缀」。随机混合文本 × 字号 ×
-    # 宽度 × tracking 对拍内联的旧线性参考实现，输出必须逐字符一致——
-    # 这条不变式一破，预览换行位置就变，像素证据不再可信。
-    from ghost import _wrap_lines as _wrap, _has_cjk as _has_cjk2
+    # CJK 折行：二分拟合与逐字贪心同断点（禁则修正之后仍同断点）。
+    # visible_width 随前缀长度单调，二分与线性扫描找到同一个「最长可容纳前缀」；
+    # 禁则只在其上做局部回退。随机混合文本 × 字号 × 宽度 × tracking 对拍内联的
+    # 旧线性参考实现，输出必须逐字符一致——这条不变式一破，预览换行位置就变，
+    # 像素证据不再可信。
+    from ghost import (_wrap_lines as _wrap, _has_cjk as _has_cjk2,
+                       _cjk_break_fix as _fix, _NO_LINE_START as _nls,
+                       _UNIT_HEAD as _unit_head, _UNIT_INNER as _unit_inner)
 
     def _linear_cjk(text, font, width, tracking=0.0):
         limit = max(1, width)
@@ -1320,16 +1410,78 @@ def test_production(tmp: Path):
             if not raw:
                 out.append("")
                 continue
-            line = ""
-            for ch in raw:
-                cand = line + ch
-                if line and vw(cand) > limit:
-                    out.append(line.rstrip())
-                    line = ch
-                else:
-                    line = cand
-            out.append(line)
+            pos, n = 0, len(raw)
+            while pos < n:
+                seg = raw[pos:]
+                if vw(seg) <= limit:
+                    out.append(seg)            # 末行整段可容纳
+                    break
+                if len(seg) == 1:
+                    out.append(seg)
+                    break
+                lo = 1                          # 逐字扫描：找到最长可容纳前缀
+                while lo < len(seg) and vw(seg[:lo + 1]) <= limit:
+                    lo += 1
+                lo = _fix(seg, lo)              # 与二分路径同一套禁则回退
+                out.append(seg[:lo].rstrip())
+                pos += lo
         return out
+
+    # 禁则本身：行首不得出现禁则字符；数字与单位不得被拆到两行
+    _rule_font = _font(18, cjk=True)
+    _rule_text = ("口岸清关时效在 1.8 至 6.4 天之间波动，波动幅度 256%，"
+                  "库存周转天数在 21 至 47 天之间摆动，「次日达」无法售卖。")
+    _rule_bad = None
+    for _w in (220, 260, 300, 340, 420, 520, 640, 800):
+        _lines = _wrap(_rule_text, _rule_font, _w)
+        for _ln in _lines[1:]:
+            if _ln[:1] and _ln[0] in _nls:
+                _rule_bad = ("行首标点", _w, _ln); break
+            _prev = _lines[_lines.index(_ln) - 1]
+            if _prev[-1:].isdigit() and _unit_head.match(_ln.strip()):
+                _rule_bad = ("数字单位拆行", _w, _prev, _ln); break
+        if _rule_bad:
+            break
+    check("ghost: 中文禁则折行（行首无禁则标点、数字与单位同行）",
+          _rule_bad is None, str(_rule_bad)[:160])
+
+    # 断口常常落在**空格**上（中英混排的「9 个」「11.2 元」）：此时真正的邻居是
+    # 空格两边的实字，不是断口那一个字符。旧实现取 seg[lo] / seg[lo-1]，量到的
+    # 是两个空格，禁则静默失效——预览看着合规，产物里读出来是「9」「个」两个信息。
+    # 实测（CASE_006 第 4 页）：旧预览断成「…可控节点 9 | 个，复制周期…」。
+    _sp_font = _font(15, cjk=True)
+    _sp_text = ("印尼雅加达自营：首城盈利 14 个月，履约成本 11.2 元，可控节点 9 个，"
+                "复制周期 5 个月。")
+    _sp_bad = None
+    for _w in range(200, 470, 3):
+        _ls = _wrap(_sp_text, _sp_font, _w)
+        for _a, _b in zip(_ls, _ls[1:]):
+            _l, _r = _a.rstrip(), _b.lstrip()
+            if _l[-1:].isdigit() and _unit_head.match(_r):
+                _sp_bad = ("数字与量词被空格隔开后拆行", _w, _a, _b); break
+            if _r[:1] and _r[0] in _nls:
+                _sp_bad = ("行首禁则标点", _w, _b); break
+        if _sp_bad:
+            break
+    check("ghost: 禁则看断口两侧的实字（空格不是邻居，数字与量词不隔空拆行）",
+          _sp_bad is None, str(_sp_bad)[:160])
+
+    # 双字单位不腰斩：断在「个｜月」「万｜元」「小｜时」中间，单位被读成两个词，
+    # 「14 个月」会排成「14 个 / 月」——比数字与单位分家更常见，因为断口落在
+    # 单位的两个汉字之间，任何只看断口两侧是不是「数字 + 单位」的规则都抓不到。
+    _du_font = _font(15, cjk=True)
+    _du_text = "首城盈利周期 14 个月，投入 3,800 万美元，分拣时长 45 分钟。"
+    _du_bad = None
+    for _w in range(180, 520, 2):
+        _ls = _wrap(_du_text, _du_font, _w)
+        for _a, _b in zip(_ls, _ls[1:]):
+            _l, _r = _a.rstrip(), _b.lstrip()
+            if _l and _r and (_l[-1] + _r[0]) in _unit_inner:
+                _du_bad = ("双字单位被腰斩", _w, _a, _b); break
+        if _du_bad:
+            break
+    check("ghost: 双字单位内部不断行（个月/万元/分钟/小时不读成两个词）",
+          _du_bad is None, str(_du_bad)[:160])
 
     import random as _random
     _rng = _random.Random(20261013)

@@ -84,6 +84,10 @@ def _text_box_capacity(e: dict) -> dict | None:
     return {"lines": lines, "need": need, "usable": usable_h, "size": size,
             "line_height": lh, "max_lines": declared_max,
             "paragraph_gap": paragraph_gap,
+            # 行长（可读域）：中文一字约等于一个字号宽。取「栏宽能排多少字」与
+            # 「内容实际排了多少字」的较小值——短标签放在宽框里并没有 88 字/行，
+            # 真正要拦的是**排满时**一行超过 45 字。
+            "measure_cjk": (min(usable_w, width_need) / size) if size else 0.0,
             "over_height": need > usable_h + 1, "over_max_lines": bool(over_max),
             "over_width": not wrap and width_need > usable_w + 2, "width_need": width_need}
 
@@ -369,6 +373,15 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
             add("text_capacity", eid, "error",
                 f"估算 {cap['lines']} 行 > 声明 max_lines {cap['max_lines']}："
                 "文本会被截断或挤出框；删句、改写或放宽 max_lines")
+        # 行长是**可读域**问题，不是容量问题：装得下不等于读得下去。
+        # 中文一行超过 45 字，投影/远距离回扫会丢行；分栏或收窄栏宽，不要缩字号。
+        if (cap and not cap.get("invalid") and e.get("wrap", True) is not False
+                and float(te.get("size", 18) or 18) <= 22
+                and cap.get("measure_cjk", 0) > 45):
+            add("text_measure", eid, "warn",
+                f"[{sid}] 行长 {cap['measure_cjk']:.0f} 汉字/行 超出可读域 22–45"
+                f"（字号 {cap['size']:g} × 可用栏宽 {cap['measure_cjk'] * cap['size']:.0f}px）："
+                "分栏、收窄栏宽或拆成两条，不要缩字号")
 
     if typ in ("chart", "native_chart"):
         _check_chart(e, eid, add, require_provenance=require_provenance)
@@ -835,6 +848,12 @@ def verdict(spec, *, mode=None, guard_report, compile_report,
         "blocking_detail": [{"rule": c.get("rule"), "id": c.get("id"),
                              "msg": str(c.get("msg") or "")[:220]} for c in blocking],
         "guard": {"checks": len(guard.get("checks", [])), "errors": len(blocking)},
+        # 可读域这类不阻断的缺陷（行长）不进对话（验证层约定），但必须留痕：
+        # 发布清单把抄进 notes，一次发布验收就能看见，不必等到人工审片。
+        "guard_warnings": [{"rule": c.get("rule"), "id": str(c.get("id") or ""),
+                            "msg": str(c.get("msg") or "")[:220]}
+                           for c in guard.get("checks", [])
+                           if c.get("level") == "warn"][:8],
         # result.compile 只抄被消费的键（打印 + manifest）；其余明细槽零读取，不抄。
         "compile": {k: cr.get(k) for k in
                     ("passed", "file_bytes",
@@ -940,6 +959,9 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
             issues.append("qa_report 声称 PASS 但 execution.mode 不是 release")
         if not compile_claim.get("passed"):
             issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")
+    # 可读域越界是非阻断证据：只进发布清单的 notes，不进对话、不改判定。
+    for w in (qa_report.get("guard_warnings") or [])[:8]:
+        notes.append(f"[可读域] {w.get('msg')}")
     wf = workflow if isinstance(workflow, dict) else (qa_report.get("asset_workflow") or {})
     image_count = wf.get("image_count")
     if image_count is None:

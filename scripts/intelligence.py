@@ -107,7 +107,17 @@ _PART_OF_WHOLE = re.compile(
     r"(?P<total>\d+(?:[.,]\d+)?\s*(?P<unit>家|人|个|台|名|位|件|%|％))"
     r"[^。；;!?！？]{0,30}?中[，,\s]*(?P<part>\d+(?:[.,]\d+)?\s*(?P=unit))")
 _STRUCTURE_WORDS = ("体系", "架构", "框架", "模型", "组织", "结构", "模块", "层级",
-                    "平台", "中台", "能力", "framework", "architecture", "system")
+                    "平台", "中台", "framework", "architecture", "system")
+# 「结构性增长 / 结构化数据」里的「结构」是形容词，「结构性增长」是一个东西的
+# 名字、不是一条时间序列。不剥掉它，一句封面主张（「唯一还能拿到结构性增长的
+# 战场」）会先被判成结构说明页、再被判成数据序列页，焦点与构图随之落到一张
+# 并不存在的层级图/曲线上（CASE_006 s01 实测）。
+_COMPOUND_NOUNS = re.compile(r"结构性(?:增长|提升|变化|下降|调整|机会)?|结构化|结构图")
+
+
+def _evidence_body(body: str) -> str:
+    """证据形态只按**谓词**判定：复合名词（结构性增长）不产生证据形态。"""
+    return _COMPOUND_NOUNS.sub("", body)
 _CONCLUSION_WORDS = ("结论", "所以", "因此", "必须", "唯一", "只有", "本质", "关键",
                      "决定", "建议", "请批准", "意味着", "证明")
 # 现场/记录信号：内容里出现可指认的场所与记录动作时，图像才可能是证词。
@@ -300,16 +310,175 @@ _ARRIVAL_CUE = re.compile(
     r"\b(?:to|now|currently)\b)\s*", re.I)
 
 
-def number_roles(text: str) -> tuple[list[dict], dict | None]:
+_CLAUSE_SPLIT = re.compile(r"[，,。；;：:！!？?\n]")
+# 指标名归属时要剔掉的「非指标」词：连词、代词、时态与量词外壳。
+# 只做减法——不认识的词一律保留（宁可多留一个候选，也不误删真指标）。
+_METRIC_STOPWORDS = frozenset({
+    "我们", "他们", "它们", "本页", "本期", "同期", "分别", "其中", "通过", "进行",
+    "已经", "可以", "不能", "无法", "没有", "出现", "达到", "成为", "包括", "以及",
+    "并且", "而且", "但是", "因此", "所以", "目前", "当前", "现在", "未来", "今年",
+    "去年", "明年", "所有", "全部", "部分", "这些", "那些", "一个", "两个", "三个",
+    "四个", "存在", "产生", "导致", "使得", "用于", "属于", "位于", "来自", "采用",
+    "使用", "是否", "还是", "就是", "不是", "只有", "还有", "其它", "其他", "之上",
+    "之下", "之内", "之外", "其中", "上述", "以下", "之间", "左右", "前后", "连续",
+    "每个", "任何", "每一", "这一", "该", "其", "此", "后", "前",
+})
+_CJK_RUN = re.compile(r"[一-鿿]{2,}")
+# 长 CJK 串内部按虚词再切：不切的话「与印尼的口岸清关时效在」会成为一个
+# 19 字的「指标名」，主张里的「清关」永远命中不上。
+_METRIC_SEPARATORS = re.compile(r"[的与和或是在由从对把被之并而就才更最也都还又则即及等中上下为了到至使让]")
+# 太通用的 2 字片段（「成本」「数据」…）不足以证明主张点名了这个指标。
+_WEAK_METRIC_SLICE = frozenset({
+    "成本", "数据", "时间", "比例", "金额", "数量", "情况", "内容", "方式", "结果",
+    "问题", "比率", "水平", "规模", "增长", "下降", "提升", "下降", "变化", "区间",
+    "部分", "整体", "合计", "平均", "同比", "环比", "口径", "来源", "期间", "单位",
+})
+# 区间下界：「1.8 至 6.4 天」里的 1.8 是波动的下沿，不是这一页要立住的量。
+_RANGE_NEXT = re.compile(r"^\s*(?:至|到|~|～|—|–|-)\s*[-+]?\d")
+# 序数→序列下标：主张说「第二年」，证据按年份分句时，焦点属于那一年。
+_ORDINAL_INDEX = {"第一": 0, "第二年": 1, "第二年": 1, "第三年": 2, "首年": 0, "次年": 1,
+                  "末年": -1, "第一年": 0, "第二年": 1, "第三年": 2, "第四年": 3,
+                  "首个": 0, "第二个": 1, "第三个": 2, "最后一个": -1}
+_YEAR_TOKEN = re.compile(r"(20\d{2})\s*年?")
+_DIGIT_TAIL = re.compile(r"[0-9][0-9.,]*\s*$")
+
+
+# 纯函数记忆化：同一页的从句切分 / 指标名 / 数字角色在一轮判断里会被
+# number_roles → focus_of / information_weight / typography 反复问到。
+# 它们都是输入的纯函数，缓存不改变任何判断结果，只去掉重复解析。
+def _metric_of_clause(clause: str) -> list[str]:
+    """从句里取可能的指标名（连续 CJK 片段按虚词再切，去掉连词与动词外壳）。"""
+    out = []
+    for m in _CJK_RUN.finditer(clause):
+        for tok in _METRIC_SEPARATORS.split(m.group(0)):
+            if tok in _METRIC_STOPWORDS or len(tok) < 2:
+                continue
+            # 「降至 / 升至 / 达到」这类动词壳不是指标名；剥掉常见后缀再判一次。
+            core = re.sub(r"(降至|升至|增到|减到|达到|超过|低于|高于|为|约|达|从)$", "", tok)
+            if len(core) >= 2 and core not in _METRIC_STOPWORDS:
+                out.append(core)
+    return out
+
+
+def _claim_mentions(claim: str, metric: str) -> bool:
+    """主张是否点名了这个指标：全名命中，或片段命中（中文常写简称）。
+
+    4 字以上的指标允许 2 字片段（「单均履约成本」↔ 主张里的「履约」），
+    但太通用的 2 字片段不算——否则任何带「成本」的指标都会被当成被点名的那个。
+    """
+    if not claim or not metric:
+        return False
+    if metric in claim:
+        return True
+    if len(metric) >= 3 and any(metric[i:i + 3] in claim for i in range(len(metric) - 2)):
+        return True
+    if len(metric) >= 4:
+        return any(metric[i:i + 2] in claim and metric[i:i + 2] not in _WEAK_METRIC_SLICE
+                   for i in range(len(metric) - 1))
+    return False
+
+
+# 纯函数记忆化：同一页的从句切分 / 指标名 / 数字角色在一轮判断里会被
+# number_roles → focus_of / information_weight / typography 反复问到。
+# 它们都是输入的纯函数，缓存不改变任何判断结果，只去掉重复解析。
+def _clause_spans(text: str) -> list[tuple[int, int]]:
+    spans, start = [], 0
+    for m in _CLAUSE_SPLIT.finditer(text):
+        spans.append((start, m.start()))
+        start = m.end()
+    spans.append((start, len(text)))
+    return [(a, b) for a, b in spans if b > a]
+
+
+def _year_by_clause(text: str) -> dict[int, str]:
+    """按从句给出「当前年份」：年份标记只在它出现的那一句，其后各句沿用，
+    直到下一个年份标记出现（「2027 年：收入 12.8 亿元」——年份在冒号前）。"""
+    out: dict[int, str] = {}
+    current = None
+    for i, (a, b) in enumerate(_clause_spans(text)):
+        m = _YEAR_TOKEN.search(text[a:b])
+        if m:
+            current = m.group(1)
+        if current:
+            out[i] = current
+    return out
+
+
+def _ordinal_year(text: str, claim: str) -> str | None:
+    """主张用序数点名某一年（「第二年」）时，返回证据里对应的那一年的年份串。"""
+    hits = [(ordinal, idx) for ordinal, idx in _ORDINAL_INDEX.items() if ordinal in claim]
+    if not hits:
+        return None
+    idx = max(hits, key=lambda kv: len(kv[0]))[1]
+    years = []
+    for y in _year_by_clause(text).values():
+        if y not in years:
+            years.append(y)
+    if not years:
+        return None
+    try:
+        return years[idx]
+    except IndexError:
+        return None
+
+
+def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
+    """焦点数字＝**主张所指的那个量**，不是第一个或最后一个数字。
+
+    判据（全部来自本页文本，确定性）：
+      1. 数字按从句归属它前面的指标名（「履约成本 11.2 元」→ 履约成本）；
+      2. 主张里点名的指标，其数字优先（+3）；主张用序数点名某年（「第二年」）
+         时，那一年从句里的数字优先（+3）；
+      3. 变化终值（降至 / 升至 …）优先（+1）；
+      4. 区间下界（「1.8 至 6.4」里的 1.8）不是可以立住的量，出局。
+    """
+    spans = _clause_spans(text)
+    years = _year_by_clause(text)
+    year = _ordinal_year(text, claim)
+    cursor, scored = 0, []
+    for n in nums:
+        pos = text.find(n["raw"], cursor)
+        if pos < 0:
+            pos = cursor
+        cursor = pos + len(n["raw"])
+        idx = next((i for i, (a, b) in enumerate(spans) if a <= pos < b), 0)
+        a, b = spans[idx]
+        clause = text[a:b]
+        tail = text[pos + len(n["raw"]):pos + len(n["raw"]) + 6]
+        is_range_bound = bool(_RANGE_NEXT.match(tail))
+        score = 0.0
+        if any(_claim_mentions(claim, m) for m in _metric_of_clause(clause)):
+            score += 3.0
+        if year and years.get(idx) == year:
+            score += 3.0
+        if _ARRIVAL_CUE.search(clause[:pos - a]):
+            score += 1.0
+        scored.append((score, not is_range_bound, n))
+    alive = [s for s in scored if s[1]]
+    pool = alive or scored                       # 全是区间边界时退回全体（不判空）
+    best = max(pool, key=lambda t: t[0])
+    if best[0] <= 0:
+        return None
+    return best[2]
+
+
+def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict | None]:
     """区分基期和结果：『从 38% 升至 61%』的视觉主语是 61%，不是首个数字。
 
     只认明确的终值信号；没有信号时保留原始顺序，不擅自把最大值当答案。
     页判断只调用一次，焦点与信息权重共享；直接调用两者时各自可回退。
+    `claim` 给了就做**主张锚定**：焦点数字必须属于主张所指的那个指标，
+    否则这一页会拿一个不相干的最大数字当主语（CASE_006 实测：单位经济页
+    把客单价当焦点、风险页把波动下界当焦点）。
     """
     text = str(text or "")
     nums = evidence_numerals(text)
     if not nums:
         return nums, None
+    if claim:
+        anchored = _attributed_primary(text, nums, str(claim))
+        if anchored is not None:
+            return nums, anchored
     subset = _PART_OF_WHOLE.search(text)
     if subset:
         part = evidence_numerals(subset.group("part"))
@@ -360,11 +529,12 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
     if is_subset:
         modes["part_whole"] = 0.84
-    if _hit(text, _SERIES_WORDS) or distinct >= 3 or _FROM_TO_QUANTITY.search(body):
+    if _hit(_evidence_body(body), _SERIES_WORDS) or distinct >= 3 \
+            or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
-    if _hit(body, _STRUCTURE_WORDS):
+    if _hit(_evidence_body(body), _STRUCTURE_WORDS):
         modes["structure"] = 0.65
     if _hit(body, _SEQUENCE_WORDS):
         # 顺序词出现得越多，形状越是「有步骤的行动」，越不该被一个孤立的时长数字
@@ -382,7 +552,10 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
     dominant = max(modes, key=lambda k: (modes[k], -EVIDENCE_MODES.index(k))) if modes else "none"
-    subjects = [name for name, spec in _MATERIAL_LEXICON.items() if _hit(body, spec["words"])]
+    # 主题实体也走复合名词过滤：「结构性增长」里的「结构」不是建筑实体，
+    # 否则一句抽象封面主张会推导出一个石头与混凝土的世界，并给封面派一张图。
+    subjects = [name for name, spec in _MATERIAL_LEXICON.items()
+                if _hit(_evidence_body(body), spec["words"])]
     return {
         "evidence": dominant,
         "numerals": nums,
@@ -431,6 +604,13 @@ _TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足",
                     "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成")
 
 
+# 对比式断言：「增长来自复购而非补贴」「不是在赌市场，是在买能力」
+# ——中文商业写作里最典型的判断句形，和「唯一/只有」同样属于断言证据。
+_CONTRAST_ASSERTION = re.compile(
+    r"而非|不是[^，。；]{0,12}(?:而是|是)|不在于|不再只是|关键在于|取决于|本质上是|"
+    r"差别不在|问题不在|真正的")
+
+
 def _title_assertive(title: str) -> bool:
     """标题是否携带主张（而不是一个名词标签）。
 
@@ -460,6 +640,11 @@ def _is_data_listing(sent: str) -> bool:
     ev = evidence_numerals(sent)
     if len(ev) < 2:
         return False
+    # 三个以上数字且没有任何断言词＝规格行（「首城盈利周期 14 个月，履约成本
+    # 11.2 元，可控节点 9 个」）：它回答「各是多少」，不回答「所以呢」。
+    # 混合单位比同单位更像清单——同单位还可能是一个真实的关系句。
+    if len(ev) >= 3:
+        return True
     units = [n.get("unit") or "" for n in ev]
     if len(set(units)) != 1:
         return False
@@ -469,7 +654,7 @@ def _is_data_listing(sent: str) -> bool:
     return True
 
 
-def extract_claim(item: dict) -> dict:
+def extract_claim(item: dict, *, positional: bool = False) -> dict:
     """本页唯一结论：作者写了就用；没写就从内容里抽首句结论。
 
     抽不出来就 `absent`——**不编造**。摘要是观点不是证据，**标题是结论位**
@@ -488,7 +673,10 @@ def extract_claim(item: dict) -> dict:
         # 标题是最常见的结论位置，但它只有在「内容也在场」时才算主张：
         # 只有一句话题词、没有内容的页面，我们并不知道作者想说什么（不编）。
         # 以「记录/流程/结构/说明…」结尾的标题是话题标签，不是结论。
-        bonus = 1.2 if content else 0.6
+        # 首/末页是**陈述位**：没有证据也不等于没有主张。封面与收尾的职责就是
+        # 立住或回收那一句话，它的证据在别的页上——把它们按「缺内容」扣分，
+        # 会逼作者给封面补数据、或把收尾页降级成章节页（CASE_006 s01/s12 实测）。
+        bonus = 1.2 if (content or positional) else 0.6
         if _topic_shaped(title):
             bonus -= 0.8
         elif content and _title_assertive(title):
@@ -518,6 +706,12 @@ def extract_claim(item: dict) -> dict:
         if _hit(sent, _CONCLUSION_WORDS):
             score += 2.0
             bits.append(f"结论措辞「{_fired(sent, _CONCLUSION_WORDS)}」")
+        elif _CONTRAST_ASSERTION.search(sent):
+            score += 2.0
+            bits.append("对比式断言（「不是/不在于…而是…」）")
+        if is_title and positional and not content:
+            score += 2.0
+            bits.append("首末页陈述位（不要求本页证据）")
         if _hit(sent, _ASK_WORDS):
             # 要决定的话本身就是结论（「请批准试点预算」没写也得算写了）：
             # 否则 ask 全在标题里时结论判 absent，role 会把要决定的页判成别的。
@@ -676,6 +870,19 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
         role = "prove"
         why = "数字承担论证：这一页的说服力来自可核验的量，而不是措辞。"
         alts = [["persuade", "用形容词说服＝把可核验的东西换成不可核验的"]]
+    elif index in (0, total - 1) and ev in ("none", "proposition", "structure", "sequence") \
+            and not int(u.get("distinct_numerals") or 0):
+        # 开场与收尾在没有可核验的量时按叙事位置取角色：这一页的职责是立住或回收
+        # 整套主张，不是解释一个结构。只有一句主张的封面被判成「说明页」，
+        # 焦点与构图会跟着落到一个并不存在的层级图上（CASE_006 s01/s12 实测）。
+        if index == 0:
+            role = "establish"
+            why = "开场页建立世界与主张：观众从这里决定要不要继续读。"
+            alts = [["explain", "开场就解释细节＝在观众建立兴趣之前要求注意力"]]
+        else:
+            role = "summarize"
+            why = "收尾页回收开场的决定：把主张收成一句可执行的话，不用新装饰稀释请求。"
+            alts = [["prove", "收尾再补证据＝把决定推迟到最后一次提问之后"]]
     elif ev in ("structure", "sequence"):
         role = "explain"
         why = "关系的形状比措辞更能说明机制，观众要的是结构。"
@@ -711,8 +918,74 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
 # ─────────────────────────────────────────────────────────────────────
 # 6 · 焦点判定（Focus Determination）
 # ─────────────────────────────────────────────────────────────────────
+def _metric_attribution(text: str, nums: list[dict]) -> list[tuple[dict, str]]:
+    """每个数字归属它前面最近的那个指标名（「履约成本 11.2 元」→ 履约成本）。"""
+    spans = _clause_spans(text)
+    cursor, pairs = 0, []
+    for n in nums:
+        pos = text.find(n["raw"], cursor)
+        if pos < 0:
+            pos = cursor
+        cursor = pos + len(n["raw"])
+        clause = next((text[a:b] for a, b in spans if a <= pos < b), text)
+        prefix = clause[:max(0, pos - next(a for a, b in spans if a <= pos < b))] \
+            if any(a <= pos < b for a, b in spans) else clause
+        # 取**离数字最近**的那个指标名（「…口岸清关时效在 1.8」→ 清关时效，
+        # 不是句首的「越南」）：指标名归属错了，集中度与焦点判据一起错。
+        head = _metric_of_clause(prefix) or _metric_of_clause(clause)
+        pairs.append((n, head[-1] if head else ""))
+    return pairs
+
+
+def _canonical_metrics(tokens: list[str]) -> list[str]:
+    """指标名归一：页面中已有更短的核心名时，用核心名（单均履约成本 → 履约成本）。
+
+    不归一会把「同一个指标的不同写法」当成两个指标，集中度被摊薄，
+    焦点判据随之把一个真正的单指标页误判成多量纲罗列。
+    """
+    uniq = [t for t in dict.fromkeys(tokens) if t]
+    out = []
+    for t in uniq:
+        shorter = [o for o in uniq if o != t and o in t]
+        out.append(min(shorter, key=len) if shorter else t)
+    return out
+
+
+def _metric_concentration(text: str, nums: list[dict]) -> float:
+    """页面数字被**同一个指标**占住的比例：越高，这一页越是「一个量」的页。"""
+    pairs = _metric_attribution(text, nums)
+    raw = [m for _, m in pairs if m]
+    if not raw:
+        return 0.0
+    canon = dict(zip(dict.fromkeys(raw), _canonical_metrics(raw)))
+    named = [canon.get(m, m) for m in raw]
+    if not named:
+        return 0.0
+    return max(named.count(m) for m in set(named)) / len(pairs)
+
+
+def _numbers_are_support(claim_text: str, u: dict, carried: list[dict],
+                         text: str) -> bool:
+    """数字是否只是支撑：**主张里没有数字，而证据横跨三种以上量纲，且页面
+    不是「同一个指标的不同取值」**时，这一页要立住的是那句话。
+
+    典型误判（CASE_006 s05）：风险页的主张是「清关与用工无法靠补贴解决」，
+    证据里却有天 / 百分比 / 元三种量纲 —— 让其中任何一个当主语都会把
+    「阻力」读成「某个指标的值」。这时数字退到支撑位，第一落点回到那句话。
+    反例（s02）：同一页里履约成本出现五次（占 62%），它就是这一页的主语，
+    不能因为主张句没写数字就把它降成支撑。
+    """
+    if not claim_text or evidence_numerals(claim_text):
+        return False
+    units = {str(n.get("unit") or "").strip() for n in carried}
+    if len(units) < 3:
+        return False
+    return _metric_concentration(text, carried) < 0.5
+
+
 def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
-             number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
+             number_anchor: tuple[list[dict], dict | None] | None = None,
+             page_text: str = "") -> dict:
     """第一落点：哪个元素承担结论，以及为什么不是别的元素。
 
     顺序即优先级：**通过必要性测试的图像 > 结论里的数字 > 那句话 > 标题**。
@@ -728,6 +1001,9 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
         primary = carried[0] if carried else None
     has_image = media.get("decision") in ("required", "reuse")
     claim_text = (claim.get("text") or "").strip()
+    # 数字是主语还是支撑：主张没点名任何量、证据横跨多量纲、且页面不是
+    # 「同一个指标的不同取值」时，第一落点回到那句话（见 _numbers_are_support）。
+    support_only = _numbers_are_support(claim_text, u, carried, page_text)
     if has_image:
         choice = {"element_role": "image_subject" if media.get("function") != "witness"
                                      else "image_witness",
@@ -746,14 +1022,20 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                     ["card_grid_4", "一个分子与分母不需要四张等权卡片"]]
     elif (u.get("comparison") or u.get("evidence") == "comparison") \
             and int(u.get("distinct_numerals") or 0) >= 2:
+        # 六个以上的数字是**一条序列**，不是两端对照：同屏排成数字墙会丢掉形状，
+        # 交给图表（同一基线 + 单一高亮终值）才读得出趋势。
+        many = int(u.get("distinct_numerals") or 0) >= 6
         choice = {"element_role": "comparison_field",
-                  "type": "chart" if u.get("has_chart") else "text",
-                  "why": "把两端的指标名与数值同屏标出；只有同口径才共享轴线并标差值，"
+                  "type": "chart" if (u.get("has_chart") or many) else "text",
+                  "why": ("这一页有 %d 个数字：把它们排进文本框读者要自己连点成线，"
+                          "交给同一基线的图表，只高亮主张所指的终点。" %
+                          int(u.get("distinct_numerals") or 0)) if many else
+                         "把两端的指标名与数值同屏标出；只有同口径才共享轴线并标差值，"
                          "分母不同时先说明比较边界。"}
         rejected = [["two_pie", "两个饼图：占比比较最不可读的一种形式"],
                     ["radar", "雷达图形状相似度高，差异看不出来"],
                     ["side_by_side_cards", "左右卡片墙：视觉等权，读者得自己找答案"]]
-    elif carried and role in ("prove", "summarize", "compare"):
+    elif carried and role in ("prove", "summarize", "compare") and not support_only:
         raw = (primary or carried[0])["raw"]
         if (_hit(claim_text, _ASK_WORDS)):
             why = f"「{raw}」是请求的资源量：它和动作同屏，期限不被误称作基期。"
@@ -763,8 +1045,9 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
             why = f"「{raw}」承担本页证据：保持来源与口径可见，不为数字编造基期。"
         # 单一结论量或预算请求用原生文字直立；真有时间序列/作者声明图表
         # 才让图表承担焦点，不能把每一个数字机械地变成一张图。
-        chart_needed = bool(u.get("has_chart") or
-                            (u.get("evidence") == "series" and len(carried) >= 2))
+        chart_needed = bool(u.get("has_chart")
+                            or (u.get("evidence") == "series" and len(carried) >= 2)
+                            or int(u.get("distinct_numerals") or 0) >= 6)
         choice = {"element_role": "kpi_main",
                   "type": "chart" if chart_needed else "text", "why": why}
         rejected = [["card_grid_4", "四张等权卡片：等权＝没有结论，观众平均用力后什么都没记住"],
@@ -775,9 +1058,13 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                   "why": "层级/顺序是内容本身的形状，画出来比写出来短。"}
         rejected = [["icon_row", "一排图标：图标不承载关系，只承载「我们有很多模块」"],
                     ["card_stack", "卡片堆叠把结构压成清单，关系丢失"]]
-    elif role == "persuade" or (role == "establish" and len(claim_text) <= 42):
-        choice = {"element_role": "statement_text", "type": "text",
-                  "why": "焦点是这一页要立住的那句话：字阶与留白负责它的分量。"}
+    elif role == "persuade" or (role == "establish" and len(claim_text) <= 42) \
+            or (support_only and claim_text):
+        why = ("焦点是这一页要立住的那句话：字阶与留白负责它的分量。"
+               if not support_only else
+               "主张里没有一个可以立住的量：证据横跨多种量纲，任何一个数字当主语都会把"
+               "「这件事为什么难」读成「某个指标是多少」——数字退到支撑位。")
+        choice = {"element_role": "statement_text", "type": "text", "why": why}
         rejected = [["banner_quote", "色块包一句引用：包起来的句子看起来像广告"],
                     ["stock_photo", "配一张氛围图：把不可回答的问题装饰掉"]]
     else:
@@ -826,11 +1113,13 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
     # 否则「焦点是图、构图是留白」自相矛盾。
     s["image_narrative"] = (4.5 if has_image else -99.0) + (1.5 if role == "establish" else 0.0)
     # 同一数量轴不能把不一致的单位并成两端；另有图表声明也不替它捏造同口径。
-    s["data_field"] = (3.0 if ev in ("series", "comparison")
+    # 数据场要有**可对齐的同量纲数字**：一个数字都没有的页（纯层级/纯陈述）
+    # 不被「数据场」接住——否则四层架构页会被判成数据网格，网格里却没有数据。
+    s["data_field"] = (3.0 if ev in ("series", "comparison") and n >= 2
                        and u.get("same_unit", True) else 0.0) \
         + (2.0 if n >= 3 and u.get("same_unit", True) else 0.0) \
         + (1.0 if dense >= 6 and u.get("same_unit", True) else 0.0) \
-        + (0.5 if u.get("comparison") else 0.0)
+        + (0.5 if u.get("comparison") and n >= 2 else 0.0)
     s["big_whitespace"] = (3.0 if (n == 1 and ev in ("number", "series")) else 0.0) \
         + (3.25 if ev == "part_whole" else 0.0) \
         + (2.0 if role == "persuade" else 0.0) + (1.0 if text_len <= 40 else 0.0) \
@@ -977,8 +1266,80 @@ def _weight_label(value) -> str:
     return re.split(r"\s*—\s+", text, maxsplit=1)[0]
 
 
+# ── 排版尺度：由本页内容量推导的可执行约束（可读域，不是字阶模板）──────────
+# 行长、行距与内边距是**物理可读域**（像对比度 4.5:1），不是风格：中文方块字
+# 一行超过 45 个汉字，投影尺度下读者的回扫会丢行；少于 22 个则每行都在半句处
+# 折断。此前骨架只给一句散文纪律，作者凭手感定栏宽——实测同一份内容里出现
+# 60–68 汉字/行的正文块（CASE_006 s07/s08/s10）。
+_MEASURE_MAX_CJK = 45          # 行长上限（超过即回扫丢行）
+_MEASURE_MIN_CJK = 22          # 行长下限（低于即断句破碎）
+_LEAD_MAX_CJK = 20             # 主张/标题每行上限（大字阶，靠行数不靠缩放）
+# 断行候选，按**语义强度**排序；(token 组, 断在 token 前还是后)。
+# 只收「断在这里不会割裂词」的位置：停顿标点 > 系词/转折连词 > 时间数量短语 > 的。
+# 介词与助动词（在/把/让/能…）一律不收——实测会把「用工」切成「与用｜工」。
+_BREAK_RULES = (
+    (("，", "、", "；", "：", "。", "！", "？"), "after"),          # 停顿：最强
+    (("而是", "而非", "不是", "不再", "尚未", "所以", "因此", "同时",
+      "另外", "其中", "其次", "最后", "首先", "就是", "才是", "但", "却",
+      "则", "是"), "before"),                                     # 系词/转折：领起谓语
+    (("年", "季度", "月", "日", "天", "小时", "倍"), "after"),      # 时间数量短语之后
+    (("的",), "after"),                                           # 定语之后（悬挂）
+)
+_NO_LINE_START_CJK = "，。、；：？！）〉》」』】〕｝·…—～”’"
+_NO_LINE_END_CJK = "（《「『【〔｛“‘"
+_UNIT_AFTER_DIGIT = re.compile(
+    r"^\s*(亿元|万元|万户|万单|万人|万家|万次|个月|分钟|小时|美元|元|家|人|个|台|"
+    r"名|位|件|次|天|月|年|%|％|pp|倍)")
+
+
+def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
+    """给主张一句**断行建议**：在语义边界处断，不在数字与单位之间断。
+
+    断行决定中文标题的视觉形状：机械按框宽折行会把「11.2 元」拆成两行、
+    把「，」甩到行首。这里只给一处断口（两行），用「｜」标出；作者仍可改写。
+    """
+    text = str(sentence or "").strip()
+    if len(text) < 8 or len(text) <= max_line:
+        return None
+    cap = max(max_line, (len(text) + 1) // 2 + 4)
+    best, best_score = None, None
+    for strength, (group, side) in enumerate(_BREAK_RULES):
+        for i in range(1, len(text)):
+            hit = next((w for w in group if text[i:i + len(w)] == w), None)
+            if not hit:
+                continue
+            at = i + len(hit) if side == "after" else i
+            left, right = text[:at], text[at:]
+            if len(left) < 4 or len(right) < 4:
+                continue
+            if max(len(left), len(right)) > cap:
+                continue
+            if right[0] in _NO_LINE_START_CJK:
+                continue                       # 行首禁则：标点不能领行
+            if left[-1:] in _NO_LINE_END_CJK:
+                continue                       # 行尾禁则：开引号不能收尾
+            if left[-1:].isdigit() and _UNIT_AFTER_DIGIT.match(right):
+                continue                       # 数字与单位不拆行
+            score = (strength, abs(len(left) - len(right)))
+            if best_score is None or score < best_score:
+                best, best_score = f"{left}｜{right}", score
+    return best
+
+
+def measure_of(text_len: int, *, has_long_lead: bool = False) -> dict:
+    """本页正文的可读行长（汉字/行）：文本越长，栏越窄。"""
+    if text_len >= 220:
+        cjk, note = 30, "长文窄栏：信息密度高，窄栏换取回扫可靠"
+    elif text_len >= 120:
+        cjk, note = 34, "中长文本：两栏或窄单栏，避免一行横跨整页"
+    else:
+        cjk, note = 38, "短文本：栏宽可以放开，但仍不横跨整页"
+    return {"body_measure_cjk": cjk, "why": note,
+            "limit": f"{_MEASURE_MIN_CJK}–{_MEASURE_MAX_CJK} 汉字/行（超出即回扫丢行 / 断句破碎）"}
+
+
 def typography_of(claim: dict, weight: dict, focus: dict, role: str,
-                  u: dict | None = None, *,
+                  u: dict | None = None, *, text_len: int = 0,
                   number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
     """把一份数字锚与信息权重转成可执行的编辑次序；不派发坐标/模板。"""
     weak = weight.get("weaken") or []
@@ -1013,7 +1374,23 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
     else:
         rule = ("结论按语义停顿断行，动词与对象相连、数字不与单位拆开；"
                 "标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。")
-    return {"lead": focal, "support": secondary, "discipline": rule}
+    # 排版尺度：把「纪律」落成这一页可核对的**数字**（行长/断行/行距/内边距）。
+    # 它不替作者定字号与坐标，只给可读域——越界就是要在投影尺度下丢行。
+    lead_text = str(claim.get("text") or "")
+    # 断行建议始终针对**结论句本身**：焦点是数字时，那句话仍然要被读出来，
+    # 它排成什么形状同样是这一页的排版决定。
+    break_hint = suggest_break(lead_text)
+    scale = {
+        "lead_break": break_hint,
+        "lead_lines": f"主张 2–3 行、每行 ≤ {_LEAD_MAX_CJK} 汉字（靠行数分级，不靠缩放）",
+        **measure_of(int(text_len or 0)),
+        "line_height": {"title": "1.18–1.35", "body": "1.55–1.85"},
+        "padding": "内边距 ≥ 0.5×字号（≥8px）：内边距是真留白，不靠行距凑",
+        "hierarchy": "主张 : 支撑 : 出处 ≈ 3 : 1.5 : 1，共用同一阅读轴",
+        "why": ("行长与行距是投影尺度的物理可读域，不是风格；"
+                "断行处取语义边界，数字与单位同在一行。"),
+    }
+    return {"lead": focal, "support": secondary, "discipline": rule, "scale": scale}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1253,11 +1630,62 @@ _PAGE_DECLARATIONS = ("audience", "decision", "tension", "density", "energy",
                       "asset_ratio", "asset_allow_crop", "asset_source", "composition",
                       "insight", "focus",
                       # 页级底色参与资产 QC 亮度参照：声明必须透传到清单（CASE_004）。
-                      "background")
+                      "background", "eyebrow")
 
 
 def _intent_value(value) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
+# 眉标（跨页锚）：此前直接把视觉角色的英文枚举大写贴上去（PROVE / COMPARE…），
+# 12 页里 7 页同为 PROVE —— 它是内部枚举，不是给观众看的内容，机械重复还会
+# 把整套读成模板。眉标该说的是「现在走到论证的哪一段」，所以由本页结论派生；
+# 作者可在 brief 里逐页声明 `eyebrow` 压过推导。
+_ROLE_LABEL_CN = {"establish": "建立", "explain": "解释", "compare": "对比",
+                  "prove": "证明", "persuade": "说服", "summarize": "收束"}
+_LABEL_HEAD_PREFIX = ("我们", "本页", "这一页", "首先", "其次", "同时", "另外",
+                      "因此", "所以", "但是", "请", "建议", "也就是说", "换句话说",
+                      "同期", "本期", "目前", "当前", "今年", "未来")
+# 眉标在**谓语/虚词之前**收口：主语短语才是「这一段在论证里的位置」。
+_LABEL_BOUNDARY = ("是", "在", "与", "和", "或", "由", "从", "对", "把", "被", "并",
+                   "为", "到", "至", "使", "让", "的", "，", "。", "、", "；", "：",
+                   "！", "？", "只", "才", "更", "最", "也", "都", "还", "就", "而",
+                   "却", "但", "已", "将", "会", "能", "要", "有", "按", "靠", "用",
+                   "之", "占", "达", "超", "低于", "高于", "无法", "不能", "不是",
+                   "不再", "尚未", "来自", "关键")
+_LABEL_TAIL = "的里中上下内外前后了过等及"
+
+
+def section_label(item: dict, claim: dict, role: str) -> str:
+    """眉标：本页结论的**主题短语**（3–6 字），派不出来才退回中文角色词。
+
+    取法：先剥语气/时间前缀，再在第一个虚词或谓语之前收口（「三个市场｜里只有…」
+    → 三个市场）；收口太短就顺延到下一个边界，太长就退回角色词——宁可退回，
+    也不输出半截词（此前的截断做法产出过「三个市场里只有印」）。
+    """
+    declared = str((item or {}).get("eyebrow") or "").strip()
+    if declared:
+        return declared[:16]
+    text = str((claim or {}).get("text") or (item or {}).get("title") or "").strip()
+    for prefix in _LABEL_HEAD_PREFIX:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    head = re.split(r"[，。；：！？\n]", text, maxsplit=1)[0].strip()
+    head = re.sub(r"[^一-鿿]", "", head)          # 数字/拉丁不进眉标
+    if not head:
+        return _ROLE_LABEL_CN.get(str(role), str(role))
+    cuts = sorted({i for w in _LABEL_BOUNDARY for i in
+                   [m.start() for m in re.finditer(re.escape(w), head)]})
+    cands = [head[:i] for i in cuts if 3 <= i <= 8]
+    for cand in cands:
+        label = cand.rstrip(_LABEL_TAIL)
+        if 3 <= len(label) <= 6:
+            return label
+    # 没有可用边界（整句就是一个名词短语）：整句收口到 6 字
+    if len(head) <= 6:
+        return head
+    return _ROLE_LABEL_CN.get(str(role), str(role))
 
 
 def _apply_declared_spot(focus: dict, comp: dict, declared) -> tuple[dict, dict]:
@@ -1287,7 +1715,7 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     text = f"{title} {content}".strip()
     if u is None:
         u = understand(text, has_chart=bool(item.get("chart")))
-    claim = extract_claim(item)
+    claim = extract_claim(item, positional=index in (0, total - 1))
     if claim["source"] == "absent":
         warnings.append({"rule": "unresolved_content", "scope": item.get("id"),
                          "msg": "这一页没有可复述的结论（content 缺失）："
@@ -1302,11 +1730,14 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     media = media_necessity(u, role["role"],
                             declared=str(item.get("asset") or "").lower() or None,
                             has_chart=bool(item.get("chart")))
-    anchor = number_roles(claim.get("text") or "")
+    claim_text = str(claim.get("text") or "")
+    anchor = number_roles(claim_text)
     if not anchor[0] and role["role"] in ("prove", "compare") \
             and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
-        anchor = number_roles(content)  # 结论在标题、结果值在证据中
-    focus = focus_of(role["role"], u, claim, media, number_anchor=anchor)
+        # 结论在标题、结果值在证据中：主张照样锚定「哪一个量」是本页主语
+        anchor = number_roles(content, claim_text or None)
+    focus = focus_of(role["role"], u, claim, media, number_anchor=anchor,
+                     page_text=content)
     comp = composition_of(role["role"], u,
                           composition_grammar=world.get("composition_grammar", ""),
                           media=media, claim=claim, content_len=len(text))
@@ -1314,7 +1745,7 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     spatial = spatial_of(comp)
     weight = information_weight(u, claim, text, number_anchor=anchor)
     typography = typography_of(claim, weight, focus, role["role"], u,
-                                number_anchor=anchor)
+                                text_len=len(text), number_anchor=anchor)
     prod = production_spec(focus, comp, media, u, weight)
     open_q = []
     if claim["source"] == "absent":
@@ -1347,11 +1778,13 @@ def _rejudge_without_image(entry: dict, *, text: str, world: dict,
     j["media"] = media
     u = j["understanding"]
     role = j["visual_role"]["role"]
-    anchor = number_roles(j["claim"].get("text") or "")
+    claim_text = str(j["claim"].get("text") or "")
+    anchor = number_roles(claim_text)
     if not anchor[0] and role in ("prove", "compare") \
             and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
-        anchor = number_roles(text)
-    focus = focus_of(role, u, j["claim"], media, number_anchor=anchor)
+        anchor = number_roles(text, claim_text or None)
+    focus = focus_of(role, u, j["claim"], media, number_anchor=anchor,
+                     page_text=text)
     comp = composition_of(role, u, composition_grammar=world.get("composition_grammar", ""),
                           media=media, claim=j["claim"], content_len=len(text))
     focus, comp = _apply_declared_spot(focus, comp, entry.get("declarations"))
@@ -1359,7 +1792,7 @@ def _rejudge_without_image(entry: dict, *, text: str, world: dict,
     j["composition"] = comp
     j["spatial"] = spatial_of(comp)
     j["typography"] = typography_of(j["claim"], j["information_weight"], focus, role, u,
-                                    number_anchor=anchor)
+                                    text_len=len(text), number_anchor=anchor)
     j["production"] = production_spec(focus, comp, media, u, j["information_weight"])
     j["open_questions"] = ([q for q in (j.get("open_questions") or [])
                             if not q.startswith("图像主题由作者确认")] or None)
@@ -1713,7 +2146,8 @@ def think(brief: dict) -> dict:
                                  world=world, warnings=warnings, u=understanding[i])
         anchor = None
         if len(items) >= 4:
-            anchor = {"eyebrow": judgment["visual_role"]["role"].upper()}
+            anchor = {"eyebrow": section_label(
+                it, judgment["claim"], judgment["visual_role"]["role"])}
             if i > 0:
                 anchor["page_number"] = i + 1
         pages.append({"id": sid,
@@ -1979,6 +2413,19 @@ def build_skeleton(bundle: dict) -> str:
         typ = j.get("typography") or {}
         L.append(f'        #    排版: 主语 {typ.get("lead")} · 退后 {typ.get("support") or "无"}；'
                  f'{typ.get("discipline")}')
+        sc = typ.get("scale") or {}
+        if sc:
+            # 排版尺度落成可核对的数字：行长/行距/内边距是投影尺度的可读域，
+            # 不是风格；此前骨架只给一句散文纪律，作者凭手感定栏宽。
+            lh = sc.get("line_height") or {}
+            L.append(f'        #    尺度: 正文行长 ≤{sc.get("body_measure_cjk")} 汉字/行'
+                     f'（{sc.get("why")}；{sc.get("limit")}）'
+                     f' · 行距 标题 {lh.get("title")} / 正文 {lh.get("body")}'
+                     f' · {sc.get("padding")}'
+                     f' · {sc.get("hierarchy")}')
+            if sc.get("lead_break"):
+                L.append(f'        #    断行: {sc["lead_break"]}'
+                         f'（按语义停顿断，数字与单位同在一行）')
         if media.get("decision") not in (None, "none"):
             L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
         rhythm = j.get("rhythm") or {}
