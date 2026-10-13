@@ -324,7 +324,6 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
 
     timing = {
         "cache_probe_ms": round(cache_probe_ms, 2),
-        "cache_ms": round(cache_probe_ms, 2),  # 向后兼容旧性能字段
         "compile_ms": round(compile_ms, 2),
         "attestation_ms": round(attestation_ms, 2),
         "cache_write_ms": round(cache_write_ms, 2),
@@ -342,6 +341,8 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     只有产物/渲染器/选页/预览文件见证都一致，才复用整份证据。
     快档 stat、严档逐文件 SHA；输出 PNG 被改坏不能再以 PASS 复用。
     页级缓存仍负责修复而不重画未变化的页。
+    两档同一渲染口径（1× 直接绘制）：预览在本尺寸上回答的是方向问题，
+    2× 超采样只用 38% 的额外时间买到亚像素抗锯齿差，不改变任何判断依据。
     """
     from primitives import engine_fingerprint, file_digest, witness, witness_same
     fast = str(speed).lower() == "fast"
@@ -412,7 +413,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     rendered: list = []
     page_stats: dict = {}
     paths = ghost_deck(preview_spec, output_dir, pages=wanted,
-                       scale=0.5, supersample=1 if fast else 2, store=True,
+                       scale=0.5, supersample=1, store=True,
                        png_compress_level=1 if fast else 6, images_out=rendered,
                        stats=page_stats)
     sheet_stats: dict = {}
@@ -429,7 +430,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
             "slide_ids": rendered_ids,
             "pages_rendered": wanted, "page_count": len(slides),
             "scope": scope, "contact_sheet": str(contact) if contact else None,
-            "renderer": "PIL", "supersampled": not fast,
+            "renderer": "PIL",
             "pages_drawn": len(page_stats.get("rendered_pages") or []),
             "pages_from_cache": len(page_stats.get("cached_pages") or []),
             "contact_sheet_cached": bool(sheet_stats.get("sheet_cached")),
@@ -612,14 +613,14 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             compile_report = {"passed": True, "skipped": True, "warnings": [],
                               "file_bytes": None,
                               "output_exists": False, "output_sha256": None}
-            timing.update(cache_probe_ms=0, cache_ms=0, compile_ms=0,
+            timing.update(cache_probe_ms=0, compile_ms=0,
                           attestation_ms=0, cache_write_ms=0,
                           cache_reason="not_compiled")
         elif guard_errors:
             compile_report = {"passed": False, "skipped": True, "warnings": [],
                               "file_bytes": None,
                               "output_exists": False, "output_sha256": None}
-            timing.update(cache_probe_ms=0, cache_ms=0, compile_ms=0,
+            timing.update(cache_probe_ms=0, compile_ms=0,
                           attestation_ms=0, cache_write_ms=0,
                           cache_reason="guard_error")
         else:

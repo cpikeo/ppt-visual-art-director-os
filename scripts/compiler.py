@@ -245,7 +245,7 @@ def add_shape(slide, element: dict, ctx: RenderContext) -> None:
         return
 
     if kind not in SHAPE_TYPES:
-        ctx.warn(f"shape '{element.get('id')}': 未知 shape={kind!r}，回落到 rect", element.get("id"))
+        ctx.warn(f"shape '{element.get('id')}': 未知 shape={kind!r}，回落到 rect")
         kind = "rect"
     s = slide.shapes.add_shape(
         SHAPE_TYPES[kind], Emu(emu(x)), Emu(emu(y)), Emu(emu(w)), Emu(emu(h)))
@@ -468,10 +468,10 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
     if snapshot is None and raw_src_key:
         snapshot = image_snapshots.get(raw_src_key)
     if snapshot is None and getattr(ctx, "require_snapshot", False):
-        ctx.warn(f"image '{element.get('id')}': 缺少核验字节快照", element.get("id"))
+        ctx.warn(f"image '{element.get('id')}': 缺少核验字节快照")
         return
     if snapshot is None and not src.exists():
-        ctx.warn(f"image '{element.get('id')}': 找不到文件 {src}", element.get("id"))
+        ctx.warn(f"image '{element.get('id')}': 找不到文件 {src}")
         return
     if snapshot is None and isinstance(image_snapshots, dict):
         try:
@@ -481,8 +481,7 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
             if raw_src_key and raw_src_key != canonical_key:
                 image_snapshots[raw_src_key] = snapshot
         except OSError as exc:
-            ctx.warn(f"image '{element.get('id')}': 无法读取文件 {src}（{exc}）",
-                     element.get("id"))
+            ctx.warn(f"image '{element.get('id')}': 无法读取文件 {src}（{exc}）")
             return
 
     fit = element.get("fit", "cover")
@@ -515,7 +514,7 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
             else:
                 ctx.timings["image_transform_reuses"] = ctx.timings.get("image_transform_reuses", 0) + 1
         except Exception as exc:
-            ctx.warn(f"image '{element.get('id')}': 裁切失败，按原图嵌入（{exc}）", element.get("id"))
+            ctx.warn(f"image '{element.get('id')}': 裁切失败，按原图嵌入（{exc}）")
             blob = None
 
     # 嵌入：blob 为本进程变换出的字节；无变换时直接给流/路径。
@@ -732,12 +731,12 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     parsed = []
     for s in series_list:
         if not isinstance(s, dict):
-            ctx.warn(f"chart '{eid}': series 项必须是对象/dict，已跳过", eid)
+            ctx.warn(f"chart '{eid}': series 项必须是对象/dict，已跳过")
             continue
         name = str(s.get("name", ""))
         vals = s.get("values")
         if not isinstance(vals, list) or not vals:
-            ctx.warn(f"chart '{eid}': 序列 '{name}' 缺少 values，已跳过", eid)
+            ctx.warn(f"chart '{eid}': 序列 '{name}' 缺少 values，已跳过")
             vals = []
         nums = []
         for v in vals:
@@ -750,10 +749,10 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
                 nums.append(n)
             except (TypeError, ValueError, OverflowError):
                 nums.append(0.0)
-                ctx.warn(f"chart '{eid}': 序列 '{name}' 含无法解析为数字的值，已按 0 计算", eid)
+                ctx.warn(f"chart '{eid}': 序列 '{name}' 含无法解析为数字的值，已按 0 计算")
         parsed.append((name, nums))
     if not parsed or not categories:
-        ctx.warn(f"chart '{eid}': 多序列图缺少 series 或 categories，已跳过", eid)
+        ctx.warn(f"chart '{eid}': 多序列图缺少 series 或 categories，已跳过")
         return
     n_cat = len(categories)
     data = CategoryChartData()
@@ -830,11 +829,11 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
 
     rows = _rows(element)
     if not rows:
-        ctx.warn(f"chart '{element.get('id')}': 没有可渲染的数据行，已跳过", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': 没有可渲染的数据行，已跳过")
         return
     invalid = [r for r in rows if r.get("invalid")]
     if invalid:
-        ctx.warn(f"chart '{element.get('id')}': {len(invalid)} 个数据值无法解析为有限数字，已按 0 计算；请修正原始数据", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': {len(invalid)} 个数据值无法解析为有限数字，已按 0 计算；请修正原始数据")
     data = CategoryChartData()
     data.categories = [r["label"] for r in rows]
     data.add_series(str(element.get("series_name", "")), [r["value"] for r in rows])
@@ -921,9 +920,9 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                 and h < CHART_LABEL_MIN_H):
             if label_policy == "hide_redundant":
                 show_values = False
-                ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值", element.get("id"))
+                ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值")
             else:
-                ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡", element.get("id"))
+                ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡")
         if show_values:
             plot = chart.plots[0]
             plot.has_data_labels = True
@@ -962,7 +961,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                     if getattr(labels, "position", None) is not None:
                         labels.position = XL_LABEL_POSITION.BEST_FIT
                 except Exception as exc:
-                    ctx.warn(f"chart '{eid}': 构成图类别标注未写入（{exc}）", eid)
+                    ctx.warn(f"chart '{eid}': 构成图类别标注未写入（{exc}）")
             if kind != "pie":
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
             hl = int(highlight_index(element, rows, 0))
@@ -1001,7 +1000,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
     except Exception as exc:
         # 不静默吞掉：图表样式块任何一步失败都可能悄悄丢掉环心 KPI / 孔比，
         # 至少要让报告里看得到（此前裸 pass，排障时图表可以无声缺件）。
-        ctx.warn(f"chart '{element.get('id')}': 样式块异常 {type(exc).__name__}: {exc}", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': 样式块异常 {type(exc).__name__}: {exc}")
 
 
 # --------------------------------------------------------------------------
@@ -1017,11 +1016,11 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     # 用「必须有 data 行」的通用门拦它们，会让这两种 kind 永远画不出来——
     # 文档要求 points/layers、Guard 也只校验 points/layers，编译器却要 data = 三层口径打架。
     if not rows and kind not in ELEMENT_PAYLOAD_CHARTS:
-        ctx.warn(f"chart '{element.get('id')}': 没有可渲染的数据行，已跳过", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': 没有可渲染的数据行，已跳过")
         return
     invalid = [r for r in rows if r.get("invalid")]
     if invalid:
-        ctx.warn(f"chart '{element.get('id')}': {len(invalid)} 个数据值无法解析为有限数字，已按 0 计算；请修正原始数据", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': {len(invalid)} 个数据值无法解析为有限数字，已按 0 计算；请修正原始数据")
 
     if kind == "process_flow":
         n = min(len(rows), 7)
@@ -1229,7 +1228,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     if kind == "architecture":
         layers = element.get("layers") or []
         if not (1 <= len(layers) <= 3):
-            ctx.warn(f"chart '{element.get('id')}': architecture 缺少 layers，已跳过（不生成占位层名）", element.get("id"))
+            ctx.warn(f"chart '{element.get('id')}': architecture 缺少 layers，已跳过（不生成占位层名）")
             return
         lh = h / len(layers) * 0.6
         for i, lt in enumerate(layers[:3]):
@@ -1298,7 +1297,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             solid_fill(track.fill, track_c or hairline_c, track_a or hairline_a)
             track.line.fill.background()
             if r["value"] < 0:
-                ctx.warn(f"chart '{element.get('id')}': ranked_bar 第 {i + 1} 行为负值，已不绘制负向长度", element.get("id"))
+                ctx.warn(f"chart '{element.get('id')}': ranked_bar 第 {i + 1} 行为负值，已不绘制负向长度")
             bw = span * max(r["value"], 0) / maxv
             color = (ctx.color("accent") if hl in (i, r.get("_index")) else primary)
             bar = slide.shapes.add_shape(
@@ -1350,7 +1349,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             track.line.fill.background()
             ceiling = float(r.get("max", element.get("max", 100))) or 100
             if r["value"] < 0:
-                ctx.warn(f"chart '{element.get('id')}': progress_bar 第 {i + 1} 行为负值，已按 0% 绘制", element.get("id"))
+                ctx.warn(f"chart '{element.get('id')}': progress_bar 第 {i + 1} 行为负值，已按 0% 绘制")
             ratio = max(0.0, min(1.0, r["value"] / ceiling))
             if ratio > 0:
                 fill = slide.shapes.add_shape(
@@ -1373,7 +1372,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         # 堆叠条：分段 + 直接图例
         negative_rows = [i for i, r in enumerate(rows) if r["value"] < 0]
         if negative_rows:
-            ctx.warn(f"chart '{element.get('id')}': stacked_bar 含负值行 {negative_rows}，负值不绘制", element.get("id"))
+            ctx.warn(f"chart '{element.get('id')}': stacked_bar 含负值行 {negative_rows}，负值不绘制")
         total = sum(max(r["value"], 0) for r in rows) or 1
         bar_h = max(18, min(float(element.get("bar_height", 46)), h * 0.34))
         bar_y = y + (h - bar_h) / 2 - (h * 0.10 if element.get("legend") is not False else 0)
@@ -1451,7 +1450,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     if kind == "bubble":
         negative_rows = [i for i, r in enumerate(rows) if r["value"] < 0]
         if negative_rows:
-            ctx.warn(f"chart '{element.get('id')}': bubble 含负值行 {negative_rows}，负值按最小半径绘制", element.get("id"))
+            ctx.warn(f"chart '{element.get('id')}': bubble 含负值行 {negative_rows}，负值按最小半径绘制")
         vals = [max(r["value"], 0.01) for r in rows]
         lo, hi = min(vals), max(vals)
         span = max(hi - lo, 0.01)
@@ -1480,7 +1479,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         vals = [r["value"] for r in rows]
         n = len(vals)
         if n < 2:
-            ctx.warn(f"chart '{element.get('id')}': sparkline 至少需要 2 个数据点", element.get("id"))
+            ctx.warn(f"chart '{element.get('id')}': sparkline 至少需要 2 个数据点")
             return
         lo = min(vals)
         hi = max(vals)
@@ -1540,11 +1539,11 @@ def add_chart(slide, element: dict, ctx: RenderContext) -> None:
         add_shape_chart(slide, element, ctx, kind)
         return
     if kind not in CHART_KINDS:
-        ctx.warn(f"chart '{element.get('id')}': 不支持的 chart_kind {kind!r}，已跳过", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': 不支持的 chart_kind {kind!r}，已跳过")
         return
     # schema 白名单已通过；实现映射仍决定是 native 还是可编辑 shape chart。
     if kind not in NATIVE_CHART_TYPES:
-        ctx.warn(f"chart '{element.get('id')}': chart_kind {kind!r} 尚未实现，已跳过", element.get("id"))
+        ctx.warn(f"chart '{element.get('id')}': chart_kind {kind!r} 尚未实现，已跳过")
         return
     add_native_chart(slide, element, ctx)
 
@@ -1660,7 +1659,7 @@ def _postprocess_package(output_path, *, media_stored: bool = True) -> dict:
     empty_run = _re.compile(r"<a:r>(?:(?!</a:r>).)*?<a:t(?:\s[^>]*)?>\s*</a:t>"
                             r"(?:(?!</a:r>).)*?</a:r>", _re.S)
     t0 = _time.perf_counter()
-    media_written = media_passthrough = 0
+    media_passthrough = 0
     with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w") as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
@@ -1810,8 +1809,7 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
                 else:
                     fn(slide, element, ctx)
             except Exception as exc:  # 只记录，不静默改稿
-                ctx.warn(f"slide[{si}].elements[{ei}] ({element.get('id')}): {exc}",
-                         element.get("id") if isinstance(element, dict) else None)
+                ctx.warn(f"slide[{si}].elements[{ei}] ({element.get('id')}): {exc}")
 
         # Quiet-luxury 硬约束：主题默认 effectStyleLst 会给一切形状/连接线/图片
         # 继承标准 Office 投影，编辑式版面会显得廉价。统一移除继承，

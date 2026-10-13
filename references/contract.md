@@ -38,7 +38,6 @@ spec = {
   "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
   "theme":  {"colors": {…六 token…}, "fonts": {"cn": …, "latin": …}},  # 家族 ≤2
   "slides": [{"id": "s01",
-              "page_intent": {"insight": "本页结论一句话", "focus": "第一落点元素 id"},
               "anchor": {"eyebrow": "…", "page_number": 2},   # ≥4 页时由 plan 发给
               "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},
               "elements": [ … ]}],
@@ -113,7 +112,7 @@ steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/execu
 |---|---|---|
 | 资产 QC 像素域 | 长边降采样；安全区原分辨率 | 全分辨率 |
 | 编译缓存探测 | size+mtime 快探针 | 整包 SHA-256 |
-| 结构预览 | 关键页取证（封面/章节/画心/密数据/收尾，默认 5 页） | 全 deck 逐页 2× 超采样 |
+| 结构预览 | 关键页取证（封面/章节/画心/密数据/收尾，默认 5 页） | 全 deck 逐页 |
 
 阻断项与阈值两档相同，但快档的多数像素统计在整数箱平均后的工作域，边界案例可能与原生
 分辨率结果不同；文字安全区纹理和硬缝仍看原图。需逐页视觉取证的终稿选 `strict`；

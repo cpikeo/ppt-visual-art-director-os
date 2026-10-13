@@ -13,7 +13,6 @@ QA 不做：审美裁决、密度打分、自动重设计、无限修复、warni
 from __future__ import annotations
 
 import math
-import re
 
 from primitives import (CHART_KINDS, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
                         DEFAULT_HEIGHT, DEFAULT_WIDTH, ELEMENT_TYPES,
@@ -220,8 +219,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             add("page_contract", sid, "error",
                 "这一页没有任何元素，也没有 background：画面上什么都没有"
                 "（要么给元素，要么给背景）")
-        if slide.get("page_intent") is not None and not isinstance(slide.get("page_intent"), dict):
-            add("slide_schema", sid, "error", "slide.page_intent 必须是对象/dict")
         bg = slide.get("background")
         if isinstance(bg, dict) and isinstance(bg.get("color"), (dict, list, tuple)):
             add("element_schema", sid, "error",

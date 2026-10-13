@@ -221,6 +221,33 @@ def test_intelligence(tmp: Path):
     check("weight: 同数字重复出现进删除清单",
           any("重复" in x for x in dup["delete"]), str(dup["delete"]))
 
+    # 两组「各自从 A 到 B」的变化并排（证据表的一行）不再顶掉标题结论位：
+    # 此前这句靠「变化词 + 数字」加分胜出，焦点与排版跟着落到基期数字上。
+    two_moves = intel.think({
+        "audience": "董事会", "decision": "批准投入",
+        "slides": [{"id": "p1", "title": "我们的份额增速正在被本地玩家反超",
+                    "content": "过去 12 个月本地头部玩家份额从 12% 升至 19%，我方从 9% 降至 7%；"
+                               "获客成本我方 42 美元、对手 26 美元。（来源：第三方市场监测）"}]})
+    two_moves_claim = two_moves["pages"][0]["judgment"]["claim"]
+    check("claim: 两组变化并排是列举，作者写在标题位的结论仍然胜出",
+          two_moves_claim["text"] == "我们的份额增速正在被本地玩家反超"
+          and "标题" in two_moves_claim["why"], str(two_moves_claim))
+
+    # 顺序形状由顺序词的数量决定：三段里程碑排期不应该被一个孤立的时长数字压成 number。
+    plan_page = intel.think({
+        "audience": "董事会", "decision": "批准排期",
+        "slides": [{"id": "p1", "title": "必须在 2027 年一季度前完成三国落地",
+                    "content": "先做基础设施与合规，然后复制内容与供应链，接着本地化运营团队，"
+                               "最后做区域品牌投放。总计 18 个月，分三段里程碑。（来源：战略部排期）"}]})
+    plan_judgment = plan_page["pages"][0]["judgment"]
+    check("understand: 三段以上顺序词 → sequence（骨架走线性结构，而不是单数字大留白）",
+          plan_judgment["understanding"]["evidence"] == "sequence"
+          and plan_judgment["visual_role"]["role"] == "explain"
+          and plan_judgment["composition"]["chosen"] == "linear_structure",
+          str({"evidence": plan_judgment["understanding"]["evidence"],
+               "role": plan_judgment["visual_role"]["role"],
+               "composition": plan_judgment["composition"]["chosen"]}))
+
     # 视觉角色：开场 establish / 收尾 summarize / 对比 compare / 说服 persuade
     roles = {p["id"]: p["judgment"]["visual_role"]["role"] for p in pages}
     check("role: 开场 establish、收尾 summarize",
@@ -229,7 +256,7 @@ def test_intelligence(tmp: Path):
           roles["s03"] == "compare" and by_id["s03"]["judgment"]["visual_role"]["alternatives"])
 
     # 焦点：焦点元素唯一 + 必须给出否决的替代项
-    foc = s03["judgment"]["focus"] if False else s03["focus"]
+    foc = s03["focus"]
     check("focus: 对比页焦点是两端对比场而不是卡片墙",
           foc["element_role"] == "comparison_field"
           and any("卡片" in r["why_not"] or "卡" in r["option"] for r in foc["rejected"]),
@@ -238,7 +265,7 @@ def test_intelligence(tmp: Path):
           by_id["s05"]["judgment"]["focus"]["element_role"] in ("kpi_main", "hero_statement"))
 
     # 构图：必须回答「为什么不是别的形式」
-    comp = s02["judgment"]["composition"] if False else by_id["s02"]["judgment"]["composition"]
+    comp = by_id["s02"]["judgment"]["composition"]
     check("composition: 主张页 → big_whitespace 且否决项有效（只留真实竞争）",
           comp["chosen"] == "big_whitespace" and len(comp["rejected"]) <= 2
           and all(r["why_not"] and r["option"] != comp["chosen"]
@@ -423,6 +450,19 @@ def test_intelligence(tmp: Path):
           and compile(preserved_sk, "preserved.py", "exec") is not None)
     check("skeleton: 无图不添加空资产清单命令（含图命令交由 plan 决定）",
           "--assets-manifest" not in preserved_sk and "媒体:none" in preserved_sk)
+    four_pages = intel.think(dict(BRIEF, slides=[
+        {"id": f"p{i}", "title": f"第{i}页结论句", "content": f"证据 {i}（来源：台账）"}
+        for i in range(1, 5)]))
+    four_sk = intel.build_skeleton(four_pages)
+    four_vars: dict = {}
+    exec(compile(four_sk, "anchor-skeleton.py", "exec"), four_vars)
+    anchors = [s.get("anchor") for s in four_vars["SPEC"]["slides"]]
+    role_1 = four_pages["pages"][1]["judgment"]["visual_role"]["role"].upper()
+    check("skeleton: 跨页锚以判断对象落进 spec（不是散文提醒），spec 不留第二个结论位",
+          isinstance(anchors[1], dict) and anchors[1].get("eyebrow") == role_1
+          and anchors[1].get("page_number") == 2 and anchors[0].get("page_number") is None
+          and all("page_intent" not in s for s in four_vars["SPEC"]["slides"]),
+          str(anchors))
     raw_media = intel.think(dict(BRIEF, slides=[
         {"id": "photo", "title": "真实门店的回访记录",
          "content": "门店现场观察有来源（来源：实地记录）", "asset": "required"}]))
@@ -1305,6 +1345,24 @@ def test_cli(tmp: Path):
           and "--assets-manifest" in media_sk.read_text(encoding="utf-8")
           and len(json.loads(auto_manifest.read_text(encoding="utf-8")).get("assets", [])) == 1,
           str(image_json.get("workflow", {})))
+    # --asset-cache（提示词缓存）此前在读取路径上引用了未导入的 json 模块，
+    # 属于「只在冷启动加缓存时才炸」的真实崩溃点：这里把读写两个方向都钉住。
+    cache_file = media_dir / "prompt-cache.json"
+    cache_args = ("--assets-out", str(auto_manifest), "--asset-cache", str(cache_file))
+    cache_first = run_vao("plan", str(media_brief), "--out", str(media_plan),
+                          "--skeleton", str(media_sk), *cache_args, "--json")
+    cache_second = run_vao("plan", str(media_brief), "--out", str(media_plan),
+                           "--skeleton", str(media_sk), *cache_args, "--json")
+    cache_meta = json.loads(auto_manifest.read_text(encoding="utf-8")).get("prompt_cache", {}) \
+        if cache_first.returncode == 0 else {}
+    check("cli: --asset-cache 读写闭环（第二次 plan 命中提示词缓存，不再 NameError）",
+          cache_first.returncode == 0 and cache_second.returncode == 0
+          and cache_file.is_file()
+          and json.loads(cache_file.read_text(encoding="utf-8")).get("schema")
+          == "vao-asset-prompt-cache-v2" and cache_meta.get("hits") == 1,
+          f"rc={cache_second.returncode} hits={cache_meta.get('hits')} "
+          f"{cache_second.stderr[-160:]}")
+
     check("cli: 无图一次 plan 没有资产清单和清单验证参数",
           noimg_run.returncode == 0 and not (tmp / "asset_manifest.json").exists()
           and not noimg_json.get("workflow", {}).get("assets_manifest_path")
@@ -1368,11 +1426,13 @@ def test_cli(tmp: Path):
         png_valid = True
     except (OSError, ValueError):
         pass
+    # 证据被破坏必须重贴，但页面没变就不该重画：逐页缓存命中 → 联络表重建 + 零重绘。
+    # （此前断言还要求整份 bundle 不复用——那会把「什么都没变时复用页面」也判成失败。）
     check("cli: 交付 PNG 被破坏不能再凭 marker 假 PASS；复用未变页图修复联络表",
           repaired.returncode == 0 and png_valid
-          and not repair_timing.get("render_bundle_reused")
           and repair_timing.get("render_pages_drawn") == 0
-          and repair_timing.get("compile_ms") == 0)
+          and repair_timing.get("compile_ms") == 0
+          and repair_timing.get("ghost_ms", 0) > 0)
     small = run_vao("check", str(filled), str(out), "--mode", "release", "--speed", "fast",
                     "--ghost-pages", "2", "--json")
     small_timing = (json.loads(small.stdout).get("timing") or {}) if small.returncode == 0 else {}

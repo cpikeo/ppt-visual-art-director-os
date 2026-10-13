@@ -1143,8 +1143,12 @@ class RenderContext:
         h = float(element["height"])
         return x, y, w, h
 
-    def warn(self, message: str, element_id=None) -> None:
-        """记一条编译期警告（字符串列表；唯一读法是 compile_report["warnings"]）。"""
+    def warn(self, message: str) -> None:
+        """记一条编译期警告（字符串列表；唯一读法是 compile_report["warnings"]）。
+
+        element 身份已经写进消息文本本身；不再收一个没人读的参数（vulture 实测
+        该参数从未被实现读取，属于「接口长得像有消费者」的假象）。
+        """
         self.warnings.append(message)
 
 # （历史：此块曾住背景层免检阈值 BG_MIN_COVERAGE / BG_MIN_PROTECT_OPACITY，

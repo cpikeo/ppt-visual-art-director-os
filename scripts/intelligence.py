@@ -367,7 +367,10 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     if _hit(body, _STRUCTURE_WORDS):
         modes["structure"] = 0.65
     if _hit(body, _SEQUENCE_WORDS):
-        modes["sequence"] = 0.6
+        # 顺序词出现得越多，形状越是「有步骤的行动」，越不该被一个孤立的时长数字
+        # 压成 number（实测：三段里程碑 + 总计 18 个月的排期页被判成 number）。
+        seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in body)
+        modes["sequence"] = 0.6 + 0.05 * min(seq_hits, 4)
     if SEQUENCE_MARKERS & set(body):
         # 两个可比较的量由箭头连起来是变化，不是『步骤模板』；有明确阶段词
         # 则仍由真实流程承担形状。无数字的箭头链维持原先的顺序判定。
@@ -441,12 +444,18 @@ def _title_assertive(title: str) -> bool:
 def _is_data_listing(sent: str) -> bool:
     """数字列举不是结论：「华东 +42%、华南 +28%、华北 +15%」是证据表的一行。
 
-    判据是**形状**而不是字数：同一量纲的两个以上数字并排、句中没有主张动词
-    （变化/比较/结论/决定），也没有把数字连成一句话的关系词 —— 这样的句子
-    只回答「有多少」，不回答「所以呢」。作者真要它当结论，写 insight 声明即可。
+    判据是**形状**而不是字数。列举= 报告「各自是多少/走到哪」，主张= 让人得出
+    「所以呢」。所以：结论句／要决定的句子／比较措辞＝主张（先判，压过其余）；
+    两组以上的到达句并排（「甲方从 12% 升至 19%，我方从 9% 降至 7%」）＝列举——
+    它把两条变化摆在一起，仍然只是证据表的一行；单组「从 A 到 B」是一个关系句，
+    算主张。作者真要列举句当结论，写 insight 声明即可。
     """
-    if _hit(sent, _CHANGE_WORDS) or _hit(sent, _CONCLUSION_WORDS) \
-            or _hit(sent, _ASK_WORDS) or _hit(sent, _COMPARISON_WORDS):
+    if _hit(sent, _CONCLUSION_WORDS) or _hit(sent, _ASK_WORDS) \
+            or _hit(sent, _COMPARISON_WORDS):
+        return False
+    if len(_ARRIVAL_CUE.findall(sent)) >= 2:
+        return True                      # 两条以上的变化并排 = 比较证据行
+    if _hit(sent, _CHANGE_WORDS):
         return False
     ev = evidence_numerals(sent)
     if len(ev) < 2:
@@ -526,7 +535,7 @@ def extract_claim(item: dict) -> dict:
             else:
                 score += 1.6 if content else 0.0
                 bits.append("数字「" + "/".join(n["raw"] for n in snums[:3]) + "」")
-        if _hit(sent, _CHANGE_WORDS):
+        if not listing and _hit(sent, _CHANGE_WORDS):
             score += 0.8
             bits.append(f"变化「{_fired(sent, _CHANGE_WORDS)}」")
         if len(sent) <= 42:
@@ -1985,12 +1994,12 @@ def build_skeleton(bundle: dict) -> str:
             L.append(f'        #    作者声明（原样生效）: {shown[:150]}')
         L.append('        {')
         L.append(f'            "id": {pg.get("id")!r},')
-        intent = {"insight": claim.get("text") or "", "focus": focus.get("element_role") or ""}
-        L.append(f'            "page_intent": {json.dumps(intent, ensure_ascii=False)},'
-                 '  # 判断已给出；要改就改这里')
         if pg.get("anchor"):
-            L.append(f'            "anchor": {json.dumps(pg["anchor"], ensure_ascii=False)},'
-                     '  # 眉标固定上缘 / 页码固定象限（落成对应 role 的元素）')
+            # 判断对象原样落进 spec（不是散文提醒）：spec 层从此没有第二个「结论位」——
+            # 结论住上面的判断注释，跨页锚住这里，作者一眼能对上是哪一个对象。
+            L.append('            # 跨页锚（眉标角色 / 页码序号，≥4 页时由 plan 发）：'
+                     '落成 role=eyebrow / role=page_number 的元素')
+            L.append(f'            "anchor": {json.dumps(pg["anchor"], ensure_ascii=False)},')
         L.append('            "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},')
         L.append('            "elements": [  # TODO：按上面的判断落元素')
         L.append('            ],')
