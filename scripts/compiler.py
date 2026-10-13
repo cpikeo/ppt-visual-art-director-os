@@ -324,7 +324,7 @@ def _needs_alpha(img) -> bool:
 
 
 def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
-                     bg: tuple | None = None, *, speed: str = "strict",
+                     bg: tuple | None = None, *,
                      decode_cache: dict | None = None,
                      cache_key: str | None = None) -> bytes:
     """源图 → 落位尺寸的 PNG bytes（无临时文件）。source 可为路径或 bytes。"""
@@ -346,7 +346,7 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
             cx0, cy0 = int(iw * crop[0]), int(ih * crop[1])
             cx1, cy1 = int(iw * (1 - crop[2])), int(ih * (1 - crop[3]))
             img = img.crop((cx0, cy0, cx1, cy1))
-        return _encode_png(img, w, h, fit, bg, speed)
+        return _encode_png(img, w, h, fit, bg)
     with Image.open(io.BytesIO(blob)) as opened:
         iw, ih = opened.size
         l, t, r, b = (crop or (0, 0, 0, 0))
@@ -385,11 +385,10 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
         # 只缓存未裁切的底图：同一源在不同盒子里可能带不同裁切，缓存裁切后的图
         # 会让第二次命中时在已裁切的图上再裁一次（像素错误，不是性能问题）。
         decode_cache[cache_key] = img
-    return _encode_png(img, w, h, fit, bg, speed)
+    return _encode_png(img, w, h, fit, bg)
 
 
-def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None,
-                speed: str) -> bytes:
+def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None) -> bytes:
     """已解码底图 → 落位尺寸的 PNG bytes（cover / contain）。"""
     import io
     from PIL import Image
@@ -412,9 +411,10 @@ def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None,
         left, top = (nw - target_w) // 2, (nh - target_h) // 2
         img = img.crop((left, top, left + target_w, top + target_h))
     buf = io.BytesIO()
-    # 快速档用低压缩级别换编码时间：预览/交付质量不受影响（无损），
-    # 只是文件略大——PNG 的无损性不随 compress_level 改变。
-    img.save(buf, "PNG", compress_level=1 if speed == "fast" else 6)
+    # 统一 level 1（9.10.0 同判据，v9.12 起：zlib 级别不改变任何解码像素——PNG
+    # 无损；level 6 只对照片内容每张多付 ~400ms 编译时间换 ~10% 更小的体积。
+    # 证据与产物的效力在像素，不在压缩比；两档产物字节从此同口径。
+    img.save(buf, "PNG", compress_level=1)
     return buf.getvalue()
 
 
@@ -503,7 +503,6 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
                 if decode_cache is not None and str(src) in decode_cache:
                     ctx.timings["image_decode_reuses"] = ctx.timings.get("image_decode_reuses", 0) + 1
                 blob = _fit_image_bytes(source, w, h, fit, crop, bg=bg_tuple,
-                                        speed=getattr(ctx, "speed", "strict"),
                                         decode_cache=decode_cache,
                                         cache_key=str(src))
                 ctx.timings["image_transform_ms"] = ctx.timings.get("image_transform_ms", 0.0) \
@@ -1707,9 +1706,9 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
 
     返回契约：{"passed","warnings","file_bytes"}。
 
-    speed="fast"（v5.9）时：图片变换用低压缩级别编码，包级后处理仍做
-    （时间戳与 XML 规格不变，产物仍确定性），只是不再为媒体条目重复压缩。
-    speed="strict" 保留原压缩级别。两条路径的**可见结果一致**，差异只在耗时与字节。
+    图片变换统一 PNG level 1（v9.12：zlib 级别不改变解码像素，fast/strict
+    产物字节同口径；v5.9 的两档压缩级别双口径在此收口）。包级后处理两档都做
+    （时间戳与 XML 规格不变，产物仍确定性）。
     """
     output_path = Path(output_path)
     _spec_warning = None

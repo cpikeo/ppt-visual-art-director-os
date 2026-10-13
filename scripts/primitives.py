@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import sys
 from pathlib import Path
 
 
@@ -229,12 +230,40 @@ def engine_fingerprint(scope: str, *, short: int | None = None) -> str:
 
 # ── python-pptx 延迟加载（契约，别改回顶层 import）────────────────────
 # 本层被 guard / normalizer / qa 复用，而它们**只处理 spec 数据**：draft 一轮
-# 真正的判断成本是 2.8ms，pptx 的 import 却要 152ms（pptx.api → opc → oxml →
+# 真正的判断成本是 2.8ms，pptx 的 import 却要 150ms（pptx.api → opc → oxml →
 # xml.sax → urllib.request）。把整套 Presentation API 拖进「读数据」的路径是
 # 架构错误，所以这里只在真的要用 pptx 对象时才解析（`_p()`，进程内缓存一次）。
-# 自检 `check_draft_import_contract` 会断言 draft 进程内不得出现 pptx / lxml /
+# 颜色是唯一的跨层对象：ghost 预览（PIL）也走 parse_token，但只用元组与
+# `str()`——因此 pptx 未加载时 `parse_token` / `fallback_ink` 产 RGB 等价对象
+# （同是 3 元组、str() 同为 'RRGGBB'），**零导入**；pptx 已加载（编译进程内）
+# 则照旧产真 RGBColor，`.rgb =` 边界的 isinstance 校验不受影响。规则：等价
+# 对象只存在于没有 pptx 的进程里，那里没有任何代码会把它赋给 pptx API。
+# 自检 `import_contract` 断言 draft/spec/纯预览进程内不得出现 pptx / lxml /
 # compiler —— 谁把 `from pptx import ...` 放回本层顶部，立刻失败。
 _PPTX: dict | None = None
+
+
+class RGB(tuple):
+    """RGBColor 的零导入等价对象（仅当 pptx 未加载时由 `_rgb_new` 产出）。
+
+    与 pptx.dml.color.RGBColor 同为 0-255 三元组、str() 同为 'RRGGBB'；
+    tuple 子类所以索引/迭代/相等与真对象一致。不要在 pptx 已加载的进程里
+    手工构造它——编译边界（`*.rgb =`）做 isinstance 校验，只收真 RGBColor。
+    """
+
+    __slots__ = ()
+
+    def __str__(self) -> str:
+        return "%02X%02X%02X" % self
+
+
+def _rgb_new(r: int, g: int, b: int):
+    """按进程状态产颜色对象：pptx 已加载 → 真 RGBColor；否则等价元组（不导入）。"""
+    if _PPTX is not None:
+        return _PPTX["RGBColor"](r, g, b)
+    if "pptx.dml.color" in sys.modules:
+        return sys.modules["pptx.dml.color"].RGBColor(r, g, b)
+    return RGB((int(r), int(g), int(b)))
 
 
 def _p() -> dict:
@@ -354,8 +383,8 @@ def color_to_hex(value) -> str | None:
 
 
 def fallback_ink():
-    """未声明墨色时的安全值（RGBColor，需要 pptx → 延迟构造）。"""
-    return _p()["RGBColor"](0x20, 0x20, 0x20)
+    """未声明墨色时的安全值（RGBColor 语义；pptx 未加载时为等价对象，不导入）。"""
+    return _rgb_new(0x20, 0x20, 0x20)
 
 
 def emu(px) -> int:
@@ -557,7 +586,10 @@ def with_alpha(hex_color: str, alpha: float) -> str:
 
 
 def parse_token(value):
-    """-> (RGBColor | None, alpha | None)；支持 #RGB / #RRGGBB / #RRGGBBAA / none。"""
+    """-> (RGBColor | RGB | None, alpha | None)；支持 #RGB / #RRGGBB / #RRGGBBAA / none。
+
+    pptx 未加载的进程（纯预览）返回零导入等价对象 RGB，见 `_rgb_new`。
+    """
     if value is None:
         return None, None
     t = str(value).strip()
@@ -568,16 +600,17 @@ def parse_token(value):
     h = t[1:]
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
+    try:
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except ValueError:
+        return None, None
     if len(h) == 8:
         try:
-            return _p()["RGBColor"].from_string(h[0:6].upper()), int(h[6:8], 16) / 255.0
+            return _rgb_new(r, g, b), int(h[6:8], 16) / 255.0
         except Exception:
             return None, None
     if len(h) == 6:
-        try:
-            return _p()["RGBColor"].from_string(h.upper()), None
-        except Exception:
-            return None, None
+        return _rgb_new(r, g, b), None
     return None, None
 
 
@@ -931,16 +964,44 @@ def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,
         run.text = text
     P = _p()
     qn = P["qn"]
-    # python-pptx 的 run.font 是描述符；同一 run 重复取它会反复走 XML
-    # 父链查找。缓存一次对象，属性写入语义不变但可明显降低大 deck 编译成本。
-    font = run.font
-    font.size = P["Pt"](size_pt)
-    font.bold = bool(bold)
-    font.italic = bool(italic)
-    if color is not None:
-        font.color.rgb = color
-    font.name = latin_family
+    # 一次拿到 rPr。python-pptx 的 font.size / font.color… 每次访问都重新走
+    # run→rPr 的 get_or_add 与 ColorFormat 包装；大 deck（每 run 5+ 次父链查找）
+    # 实测占编译段 ~1/3，是第一热点。
     rPr = run._r.get_or_add_rPr()
+    if len(rPr) == 0:
+        # 快路径：全新 rPr（编译器创建的 run 恒为新建）。子元素按 OOXML schema
+        # 顺序直组（solidFill → latin，随后共享段补 ea → cs），属性按插入序直写
+        # （sz → b → i → spc）——与 XMLchemy get_or_* 在空 rPr 上的追加结果
+        # 逐字节相同（A/B SHA 对拍锁定）。会触发 python-pptx 校验的输入
+        # （sz 越界 / 非六位 HEX）当场拒绝或回退慢路径，失败语义不变。
+        sz = P["Pt"](size_pt).centipoints
+        color_hex = str(color) if color is not None else ""
+        if 100 <= sz <= 400000 and (color is None or len(color_hex) == 6) \
+                and latin_family is not None and cjk_family is not None:
+            rPr.set("sz", str(sz))
+            rPr.set("b", "1" if bold else "0")
+            rPr.set("i", "1" if italic else "0")
+            if color is not None:
+                sf = rPr.makeelement(qn("a:solidFill"), {})
+                sf.append(sf.makeelement(qn("a:srgbClr"), {"val": color_hex}))
+                rPr.append(sf)
+            latin_el = rPr.makeelement(qn("a:latin"), {})
+            latin_el.set("typeface", latin_family)
+            rPr.append(latin_el)
+        else:
+            rPr.sz = P["Pt"](size_pt).centipoints
+            rPr.b = bool(bold)
+            rPr.i = bool(italic)
+            if color is not None:
+                rPr.get_or_change_to_solidFill().get_or_change_to_srgbClr().val = str(color)
+            rPr.get_or_add_latin().typeface = latin_family
+    else:
+        rPr.sz = P["Pt"](size_pt).centipoints
+        rPr.b = bool(bold)
+        rPr.i = bool(italic)
+        if color is not None:
+            rPr.get_or_change_to_solidFill().get_or_change_to_srgbClr().val = str(color)
+        rPr.get_or_add_latin().typeface = latin_family
     if spacing:
         rPr.set("spc", str(int(round(float(spacing) * 100))))
     if alpha is not None and alpha < 1.0:
@@ -999,7 +1060,7 @@ class RenderContext:
 
     # -- 颜色 -------------------------------------------------------------
     def paint(self, value):
-        """-> (RGBColor | None, alpha | None)"""
+        """-> (RGBColor | RGB | None, alpha | None)（RGB = pptx 未加载时的等价对象）"""
         token = self.colors.get(value, value)
         return parse_token(token)
 
@@ -1115,8 +1176,7 @@ class RenderContext:
             if k > best_c:
                 best_c, best_role = k, role
         if best_role in ("white", "black"):
-            rgb = _p()["RGBColor"]
-            return rgb(0xFF, 0xFF, 0xFF) if best_role == "white" else rgb(0x11, 0x11, 0x11)
+            return _rgb_new(0xFF, 0xFF, 0xFF) if best_role == "white" else _rgb_new(0x11, 0x11, 0x11)
         return self.color(best_role) or self.text_color()
 
     # -- 字体 -------------------------------------------------------------

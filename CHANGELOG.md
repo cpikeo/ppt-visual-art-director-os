@@ -1,3 +1,142 @@
+## 9.13.0 · CASE_004 Real-Project Ledger & QC-Loop Parity（2026-10-13）
+
+上一轮定下的方向本轮执行：用**真实项目样本**（PPT_CASE_004 · 15 页高端红酒品牌
+融资路演，Old World Wine × Quiet Luxury × 欧洲艺术馆）走完 THINK → 出图 → BUILD →
+VERIFY 全链，把「BUILD 侧迭代次数」这个端到端最大变量第一次变成**有账本的证据**，
+再按账本修掉真实返工源。**零新增模块**；代码只动 `vao.py` 一处判据 + 自测 +1 条
+回归（186/186）+ contract.md 两行契约。
+
+### 真实迭代账本（本轮实测）
+
+- **THINK（2 次 plan = 预算内收敛）**：plan#1 逼出 3 个真实设计决策——话题式标题
+  被拒判（警告正确：作者改写 2 个标题）、团队页 witness 判图被作者否决
+  （`asset: none`，真实路演不放伪造人物照）、`brand_colors` 列表式映射把酒红放上
+  ink → 作者改槽位式声明。plan 的判断面在把作者往更好的内容上推，不是噪音。
+- **资产（2 轮出图 + 2 次声明校准，零对抗误报）**：第 1 轮 3 张全 retry——
+  目视逐张核实：生成器把「负空间」画成平板色块（x=33% 画宽处 42 灰阶硬缝），
+  **QC 判得对**。带判据重写提示词（负空间改由光衰减/失焦承载）第 2 轮摄影质量
+  跃升，仍 retry——这次是作者没声明压字区，默认全高左带把真实纹理也计入。
+  按 safe_area 声明校准（asset_id 不变，已出图不作废的承诺实测成立）s01/s02 即过；
+  s04 两次收紧无效后裁图目检：判密的是**拱门弧线的明暗交界**——任何矩形落在拱门
+  里都会被弧线切割。设计判断：文字本就不该压在弧线上，翻转为亮字压暗拱顶
+  （`text_color: light` + 右侧压字区）→ accept。3/3 accept_with_advisory。
+- **BUILD（4 轮 check 收口）**：#1 作者脚本作用域错误；#2 图页叠字未声明背景层
+  （合规路径 `layer:"background"` ≥60% 豁免）+ s11 框高差 2.5px；#3 复合图
+  （`steps`/`big_number_row`）读元素级 `data` 载荷而非 `categories/series`；
+  #4 release strict 一次收口 PASS。
+- **缓存效率（真实修复轮实测）**：BLOCK→修复轮 ghost 页缓存 15/15 命中
+  （6ms，只重画变化的页）；QC 报告复用 3/3（264ms → 11.8ms）；输出被删 → 编译
+  缓存 fail-safe miss 重编（正确）；暖态整包 41.8ms；**真全冷（15 页 3 图）
+  1597ms**（load 5 + qc 264 + compile 709 + ghost 596 + guard 4）。
+
+### 按账本修掉的三处真实返工源
+
+- **qc 离线环同判比例**：`vao.py qc` 此前不把清单 `ratio` 传给 `image_qc`，
+  比例判据在「出图迭代最短反馈环」里失明——实测后果是「qc 全绿 → check BLOCK」
+  的无效往返（本轮作者亲历）。修复后 4:3 冒充 16:9 在 qc 环即被拦（实测+回归
+  `qc: 离线环同判比例`）。
+- **contract.md 补「载荷两式」**：数值图表 `categories + series`，复合排版图
+  （steps/process_flow/timeline/big_number_row/matrix/architecture）元素级
+  `data:[{label,value,desc?}]`——BUILD #3 整轮返工的根源是契约没写。
+- **contract.md 补「全幅影像叠字」**：`layer:"background"` + ≥60% 覆盖是图页
+  排版的合法路径，不声明即 OVERLAP——BUILD #2 的 12 条碰撞告警源于此。
+
+### 设计验收边界（诚实披露）
+
+15 页成稿经 ghost 联络表 + 关键页单图人工目检：世界统一（米白/酒红/旧铜金/
+炭黑 ≤4 色）、编辑排版与大留白成立、图页文字全部落在声明压字区内、数据图表
+单一高亮 + 直读标签、s03 低产高亮论证方向正确。**未做**：PowerPoint 真实渲染
+（沙箱无 Office）、第三方盲评；B 端文与图像为 AI 生成样本，非授权实景素材——
+交付前需作者按 contract 完成第三、四层证据。
+
+## 9.12.0 · Image Chain Measured & Encoding Unity（2026-10-13）
+
+本轮先补齐一块从未测量过的证据：**含图稿的端到端基线**（6 页 3 图、16:9、strict）。
+测量暴露的真瓶颈：含图 compile 1146ms（无图稿 265ms），其中 `_encode_png` 占 883ms
+——`compress_level=1 if speed=="fast" else 6` 正是 9.10.0 在预览上删掉的**双口径**：
+照片内容按 level 6 重编码，每张多付 ~400ms 只换 ~15% 更小的体积，解码像素完全相同
+（PNG 无损）。**零新增模块、零新增规则、零新增检查层**；运行时只动 `compiler.py`
+一处口径 + 文档，自测 +1 条回归（185/185）。
+
+- **图片变换编码口径唯一（PNG level 1）**：与 9.10.0 同判据——证据与产物的效力
+  在像素，不在压缩比。`_fit_image_bytes` / `_encode_png` 的 `speed` 参数随之删除
+  （唯一消费者就是这个分支）。实测：含图稿全冷 **1752ms → 1201ms（−32%）**
+  （compile 1146→595）；QC 报告温态再跑到 ~1100ms。
+- **正确性对拍（双口径）**：新旧产物内嵌 3 张媒体**解码像素逐位一致**（文件字节
+  因 zlib 级别不同而不同：2555KB → 3029KB，+18.5%——用体积换时间，诚实披露）；
+  无图两夹具（12 页中文稿 + 富路径夹具）对上游 HEAD 的 PPTX **逐字节一致**、
+  全部预览 PNG **解码像素逐位一致**（整栈 9.10+9.11+9.12 汇总验证）。
+- **新不变式**：`media: 图片变换后 fast 与 strict 产物字节一致`——v5.9 起文档写明
+  的「两条路径可见结果一致，差异只在耗时与字节」双口径在此收口，同 spec 两档
+  编出**同一个** PPTX（实测+回归锁定）。
+- **规模扩展性审计（新证据）**：36 页压力稿 plan 78ms（次线性）、冷态 check
+  1269ms（compile 1.92×/ghost 2.82×/页数 3×，无超线性）；含图链的 QC 判据
+  （安全区亮度、比例不符、retry 升级、防抖）在真实图上逐条实测有效——
+  `qc` 离线体检不查比例而 check 查，为既有的口径分工，未改。
+
+## 9.11.0 · Fast-Path rPr & Monotone Wrap Fit（2026-10-13）
+
+同一固定任务（12 页中文董事会决策稿、7 次取中位、同机同条件）在 9.10.0 基线上
+再测：冷态耗时仍集中在 compile（含 pptx 导入）与 ghost 两段，其中**段内第一热点**
+分别是 `set_run_font` 的 XMLchemy 父链查找（~109ms/剖析）与 CJK 折行的逐字前缀
+重复测量（`getlength` 1241 次 / 67ms）。本轮两项都以「输出逐字节 / 逐像素一致」
+为前提收口，**零新增模块、零新增规则、零新增检查层**；自测 +1 条回归（184/184）。
+实测：冷态 release **619ms → 513ms（−17%）**（compile 293→246、ghost 311→249）；
+纯预览路径 **411ms → 348ms**；自 9.9.0 基线（709ms）累计 **−28%**。正确性对拍：
+两份夹具的 **PPTX SHA-256 逐字节一致、全部预览 PNG 解码像素逐位一致**。
+
+- **`set_run_font` 新建 rPr 快路径**：编译器创建的 run 恒为全新 rPr——子元素按
+  OOXML schema 顺序直组（solidFill → latin，共享段补 ea → cs），属性按插入序
+  直写（sz → b → i → spc），跳过 `get_or_change_to_solidFill` /
+  `get_or_add_latin` 每次的 successor 链扫描（`_add_child` 1962 次、
+  `first_child_found_in` 2217 次）。会触发 python-pptx 校验的输入（sz 越界 /
+  非六位 HEX / family 为 None）当场拒绝或回退既有慢路径，失败语义不变；
+  非 新建 rPr 一律走慢路径。产物逐字节相同（A/B SHA 对拍）。
+- **CJK 折行二分拟合**：`visible_width` 随前缀长度单调不减（字形步进与
+  tracking 均非负），「最长可容纳前缀」唯一——二分与逐字线性扫描找到的是
+  **同一个断点**，被度量的字符串集合不同但每个判定上的谓词值相同，输出
+  逐字符一致（600 组随机对拍进自测；4000 组仓外对拍含尾随空格 / 全角空格 /
+  width=1 / tracking>0 边界）。文本测量从每行 O(L) 次调用降到 O(log L)，
+  `getlength` 总耗时 67ms → ~20ms。**不采用**「按字符宽度累加」的近似方案：
+  实测 PIL `getlength` 非可加（长行 ~3px 漂移），会移动断行位置——预览保真
+  优先于速度。
+- **回归**：`ghost: CJK 折行二分拟合与逐字贪心同断点`（内联旧线性参考实现，
+  600 组随机对拍）。
+
+## 9.10.0 · Preview Encoding Unity & pptx-Free Ghost（2026-10-13）
+
+同一固定任务（12 页中文董事会决策稿、5 次取中位、同机同条件）先复测再动手：
+冷态 release check 的耗时集中在 compile（含 pptx 导入）与 ghost 两段，QA/规划/缓存
+段合计 <20ms，暖态 17ms——本轮只动测量出来的三处，**零新增模块、零新增规则、
+零新增检查层**。运行时代码 3 个文件 +36/−17，自测 +2 条回归（183/183）。
+实测：冷态 release **709ms → 619ms（−13%）**；纯预览路径（编译缓存命中、预览失效）
+**561ms → 411ms（−27%）**；正确性以字节与像素双口径验证：两份夹具（12 页中文稿 +
+富路径夹具：渐变/透明度/字距/斜体/大写/卡内文字/高亮柱图/负值/构成图/进度条）
+编译产物 **PPTX 逐字节一致（SHA-256 相同）、全部预览 PNG 解码像素逐位一致**。
+
+- **预览编码口径统一（PNG level 1）**：`strict` 此前按 level 6 编码证据 PNG，
+  `fast` 按 level 1——同一像素两种文件口径。zlib 级别不改变任何解码像素（PNG 无损），
+  level 6 只为每轮冷预览多付 ~70ms 换 ~10% 更小的证据文件；证据的效力在像素与
+  见证（SHA-256/页缓存键照旧含编码口径，旧缓存自然失效），不在压缩比。
+  两档统一为 1（`ghost_deck` / `make_contact_sheet` 默认值同步），12 页 + 联络表
+  实测 338ms → 275ms。延续 9.9.0 的同一判断：预览在本尺寸回答方向问题，
+  两档不该有两种口径。
+- **ghost 彻底去 pptx 化**：`parse_token` 解析 #HEX 时经 `_p()["RGBColor"]` 把整条
+  pptx 导入链（pptx.api → opc → oxml → xml.sax/urllib，实测 ~150ms）拉进 PIL 预览
+  ——primitives 顶部注释承诺的「draft 进程零 pptx」契约实际从未成立，也没有那条
+  `check_draft_import_contract` 自检。现在 `parse_token` / `fallback_ink` / 对比白黑
+  在 pptx 未加载的进程产零导入等价对象 `RGB`（同 3 元组、str() 同为 'RRGGBB'），
+  pptx 已加载（编译进程内）照旧产真 RGBColor——`*.rgb =` 边界的 isinstance 校验
+  不受影响；等价对象只存在于没有任何 pptx 赋值路径的进程里。纯预览路径每轮
+  省 ~150ms；冷态 release 不变（编译已付导入）。
+- **set_run_font 直写 rPr**：python-pptx 的 `font.size / bold / italic / color.rgb /
+  name` 每次访问都重走 run→rPr 父链与 ColorFormat 包装（大 deck 每 run 5+ 次）。
+  改为一次 `get_or_add_rPr` 后按同一顺序直写 `sz/b/i/solidFill/latin`，写入序列与
+  语义逐项一致，产物逐字节相同（夹具 SHA 对拍锁定）；编译段实测 −31ms。
+- **导入契约第一次真的有测试**：`primitives` 纯预览进程零 pptx / lxml / compiler
+  （子进程断言）+ pptx 已加载时 `parse_token` 必须产真 RGBColor（编译边界类型
+  不变式），共 2 条回归。
+
 ## 9.9.0 · Measured Preview Cost & Two Judgment Corrections（2026-10-13）
 
 先测量再动手的一次收口：固定任务（12 页中文董事会决策稿）上逐阶段计时，只改

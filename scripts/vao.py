@@ -343,6 +343,9 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     页级缓存仍负责修复而不重画未变化的页。
     两档同一渲染口径（1× 直接绘制）：预览在本尺寸上回答的是方向问题，
     2× 超采样只用 38% 的额外时间买到亚像素抗锯齿差，不改变任何判断依据。
+    两档同一编码口径（PNG level 1）：zlib 级别不改变任何像素（PNG 无损），
+    level 6 只把每轮冷预览多花 ~70ms 换 ~10% 更小的证据文件——证据的效力
+    在像素与见证，不在压缩比；实测 12 页 + 联络表 338ms → 275ms。
     """
     from primitives import engine_fingerprint, file_digest, witness, witness_same
     fast = str(speed).lower() == "fast"
@@ -414,12 +417,12 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     page_stats: dict = {}
     paths = ghost_deck(preview_spec, output_dir, pages=wanted,
                        scale=0.5, supersample=1, store=True,
-                       png_compress_level=1 if fast else 6, images_out=rendered,
+                       png_compress_level=1, images_out=rendered,
                        stats=page_stats)
     sheet_stats: dict = {}
     contact = make_contact_sheet(paths, Path(output_dir) / "ghost-contact-sheet.png",
                                  images=rendered,
-                                 png_compress_level=1 if fast else 6,
+                                 png_compress_level=1,
                                  cache_dir=Path(output_dir) / PAGE_CACHE_DIR,
                                  stats=sheet_stats)
     rendered_ids = [str(slides[n - 1].get("id")) for n in wanted
@@ -892,6 +895,8 @@ def run_qc(manifest_path: str, assets_dir: str | None = None,
                       if meta.get("text_color") else None,
                       safe_rect=a.get("safe_area"),
                       background=a.get("background_color") or "#FFFFFF",
+                      expected_ratio=a.get("ratio") or None,
+                      allow_crop=bool(a.get("asset_allow_crop")),
                       max_side=prof["max_side"])
         pol = qc_retry_decision(qc, attempt=0, phase="draft",
                                 asset_function=a.get("asset_function"),

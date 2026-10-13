@@ -1154,6 +1154,23 @@ def test_production(tmp: Path):
           diag_read == 1 and diag_snap and diag_sha,
           f"read_count={diag_read} (expect 1), snapshot_hit={diag_snap}, sha_match={diag_sha}, "
           f"canonical_key={image_key!r}, extra_keys_in_snapshot={extra_keys}")
+
+    # 图片变换编码口径唯一（v9.12）：PNG 无损，zlib 级别不改变任何解码像素；
+    # fast/strict 两档的产物字节必须完全一致（v5.9 的「差异只在耗时与字节」
+    # 双口径在此收口）。用需要 cover 变换的图（比例不符）逼出重编码路径。
+    _ratio_src = tmp / "ratio_src.png"
+    Image.new("RGB", (100, 60), (200, 40, 40)).save(_ratio_src)
+    _ratio_spec = {"canvas": {"width": 1280, "height": 720}, "theme": {},
+                   "slides": [{"id": "r1", "elements": [
+                       {"id": "pic", "type": "image", "src": str(_ratio_src),
+                        "x": 40, "y": 40, "width": 80, "height": 80, "fit": "cover"}]}]}
+    from compiler import compile_deck as _compile_deck
+    _deck_fast, _deck_strict = tmp / "img_fast.pptx", tmp / "img_strict.pptx"
+    _compile_deck(_ratio_spec, _deck_fast, speed="fast", spec_path=str(build))
+    _compile_deck(_ratio_spec, _deck_strict, speed="strict", spec_path=str(build))
+    check("media: 图片变换后 fast 与 strict 产物字节一致（编码口径唯一）",
+          file_digest(_deck_fast) == file_digest(_deck_strict))
+
     safe = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
     qc = image_qc(img, safe_rect=safe, text_is_dark=True)
     decision_ok = qc_retry_decision(qc, attempt=0, phase="release")
@@ -1177,6 +1194,25 @@ def test_production(tmp: Path):
           bad.get("status") != "ok" and decision.get("action") in ("block", "fail",
                                                                    "hold", "none"),
           f"{bad.get('status')} {decision}")
+
+    # 离线 qc 环与 check 同判据（CASE_004 实测教训）：清单声明 16:9 的资产，
+    # 4:3 成图必须在 qc 环就被拦——否则作者拿到「qc 全绿 → check BLOCK」的
+    # 无效往返，最短反馈环变成最长的弯路。
+    import vao as _vao
+    _ratio_img = tmp / "qc-loop-ratio.png"
+    Image.new("RGB", (1024, 768), (214, 206, 192)).save(_ratio_img)
+    _m = {"schema": "vao-assets-v2", "assets_dir": str(tmp),
+          "assets": [{"asset_id": "qc-loop-ratio", "slide_ids": ["s1"],
+                      "ratio": "16:9", "asset_role": "background",
+                      "safe_area": {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78},
+                      "meta": {"text_color": "dark"}}]}
+    _mpath = tmp / "qc_loop_manifest.json"
+    _mpath.write_text(json.dumps(_m, ensure_ascii=False), encoding="utf-8")
+    _loop = _vao.run_qc(str(_mpath), str(tmp), speed="strict")
+    _loop_r = _loop["results"][0]
+    check("qc: 离线环同判比例（清单 16:9 对 4:3 成图必须 retry）",
+          "aspect_ratio" in _loop_r.get("blocking", []),
+          json.dumps(_loop_r, ensure_ascii=False)[:160])
 
     # prepare 落盘：plan/brief 一致性走文件凭证，不再有 dict 级二次比对
     from assets import prepare_manifest
@@ -1268,6 +1304,89 @@ def test_production(tmp: Path):
         _draw_text(actual, {**text_elem, "opacity": opacity}, ctx, 1)
         same = same and actual.tobytes() == expected.tobytes()
     check("ghost: 不透明直画与半透明旧合成路径像素一致（速度不能改变设计）", same)
+
+    # CJK 折行二分拟合与逐字贪心同断点：visible_width 随前缀长度单调，
+    # 二分与线性扫描找到同一个「最长可容纳前缀」。随机混合文本 × 字号 ×
+    # 宽度 × tracking 对拍内联的旧线性参考实现，输出必须逐字符一致——
+    # 这条不变式一破，预览换行位置就变，像素证据不再可信。
+    from ghost import _wrap_lines as _wrap, _has_cjk as _has_cjk2
+
+    def _linear_cjk(text, font, width, tracking=0.0):
+        limit = max(1, width)
+        def vw(value):
+            return font.getlength(value) + max(0, len(value) - 1) * tracking
+        out = []
+        for raw in str(text).split("\n"):
+            if not raw:
+                out.append("")
+                continue
+            line = ""
+            for ch in raw:
+                cand = line + ch
+                if line and vw(cand) > limit:
+                    out.append(line.rstrip())
+                    line = ch
+                else:
+                    line = cand
+            out.append(line)
+        return out
+
+    import random as _random
+    _rng = _random.Random(20261013)
+    _pool = "本议案请求批准3800万美元首期预算，覆盖新加坡、雅加达；份额从7%到19%（括号）「引号」混合latin words在内。"
+    _fonts = [(_font(s, cjk=True, bold=b), s) for s in (11, 17, 34, 84) for b in (False, True)]
+    _wrap_bad = None
+    for _ in range(600):
+        _text = "".join(_rng.choice(_pool) for _ in range(_rng.randint(1, 50)))
+        if not _has_cjk2(_text):
+            continue
+        _f, _s = _rng.choice(_fonts)
+        _w = _rng.choice([1, 7, 37, 120, 496, 900])
+        _t = _rng.choice([0, 0, 0.5, 1.5, 3.0])
+        if _wrap(_text, _f, _w, _t) != _linear_cjk(_text, _f, _w, _t):
+            _wrap_bad = (_text, _s, _w, _t)
+            break
+    check("ghost: CJK 折行二分拟合与逐字贪心同断点（600 组随机对拍）",
+          _wrap_bad is None, str(_wrap_bad)[:160])
+
+    # 导入契约（primitives 顶部注释承诺过的自检）：纯预览进程不得拖入
+    # pptx / lxml / compiler。parse_token 曾经由 RGBColor 把整条 pptx 导入链
+    # 拉进 PIL 预览路径（实测 ~150ms/轮），这里锁死：谁改回去，立刻失败。
+    noleak_spec = tmp / "noleak_spec.json"
+    noleak_spec.write_text(json.dumps({
+        "canvas": {"width": 1280, "height": 720},
+        "theme": {"colors": {"background": "#F1EFEA", "ink": "#12120F",
+                             "muted": "#8A8984", "accent": "#6E6A63"}},
+        "slides": [{"id": "s1", "background": "#F1EFEA", "elements": [
+            {"id": "t", "type": "text", "x": 48, "y": 40, "width": 400, "height": 40,
+             "text": "纯预览", "size": 20, "color": "ink"}]}]}, ensure_ascii=False),
+        encoding="utf-8")
+    noleak_out = tmp / "noleak_preview"
+    probe = (
+        "import sys, json;"
+        f"sys.path.insert(0, {str(SCRIPTS)!r});"
+        "from primitives import parse_token;"
+        "c, _ = parse_token('#F1EFEA');"
+        "assert str(c) == 'F1EFEA' and tuple(c) == (241, 239, 234), c;"
+        "from ghost import ghost_deck;"
+        f"ghost_deck(json.load(open({str(noleak_spec)!r}, encoding='utf-8')), "
+        f"{str(noleak_out)!r}, pages=[1], scale=0.5);"
+        "bad = sorted(m for m in ('pptx', 'pptx.dml.color', 'lxml', 'compiler') "
+        "if m in sys.modules);"
+        "print('LEAK:' + ','.join(bad) if bad else 'CLEAN')"
+    )
+    r_probe = subprocess.run([sys.executable, "-c", probe],
+                             capture_output=True, text=True, encoding="utf-8")
+    check("primitives: 纯预览进程零 pptx / lxml / compiler（导入契约成立）",
+          r_probe.returncode == 0 and r_probe.stdout.strip() == "CLEAN",
+          (r_probe.stdout + r_probe.stderr).strip()[:200])
+    # 编译边界不变式：pptx 已加载的进程里 parse_token 必须产真 RGBColor
+    # （`*.rgb =` 的 isinstance 校验只收真对象；等价元组只存在于零 pptx 进程）。
+    from pptx.dml.color import RGBColor
+    from primitives import parse_token as _parse_token
+    c_loaded, _ = _parse_token("#123456")
+    check("primitives: pptx 已加载时 parse_token 产真 RGBColor（编译边界类型不变）",
+          isinstance(c_loaded, RGBColor), type(c_loaded).__name__)
 
 
 # ── 4 · cli + docs ───────────────────────────────────────────────────

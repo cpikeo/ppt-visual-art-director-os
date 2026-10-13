@@ -81,11 +81,15 @@ line/trend/single_trend_line(8) · area(8) · donut/pie(8) · stacked_bar(8) · 
 waterfall(12) · matrix(12) · bubble(12) · sparkline(12) · process_flow(7) · timeline(7) ·
 steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/executive_kpi/big_number
 （数字展示读元素级 `value`）。数值图表齐 `source / unit / period / basis`（release 硬门）；
-同 `metric` 跨页必须同单位。
+同 `metric` 跨页必须同单位。**载荷两式**：数值图表用 `categories + series[].values`；
+复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）
+用元素级 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
 
 **来源区**：`source_zone` 内只放 `role ∈ {source, method, metadata}` 的文字，
 其他对象与之相交即 `SOURCE_COLLISION`。**跨页锚**：`role=eyebrow` 与 `role=page_number`，
-位置全 deck 一致（plan 在 ≥4 页时逐页发）。
+位置全 deck 一致（plan 在 ≥4 页时逐页发）。**全幅影像上叠字**：图元素声明
+`layer: "background"` 且覆盖 ≥60% 画布（伪背景仍拦），其上文字按正常容量与
+安全区纪律落位；不声明的图按内容对象参与碰撞检查——叠字即 `OVERLAP`。
 
 ## 作者逃生口（生产实证 · 写 spec / 出图前查）
 

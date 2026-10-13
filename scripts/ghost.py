@@ -295,15 +295,31 @@ def _wrap_lines(text: str, font, width: int, tracking: float = 0) -> list[str]:
                     line = word if not line else f"{line} {word}"
             result.append(line)
             continue
-        line = ""
-        for ch in raw:
-            candidate = line + ch
-            if line and visible_width(candidate) > limit:
-                result.append(line.rstrip())
-                line = ch
-            else:
-                line = candidate
-        result.append(line)
+        # CJK 逐字贪心与二分拟合同断点：visible_width 随前缀长度单调不减
+        #（字形步进与 tracking 都非负），「最长的可容纳前缀」唯一存在，
+        # 线性扫描与二分找到的是同一个 L——被度量的字符串集合不同，
+        # 但每个判定输入上的谓词值相同，输出逐字符一致（自检对拍）。
+        # 线性扫描每行 O(L) 次 getlength、每次 O(L) 字符，是预览文本段的
+        # 第一热点；二分把测量调用数降到 O(log L)。
+        pos = 0
+        n = len(raw)
+        while pos < n:
+            seg = raw[pos:]
+            if visible_width(seg) <= limit:
+                result.append(seg)          # 末行整段可容纳：原样追加（不 rstrip）
+                break
+            if len(seg) == 1:
+                result.append(seg)          # 放不下的末单字：与扫描末行一致（不 rstrip）
+                break
+            lo, hi = 1, len(seg)            # seg[:lo] 可容纳；seg[:hi]（=seg）放不下
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if visible_width(seg[:mid]) <= limit:
+                    lo = mid
+                else:
+                    hi = mid
+            result.append(seg[:lo].rstrip())  # 中间行：rstrip，与扫描 emit 一致
+            pos += lo
     return result or [""]
 
 
@@ -1352,7 +1368,7 @@ def _page_key(slide: dict, spec: dict, scale: float, supersample: int,
 
 def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
                scale: float = 0.5, *, supersample: int = 1,
-               store: bool = True, png_compress_level: int = 6,
+               store: bool = True, png_compress_level: int = 1,
                images_out: list | None = None, page_cache: bool = True,
                stats: dict | None = None) -> list[Path]:
     """Save per-page PNGs.  Return only page paths for API compatibility.
@@ -1471,7 +1487,7 @@ def _sheet_cache_key(valid: list[Path], columns: int, gap: int, label_height: in
 def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int = 2,
                        gap: int = 24, label_height: int = 34,
                        images: list | None = None,
-                       png_compress_level: int = 6,
+                       png_compress_level: int = 1,
                        cache_dir: str | Path | None = None,
                        stats: dict | None = None) -> Path | None:
     """Create a clean, presentation-ready overview without adding decoration to pages.
