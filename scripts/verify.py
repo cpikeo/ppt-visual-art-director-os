@@ -485,7 +485,7 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                     f"highlight={hi!r} 既不是索引也不匹配任何类别名/序列名，会被忽略")
 
     # 标签空间：标签是独立可见对象，空间不足不允许渲染器硬塞（不缩字号）
-    n = len(data) if isinstance(data, list) else 0
+    n = n_cat * n_series if multi else (len(data) if isinstance(data, list) else 0)
     show_values = e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
     try:
         height = float(e.get("height", 0))

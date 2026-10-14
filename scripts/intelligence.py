@@ -499,7 +499,40 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
     return nums, nums[0]
 
 
-def understand(text: str, *, has_chart: bool = False) -> dict:
+# 只收正文中可逐字核对的「主体—关系—对象」，不从“治理/四层”等话题词造图。
+# 这是保守的中文显式句式提取，不是通用语义解析：不确定句、结果数字与步骤留给原判断。
+_RELATION_CLAUSE = re.compile(
+    r"^(?P<subject>[^\s，,；;。！？!?：:]{1,24}?)"
+    r"(?P<relation>负责(?!人|率)|决定|协调|执行|隶属)"
+    r"(?P<object>[^，,；;。！？!?：:]{1,32})$")
+_REPORTING_CLAUSE = re.compile(
+    r"^(?P<subject>[^\s，,；;。！？!?：:]{1,24}?)向"
+    r"(?P<object>[^\s，,；;。！？!?：:]{1,24}?)汇报$")
+
+
+def explicit_relations(content: str) -> list[dict]:
+    """保留原句事实；至少两个不同主体才足以构成同屏关系，不据顺序推上下级。"""
+    if re.search(r"[?？]|(?:谁|如何|是否|可能|如果|建议|应该|应当|拟|尚未)", content):
+        return []
+    found = []
+    for raw in re.split(r"[，,；;。\n]", _SOURCE_TAIL.sub("", content)):
+        clause = re.sub(r"^\s*(?:[0-9]+[、.)）]\s*)?", "", raw).strip()
+        match = _REPORTING_CLAUSE.fullmatch(clause) or _RELATION_CLAUSE.fullmatch(clause)
+        if not match:
+            continue
+        fact = match.groupdict()
+        fact.setdefault("relation", "汇报")
+        if fact["subject"].endswith(("不", "未", "没有", "应", "将", "先", "然后", "最后")):
+            continue
+        if any(n for n in evidence_numerals(clause)):
+            continue
+        fact["object"] = fact["object"].strip()
+        if fact["object"] and fact not in found:
+            found.append(fact)
+    return found if len({f["subject"] for f in found}) >= 2 else []
+
+
+def understand(text: str, *, has_chart: bool = False, content: str | None = None) -> dict:
     """内容理解：这段内容靠什么成立（证据形态）、有多少数字、有没有人。
 
     确定性、无副作用；它是判断的输入，不是判定的结果。
@@ -524,6 +557,11 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
     is_subset = distinct >= 2 and bool(_PART_OF_WHOLE.search(body))
     is_comparison = (_hit(cmp_body, _COMPARISON_WORDS)
                      or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
+    # 只在无量化竞争/比较/时间推进时采信显式关系；标题不参与关系抽取。
+    relation_text = body if content is None else str(content)
+    relations = explicit_relations(relation_text)
+    if ev or is_comparison or _hit(relation_text, _SEQUENCE_WORDS) or SEQUENCE_MARKERS & set(relation_text):
+        relations = []
     modes: dict[str, float] = {}
     if is_comparison or (distinct >= 2 and has_chart):
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
@@ -551,6 +589,8 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
             modes["sequence"] = 0.75
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
+    if relations:
+        modes["structure"] = 0.9  # 多个可核对的关系强于一句“决定/必须”的观点信号
     dominant = max(modes, key=lambda k: (modes[k], -EVIDENCE_MODES.index(k))) if modes else "none"
     # 主题实体也走复合名词过滤：「结构性增长」里的「结构」不是建筑实体，
     # 否则一句抽象封面主张会推导出一个石头与混凝土的世界，并给封面派一张图。
@@ -558,6 +598,7 @@ def understand(text: str, *, has_chart: bool = False) -> dict:
                 if _hit(_evidence_body(body), spec["words"])]
     return {
         "evidence": dominant,
+        **({"relations": relations} if relations else {}),
         "numerals": nums,
         "distinct_numerals": distinct,
         "numeric_density": round(distinct / (chars / 100), 2),
@@ -871,7 +912,7 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
         why = "数字承担论证：这一页的说服力来自可核验的量，而不是措辞。"
         alts = [["persuade", "用形容词说服＝把可核验的东西换成不可核验的"]]
     elif index in (0, total - 1) and ev in ("none", "proposition", "structure", "sequence") \
-            and not int(u.get("distinct_numerals") or 0):
+            and not int(u.get("distinct_numerals") or 0) and not u.get("relations"):
         # 开场与收尾在没有可核验的量时按叙事位置取角色：这一页的职责是立住或回收
         # 整套主张，不是解释一个结构。只有一句主张的封面被判成「说明页」，
         # 焦点与构图会跟着落到一个并不存在的层级图上（CASE_006 s01/s12 实测）。
@@ -1127,7 +1168,8 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
     if not claim.get("text") and ev in ("none", "proposition"):
         # 无结论页用最少结构：结论没落定之前铺开，只会把缺席藏起来。
         s["big_whitespace"] += 1.0
-    s["linear_structure"] = (3.0 if ev in ("sequence", "structure") else 0.0)
+    s["linear_structure"] = (4.5 if u.get("relations") else
+                             3.0 if ev in ("sequence", "structure") else 0.0)
     s["asymmetric_tension"] = (2.5 if u.get("comparison") else 0.0) \
         + (1.5 if role == "compare" else 0.0) + (1.0 if n >= 2 else 0.0)
     s["editorial"] = (2.0 if text_len > 60 else 0.0) \
@@ -1191,7 +1233,9 @@ def _composition_why(chosen: str, u: dict, media: dict) -> str:
         return ("只有" + ("一个数字" if n == 1 else "一句话")
                 + "要立住：留白把结论从噪音里隔离出来，空间本身就是分量。")
     if chosen == "linear_structure":
-        return "内容本身有序（步骤/阶段/层级）：位置即顺序，轴与间距比装饰准确。"
+        if u.get("evidence") == "structure":
+            return "主体与对象的关系同屏可读；只画已明示的归属/职责，不由列举顺序补上下级或时间。"
+        return "内容本身有序（步骤/阶段）：位置表达推进，轴与间距比装饰准确。"
     if chosen == "asymmetric_tension":
         return ("两端承载不同主张：让主张侧先被看见，但先核对指标口径，"
                 "不可比时不让空间暗示一个虚假的差值。")
@@ -1219,7 +1263,7 @@ def composition_of(role: str, u: dict, *, composition_grammar: str = "",
 # ─────────────────────────────────────────────────────────────────────
 # 8 · 空间结构（Spatial Structure：职责，不是坐标）
 # ─────────────────────────────────────────────────────────────────────
-def spatial_of(comp: dict) -> dict:
+def spatial_of(comp: dict, u: dict | None = None) -> dict:
     """空间职责：主区 / 安静区 / 阅读路径 / 四层权重。坐标由作者给。"""
     chosen = comp.get("chosen")
     if chosen == "big_whitespace":
@@ -1231,6 +1275,9 @@ def spatial_of(comp: dict) -> dict:
     elif chosen == "asymmetric_tension":
         path, primary, quiet = "主张侧 → 对照侧 → 比较边界", "被推荐的一侧（大尺度）", "对照侧周围"
         duty = "使两端关系可读：不靠等权卡片、不凭空间尺度捏造不可比的差值"
+    elif chosen == "linear_structure" and (u or {}).get("evidence") == "structure":
+        path, primary, quiet = "主体 → 职责/对象 → 关系", "关系与归属的共同阅读区", "关系组之间"
+        duty = "分组与辨认归属；未给出上下级就不用连线暗示层级，空白不代表时间"
     elif chosen == "linear_structure":
         path, primary, quiet = "起点 → 序列 → 终点", "轴线上第一个与当前节点", "节点之间（时间）"
         duty = "分隔与推进：间距表达节奏，节点之间的空白是时间"
@@ -1357,6 +1404,9 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
     elif focus.get("element_role") == "comparison_field":
         rule = ("两端指标名与数字分别对齐；分母/期间就近标注，只有同口径才共享刻度轴。"
                 "不可比时用留白标出边界，不用面积暗示虚构倍数。")
+    elif (u or {}).get("evidence") == "structure" and focus.get("element_role") == "structure_map":
+        rule = ("主体与职责/对象按成对关系对齐，必要限定贴近所属对象；"
+                "层级只按明确归属表达，不把职责分工改成时间轴或推测汇报线。")
     elif focus.get("element_role") == "structure_map" or role == "explain":
         rule = ("节点→机制沿一条清楚的轴线排字；标签、解释共用文字边界，"
                 "在语义节点断行，节点间距比容器与图标更能表达顺序。")
@@ -1752,7 +1802,7 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     content = str(item.get("content") or "").strip()
     text = f"{title} {content}".strip()
     if u is None:
-        u = understand(text, has_chart=bool(item.get("chart")))
+        u = understand(text, has_chart=bool(item.get("chart")), content=content)
     claim = extract_claim(item, positional=index in (0, total - 1))
     if claim["source"] == "absent":
         warnings.append({"rule": "unresolved_content", "scope": item.get("id"),
@@ -1780,7 +1830,7 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                           composition_grammar=world.get("composition_grammar", ""),
                           media=media, claim=claim, content_len=len(text))
     focus, comp = _apply_declared_spot(focus, comp, item)
-    spatial = spatial_of(comp)
+    spatial = spatial_of(comp, u)
     weight = information_weight(u, claim, text, number_anchor=anchor)
     typography = typography_of(claim, weight, focus, role["role"], u,
                                 text_len=len(text), number_anchor=anchor)
@@ -1828,7 +1878,7 @@ def _rejudge_without_image(entry: dict, *, text: str, world: dict,
     focus, comp = _apply_declared_spot(focus, comp, entry.get("declarations"))
     j["focus"] = focus
     j["composition"] = comp
-    j["spatial"] = spatial_of(comp)
+    j["spatial"] = spatial_of(comp, u)
     j["typography"] = typography_of(j["claim"], j["information_weight"], focus, role, u,
                                     text_len=len(text), number_anchor=anchor)
     j["production"] = production_spec(focus, comp, media, u, j["information_weight"])
@@ -1852,6 +1902,8 @@ def _repick_avoiding(entry: dict, world: dict, text: str, avoid: str) -> dict | 
         penalized[avoid] -= 2.5
     order = {name: i for i, name in enumerate(_COMPOSITION_TIEBREAK)}
     new = max(penalized, key=lambda k: (penalized[k], -order[k]))
+    if u.get("relations") and avoid == "linear_structure":
+        return None
     if new == avoid or base.get(new, 0) <= 0:
         return None
     return {"chosen": new,
@@ -1884,7 +1936,7 @@ def _coherence_pass(pages: list, world: dict, texts: dict) -> dict:
                     continue
                 old = entry["judgment"]["composition"]["chosen"]
                 entry["judgment"]["composition"] = new_comp
-                entry["judgment"]["spatial"] = spatial_of(new_comp)
+                entry["judgment"]["spatial"] = spatial_of(new_comp, entry["judgment"]["understanding"])
                 entry["judgment"]["production"] = production_spec(
                     entry["judgment"]["focus"], new_comp, entry["judgment"]["media"],
                     entry["judgment"]["understanding"], entry["judgment"]["information_weight"])
@@ -1998,8 +2050,8 @@ def recall_dna(brief: dict) -> dict:
     scored.sort(key=lambda t: (-t[0], -t[1], t[2].get("id", "")))
     broken = len(entries) - len(scored)
     if not scored or scored[0][0] <= 0:
-        note = ("无匹配 DNA：按内容推导视觉世界，发布 PASS 后运行 "
-                "python scripts/vao.py dna --add <条目>.json 沉淀这条经验")
+        note = ("无匹配 DNA：按 SKILL.md 与内容判断；有可核验的真实项目证据后，"
+                "才用 python scripts/vao.py dna --add <条目>.json 沉淀例外经验，PASS 本身不是证据")
         if load_error:
             note += f"；经验库读取失败，已安全降级（{load_error}）"
         return {"matched": None, "confidence": 0.0, "dna": None, "alternatives": [],
@@ -2013,8 +2065,7 @@ def recall_dna(brief: dict) -> dict:
             "alternatives": [{"id": e.get("id"), "confidence": round(c, 2)}
                              for c, h, e in scored[1:3] if c > 0],
             "proven": best.get("proven"), "broken_entries": broken,
-            "note": ("DNA 是起点不是模板：按本稿内容与受众重组，禁止照抄" if conf < 0.6
-                     else "高置信命中：以该经验为基线，只做内容级调整")}
+            "note": "关键词命中率不是有效性置信度；先核案源与适用边界，不得覆盖 SKILL.md"}
 
 
 def validate_dna_entry(entry) -> tuple[list, list]:
@@ -2158,7 +2209,7 @@ def think(brief: dict) -> dict:
     items = [it if isinstance(it, dict) else {"title": str(it)} for it in raw]
 
     understanding = [understand(f"{it.get('title') or ''} {it.get('content') or ''}".strip(),
-                               has_chart=bool(it.get("chart"))) for it in items]
+                               has_chart=bool(it.get("chart")), content=str(it.get("content") or "")) for it in items]
     world = derive_world(brief, understanding)
     if str(brief.get("design_direction") or "").strip():
         warnings.append({"rule": "direction_retired", "scope": "deck",
@@ -2378,8 +2429,8 @@ def build_skeleton(bundle: dict) -> str:
     for note in (coherence.get("notes") or [])[:2]:
         facts.append(f"跨页提醒: {note}")
     if dna.get("matched"):
-        facts.append(f"经验召回（DNA）: {dna['matched']} · 置信 {dna.get('confidence')}"
-                     "——起点不是模板，按本稿内容重组")
+        facts.append(f"经验召回（DNA）: {dna['matched']} · 关键词命中率 {dna.get('confidence')}"
+                     "——先核案源与适用边界，不覆盖 SKILL.md")
 
     L = ['# -*- coding: utf-8 -*-',
          '"""plan → build：逐页判断只在 plan.json 有一份完整记录，几何由作者决定。',

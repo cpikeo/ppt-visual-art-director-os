@@ -1,0 +1,17 @@
+[
+  {"id":"previous-round-governance","title":"四层汇报线明确决策归属","content":"董事会决定战略；管理层负责预算；区域负责人协调资源；当地负责人执行。","expect_relations":3,"expect_role":"explain","expect_composition":"linear_structure"},
+  {"id":"responsibility","title":"研发与交付的职责应分开","content":"甲组负责研发；乙组负责交付。","expect_relations":2,"expect_role":"explain","expect_composition":"linear_structure"},
+  {"id":"reporting","title":"审批归属必须清楚","content":"区域负责人向总经理汇报；总经理向董事会汇报。","expect_relations":2,"expect_role":"explain","expect_composition":"linear_structure"},
+  {"id":"renamed-subjects","title":"职责先于装饰","content":"青岚组负责质量；澄川组负责交付。","expect_relations":2,"expect_role":"explain","expect_composition":"linear_structure"},
+  {"id":"same-subject","title":"专人承担研发和交付","content":"甲组负责研发；甲组负责交付。","expect_relations":0},
+  {"id":"question","title":"职责尚待确认","content":"谁负责研发？谁负责交付？","expect_relations":0},
+  {"id":"negation","title":"当前职责仍未落实","content":"甲组不负责研发；乙组未负责交付。","expect_relations":0},
+  {"id":"proposal","title":"分工还在讨论","content":"建议甲组负责研发；乙组负责交付。","expect_relations":0},
+  {"id":"unresolved-objects","title":"分工还不完整","content":"甲组负责；乙组执行。","expect_relations":0},
+  {"id":"numeric-evidence","title":"本期执行结果可核验","content":"甲组执行 12 项；乙组执行 18 项。","expect_relations":0},
+  {"id":"sequence","title":"先研发再交付","content":"先由甲组负责研发，然后由乙组负责交付。","expect_relations":0},
+  {"id":"comparison","title":"两组的交付率有差异","content":"甲组负责研发；乙组负责交付。甲组交付率 90%，高于乙组 80%。","expect_relations":0,"expect_role":"compare"},
+  {"id":"topic-only","title":"四层汇报线与矩阵式分工","content":"","expect_relations":0},
+  {"id":"subset-control","title":"多数试点选择续约","content":"12 家试点门店中，9 家续约。","expect_relations":0,"expect_role":"prove"},
+  {"id":"compound-control","title":"结构性增长来自续约","content":"我们必须保留这一增长来源。","expect_relations":0}
+]

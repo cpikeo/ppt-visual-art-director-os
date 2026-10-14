@@ -40,8 +40,10 @@ QA 只回答「这份 PPTX 能不能交付」，只有 **PASS / BLOCK** 二态�
 | 文本框内边距 | ≥ 0.5×字号（≥8px） | 内边距为 0 时中文全角字贴边，与相邻元素互相啃咬 |
 | 断行 | 语义停顿处断；禁则：标点不领行、开引号不收尾、数字与单位不拆行 | 断在数字与单位之间＝把「11.2 元」读成两个信息 |
 
-中文断行的禁则由结构预览（ghost）与 PowerPoint 同规则执行：预览里看到的行首标点、
-被拆开的数字与单位，就是产物里会出现的样子——不是预览瑕疵。
+中文禁则回退目前只在 ghost 的折行模型中执行；编译器写入原生文本，实际折行由目标
+PowerPoint 与字体决定，**两者不共享断行实现**。ghost 的违例可以提示人工复核，
+不能推断 Office 必然有同样违例；ghost 没有违例也不能证明 PPTX 正确。证据分层以
+`SKILL.md §6` 为准。
 
 ## Spec 字段速查
 
@@ -83,7 +85,11 @@ plan 按视觉世界给出种子，作者可覆盖任意一项。**颜色只能�
 
 **编辑级文字纪律（物理契约，不是字号模板）**：`size/width/height/padding/space_before/space_after`
 按画布 px 填；`line_height` 是相对倍数；显式 `char_spacing` 以 pt 填，中文与拉丁文字均写入
-原生 PPT 字距。每段之间的段前/段后间隔、折行后字距及框内边距都参与 Guard 容量计算；
+原生 PPT 字距。`theme.fonts.cn`（别名 `body`）决定中文字体，`latin`（别名 `display`）
+决定拉丁字体；现有 `font` token 与 `family` 元素字段只覆盖拉丁字体，不覆盖中文。
+ghost 文本框、形状内文字及本轮覆盖的原生图表标签复用同一角色解析，但仍用近似字面，
+并非目标字体的忠实测量；其他形状化图表文字路径不在本轮覆盖范围。
+每段之间的段前/段后间隔、折行后字距及框内边距都参与 Guard 容量计算；
 不得靠 `max_lines` 把文字裁去。形状内文字**同样**读 `padding`（缺省 0），没有另一套
 `text_padding` 字段。`fill: {type: none}` / 省略 `fill` = 真空心，不能让预览画成实心卡片。
 PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过载先删句改写，不压行距。
@@ -93,7 +99,12 @@ line/trend/single_trend_line(8) · area(8) · donut/pie(8) · stacked_bar(8) · 
 waterfall(12) · matrix(12) · bubble(12) · sparkline(12) · process_flow(7) · timeline(7) ·
 steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/executive_kpi/big_number
 （数字展示读元素级 `value`）。数值图表齐 `source / unit / period / basis`（release 硬门）；
-同 `metric` 跨页必须同单位。**载荷两式**：数值图表用 `categories + series[].values`；
+同 `metric` 跨页必须同单位。原生数值图表的 `show_values`、`number_format`、
+`label_collision_policy` 不因 `data` 或 `categories + series` 载荷改变；多序列的
+容量计数为类别数 × 序列数。`label_size` 控制原生轴标签、`value_size` 控制数值标签，
+均为画布 px（写入 PPTX 时乘 0.75 转 pt），中文字体来自 `theme.fonts.cn/body`。
+未声明时保留历史默认值，不把默认小字当成投影可读性证明；需作者按场景给出字号并
+在目标 PowerPoint 检查长标签折行和遮挡。**载荷两式**：数值图表用 `categories + series[].values`；
 复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）
 用元素级 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
 

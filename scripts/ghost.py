@@ -21,7 +21,8 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
-                        highlight_index, series_highlight_index, color_to_hex)
+                        highlight_index, series_highlight_index, color_to_hex,
+                        CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -87,14 +88,16 @@ def _has_cjk(text: str) -> bool:
 
 
 def _font_family(element: dict, ctx: RenderContext) -> str:
-    """元素字体 → 预览字面族。走主题字体表（与 compiler 同一张表），
-    只分衬线/无衬线两个落点：预览不假装拥有字体，但不该把宋体页画成黑体页。"""
-    fam = str(element.get("font") or "")
-    if not fam:
-        return ""
-    fonts = getattr(ctx, "fonts", None) or {}
-    resolved = str(fonts.get(fam, fam))
-    return "_serif" if "serif" in resolved.lower() or "宋" in resolved or "song" in resolved.lower() else ""
+    """复用编译器的字体解析，不另解 token 或忽略主题默认值。
+
+    中文取 cn/body；font/family 按现有契约只覆盖拉丁字面。混排仍用单一
+    CJK 字面近似，并非 Office 的逐 run 字体回退或真实换行证明。
+    """
+    cn, latin = ctx.families(element)
+    resolved = str(cn if _has_cjk(element.get("text", "")) else latin).lower()
+    serif = ("serif" in resolved and "sans" not in resolved) or any(
+        name in resolved for name in ("宋", "song", "明朝", "mincho", "georgia", "times", "cambria"))
+    return "_serif" if serif else ""
 
 
 def _font(size: float, *, cjk: bool = False, bold: bool = False,
@@ -111,7 +114,12 @@ def _font(size: float, *, cjk: bool = False, bold: bool = False,
     for name in candidates:
         try:
             if Path(name).exists():
-                loaded = ImageFont.truetype(name, px)
+                # Noto CJK 官方 TTC 的 0 号是 JP，2 号才是 SC；不改其他 TTC。
+                # 这是本技能中文预览的简体字面，不是任意字体/语言的忠实渲染。
+                sc_collection = Path(name).name in {
+                    "NotoSansCJK-Regular.ttc", "NotoSansCJK-Bold.ttc",
+                    "NotoSerifCJK-Regular.ttc", "NotoSerifCJK-Bold.ttc"}
+                loaded = ImageFont.truetype(name, px, index=2 if sc_collection else 0)
                 break
         except (OSError, ValueError):
             continue
@@ -652,7 +660,7 @@ def _rows(e: dict) -> list[dict]:
                 continue
             name = str(s.get("name") or "").strip()
             for cat, val in zip(cats, s["values"]):
-                out.append({"label": f"{cat} · {name}" if name else str(cat), "value": val})
+                out.append({"label": f"{cat} · {name}" if name and len(series) > 1 else str(cat), "value": val})
         return out
     return []
 
@@ -804,6 +812,20 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     lo, hi = min(0.0, min(values)), max(1.0, max(values))
     span = max(1e-9, hi - lo)
     groups = _series_groups(e)
+    def native_font(size, text):
+        return _font(float(size) * scale, cjk=_has_cjk(text),
+                     family=_font_family({**e, "text": text}, ctx))
+    category_text = " ".join(str(r.get("label", "")) for r in rows)
+    category_font = native_font(e.get("label_size", 40 / 3), category_text)
+    value_font = native_font(e.get("value_size", 12), "0123456789")
+    native_values = bool(e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut")))
+    if (len(rows) >= CHART_LABEL_MIN_COUNT and float(e.get("height", 0)) < CHART_LABEL_MIN_H
+            and e.get("label_collision_policy") == "hide_redundant"):
+        native_values = False
+    if kind in ("column", "line", "area", "trend", "single_trend_line"):
+        # 原生引擎会为轴/标签留位；预览不能把更大的作者字号画到图框外。
+        top += int(value_font.size * 1.4) if native_values else 0
+        bottom -= int(category_font.size * 1.6)
     if len(groups) > 1 and kind in {"line", "area", "trend", "single_trend_line"}:
         # 与产物同形：每条序列一条线（产物里 <c:ser> = 序列数）。
         # 颜色也按产物同一条链取：series_roles 声明的用角色色，否则用系列色阶；
@@ -837,9 +859,16 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             else:
                 d.line(pts, fill=col, width=max(2, int((3 if gi == hl else 1.75) * scale)),
                        joint="curve")
+            if native_values:
+                for (px, py), val in zip(pts, vals):
+                    d.text((px, py - 3 * scale), f"{val:g}", font=value_font, fill=ink, anchor="mb")
             ex, ey = pts[-1]
             rr = max(2, int((4 if gi == hl else 3) * scale))
             d.ellipse((ex - rr, ey - rr, ex + rr, ey + rr), fill=col)
+        categories = e.get("categories") or []
+        for i, category in enumerate(categories):
+            px = pl + (pr - pl) * (i / max(1, len(categories) - 1))
+            d.text((px, bottom + 3 * scale), str(category), font=category_font, fill=ink, anchor="mt")
         img.alpha_composite(overlay)
         return
     if kind in {"line", "area", "trend", "single_trend_line", "sparkline"}:
@@ -877,6 +906,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         for mi in marks:
             px, py = pts[mi]
             d.ellipse((px - 3 * scale, py - 3 * scale, px + 3 * scale, py + 3 * scale), fill=accent)
+        if kind != "sparkline":
+            for (px, py), row, val in zip(pts, rows, values):
+                if native_values:
+                    d.text((px, py - 3 * scale), f"{val:g}", font=value_font, fill=ink, anchor="mb")
+                d.text((px, bottom + 3 * scale), str(row.get("label", "")),
+                       font=category_font, fill=ink, anchor="mt")
     elif kind in {"donut", "pie", "donut_composition"}:
         vals = [max(0, v) for v in values]
         total = sum(vals) or 1
@@ -889,9 +924,9 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 类别名直接标在扇区上：产物给构成图开了 showCatName（图例全局关闭），
         # 预览若只画色块，作者看到的就是四块没有名字的颜色——与产物不是一件事。
         # 位置按扇区中角、半径中点；文字色取背景色（扇区上是实色填充）。
-        label_font = _font(max(9.0, 12.0 * scale), cjk=any(_has_cjk(r.get("label", "")) for r in rows))
+        label_font = native_font(e.get("value_size", 12), category_text)
         label_ink = _rgba(ctx, "background", 0.95) or (255, 255, 255, 235)
-        show_values = bool(e.get("show_values", True))
+        show_values = native_values
         cx0, cy0 = (left + right) / 2, (top + bottom) / 2
         radius = (right - left) / 2
         for i, val in enumerate(vals):
@@ -917,13 +952,13 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 类目轴在左侧：不给它留位置，预览就只剩一串没有主人的数字，
         # 而产物里 OOXML 是会把标签画出来的——预览必须说同一件事。
         gap = max(3, int(8 * scale))
-        cfont = _font(10 * scale, cjk=any(_has_cjk(r.get("label", "")) for r in rows))
+        cfont = category_font
         cat_w = int(min(180 * scale, (right - left) * 0.34))
         bar_left = left + cat_w
         bh = max(2, int((bottom - top - gap * max(0, len(values) - 1)) / max(1, len(values))))
         hl = highlight_index(e, rows, -1)
-        show_values = bool(e.get("show_values", True))
-        vfont = _font(11 * scale)
+        show_values = native_values
+        vfont = value_font
         # 零基轴线：条长编码的是**到零的距离**，不是「到最小值」。按最小值起算时，
         # 最负的一条长度为 0——产物里它是一根可见的负向条，预览里却什么都没有，
         # 作者会以为那一期没有数据。负值在轴线另一侧生长，两侧共用一把尺。
@@ -977,9 +1012,9 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         gap = max(3, int(8 * scale))
         bw = max(2, int((right - left - gap * max(0, len(values) - 1)) / max(1, len(values))))
         hl = highlight_index(e, rows, -1)
-        show_values = bool(e.get("show_values", True))
-        vfont = _font(11 * scale)
-        cfont = _font(10 * scale, cjk=any(_has_cjk(r.get("label", "")) for r in rows))
+        show_values = native_values
+        vfont = value_font
+        cfont = category_font
         neg_role = None
         if e.get("negative_role") is not False and any(v < 0 for v in values):
             neg_role = ctx.chart_role("negative")

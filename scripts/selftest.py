@@ -111,6 +111,38 @@ def make_build(tmp: Path, *, chart: bool = True) -> Path:
 def test_intelligence(tmp: Path):
     import intelligence as intel
 
+    relation_cases = json.loads((ROOT / "evaluation" / "relationship-cases.json").read_text(encoding="utf-8"))
+    for case in relation_cases:
+        j = intel.page_judgment({**case, "asset": "none"}, index=2, total=7,
+                                brief=BRIEF, world={}, warnings=[])
+        actual = (len(j["understanding"].get("relations", [])), j["visual_role"]["role"],
+                  j["composition"]["chosen"])
+        check("relations: " + case["id"],
+              actual == (case["expect_relations"], case.get("expect_role", actual[1]),
+                         case.get("expect_composition", actual[2])), str(actual))
+    relation_page = {**relation_cases[0], "asset": "none"}
+    checked_relations = intel.think(dict(BRIEF, slides=[
+        dict(relation_page, id=f"r{i}") for i in range(4)]))
+    check("relations: 首末位置/跨页求变不能覆盖正文关系证据",
+          all(p["judgment"]["visual_role"]["role"] == "explain"
+              and p["judgment"]["composition"]["chosen"] == "linear_structure"
+              for p in checked_relations["pages"]))
+    rj = checked_relations["pages"][0]["judgment"]
+    check("relations: 分工不伪装成汇报层级或时间轴",
+          rj["focus"]["element_role"] == "structure_map"
+          and "空白不代表时间" in rj["spatial"]["whitespace_duty"]
+          and "推测汇报线" in rj["typography"]["discipline"])
+    declared_relation = intel.think(dict(BRIEF, slides=[
+        dict(relation_page, composition="editorial", focus="author_focus")]))["pages"][0]["judgment"]
+    check("relations: 作者焦点与构图仍然优先",
+          declared_relation["composition"]["chosen"] == "editorial"
+          and declared_relation["focus"]["element_role"] == "author_focus")
+    real_sequence = intel.page_judgment({"title":"按阶段落地", "content":"先研发，然后交付。", "asset":"none"},
+                                       index=1,total=3,brief=BRIEF,world={},warnings=[])
+    check("relations: 时间推进仍保留顺序空间职责",
+          real_sequence["understanding"]["evidence"] == "sequence"
+          and "空白是时间" in real_sequence["spatial"]["whitespace_duty"])
+
     bundle = intel.think(BRIEF)
     deck, pages = bundle["deck"], bundle["pages"]
     by_id = {p["id"]: p for p in pages}
@@ -731,6 +763,12 @@ def test_intelligence(tmp: Path):
     check("dna: 安全区例外保留独立案源，按关键词召回而不稀释通用原则",
           safe_area_dna.get("matched") == "feathered_safe_area_calm"
           and "safe_area" in safe_area_dna.get("judgment", {}).get("media", ""))
+    check("dna: 无案源的通用排版配额不再召回",
+          intel.recall_dna({"title": "引言 宣言 品牌 高管 quote statement 排版 typography 字体"})
+          .get("matched") is None)
+    check("dna: 关键词命中不伪装为已验证的设计基线",
+          "不是有效性置信度" in safe_area_dna.get("note", "")
+          and "未独立复验" in safe_area_dna.get("proven", ""))
     errs, _ = intel.validate_dna_entry(
         {"id": "x", "pattern": "p", "judgment": {"layout": "fixed 64px grid"},
          "signature": {"keywords": ["k"]}})
@@ -1004,6 +1042,61 @@ def test_production(tmp: Path):
              if sh.has_text_frame and sh.text_frame.text.strip()]
     check("compiler: 原生可编辑 PPTX（文本在对象模型里可改）",
           len(prs.slides) == 5 and any("第3页结论句" in t for t in texts))
+
+    # 同一数值内容，两种载荷不能一边有原生标签、一边只有预览标签。
+    from pptx.oxml.ns import qn
+    base_chart = {"id":"labels", "type":"chart", "chart_kind":"column", "x":48,"y":220,
+                  "width":1184,"height":360,"role":"focus", "show_values":True,
+                  "label_size":24,"value_size":28,"source":"合成数据","unit":"项",
+                  "period":"测试批次","basis":"分类计数","number_format":"0.0"}
+    forms = [dict(base_chart, data=[{"label":"研发","value":12},{"label":"交付","value":8}]),
+             dict(base_chart, categories=["研发","交付"],series=[{"name":"本期","values":[12,8]}]),
+             dict(base_chart, categories=["研发","交付"],series=[{"name":"本期","values":[12,8]},
+                                                               {"name":"对照","values":[10,6]}])]
+    chart_spec = dict(spec, slides=[{"id":f"labels{i}","elements":[e]} for i,e in enumerate(forms)])
+    labeled_out = tmp / "native-labels.pptx"
+    compile_deck(chart_spec,labeled_out)
+    labeled_prs = Presentation(labeled_out)
+    native_charts = [sl.shapes[0].chart for sl in labeled_prs.slides]
+    check("charts: data / 单 series / 多 series 均消费 show_values",
+          all(c.plots[0].has_data_labels and c.plots[0].data_labels.show_value for c in native_charts))
+    check("charts: 作者 px 字号进入原生标签，不再被 8/9/10pt 硬编码覆盖",
+          all(c.category_axis.tick_labels.font.size.pt == 18
+              and c.value_axis.tick_labels.font.size.pt == 18
+              and c.plots[0].data_labels.font.size.pt == 21 for c in native_charts))
+    check("charts: 中文 a:ea 与拉丁 a:latin 字体均有明确来源",
+          all(c._chartSpace.xpath(".//a:ea")
+              and {n.get("typeface") for n in c._chartSpace.xpath(".//a:ea")} == {"Source Han Serif SC"}
+              and {n.get("typeface") for n in c._chartSpace.xpath(".//a:latin")} == {"Georgia"}
+              for c in native_charts))
+    check("charts: 两种载荷数值/格式不漂移且保持原生对象",
+          list(native_charts[0].series[0].values) == list(native_charts[1].series[0].values) == [12,8]
+          and all(c.plots[0].data_labels.number_format == "0.0" for c in native_charts))
+    dense_chart = dict(base_chart, height=120, categories=list("甲乙丙丁戊己"),
+                       series=[{"name":"本期","values":[1,2,3,4,5,6]}])
+    from verify import check_spec
+    dense_spec = dict(spec, slides=[{"id":"dense-labels","elements":[dense_chart]}])
+    dense_guard = check_spec(dense_spec)
+    check("charts: categories/series 不再绕过全页标签容量硬门",
+          any(c.get("name") == "chart_label_collision" or c.get("rule") == "chart_label_collision"
+              for c in dense_guard.get("checks",[]) if c.get("level") == "error"), str(dense_guard)[:300])
+    hidden = dict(dense_chart,label_collision_policy="hide_redundant")
+    disabled = dict(forms[1],show_values=False)
+    hidden_spec = dict(spec,slides=[{"id":"hidden","elements":[hidden]},
+                                  {"id":"disabled","elements":[disabled]}])
+    hidden_out=tmp/"hidden-labels.pptx"; compile_deck(hidden_spec,hidden_out)
+    check("charts: 作者禁用或声明隐藏重复值时不强加标签",
+          all(not sl.shapes[0].chart.plots[0].has_data_labels for sl in Presentation(hidden_out).slides))
+    import ghost as _chart_ghost
+    from unittest.mock import patch
+    with patch.object(_chart_ghost,"_font",wraps=_chart_ghost._font) as fonts:
+        _chart_ghost.ghost_page(chart_spec["slides"][1],chart_spec,scale=1,supersample=1)
+    check("ghost: 原生图表类目/数值遵循作者字号与字体角色",
+          any(c.args[0] == 24 and c.kwargs.get("cjk") and c.kwargs.get("family") == "_serif"
+              for c in fonts.call_args_list)
+          and any(c.args[0] == 28 and c.kwargs.get("family") == "_serif" for c in fonts.call_args_list))
+    check("ghost: 单 series 不把序列名缝进类别标签",
+          [r["label"] for r in _chart_ghost._rows(forms[1])] == ["研发","交付"])
 
     from ghost import ghost_page
     native = {'canvas': {'width': 500, 'height': 220},
@@ -1386,7 +1479,7 @@ def test_production(tmp: Path):
     key_b = _page_key(media_slide, media_spec_b, 0.5, 1, 1)
     check("ghost: 同一路径的图片字节变化会使页缓存失效", key_a != key_b)
     # 与先画透明整幅图再合成的旧路径逐像素比对：省掉背景合成不能改变任何墨迹。
-    from ghost import _draw_text, _font, _rgba
+    from ghost import _draw_text, _font, _rgba, _font_family
     from primitives import RenderContext
     ctx = RenderContext(spec.get("theme"), spec.get("canvas"))
     text_elem = {"id": "probe", "type": "text", "x": 12, "y": 24,
@@ -1397,12 +1490,61 @@ def test_production(tmp: Path):
         expected = Image.new("RGBA", (240, 130), bg_color)
         old_overlay = Image.new("RGBA", expected.size, (0, 0, 0, 0))
         ImageDraw.Draw(old_overlay, "RGBA").text(
-            (12, 24), "61%", font=_font(32), fill=_rgba(ctx, "ink", opacity))
+            (12, 24), "61%", font=_font(32, family=_font_family(text_elem, ctx)),
+            fill=_rgba(ctx, "ink", opacity))
         expected.alpha_composite(old_overlay)
         actual = Image.new("RGBA", expected.size, bg_color)
         _draw_text(actual, {**text_elem, "opacity": opacity}, ctx, 1)
         same = same and actual.tobytes() == expected.tobytes()
     check("ghost: 不透明直画与半透明旧合成路径像素一致（速度不能改变设计）", same)
+
+    # 字体角色与 compiler 共用 RenderContext.families；没有 font 字段也要读主题。
+    import ghost as _g
+    serif_ctx = RenderContext({"fonts": {"cn": "Noto Serif CJK SC", "latin": "Arial"}}, {})
+    sans_ctx = RenderContext({"fonts": {"cn": "Noto Sans CJK SC", "latin": "Georgia"}}, {})
+    check("ghost: 中文主题默认宋体不会静默画成黑体",
+          _g._font_family({"text": "中文"}, serif_ctx) == "_serif")
+    check("ghost: Latin font/family 覆盖不改变中文主题字面",
+          all(_g._font_family(e, serif_ctx) == "_serif" for e in
+              ({"text": "中文 AI 2026", "font": "latin"},
+               {"text": "中文", "family": "Arial"}))
+          and _g._font_family({"text": "中文", "font": "latin"}, sans_ctx) == "")
+    check("ghost: 纯拉丁遵循主题与显式覆盖（sans-serif 不是 serif）",
+          _g._font_family({"text": "Evidence"}, sans_ctx) == "_serif"
+          and _g._font_family({"text": "Evidence", "font": "latin"}, serif_ctx) == ""
+          and _g._font_family({"text": "Evidence", "family": "sans-serif"}, sans_ctx) == ""
+          and _g._font_family({"text": "Evidence", "family": "Times New Roman"}, serif_ctx) == "_serif")
+    alias_ctx = RenderContext({"fonts": {"body": "宋体", "display": "Georgia"}}, {})
+    check("ghost: body/display 别名与编译器一致",
+          all(_g._font_family({"text": t}, alias_ctx) == "_serif" for t in ("中文", "English")))
+    # 跨平台锁住 TTC index 参数，不靠 CI 恰好安装某字体；缺字库仍走原回退。
+    from unittest.mock import patch
+    saved_fonts = dict(_g._FONT_CACHE)
+    try:
+        with patch.object(Path, "exists", return_value=True), \
+                patch.object(_g.ImageFont, "truetype") as load_font:
+            _g._FONT_CACHE.clear()
+            for family in ("", "_serif"):
+                for bold in (False, True):
+                    _g._font(20, cjk=True, family=family, bold=bold)
+            check("ghost: Noto CJK 常规/粗体/衬线四路径均取 SC index 2",
+                  len(load_font.call_args_list) == 4
+                  and all(c.kwargs.get("index") == 2 for c in load_font.call_args_list))
+        with patch.object(Path, "exists", return_value=True), \
+                patch.dict(_g._FONT_CANDIDATES, {"cjk": ("C:/Windows/Fonts/msyh.ttc",)}), \
+                patch.object(_g.ImageFont, "truetype") as load_font:
+            _g._FONT_CACHE.clear()
+            _g._font(20, cjk=True)
+            check("ghost: 其他 TTC 不误套 Noto 索引", load_font.call_args.kwargs.get("index") == 0)
+        with patch.object(Path, "exists", return_value=False), \
+                patch.object(_g.ImageFont, "load_default") as fallback:
+            _g._FONT_CACHE.clear()
+            _g._font(20, cjk=True)
+            _g._font(20, cjk=True)
+            check("ghost: 缺字体安全回退且进程内复用", fallback.call_count == 1)
+    finally:
+        _g._FONT_CACHE.clear()
+        _g._FONT_CACHE.update(saved_fonts)
 
     # CJK 折行：二分拟合与逐字贪心同断点（禁则修正之后仍同断点）。
     # visible_width 随前缀长度单调，二分与线性扫描找到同一个「最长可容纳前缀」；
@@ -1785,6 +1927,13 @@ def test_cli(tmp: Path):
 
 
 def test_docs():
+    import re
+    package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    version = re.search(r'^version = "([^"]+)"', package, re.M)
+    release = re.search(r'^## (\d+\.\d+\.\d+)', changelog, re.M)
+    check("docs: 包版本与最新变更记录一致",
+          bool(version and release and version[1] == release[1]))
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     refs = sorted(p.name for p in (ROOT / "references").glob("*.md"))
     check("docs: SKILL.md 只保留六节（身份/哲学/判断/Context/执行/QA）",

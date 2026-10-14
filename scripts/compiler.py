@@ -714,6 +714,58 @@ def _label(shape, text, element, ctx, color, default_size=14):
 # --------------------------------------------------------------------------
 # 原生图表
 # --------------------------------------------------------------------------
+def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
+                       count: int, height: float) -> None:
+    """data 与 categories/series 共用标签契约；不按载荷形状丢掉 show_values。
+
+    size 沿用画布 px；默认值保持旧单序列的 10/8/9 pt，不替作者设投影字号。
+    中文字体必须写入 a:ea，单写 font.name 只设置 a:latin。
+    """
+    from pptx.oxml.xmlchemy import OxmlElement
+    cn, latin = ctx.families(element)
+    ink, muted = ctx.text_color("ink"), ctx.text_color("muted")
+
+    def style(font, size, color):
+        font.size = pt(size)
+        font.color.rgb = color
+        font.name = latin
+        for tag in ("a:ea", "a:cs"):
+            existing = font._element.xpath(tag)
+            node = existing[0] if existing else OxmlElement(tag)
+            node.set("typeface", cn)
+            if not existing:
+                font._element.append(node)
+
+    # 饼/环没有坐标轴；不要用 broad except 吞掉其他图的字体错误。
+    if kind not in ("pie", "donut", "donut_composition"):
+        chart.value_axis.has_major_gridlines = False
+        chart.value_axis.format.line.fill.background()
+        style(chart.value_axis.tick_labels.font, float(element.get("label_size", 32 / 3)), muted)
+        chart.category_axis.format.line.fill.background()
+        style(chart.category_axis.tick_labels.font, float(element.get("label_size", 40 / 3)), ink)
+    show = element.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
+    if show and count >= CHART_LABEL_MIN_COUNT and height < CHART_LABEL_MIN_H:
+        if str(element.get("label_collision_policy", "fail")) == "hide_redundant":
+            show = False
+            ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值")
+        else:
+            ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡")
+    if show:
+        plot = chart.plots[0]
+        plot.has_data_labels = True
+        labels = plot.data_labels
+        labels.show_value = True
+        style(labels.font, float(element.get("value_size", 12)), ink)
+        if element.get("number_format"):
+            labels.number_format = str(element["number_format"])
+            labels.number_format_is_linked = False
+        labels.position = (XL_LABEL_POSITION.OUTSIDE_END if kind in
+                           ("bar", "horizontal_bar", "comparison_bar", "column")
+                           else XL_LABEL_POSITION.BEST_FIT)
+        if kind not in ("pie", "donut", "donut_composition"):
+            chart.value_axis.tick_label_position = XL_TICK_LABEL_POSITION.NONE
+
+
 def _add_multi_series(slide, element: dict, ctx: RenderContext,
                       kind: str, x, y, w, h) -> None:
     """多序列原生图表（line/column/area）：categories + series[{name, values}]。
@@ -764,18 +816,7 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     chart = gf.chart
     chart.has_legend = False
     chart.has_title = False
-    try:
-        chart.value_axis.has_major_gridlines = False
-        chart.value_axis.format.line.fill.background()
-        chart.value_axis.tick_labels.font.size = Pt(8)
-        chart.value_axis.tick_labels.font.color.rgb = muted
-        chart.value_axis.tick_labels.font.name = latin
-        chart.category_axis.format.line.fill.background()
-        chart.category_axis.tick_labels.font.size = Pt(10)
-        chart.category_axis.tick_labels.font.color.rgb = ink
-        chart.category_axis.tick_labels.font.name = latin
-    except Exception:
-        pass
+    _native_chart_text(chart, element, ctx, kind, n_cat * len(parsed), h)
     series_names = [name for name, _nums in parsed]
     hl = series_highlight_index(element, series_names, -1)
     end_labels = bool(element.get("end_labels", True))
@@ -844,19 +885,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
     chart.has_legend = False
     chart.has_title = False
 
-    try:
-        # 低噪声：去网格线、去轴线，弱化刻度
-        chart.value_axis.has_major_gridlines = False
-        chart.value_axis.format.line.fill.background()
-        chart.value_axis.tick_labels.font.size = Pt(8)
-        chart.value_axis.tick_labels.font.color.rgb = muted
-        chart.value_axis.tick_labels.font.name = latin
-        chart.category_axis.format.line.fill.background()
-        chart.category_axis.tick_labels.font.size = Pt(10)
-        chart.category_axis.tick_labels.font.color.rgb = ink
-        chart.category_axis.tick_labels.font.name = latin
-    except Exception:
-        pass
+    _native_chart_text(chart, element, ctx, kind, len(rows), h)
 
     series = chart.series[0]
     hl0 = highlight_index(element, rows, -1)
@@ -908,42 +937,6 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
             point.format.fill.fore_color.rgb = accent
             try:
                 point.format.line.color.rgb = accent
-            except Exception:
-                pass
-
-        show_values = element.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
-        # Do not squeeze labels into a dense plot. The policy is explicit so the
-        # caller can choose between removing redundant labels and failing QA.
-        label_policy = str(element.get("label_collision_policy", "fail"))
-        if (show_values and len(rows) >= CHART_LABEL_MIN_COUNT
-                and h < CHART_LABEL_MIN_H):
-            if label_policy == "hide_redundant":
-                show_values = False
-                ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值")
-            else:
-                ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡")
-        if show_values:
-            plot = chart.plots[0]
-            plot.has_data_labels = True
-            plot.data_labels.show_value = True
-            plot.data_labels.font.size = Pt(9)
-            plot.data_labels.font.color.rgb = ink
-            plot.data_labels.font.name = latin
-            nf = element.get("number_format")
-            if nf:
-                try:
-                    plot.data_labels.number_format = str(nf)
-                    plot.data_labels.number_format_is_linked = False
-                except Exception:
-                    pass
-            try:
-                plot.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
-            except Exception:
-                pass
-            # 直接标注已承担读数职责时隐藏值轴刻度（OS §19.3：直接标注够用时
-            # 不保留第二套读数通道），进一步降噪。
-            try:
-                chart.value_axis.tick_label_position = XL_TICK_LABEL_POSITION.NONE
             except Exception:
                 pass
 
