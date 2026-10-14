@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -870,23 +871,68 @@ def is_cjk(ch: str) -> bool:
 # 插入 U+2009 THIN SPACE（≈1/5 em），作为渲染层的排版打磨——不改变作者的
 # spec 文本（Guard 仍按原文本测行长），只改变最终落到页面上的视觉效果。
 HAIR_SPACE = "\u2009"
+# 数字与单位之间改用**不断行**空格：U+2009 是合法的断行机会，中文排版里就出现
+# 过「…平均配送半径是 186 ｜公里」——数字被留在行尾、单位掉到下一行。替代引擎
+# 真实渲染（LibreOffice）复现了这一点。U+00A0 在所有目标引擎里都不允许断行，
+# 视觉上仍是同一个间隙。单位词表（UNIT_WORDS）是它的唯一来源。
+NO_BREAK_SPACE = "\u00a0"
+# 单位词：只用于「不让断行」，不参与任何度量或口径判断。长词在前由匹配器保证。
+UNIT_WORDS = (
+    "亿美元", "万美元", "亿元", "万元", "万户", "万单", "万人", "万家", "万次",
+    "个月", "分钟", "小时", "公里", "千米", "平方米", "平米", "立方米",
+    "千瓦时", "千瓦", "公斤", "千克", "毫米", "厘米", "毫升", "美元",
+    "吨", "克", "米", "升", "元", "万", "亿", "家", "人", "个", "台", "名",
+    "位", "件", "次", "天", "月", "年", "分", "秒", "倍", "万元",
+    "%", "％", "pp",
+)
+_UNIT_HEAD_RE = re.compile("^(?:" + "|".join(
+    re.escape(w) for w in sorted(set(UNIT_WORDS), key=len, reverse=True)) + ")")
+
+
+def unit_head(text: str) -> bool:
+    """右侧是否以单位词开头（数字与单位不拆行的判据）。"""
+    return bool(text) and bool(_UNIT_HEAD_RE.match(str(text)))
 
 
 def _is_latin_alnum(ch: str) -> bool:
     return ("A" <= ch <= "Z") or ("a" <= ch <= "z") or ("0" <= ch <= "9")
 
 
-def insert_script_gaps(text: str) -> str:
-    """在 CJK 与拉丁字母/数字的边界插入细空格；空格与标点不触发。"""
-    if not text or len(text) < 2:
+# 「186 公里」这类作者自己写下的普通空格也是断行机会：数字与单位之间改成
+# 不断行空格。只动紧贴数字之后的、且右侧以单位词开头的那一个空格。
+_NUMBER_UNIT_SPACE = re.compile(r"(?<=\d) (?=[^\s])")
+
+
+def bind_number_units(text: str) -> str:
+    """数字与单位之间的空格改为不断行空格；其余字符原样保留。"""
+    if not text:
         return text
+
+    def _swap(match):
+        tail = str(text)[match.end():match.end() + 3]
+        return NO_BREAK_SPACE if unit_head(tail) else match.group(0)
+
+    return _NUMBER_UNIT_SPACE.sub(_swap, text)
+
+
+def insert_script_gaps(text: str) -> str:
+    """在 CJK 与拉丁字母/数字的边界插入间隙；空格与标点不触发。
+
+    数字与单位之间用 `NO_BREAK_SPACE`（右侧以单位词开头时），其余边界用
+    `HAIR_SPACE`——单位永不被断到下一行，混排间隙照旧。
+    """
+    if not text or len(text) < 2:
+        return bind_number_units(text)
+    text = bind_number_units(text)
     out = []
     for i, ch in enumerate(text):
         if i > 0:
             prev = text[i - 1]
             if (_is_latin_alnum(ch) and is_cjk(prev)) or \
                     (_is_latin_alnum(prev) and is_cjk(ch)):
-                out.append(HAIR_SPACE)
+                # 数字 → 单位：不断行（判据在**左侧是数字**、右侧以单位词开头）。
+                digit_then_unit = prev.isdigit() and unit_head(text[i:])
+                out.append(NO_BREAK_SPACE if digit_then_unit else HAIR_SPACE)
         out.append(ch)
     return "".join(out)
 
@@ -920,6 +966,8 @@ def text_units(value: str) -> float:
     for c in value:
         if c == HAIR_SPACE:
             total += 0.2
+        elif c == NO_BREAK_SPACE:
+            total += 0.55          # 与普通空格同占位，单位不被算成第 N 个汉字
         elif ord(c) > 127:
             total += 1.0
         else:
@@ -931,7 +979,8 @@ def text_width(text: str, size: float, spacing: float = 0) -> float:
     """Conservative single-line estimate; not an Office font renderer."""
     units = 0.0
     for c in text:
-        units += (0.2 if c == HAIR_SPACE else 1.0 if ord(c) > 127 else
+        units += (0.2 if c == HAIR_SPACE else 0.55 if c == NO_BREAK_SPACE
+                  else 1.0 if ord(c) > 127 else
                   0.95 if c in "MW@#%&" else 0.3 if c in "ilI.,:;!'| " else 0.6)
     return units * size + max(0, len(text) - 1) * max(0, spacing) / 0.75
 

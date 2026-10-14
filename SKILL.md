@@ -120,6 +120,8 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 - `BLOCK` 后读取一个修复包，按根因组一次批量修复，再复跑同一条 check；不逐页重试。
 - 唯一入口 `vao.py`；作者审阅真实 PPTX 不等于 PIL 预览已证明 Office 排版像素一致。
 - release 缺预览或凭证时 BLOCK；时限可以中止预览，不能仍标为可发布。
+- 需要第三层证据（替代引擎真实排版）时跑 `render_evidence.py`：它只采集页图与
+  摘要，不给判定、不进发布凭证；缺渲染器就报「没有证据」，不降级成通过。
 
 ## 6. QA 边界
 
@@ -132,15 +134,19 @@ QA 只回答：**自动化硬约束与产物凭证是否通过？** 输出只有
 四层证据不是一回事，说清自己在哪一层：
 
 ```
-代码测试（selftest）→ 结构预览（ghost 方向证据）→ 真实渲染（PowerPoint 打开产物）
-                    → 专业视觉验收（人按 §2 停止信号逐页判断）
+代码测试（selftest）→ 结构预览（ghost 方向证据）→ 替代引擎实际渲染（render_evidence）
+                    → 目标 PowerPoint（打开/编辑/另存/重开）→ 专业视觉验收（人按 §2 判断）
 ```
 
 `PASS` 说明所执行的自动化硬门通过；第二层覆盖以 manifest 为准（未生成则不成立）。第二层是**方向**证据（几何、层级、数据形态），
 不是 Office 排版像素。**测试通过不代表设计优秀**，预览通过不代表交付可用；
 字体回落、中文断行、真实投影下的可读性只有第三、四层能回答。ghost 仅按编译器的
 字体角色选择近似衬线/无衬线字面（Noto CJK 使用简体字面）；混排仍非逐 run 测量，
-中文禁则回退也不写入 PPTX。LibreOffice 等替代引擎可用于打开实际 PPTX 排障，但不是目标 PowerPoint 验收。
+中文禁则回退也不写入 PPTX。`render_evidence.py` 用替代引擎（LibreOffice）把交付的 PPTX 实际排版并逐页栅格化，
+凭证只写观察到的事实（引擎版本、页数、逐页摘要），并把 `target_powerpoint /
+native_editing / independent_visual_review` 恒标为未验证——它不是目标 PowerPoint 验收，
+也不能替代人按停止信号逐页判断。它记录真实排版边界：字体回落、折行与标签是否互压
+在那一层才第一次可见（本轮 s05 的标签互压就是这样看到的）。
 没有目标 Office 环境时，记录缺失项并保留原稿、结构页图
 与待验清单，不以结构 PASS 宣称视觉终验。
 

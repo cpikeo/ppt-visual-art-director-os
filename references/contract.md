@@ -127,6 +127,22 @@ big_number_row 5、matrix/bubble 12、architecture 3；超过时在编译前 BLO
 - `vao.py qc --assets-manifest m.json`：离线像素体检（与 check 同判据），
   不写状态、不消耗 retry——出图迭代的最短反馈环。
 
+## 第三层证据（替代引擎实际渲染）
+
+```bash
+python scripts/render_evidence.py out.pptx --out evidence/   # 交付产物
+python scripts/render_evidence.py build.py --out evidence/   # 现场编译再渲染
+```
+
+只采集事实：引擎与版本、页数与逐页 SHA-256、PDF 摘要；`status` 为
+`COLLECTED`（已取证）/ `PDF_ONLY`（无栅格化器，只有 PDF 排版凭证）/
+`UNAVAILABLE`（无渲染器 = **没有证据**）/ `FAILED`。退出码 0 / 0 / 3 / 2。
+它不产出 PASS/BLOCK，不写发布清单，不改变 `release_eligible`；
+`target_powerpoint / native_editing / independent_visual_review` 恒为未验证。
+
+边界：替代引擎（LibreOffice）的真实排版 ≠ 目标 PowerPoint 排版（字体回落、
+自动轴范围、自动换行都可能不同），它是排障与方向核验，不是视觉终验。
+
 ## 执行模式与速度
 
 | 模式 | 做什么 | 产物 |

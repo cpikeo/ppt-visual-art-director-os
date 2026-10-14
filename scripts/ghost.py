@@ -280,14 +280,20 @@ def _fill(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
 # 这里只做**局部回退**：二分给出「最长可容纳前缀」后按禁则回退，不重新定义断点。
 _NO_LINE_START = "，。、；：？！）〉》」』】〕｝·…—～”’"
 _NO_LINE_END = "（《「『【〔｛“‘"
+# 单位词表的唯一来源在 primitives（编译器写不断行空格、预览判禁则共用一份）：
+# 曾经各写一份，两边的单位集合一旦漂移，「预览说不断、产物断了」就没人发现。
+from primitives import UNIT_WORDS as _UNIT_WORDS  # noqa: E402  (同目录平铺模块)
+
 _UNIT_HEAD = re.compile(
-    r"^(亿元|万元|万户|万单|万人|万家|万次|个月|分钟|小时|美元|元|家|人|个|台|"
-    r"名|位|件|次|天|月|年|%|％|pp|倍)")
+    "^(?:" + "|".join(re.escape(w) for w in
+                      sorted(set(_UNIT_WORDS), key=len, reverse=True)) + ")")
 # 双字单位的内部断点：断在「个|月」「万|元」「小|时」中间，单位被读成两个词。
 # 只在**跨断口的两字正好构成单位内部相邻对**时触发，不会误并「大小｜时间」。
 _UNIT_INNER = {u[i:i + 2] for u in
                ("亿元", "万元", "万户", "万单", "万人", "万家", "万次",
-                "个月", "分钟", "小时", "美元") for i in range(len(u) - 1)}
+                "个月", "分钟", "小时", "美元", "公里", "千米", "公斤",
+                "千克", "厘米", "毫米", "毫升", "平方", "立方", "千瓦")
+               for i in range(len(u) - 1)}
 
 
 def _cjk_break_fix(seg: str, lo: int) -> int:

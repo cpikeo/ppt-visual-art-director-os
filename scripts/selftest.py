@@ -2186,6 +2186,279 @@ def test_release_evidence(tmp: Path):
         check('arrow: ghost 方向端点 '+element['id'], ImageChops.difference(actual.convert('RGB'),plain.convert('RGB')).getbbox() is not None)
 
 
+def test_render_evidence(tmp: Path):
+    """第三层证据采集：真实排版引擎的页图凭证。
+
+    这一层绝不能变成第二个判定入口——它只记录观察到的事实（引擎、版本、页数、
+    逐页摘要），永远不产出 PASS/BLOCK，也不消费目标 PowerPoint / 编辑往返 /
+    独立评审这三个未验证状态。缺渲染器时它必须**明确说没有证据**，而不是
+    静默降级成「看起来通过」。
+    """
+    import json
+    import shutil
+    import render_evidence
+    from compiler import compile_deck
+    import vao
+
+    spec, _ = vao.load_spec(make_build(tmp, chart=True))
+    pptx = tmp / "deck.pptx"
+    compile_deck(spec, str(pptx))
+    check("render: 现场编译出可渲染的产物", pptx.exists() and pptx.stat().st_size > 0)
+
+    fingerprint = render_evidence.renderer_fingerprint()
+    record = render_evidence.collect_evidence(pptx, tmp / "evidence", dpi=72, timeout=240)
+    path = render_evidence.write_evidence(record, tmp / "evidence")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    check("render: 凭证落盘且 schema 稳定",
+          stored["schema"] == render_evidence.SCHEMA and stored["status"] == record["status"],
+          str(stored["schema"]))
+
+    if not fingerprint["available"]:
+        # 没有渲染器：必须是「没有证据」，不能是「通过」。CI 的 Windows 作业走这条分支。
+        check("render: 缺渲染器时明确无证据（不冒充通过、不产页图）",
+              record["status"] == "UNAVAILABLE" and record["pages"] == []
+              and record["renderer"]["available"] is False
+              and any("没有" in issue and "第三层证据" in issue for issue in record["issues"]),
+              str(record["status"]))
+        return
+
+    check("render: 渲染器指纹可核验（名字+版本+栅格化器）",
+          bool(record["renderer"]["version"]) and record["renderer"]["rasterizer"],
+          str(record["renderer"]))
+    if record["status"] == "PDF_ONLY":
+        # 有引擎但没有栅格化器：如实记为只保留 PDF 排版凭证。
+        check("render: 无栅格化器时如实记 PDF_ONLY（不假装有页图）",
+              record["pages"] == [] and bool(record["pdf"].get("sha256")))
+        return
+    check("render: 逐页凭证齐备且页数与 spec 一致",
+          record["status"] == "COLLECTED"
+          and len(record["pages"]) == len(spec["slides"])
+          and all(len(p["sha256"]) == 64 and p.get("dimensions") for p in record["pages"]),
+          str(record["status"]))
+    check("render: 产物指纹与页图同批（同一份 PPTX 的凭证）",
+          record["pptx"]["sha256"] == _sha_of(pptx), str(record["pptx"]))
+    # 同一个引擎、同一份输入，两次渲染的页图必须逐字节一致：凭证可复验的前提。
+    again = render_evidence.collect_evidence(pptx, tmp / "evidence2", dpi=72, timeout=240)
+    check("render: 同引擎重跑页图逐字节一致（凭证可复验）",
+          again["status"] == "COLLECTED"
+          and [p["sha256"] for p in again["pages"]] == [p["sha256"] for p in record["pages"]])
+    check("render: 三个未验证状态不被自动升级（替代引擎不是目标 PowerPoint）",
+          all(record["unverified"][k] for k in
+              ("target_powerpoint", "native_editing", "independent_visual_review"))
+          and "PowerPoint" in record["unverified"]["target_powerpoint"]
+          and "PASS" not in json.dumps(record, ensure_ascii=False))
+    # 页图必须真的画了东西：全白页说明渲染失败了却仍然记成 COLLECTED。
+    from PIL import Image
+    ink = 0
+    for page in record["pages"]:
+        with Image.open(page["file"]) as im:
+            ink += len(set(im.convert("RGB").getdata()))
+    check("render: 页图非空（不是一片白底冒充成功）", ink > 2 * len(record["pages"]), str(ink))
+
+
+def _sha_of(path: Path) -> str:
+    from primitives import file_digest
+    return file_digest(path) or ""
+
+
+def test_boundary_typography(tmp: Path):
+    """中文混排的行尾纪律：数字与单位不许被断到两行。
+
+    判据来自**替代引擎的真实渲染**：接受基准 s06 曾把「平均配送半径是 186」留在
+    行尾、把「公里」推到下一行——数字与单位拆开，正是 SKILL.md §3 禁止的那件事。
+    混排间隙（U+2009 细空格）本身是合法断行机会，所以数字与单位之间必须用
+    不断行空格；这条纪律由 primitives 的单位词表**一处**决定，编译器与幽灵预览共用。
+    """
+    import primitives as prim
+
+    gapped = prim.insert_script_gaps("配送半径是186公里")
+    check("混排: 数字与单位之间用不断行空格（细空格是断行机会）",
+          prim.NO_BREAK_SPACE in gapped and "186" + prim.NO_BREAK_SPACE + "公里" in gapped,
+          repr(gapped))
+    check("混排: 作者自己写的空格也被绑定（「186 公里」同样不许断）",
+          prim.insert_script_gaps("平均半径是 186 公里")
+          == "平均半径是 186" + prim.NO_BREAK_SPACE + "公里",
+          repr(prim.insert_script_gaps("平均半径是 186 公里")))
+    check("混排: 非单位的普通空格不受影响（不制造粘在一起的假词）",
+          prim.insert_script_gaps("覆盖 华东 与 华南") == "覆盖 华东 与 华南"
+          and prim.insert_script_gaps("我们 做了 三件事") == "我们 做了 三件事")
+    check("混排: 间隙插入幂等（二次处理不再漂移）",
+          prim.insert_script_gaps(gapped) == gapped)
+    # 容量估算必须与产物实际写的字符一致，否则 Guard 会算错行数。
+    check("混排: 容量估算认识不断行空格（不被当成一个汉字）",
+          0.5 < prim.text_units(prim.NO_BREAK_SPACE) < 0.6
+          and prim.text_units(prim.NO_BREAK_SPACE) == prim.text_units(" "),
+          str(prim.text_units(prim.NO_BREAK_SPACE)))
+    # 单位词表只有一处：预览的禁则判据必须与编译器写出的间隙同源。
+    import ghost
+    for probe in ("公里", "个月", "万元", "%", "家"):
+        check(f"混排: 预览禁则与编译共用同一份单位表（{probe}）",
+              bool(ghost._UNIT_HEAD.match(probe)) and probe in prim.UNIT_WORDS)
+    # 真实产物里也必须是不换行：编译后从 PPTX 里读回文本核对。
+    from compiler import compile_deck
+    import vao
+    spec, _ = vao.load_spec(make_build(tmp, chart=False))
+    spec["slides"][0]["elements"].append(
+        {"id": "nb", "type": "text", "x": 40, "y": 600, "width": 800, "height": 40,
+         "role": "body", "text": "平均配送半径是 186 公里", "size": 16})
+    out = tmp / "nb.pptx"
+    compile_deck(spec, str(out))
+    from pptx import Presentation
+    text = "\n".join(shape.text_frame.text for shape in
+                     Presentation(str(out)).slides[0].shapes if shape.has_text_frame)
+    check("混排: 交付的 PPTX 里数字与单位之间是不换行空格",
+          "186" + prim.NO_BREAK_SPACE + "公里" in text, repr(text[-80:]))
+
+
+def test_design_judgment(tmp: Path):
+    """设计判断回归：每条用例对应一次真实成品/渲染审计暴露出来的错判。
+
+    这些不是「更多规则」，而是把已经修对的判断钉住——每个断言的期望值都来自
+    一次可复现的误判现场（接受基准 brief_v1 的 s01/s02/s04/s05/s08 与条件从句页）。
+    """
+    import intelligence as intel
+
+    # 1 · 时间坐标不进证据量：封面写着「投委会 2026.10」，四位年 + 点分月日是日期。
+    #     旧实现把它读成 2026.1，封面于是「有一个量要立住」，焦点/权重/构图/字阶
+    #     一起落到日期上（实测：封面最大的元素成了 2026.10）。
+    check("numerals: 点分日期（2026.10 / 2026.10.14）不是证据量",
+          intel.evidence_numerals("华东区 2024—2026 经营复盘 · 投委会 2026.10") == []
+          and intel.evidence_numerals("数据截至 2026.10.14") == []
+          and [n["raw"] for n in intel.evidence_numerals("单价 12.5 元")] == ["12.5 元"],
+          str(intel.evidence_numerals("华东区 2024—2026 经营复盘 · 投委会 2026.10")))
+    cover = intel.page_judgment(
+        {"id": "c1", "title": "扩张的答案不在开店速度，在单店质量",
+         "content": "华东区 2024—2026 经营复盘 · 投委会 2026.10",
+         "insight": "扩张的答案不在开店速度，在单店质量", "asset": "none"},
+        index=0, total=8, brief={"audience": "投委会", "decision": "批准扩张预算"},
+        world=intel.derive_world({"audience": "投委会"}, [intel.understand("x")]),
+        warnings=[])
+    check("判断: 封面是陈述位，日期不当焦点（焦点回到主张本人）",
+          cover["visual_role"]["role"] == "establish"
+          and cover["focus"]["element_role"] == "statement_text"
+          and cover["understanding"]["evidence"] == "none",
+          str({k: cover[k] for k in ("visual_role", "focus")}))
+
+    # 2 · 主张说的是哪个指标，就锚哪个数字：标题讲增速连续收窄，正文末句讲的是
+    #     单店月均营收——旧实现让正文的「数字＋变化」把标题结论顶掉，主语变成
+    #     另一个指标的金额（实测：增速页的头号数字成了 37.5 万元）。
+    mixed = intel.extract_claim(
+        {"title": "同店销售额仍在增长，但增速已经连续三个季度收窄",
+         "content": "同店销售额同比增速：2025Q4 为 8.6%，2026Q1 为 6.1%，2026Q2 为 3.4%，"
+                    "2026Q3 为 2.2%。单店月均营收从 41.2 万元降至 37.5 万元。"})
+    check("claim: 正文换了指标时不顶掉标题结论（同一度量才谈得上更强）",
+          mixed["text"] == "同店销售额仍在增长，但增速已经连续三个季度收窄", str(mixed))
+    stronger = intel.extract_claim(
+        {"title": "华东区数据",
+         "content": "结论：增速收窄的根因是店长成熟度。单店月均营收降至 37.5 万元。"})
+    check("claim: 带结论措辞的正文句仍然胜出（不被指标一致性挡住）",
+          "根因" in (stronger["text"] or ""), str(stronger))
+
+    # 3 · 序列位置坐标不是第二个量：「第 3 个月 × 月均营收（万元）」是坐标轴，
+    #     不是两种单位并置。旧实现判成单位不同 → 丢掉 data_field，还多报一条
+    #     并不存在的口径告警（实测：同一张图的同口径数据被判不可比）。
+    curve = intel.understand(
+        "成熟店与新店的营收差距在开业第 9 个月才收敛 "
+        "开业后各月单店月均营收（万元）：第 3 个月，成熟店 41.2，新店 27.2；"
+        "第 6 个月，成熟店 41.8，新店 33.6。")
+    check("data: 序列位置坐标（第 N 个月）不把同口径序列判成单位不同",
+          curve["same_unit"] is True and curve["evidence"] == "comparison", str(curve))
+    check("data: 真跨量纲的页面仍然判不可比（尺子没被放松）",
+          intel.understand("总收入 480 万元，人均成本 90 元")["same_unit"] is False)
+
+    # 4 · 请求的动作自己带的量赢过后面的终值：「批准本轮 30 家，同步把培训基地
+    #     从 2 个扩到 3 个」的主语是要批的 30 家，不是「扩到 3 个」。
+    ask = "批准本轮 30 家，同步把培训基地从 2 个扩到 3 个"
+    _, ask_primary = intel.number_roles(ask, ask)
+    check("focus: 要决定的那个量赢过后面出现的终值（30 家，而不是 3 个）",
+          ask_primary and ask_primary["raw"] == "30 家", str(ask_primary))
+
+    # 5 · 序列没有点名取值时，同分同单位取**末值**：讲「增速连续三个季度收窄」，
+    #     主语是当前的 2.2%，不是三年前的 8.6%（旧实现取同分里的第一个）。
+    _, latest = intel.number_roles(
+        "同店销售额同比增速：2025Q4 为 8.6%，2026Q1 为 6.1%，2026Q2 为 3.4%，2026Q3 为 2.2%。",
+        "增速已经连续三个季度收窄")
+    check("focus: 序列同分同单位时取末值（当前状态，不是基期）",
+          latest and latest["raw"] == "2.2%", str(latest))
+
+    # 6 · 主张自己的量不算「重复」：结论点明落点、证据里必然再出现一次。
+    #     旧实现把它列进删除清单，等于叫作者删掉本页的主张（实测：收敛页的
+    #     删除清单里出现「9 个月 的重复出现」）。
+    gap_text = ("开业后各月：第 3 个月，成熟店 41.2，新店 27.2；"
+                "第 9 个月，成熟店 42.1，新店 38.9。")
+    gap_page = intel.information_weight(
+        intel.understand(gap_text),
+        {"text": "成熟店与新店的营收差距在开业第 9 个月才收敛", "source": "extracted"},
+        gap_text)
+    check("weight: 结论点名的坐标不进删除清单（主张与证据的必要呼应）",
+          not any("重复" in x for x in gap_page["delete"]), str(gap_page["delete"]))
+    dup_text = "收入 12 亿，收入 12 亿（来源：财报）"
+    dup_again = intel.information_weight(intel.understand(dup_text),
+                                        {"text": "收入 12 亿", "source": "extracted"}, dup_text)
+    check("weight: 同一句话里的数字重复照旧进删除清单",
+          any("重复" in x for x in dup_again["delete"]), str(dup_again["delete"]))
+
+    # 7 · 「单位不同」只在**主张**层面成立：页面里同时出现家数、月数与百分比，
+    #     不等于这一页要把它们画到同一条数量轴上（实测：人效对比页的未决项来自
+    #     正文的门店家数，主张其实只有 34% 一个量）。
+    chart_brief = {"audience": "投委会", "decision": "批准扩张"}
+    chart_page = intel.think({**chart_brief, "slides": [{
+        "id": "u1", "title": "开店速度已经超过组织承接能力",
+        "content": "2026 年新开 62 家门店，同比 38 家增长 63%；同期店长培养周期从 5.2 个月"
+                   "拉长到 8.7 个月。新店首月人效比成熟店低 34%。"}]})["pages"][0]["judgment"]
+    check("judgment: 主张单一量时不误报口径未决（正文混量纲不算）",
+          not any("单位不同" in q for q in (chart_page["open_questions"] or [])),
+          str(chart_page["open_questions"]))
+    mixed_claim = intel.think({**chart_brief, "slides": [{
+        "id": "u2", "title": "总收入与人均成本对比：480 万元 vs 90 元",
+        "content": "总收入 480 万元，人均成本 90 元（来源：财务表）"}]})["pages"][0]["judgment"]
+    check("judgment: 主张自己跨量纲时照旧报口径未决（尺子没被放松）",
+          any("单位不同" in q for q in (mixed_claim["open_questions"] or [])),
+          str(mixed_claim["open_questions"]))
+
+    # 8 · 单个「先」是优先级不是流程：「先把周期压回去，再谈扩张」是决策页，
+    #     不是一个时间轴（旧实现据一个虚词判出 sequence + linear_structure）。
+    decision = intel.think({**chart_brief, "slides": [{
+        "id": "d1", "title": "先把店长培养周期压回 6 个月，再谈第三轮扩张",
+        "content": "批准本轮 30 家，同步把培训基地从 2 个扩到 3 个；"
+                   "若 2027Q1 店长培养周期仍高于 7 个月，暂停后续批次。"}]})["pages"][0]["judgment"]
+    check("judgment: 单个「先/再」不构成流程（决策页回到收束位）",
+          decision["visual_role"]["role"] == "summarize"
+          and decision["composition"]["chosen"] != "linear_structure",
+          str({"role": decision["visual_role"]["role"],
+               "comp": decision["composition"]["chosen"]}))
+    check("judgment: 条件从句里的比较词不把收尾页判成两端对比",
+          decision["understanding"]["evidence"] != "comparison", str(decision["understanding"]))
+
+    # 9 · 眉标是被截断的从句时不输出：「答案不在开店速度」曾是眉标「答案不」。
+    for text, forbid in (("扩张的答案不在开店速度，在单店质量", "答案不"),
+                         ("同店销售额仍在增长，但增速已经连续三个季度收窄", "同店销售额仍")):
+        got = intel.section_label({}, {"text": text}, "prove")
+        check(f"眉标: 不以副词收尾的截断从句（{forbid}）", got != forbid and len(got) <= 6, got)
+    check("眉标: 干净名词短语照旧派得出来（收尾字表不被过度收紧）",
+          intel.section_label({}, {"text": "供应链的响应半径决定了开业节奏的上限"}, "prove")
+          == "供应链", intel.section_label({}, {"text": "x"}, "prove"))
+
+    # 10 · 单位表覆盖实务量词：配送半径 186 公里不能读成无单位的 186。
+    check("numerals: 公里/吨/平方米等单位进入读数（主语不丢量纲）",
+          [(n["raw"], n["unit"]) for n in intel.evidence_numerals("配送半径 186 公里")]
+          == [("186 公里", "公里")]
+          and intel.evidence_numerals("产量 12 万吨")[0]["unit"] == "万吨")
+
+    # 11 · 主张讲「差」时，排版纪律点名差本身：两条近重合的线各带一套数值标签，
+    #      会在同一个 x 上挤到一起且认不出归属（真实渲染实测）。
+    gap_judgment = intel.page_judgment(
+        {"id": "g1", "title": "成熟店与新店的营收差距在开业第 9 个月才收敛",
+         "content": "开业后各月单店月均营收（万元）：第 3 个月，成熟店 41.2，新店 27.2；"
+                    "第 6 个月，成熟店 41.8，新店 33.6；第 9 个月，成熟店 42.1，新店 38.9。",
+         "asset": "none"},
+        index=4, total=8, brief=chart_brief,
+        world=intel.derive_world(chart_brief, [intel.understand("x")]), warnings=[])
+    check("typography: 讲差的一页要求画差值或只标端点（不给两条线各配标签）",
+          "差值" in gap_judgment["typography"]["discipline"],
+          gap_judgment["typography"]["discipline"])
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -2228,7 +2501,11 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         for name, fn in (("intelligence", test_intelligence), ("verify", test_verify),
-                         ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries), ("release_evidence", test_release_evidence)):
+                         ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries),
+                         ("release_evidence", test_release_evidence),
+                         ("design_judgment", test_design_judgment),
+                         ("render_evidence", test_render_evidence),
+                         ("boundary_typography", test_boundary_typography)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

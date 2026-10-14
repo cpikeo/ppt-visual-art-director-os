@@ -49,8 +49,21 @@ scripts/
   compiler.py     确定性 PPTX 编译（含编译缓存）
   primitives.py   最小生产原语（身份/字节/几何/颜色/文本测量）
   ghost.py        PIL 结构预览（关键页取证：封面/章节/画心/密数据/收尾）
+  render_evidence.py  第三层证据：替代引擎（LibreOffice）实际排版 → 逐页页图 + 摘要
   selftest.py     核心测试（生产路径即测试路径）
 ```
+
+四层证据不是一回事，谁在哪一层要写清楚：
+
+```
+selftest 代码测试 → ghost 结构预览（方向证据，近似字面）
+                  → render_evidence 替代引擎实际渲染（真实排版，不是目标 PowerPoint）
+                  → 目标 PowerPoint 打开/编辑/另存/重开 → 独立视觉验收
+```
+
+第三层缺渲染器时 `render_evidence.py` 明确回报「没有证据」，不会把结构预览
+升格成真实渲染；`target_powerpoint / native_editing / independent_visual_review`
+在任何自动化结果里都保持未验证。
 
 - **QA 只拦硬错误**：编译失败 / 内容缺失 / 溢出 / 越界 / 重叠 / 无效资产 / 无效图表 /
   来源缺失（release）。输出只有 **PASS / BLOCK**；设计质量由逐页判断与作者审阅负责，
@@ -92,7 +105,24 @@ pip install -r requirements.txt
 python scripts/selftest.py   # 核心测试
 ```
 
-## 本轮可复验交付（9.17.1 候选版）
+## 接受基准（`acceptance/`）
+
+一份 8 页的代表性真实成品基准，覆盖封面 / 观点页 / 复杂逻辑页 / 密集数据页 /
+图表页 / 中文长文本页 / 图片叠字页 / 收尾页，数据与品牌均虚构：
+
+```bash
+cd acceptance
+python ../scripts/vao.py check build.py out.pptx --mode release --speed strict \
+    --assets-manifest asset_manifest.json --assets-dir assets --preview preview
+python ../scripts/render_evidence.py out.pptx --out evidence
+```
+
+它同时是设计判断的回归现场：`scripts/selftest.py` 的 `design_judgment` 组把
+这一套里出现过的每一次错判都钉成断言（日期被当成证据量、正文换指标顶掉标题结论、
+序列坐标被判成跨量纲、请求量被终值压过、坐标进删除清单、单个「先」判成流程、
+眉标截成「答案不」……）。差分记录见 `acceptance/REPORT.md`。
+
+## 本轮可复验交付（9.18.0 候选版）
 
 自动化回归与冒烟由 CI 每次 push 实跑：`scripts/selftest.py`（固定自检矩阵，
 ubuntu / windows × py3.10 / 3.12 / 3.13，退出码即门槛）与 spec 档冒烟
@@ -104,16 +134,21 @@ python scripts/selftest.py                                   # 核心自检矩�
 python scripts/vao.py check build.py out.pptx --mode release --speed strict
 ```
 
-已声明：312 项自检通过、spec 冒烟通过、结构预览（`ghost.py`，PIL 结构预览，
-不是 Office 像素忠实证明）给出方向证据——**自检全绿不等于视觉质量合格**。
-未声明：目标 PowerPoint 视觉终验、独立盲评结论、端到端提速。
+已声明：350 项自检通过、spec 冒烟通过、结构预览（`ghost.py`，PIL 结构预览，
+不是 Office 像素忠实证明）给出方向证据，以及接受基准的**替代引擎实际渲染**
+（LibreOffice 25.2，8 页逐页页图 + SHA-256，见 `acceptance/`），
+——**自检全绿与替代引擎渲染都不等于视觉质量合格**。
+未声明：目标 PowerPoint 视觉终验、原生编辑往返、独立盲评结论、端到端提速。
 未声明项的状态见下方「当前验证边界」。
 
 ## 当前验证边界（9.17.1）
 
 - **已做**：自动化回归、独立 spec 冒烟、结构预览（非 Office 像素证明）、本机计时基线。
+- **已做（9.18.0 新增）**：替代引擎（LibreOffice）对接受基准 PPTX 的实际排版与
+  逐页栅格化，凭证含引擎版本与逐页 SHA-256，并可重跑复验；同引擎重跑页图逐字节一致。
 - **未做**：目标 Microsoft PowerPoint 的实际打开 / 编辑 / 另存 / 重开验收；
   独立评审者对匿名 A/B 候选的完成评审；真实品牌或产品场景的泛化验证。
+  替代引擎渲染**不构成**目标环境验收：字体回落、自动轴范围与自动换行都可能不同。
 - 未完成项不在仓库内留半成品证据目录；评审材料与解盲件按匿名批次在仓库外
   独立保存，评审批次一经发出不重编号、不改阅读顺序。
 - 任何"更快""更好"的结论都必须先有独立评审通过的质量等价性；在它成立之前
