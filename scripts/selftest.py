@@ -481,6 +481,18 @@ def test_intelligence(tmp: Path):
           and len(set(labels)) == 1 and labels[0] == "东南亚市场"
           and [(p.get("anchor") or {}).get("eyebrow") for p in declared_eyebrow["pages"]]
           == ["单位经济", "清关与用工", "释放条件", "复盘节点"], str(labels))
+    # 眉标不得**缝合数字两侧**：把数字删掉再断词，会把「中国 800 元以上」缝成
+    # 「中国元以」——它看着像有信息，实际是噪声，比退回角色词更糟。
+    # 边缘编号（东南亚市场1）可以去掉，夹在中间的数字一律不收。
+    splice_bad = None
+    for _t, _want in (("中国 800 元以上的葡萄酒，是唯一两位数增长的赛道", "葡萄酒"),
+                      ("东南亚市场1是我们唯一的结构性增长来源", "东南亚市场"),
+                      ("本轮 1.8 亿元里，67% 投向库存与藤园", "证明")):
+        _got = intel.section_label({}, {"text": _t}, "prove")
+        if _got != _want:
+            splice_bad = (_t, _want, _got); break
+    check("眉标: 不缝合数字两侧的汉字（宁可退回角色词）",
+          splice_bad is None, str(splice_bad))
     # 封面 / 收尾是**陈述位**：没有证据不等于没有主张。
     # 实测（CASE_006）：一句封面主张被判成「结构说明页」，焦点落到一张并不存在的
     # 层级图上，收尾页则被判 absent 并告警，逼作者给封面补数据。

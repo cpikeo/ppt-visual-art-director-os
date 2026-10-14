@@ -1654,6 +1654,19 @@ _LABEL_BOUNDARY = ("是", "在", "与", "和", "或", "由", "从", "对", "把"
                    "之", "占", "达", "超", "低于", "高于", "无法", "不能", "不是",
                    "不再", "尚未", "来自", "关键")
 _LABEL_TAIL = "的里中上下内外前后了过等及"
+_NON_CJK = re.compile(r"[^一-鿿]")
+# 段首的「名词 + 数字 + 单位」说明语：「中国 800 元以上」「本轮 1.8 亿元里」
+_NUM_MODIFIER = re.compile(r"^[^0-9A-Za-z]{0,6}[0-9][0-9.,]*\s*[一-鿿]{0,3}")
+# 切段边界（长词优先），在此处断开而不是在断口前截断
+_BOUNDARY_SPLIT = re.compile("|".join(
+    re.escape(w) for w in sorted(_LABEL_BOUNDARY, key=len, reverse=True)))
+# 领头的动词/介词/数词：以它们开头的段是谓语或数量说明，不是眉标要的名词短语
+_LABEL_HEAD_STOP = set("把被将使让在为到按靠用向给与和或并且也还就而却但已会能要"
+                       "有只才更最都半多少整全各每本该此其做至升降增减投买卖产销"
+                       "提开完实进转扩缩换不从由")
+# 收尾的动词/连词/量词：以它们结尾的段是半句话或一个数量短语，不是可定位的名词
+_LABEL_TAIL_STOP = set("做在为有成给使让占到把被与和或并且而则及升降增减投买卖产"
+                       "销是年月日周季天时分秒个片条块件层度倍成回次遍")
 
 
 def section_label(item: dict, claim: dict, role: str) -> str:
@@ -1672,20 +1685,45 @@ def section_label(item: dict, claim: dict, role: str) -> str:
             text = text[len(prefix):]
             break
     head = re.split(r"[，。；：！？\n]", text, maxsplit=1)[0].strip()
-    head = re.sub(r"[^一-鿿]", "", head)          # 数字/拉丁不进眉标
+    fallback = _ROLE_LABEL_CN.get(str(role), str(role))
     if not head:
-        return _ROLE_LABEL_CN.get(str(role), str(role))
-    cuts = sorted({i for w in _LABEL_BOUNDARY for i in
-                   [m.start() for m in re.finditer(re.escape(w), head)]})
-    cands = [head[:i] for i in cuts if 3 <= i <= 8]
-    for cand in cands:
-        label = cand.rstrip(_LABEL_TAIL)
-        if 3 <= len(label) <= 6:
+        return fallback
+
+    def _label_of(seg: str) -> str:
+        """按虚词/谓语切段，取**第一个干净的名词短语**作眉标（2–6 字，优取 3–6）。
+
+        旧做法先删数字、再按「第一个边界之前」截断：等于把数字两侧的汉字缝在一起
+        （「中国 800 元以上」→「中国元以」），或收下一截动词短语（「会员做」）。
+        眉标是页眉上的定位词，缝出来的词比退回角色词更糟——它看着像有信息，
+        实际是噪声。切段 + 首尾虚词/动词剔除，宁可退回角色词。
+        """
+        for part in _BOUNDARY_SPLIT.split(seg):
+            q = part.strip()
+            core = re.sub(r"[^一-鿿]", "", q)
+            # 数字/拉丁夹在汉字之间（「中国 800 元以上」）说明这段不是连续名词，
+            # 硬删会把数字两侧的字缝成一个不存在的词；只在边缘的（「东南亚市场1」）
+            # 是编号，去掉边缘编号仍是同一个名词。
+            if not core or core not in q:
+                continue
+            p = core.strip(_LABEL_TAIL)
+            if not (2 <= len(p) <= 6):
+                continue
+            if p[0] in _LABEL_HEAD_STOP or p[-1] in _LABEL_TAIL_STOP:
+                continue                       # 动词/量词领头或收尾的不是名词短语
+            return p                           # 主语在前：取第一个干净的段
+        return ""
+
+    label = _label_of(head)
+    if label:
+        return label
+    # 段首是「名词 + 数字 + 单位」的说明语（「中国 800 元以上…」）：剥掉它再收一次，
+    # 真正的主语常常在数量词之后。
+    stripped = _NUM_MODIFIER.sub("", head, count=1).strip()
+    if stripped and stripped != head:
+        label = _label_of(stripped)
+        if label:
             return label
-    # 没有可用边界（整句就是一个名词短语）：整句收口到 6 字
-    if len(head) <= 6:
-        return head
-    return _ROLE_LABEL_CN.get(str(role), str(role))
+    return fallback
 
 
 def _apply_declared_spot(focus: dict, comp: dict, declared) -> tuple[dict, dict]:
