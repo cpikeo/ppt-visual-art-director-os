@@ -94,14 +94,27 @@ python scripts/selftest.py   # 核心测试
 
 ## 本轮可复验交付（9.17.1 候选版）
 
-见 [审计与验收报告](acceptance/REPORT.md)：根因、312 项回归、四类 12 页实际 PPTX、
-LibreOffice 页图、前后像素差分、原生对象检查与同环境 A/B 原始计时。
-仅声明自动化通过与替代引擎取证，**不声明目标 PowerPoint 视觉终验或端到端提速**。
+自动化回归与冒烟由 CI 每次 push 实跑：`scripts/selftest.py`（固定自检矩阵，
+ubuntu / windows × py3.10 / 3.12 / 3.13，退出码即门槛）与 spec 档冒烟
+（断言 `pptx` / `lxml` / `compiler` 不进 `sys.modules`）。结果与运行日志在
+Actions 页可查，不在仓库内另存一份报告。
 
 ```bash
-python acceptance/suite.py run --out /tmp/vao-acceptance
-# 安装 LibreOffice、Poppler 与 Noto CJK 字体后，可选实际渲染：
-python acceptance/suite.py run --render --out /tmp/vao-rendered
+python scripts/selftest.py                                   # 核心自检矩阵
+python scripts/vao.py check build.py out.pptx --mode release --speed strict
 ```
 
-这些是固定人工编排的验收夹具，不是新增模板引擎；生产仍只走 `scripts/vao.py`。
+已声明：312 项自检通过、spec 冒烟通过、结构预览（`ghost.py`，PIL 结构预览，
+不是 Office 像素忠实证明）给出方向证据——**自检全绿不等于视觉质量合格**。
+未声明：目标 PowerPoint 视觉终验、独立盲评结论、端到端提速。
+未声明项的状态见下方「当前验证边界」。
+
+## 当前验证边界（9.17.1）
+
+- **已做**：自动化回归、独立 spec 冒烟、结构预览（非 Office 像素证明）、本机计时基线。
+- **未做**：目标 Microsoft PowerPoint 的实际打开 / 编辑 / 另存 / 重开验收；
+  独立评审者对匿名 A/B 候选的完成评审；真实品牌或产品场景的泛化验证。
+- 未完成项不在仓库内留半成品证据目录；评审材料与解盲件按匿名批次在仓库外
+  独立保存，评审批次一经发出不重编号、不改阅读顺序。
+- 任何"更快""更好"的结论都必须先有独立评审通过的质量等价性；在它成立之前
+  不声明提速，也不把版本号当作结果。

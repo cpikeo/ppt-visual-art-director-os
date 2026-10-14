@@ -25,13 +25,3 @@ asset_prompt_cache.json
 !demo/deck_preview/
 demo/deck_preview/ghost-*.png
 demo/deck_preview/pages/
-
-# 有意保留本轮可审计的验收成品与凭证（不保留缓存）
-!acceptance/evidence/**/deck.pptx
-!acceptance/evidence/**/*.pdf
-!acceptance/evidence/**/*.manifest.json
-!acceptance/evidence/**/plan.json
-!acceptance/evidence/**/deck_preview/
-!acceptance/evidence/**/deck_preview/*
-!acceptance/evidence/**/*-edited.pptx
-!acceptance/evidence/**/fallback.pptx
