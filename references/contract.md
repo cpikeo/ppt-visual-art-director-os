@@ -4,32 +4,18 @@
 
 ## 判定边界
 
-QA 只回答自动化硬约束与凭证是否通过，只有 **PASS / BLOCK** 二态，不签署视觉终验。
+QA 只回答硬约束与凭证是否通过（PASS / BLOCK），不签署视觉终验（SKILL §6）。
 
-| 拦（error → BLOCK） | 不拦（设计判断，归你） |
-|---|---|
-| 编译失败 · 内容缺失 · 空 deck/空页 | 好不好看、密度高不高、颜色够不够克制 |
-| 溢出（框装不下 / 超 max_lines / 禁换行超宽） | 字号选择、留白多少、字阶是否好听 |
-| 越界（出画布）· 退化几何（元素不可见） | 构图是否平衡、层级是否够戏剧 |
-| 重叠（有效墨迹 > 容忍）· 来源区被侵入 | 叠压是否成立（作者声明即合法手法） |
-| 无效图表类型 / 空载荷 / 非有限值 / 行标签缺失 | 图表类型是否最合适（type 合规 ≠ 选得对） |
-| 同指标跨页单位不一致 · release 档缺来源/单位/期间/口径 | 口径文字怎么写、放哪里 |
-| 认不出的色名（渲染会静默回落）· 未消费字段 | 色相与彩度是否到位 |
-| 形 / 线填充走了不被读的字段（元素不可见） | 用形状还是用线 |
-
-**验证层不评分、不重新设计、不发明数字、不产生 warning 对话。** 非阻断信号不进对话，
-只作为证据存在；发现问题时按 `fix_plan` 根因组一次改完。
+- **拦（error → BLOCK）**：编译失败 · 内容缺失 · 空 deck/空页 · 溢出（框装不下 / 超 max_lines / 禁换行超宽）
+  · 越界与退化几何 · 重叠与来源区侵入 · 无效图表类型 / 空载荷 / 非有限值 / 行标签缺失
+  · 同指标跨页单位不一致 · release 缺来源/单位/期间/口径 · 认不出的色名 · 未消费或不可见的字段。
+- **不拦（归作者判断）**：好不好看、密度、颜色克制度、字号与留白、构图平衡、图表类型是否选得对、
+  口径文字怎么写。
 
 ## 文本测量边界
 
-Guard 粗估字号、折行、字距、段距及内边距；不是目标字体的真实排版。plan 的
-`typography.scale` 是启发式建议，不是适用于所有投影距离的物理定律或通过阈值。
-排版判断只按 SKILL.md；实际字体、回退、禁则、裁切与可读性须另行渲染核验。
-
-中文禁则回退目前只在 ghost 的折行模型中执行；编译器写入原生文本，实际折行由目标
-PowerPoint 与字体决定，**两者不共享断行实现**。ghost 的违例可以提示人工复核，
-不能推断 Office 必然有同样违例；ghost 没有违例也不能证明 PPTX 正确。证据分层以
-`SKILL.md §6` 为准。
+Guard 的字号、折行、字距与段距是**粗估**，不是目标字体的真实排版；中文禁则回退只在 ghost 折行模型里生效，
+编译器写入的是原生文本，实际断行由目标 PowerPoint 与字体决定。ghost 有违例只提示人工复核；无违例也不证明 PPTX 正确（SKILL §6）。
 
 ## Spec 字段速查
 
@@ -127,41 +113,12 @@ big_number_row 5、matrix/bubble 12、architecture 3；超过时在编译前 BLO
 - `vao.py qc --assets-manifest m.json`：离线像素体检（与 check 同判据），
   不写状态、不消耗 retry——出图迭代的最短反馈环。
 
-## 第三层证据（替代引擎实际渲染）
-
-```bash
-python scripts/render_evidence.py out.pptx --out evidence/   # 交付产物
-python scripts/render_evidence.py build.py --out evidence/   # 现场编译再渲染
-```
-
-只采集事实：引擎与版本、页数与逐页 SHA-256、PDF 摘要；`status` 为
-`COLLECTED`（已取证）/ `PDF_ONLY`（无栅格化器，只有 PDF 排版凭证）/
-`UNAVAILABLE`（无渲染器 = **没有证据**）/ `FAILED`。退出码 0 / 0 / 3 / 2。
-它不产出 PASS/BLOCK，不写发布清单，不改变 `release_eligible`；
-`target_powerpoint / native_editing / independent_visual_review` 恒为未验证。
-
-边界：替代引擎（LibreOffice）的真实排版 ≠ 目标 PowerPoint 排版（字体回落、
-自动轴范围、自动换行都可能不同），它是排障与方向核验，不是视觉终验。
-
 ## 执行模式与速度
 
-| 模式 | 做什么 | 产物 |
-|---|---|---|
-| `spec` | 归一化 + 硬门，不编译 | 判定报告 |
-| `draft` | 硬门 + 编译 | PPTX + 修复包 |
-| `release` | draft 全部 + 出处硬门 + 结构预览证据 + Manifest | PPTX + 预览 + Manifest |
-
-| 项 | `--speed fast`（默认） | `--speed strict` |
-|---|---|---|
-| 资产 QC 像素域 | 长边降采样；安全区原分辨率 | 全分辨率 |
-| 编译缓存探测 | size+mtime 快探针 | 整包 SHA-256 |
-| 结构预览 | 关键页取证（封面/章节/画心/密数据/收尾，默认 5 页） | 全 deck 逐页 |
-
-阻断项与阈值两档相同，但快档的多数像素统计在整数箱平均后的工作域，边界案例可能与原生
-分辨率结果不同；文字安全区纹理和硬缝仍看原图。需逐页结构取证的终稿选 `strict`；
-`fast` 仅取关键页，不要写成「全页已看过」。`--deadline`（默认 120s）只会跳过可选预览，
-不跳过核心正确性；release 预览因时限跳过即 BLOCK，须补跑同一条 check。
-严格档必须完整覆盖全部页面；快速档允许清单明确记录的关键页抽样。
+- `spec`：归一化 + 硬门，不编译。`draft`：硬门 + 编译 + 修复包。`release`：draft + 出处硬门 + 结构预览 + Manifest。
+- `--speed fast`（默认）：资产 QC 降采样、编译缓存用 size+mtime 探针、预览只画关键页（封面/章节/画心/密数据/收尾）。
+- `--speed strict`：全分辨率 QC、整包 SHA-256 核对、全页预览。**终稿用 strict**；fast 不能写成「全页已看过」。
+- 阻断项与阈值两档相同；`--deadline`（默认 120s）只跳过可选预览，不跳过正确性。release 因时限跳过预览即 BLOCK，须补跑同一条 check。
 
 ## Failure codes
 
@@ -171,12 +128,7 @@ python scripts/render_evidence.py build.py --out evidence/   # 现场编译再�
 
 ## Release Manifest
 
-`check --mode release` 生成 `source_spec_hash / validation / verification / compile_report
-（含 output_sha256）/ ghost_preview / asset_workflow / status`。校验三件事：报告盖的 spec 戳与
-当前一致；PPTX 字节戳与磁盘一致（一次哈希比对）；预览证据的唯一页面/文件数与声明一致，完整取证按叙事顺序覆盖当前 spec。
-缺 spec 戳、PPTX 路径/摘要或预览均不能 PASS。输入异常也覆盖旧 PASS 清单，
-磁盘可能保留旧 PPTX，但它不再代表当前输入的有效交付。
-`release_eligible` 仅在 release 档、编译通过且凭证全有效时为真。
-
-`verification.target_powerpoint/native_editing/independent_visual_review` 明确记录未验证状态；
-此工具不消费外部签署，也不会因自动化 PASS 自动升级它们。替代引擎记录与人工审阅须单独附上。
+`check --mode release` 写出 `source_spec_hash / validation / verification / compile_report（含 output_sha256）/
+ghost_preview / asset_workflow / status`。缺 spec 戳、PPTX 摘要或预览证据即不能 PASS；输入异常时覆盖旧 PASS 清单。
+`release_eligible` 仅在 release、编译通过且凭证全有效时为真。`verification.target_powerpoint / native_editing /
+independent_visual_review` 恒为未验证；工具不消费外部签署，也不自动升级它们。

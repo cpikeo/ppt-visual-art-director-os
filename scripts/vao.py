@@ -828,47 +828,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--assets-dir", default=None)
     q.add_argument("--speed", choices=["fast", "strict"], default="fast")
     q.add_argument("--json", action="store_true")
-    d = sub.add_parser("dna", help="设计经验记忆：--check 体检 / --add 沉淀一条")
-    d.add_argument("--add")
-    d.add_argument("--replace", action="store_true")
-    d.add_argument("--check", action="store_true")
-    d.add_argument("--json", action="store_true")
     return parser
-
-
-def _dna(args) -> int:
-    from intelligence import DNA_STORE, record_dna, validate_dna_store
-    if args.add:
-        src = Path(args.add).expanduser()
-        if not src.is_file():
-            print(f"VAO error: 条目文件不存在：{src}")
-            return 2
-        try:
-            entry = json.loads(src.read_text(encoding="utf-8"))
-        except Exception as exc:
-            print(f"VAO error: 条目文件解析失败（{type(exc).__name__}: {exc}）")
-            return 2
-        result = record_dna(entry, replace=args.replace)
-        if args.json:
-            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-        elif result.get("errors"):
-            print("dna: 拒绝写入 · " + "；".join(result["errors"]))
-            for w in result.get("warnings") or []:
-                print(f"  - {w}")
-        else:
-            print(f"dna: {result.get('note', 'ok')} · store={DNA_STORE}")
-        return 2 if result.get("errors") else 0
-    report = validate_dna_store()
-    if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
-    else:
-        print(f"dna store: {'OK' if report['ok'] else 'BROKEN'} · {report['entries']} 条 · "
-              f"{len(report['errors'])} error / {len(report['warnings'])} warning")
-        for item in report["errors"]:
-            print(f"  ✗ [{item['id']}] {item['reason']}")
-        for item in report["warnings"]:
-            print(f"  · [{item['id']}] {item['reason']}")
-    return 0 if report["ok"] else 2
 
 
 def run_qc(manifest_path: str, assets_dir: str | None = None,
@@ -964,8 +924,6 @@ def main(argv=None) -> int:
             rep = run_qc(args.assets_manifest, args.assets_dir, args.speed)
             print(json.dumps(rep, ensure_ascii=False, indent=2))
             return 0 if rep["status"] == "PASS" else 2
-        if args.command == "dna":
-            return _dna(args)
         return 2
     except ModuleNotFoundError as exc:
         print(f"VAO error: missing Python dependency {exc.name!r}; "

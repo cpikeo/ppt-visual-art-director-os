@@ -37,7 +37,7 @@ jobs:
 
       - name: Regression suite
         # selftest 全 PASS 退 0、任一 FAIL 退 1，退出码本身即门槛。
-        # 它不需要 LibreOffice：缺渲染器时相关用例自行降级，不会误报失败。
+        # 不依赖任何外部渲染器或 Office 软件。
         run: python scripts/selftest.py
         env:
           PYTHONPATH: scripts
@@ -45,58 +45,6 @@ jobs:
       - name: Whitespace check
         if: matrix.os == 'ubuntu-latest'
         run: git diff --check
-
-  render-evidence:
-    name: 第三层证据 · 替代引擎实际渲染
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install runtime dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      # 只有这一层需要外部渲染器；selftest 矩阵刻意不装，缺渲染器时那条
-      # 用例走「没有证据」分支，保证任何环境都能跑完整回归。
-      - name: Install alternative renderer
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libreoffice-impress poppler-utils
-
-      - name: Acceptance deck（release PASS）
-        run: |
-          cd acceptance
-          PYTHONPATH="$PWD/../scripts" python ../scripts/vao.py check build.py out.pptx \
-            --mode release --speed strict \
-            --assets-manifest asset_manifest.json --assets-dir assets --preview preview
-
-      - name: Real render evidence（替代引擎，逐页页图 + 摘要）
-        run: |
-          cd acceptance
-          PYTHONPATH="$PWD/../scripts" python ../scripts/render_evidence.py out.pptx --out /tmp/evidence --json > /tmp/evidence.json
-          python - <<'PY'
-          import json
-          record = json.loads(open('/tmp/evidence/render_evidence.json', encoding='utf-8').read())
-          assert record['status'] == 'COLLECTED', record['status']
-          assert len(record['pages']) == 8, len(record['pages'])
-          assert all(len(p['sha256']) == 64 for p in record['pages'])
-          # 替代引擎不等于目标验收：这三个状态必须恒为未验证。
-          assert all(record['unverified'][k] for k in
-                     ('target_powerpoint', 'native_editing', 'independent_visual_review'))
-          assert 'PASS' not in json.dumps(record, ensure_ascii=False)
-          print('render evidence ok:', len(record['pages']), 'pages ·',
-                record['renderer']['version'])
-          PY
-
-      - name: Upload page images
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: render-evidence-pages
-          path: /tmp/evidence/page-*.png
-          if-no-files-found: warn
 
   smoke:
     name: spec 档冒烟（零渲染 / 零 python-pptx）

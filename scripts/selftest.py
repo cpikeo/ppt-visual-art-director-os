@@ -6,7 +6,7 @@
   1) intelligence —— 设计判断：结论 / 权重 / 角色 / 焦点 / 构图（含否决理由）/ 媒体必要性 / 世界
   2) verify        —— 硬门：溢出、重叠、越界、空载荷、来源区、出处、口径
   3) production    —— 编译确定性、缓存复用、资产链、关键页取证
-  4) cli + docs    —— 单入口 plan/check/dna、骨架携带判断、文档纪律
+  4) cli + docs    —— 单入口 plan/check/qc、骨架携带判断、文档纪律
 """
 from __future__ import annotations
 
@@ -767,34 +767,6 @@ def test_intelligence(tmp: Path):
           mixed["deck"]["world"]["chart_style"]
           == "shared baseline, two-tone delta, direct labels",
           str(mixed["deck"]["world"]["chart_style"]))
-
-    # DNA：召回 / 校验 / 拒收结果记忆 / 幂等写入
-    dna = intel.recall_dna(BRIEF)
-    check("dna: 召回结构完整", {"matched", "confidence", "note"} <= set(dna))
-    safe_area_dna = intel.recall_dna({
-        "title": "满幅摄影背景的文字安全区纹理过密，safe_area 需要羽化处理"})
-    check("dna: 安全区例外保留独立案源，按关键词召回而不稀释通用原则",
-          safe_area_dna.get("matched") == "feathered_safe_area_calm"
-          and "safe_area" in safe_area_dna.get("judgment", {}).get("media", ""))
-    check("dna: 无案源的通用排版配额不再召回",
-          intel.recall_dna({"title": "引言 宣言 品牌 高管 quote statement 排版 typography 字体"})
-          .get("matched") is None)
-    check("dna: 关键词命中不伪装为已验证的设计基线",
-          "不是有效性置信度" in safe_area_dna.get("note", "")
-          and "未独立复验" in safe_area_dna.get("proven", ""))
-    errs, _ = intel.validate_dna_entry(
-        {"id": "x", "pattern": "p", "judgment": {"layout": "fixed 64px grid"},
-         "signature": {"keywords": ["k"]}})
-    check("dna: judgment 写结果值被拒收", bool(errs))
-    ok_entry = {"id": "t", "pattern": "p", "judgment": {"space": "留白先于装饰"},
-                "signature": {"keywords": ["t"]}}
-    check("dna: 行为判断可入库", not intel.validate_dna_entry(ok_entry)[0])
-    store = tmp / "dna.json"
-    store.write_text(json.dumps({"version": 2, "entries": []}), encoding="utf-8")
-    first = intel.record_dna(ok_entry, path=store)
-    again = intel.record_dna(ok_entry, path=store)
-    check("dna: 写入幂等 + 原子替换",
-          first["added"] and not again["added"] and intel.validate_dna_store(store)["ok"])
 
 
 # ── 2 · verify（硬门）────────────────────────────────────────────────
@@ -1924,9 +1896,6 @@ def test_cli(tmp: Path):
     check("cli: 空 slides 早失败并给修法", r.returncode != 0
           and ("slides" in r.stderr or "slides" in r.stdout), r.stderr[-200:])
 
-    r = run_vao("dna", "--check")
-    check("cli: dna 体检可用且库健康", r.returncode == 0 and "OK" in r.stdout, r.stdout[-200:])
-
     # CLI 面就是这套体系对外暴露的全部动作。多一个子命令 = 多一条 Agent 会调用、
     # 却没有文档与消费者支持的路径（`preview` 曾是这种残骸：SKILL 明说别跑它）。
     # 断言在这里锁住，新增入口必须是有意决定，而不是顺手。
@@ -1934,8 +1903,8 @@ def test_cli(tmp: Path):
     import re as _re
     _m = _re.search(r"\{([\w,]+)\}", r_help.stdout)
     listed = set(_m.group(1).split(",")) if _m else set()
-    check("cli: 入口面恰好是 plan/check/qc/dna（无第二执行路径）",
-          listed == {"plan", "check", "qc", "dna"}, str(sorted(listed)))
+    check("cli: 入口面恰好是 plan/check/qc（无第二执行路径）",
+          listed == {"plan", "check", "qc"}, str(sorted(listed)))
     check("cli: 已删除的 preview 子命令确实不存在",
           run_vao("preview", "x.py").returncode != 0)
 
@@ -2186,86 +2155,11 @@ def test_release_evidence(tmp: Path):
         check('arrow: ghost 方向端点 '+element['id'], ImageChops.difference(actual.convert('RGB'),plain.convert('RGB')).getbbox() is not None)
 
 
-def test_render_evidence(tmp: Path):
-    """第三层证据采集：真实排版引擎的页图凭证。
-
-    这一层绝不能变成第二个判定入口——它只记录观察到的事实（引擎、版本、页数、
-    逐页摘要），永远不产出 PASS/BLOCK，也不消费目标 PowerPoint / 编辑往返 /
-    独立评审这三个未验证状态。缺渲染器时它必须**明确说没有证据**，而不是
-    静默降级成「看起来通过」。
-    """
-    import json
-    import shutil
-    import render_evidence
-    from compiler import compile_deck
-    import vao
-
-    spec, _ = vao.load_spec(make_build(tmp, chart=True))
-    pptx = tmp / "deck.pptx"
-    compile_deck(spec, str(pptx))
-    check("render: 现场编译出可渲染的产物", pptx.exists() and pptx.stat().st_size > 0)
-
-    fingerprint = render_evidence.renderer_fingerprint()
-    record = render_evidence.collect_evidence(pptx, tmp / "evidence", dpi=72, timeout=240)
-    path = render_evidence.write_evidence(record, tmp / "evidence")
-    stored = json.loads(path.read_text(encoding="utf-8"))
-    check("render: 凭证落盘且 schema 稳定",
-          stored["schema"] == render_evidence.SCHEMA and stored["status"] == record["status"],
-          str(stored["schema"]))
-
-    if not fingerprint["available"]:
-        # 没有渲染器：必须是「没有证据」，不能是「通过」。CI 的 Windows 作业走这条分支。
-        check("render: 缺渲染器时明确无证据（不冒充通过、不产页图）",
-              record["status"] == "UNAVAILABLE" and record["pages"] == []
-              and record["renderer"]["available"] is False
-              and any("没有" in issue and "第三层证据" in issue for issue in record["issues"]),
-              str(record["status"]))
-        return
-
-    check("render: 渲染器指纹可核验（名字+版本+栅格化器）",
-          bool(record["renderer"]["version"]) and record["renderer"]["rasterizer"],
-          str(record["renderer"]))
-    if record["status"] == "PDF_ONLY":
-        # 有引擎但没有栅格化器：如实记为只保留 PDF 排版凭证。
-        check("render: 无栅格化器时如实记 PDF_ONLY（不假装有页图）",
-              record["pages"] == [] and bool(record["pdf"].get("sha256")))
-        return
-    check("render: 逐页凭证齐备且页数与 spec 一致",
-          record["status"] == "COLLECTED"
-          and len(record["pages"]) == len(spec["slides"])
-          and all(len(p["sha256"]) == 64 and p.get("dimensions") for p in record["pages"]),
-          str(record["status"]))
-    check("render: 产物指纹与页图同批（同一份 PPTX 的凭证）",
-          record["pptx"]["sha256"] == _sha_of(pptx), str(record["pptx"]))
-    # 同一个引擎、同一份输入，两次渲染的页图必须逐字节一致：凭证可复验的前提。
-    again = render_evidence.collect_evidence(pptx, tmp / "evidence2", dpi=72, timeout=240)
-    check("render: 同引擎重跑页图逐字节一致（凭证可复验）",
-          again["status"] == "COLLECTED"
-          and [p["sha256"] for p in again["pages"]] == [p["sha256"] for p in record["pages"]])
-    check("render: 三个未验证状态不被自动升级（替代引擎不是目标 PowerPoint）",
-          all(record["unverified"][k] for k in
-              ("target_powerpoint", "native_editing", "independent_visual_review"))
-          and "PowerPoint" in record["unverified"]["target_powerpoint"]
-          and "PASS" not in json.dumps(record, ensure_ascii=False))
-    # 页图必须真的画了东西：全白页说明渲染失败了却仍然记成 COLLECTED。
-    from PIL import Image
-    ink = 0
-    for page in record["pages"]:
-        with Image.open(page["file"]) as im:
-            ink += len(set(im.convert("RGB").getdata()))
-    check("render: 页图非空（不是一片白底冒充成功）", ink > 2 * len(record["pages"]), str(ink))
-
-
-def _sha_of(path: Path) -> str:
-    from primitives import file_digest
-    return file_digest(path) or ""
-
-
 def test_boundary_typography(tmp: Path):
     """中文混排的行尾纪律：数字与单位不许被断到两行。
 
-    判据来自**替代引擎的真实渲染**：接受基准 s06 曾把「平均配送半径是 186」留在
-    行尾、把「公里」推到下一行——数字与单位拆开，正是 SKILL.md §3 禁止的那件事。
+    判据来自既往一次真实版面观察：「平均配送半径是 186」留在行尾、「公里」推到下一行——
+    数字与单位拆开，正是 SKILL.md §3 禁止的那件事。
     混排间隙（U+2009 细空格）本身是合法断行机会，所以数字与单位之间必须用
     不断行空格；这条纪律由 primitives 的单位词表**一处**决定，编译器与幽灵预览共用。
     """
@@ -2458,6 +2352,64 @@ def test_design_judgment(tmp: Path):
           "差值" in gap_judgment["typography"]["discipline"],
           gap_judgment["typography"]["discipline"])
 
+    # 12 · 趋势词不是序列：序列至少两个数据点。封面「接管增长」与致谢页「内容增长负责人」
+    #      曾因一个措辞被判成数据序列，连带封面变成证明页并派发「坐标轴」指令。
+    check("series: 无数字的趋势措辞不构成序列",
+          intel.understand("自有内容正在接管增长，预算应该跟上")["evidence"] != "series")
+    check("series: 两个以上数据点仍是序列",
+          intel.understand("2023 年 38%，2024 年 47%，2025 年 61%")["evidence"] == "series")
+    deck_plan = intel.think({
+        "audience": "董事会", "decision": "批准预算", "tension": "成本持续上升",
+        "slides": [
+            {"id": "s01", "title": "自有内容正在接管增长，预算应该跟上", "content": "2027 内容战略提案"},
+            {"id": "s02", "title": "外部流量价格三年翻倍", "content": "获客成本从 186 元涨到 412 元（来源：投放台账）"},
+            {"id": "s03", "title": "谢谢，欢迎质询", "content": "联系人：内容增长负责人"}]})
+    jd = {p["id"]: p["judgment"] for p in deck_plan["pages"]}
+    check("judgment: 封面建立主张，不被判成证明页",
+          jd["s01"]["visual_role"]["role"] == "establish", jd["s01"]["visual_role"]["role"])
+    check("judgment: 无图表的封面不派发「坐标轴与刻度」",
+          not any("坐标轴" in w for w in jd["s01"]["information_weight"]["weaken"]))
+    check("judgment: 致谢/问答页没有结论时不追问补句（也不编造结论）",
+          jd["s03"]["claim"]["source"] == "frame" and jd["s03"]["claim"]["text"] is None
+          and not any("先写出一句" in q for q in (jd["s03"].get("open_questions") or []))
+          and "先补一句" not in str(jd["s03"]["claim"].get("why")))
+    check("judgment: 一句话收束的致谢页让留白承担分量",
+          jd["s03"]["composition"]["chosen"] == "big_whitespace", jd["s03"]["composition"]["chosen"])
+    # 13 · 时间序列不是比较：按年份排列的同一指标（有图表）仍是 series；分期不是两个并置选项
+    year_series = intel.understand("2023 年 38%，2024 年 47%，2025 年 61%", has_chart=True)
+    check("series: 按年份排列的图表数据是时间序列，不被当成比较",
+          year_series["evidence"] == "series" and not year_series["comparison"],
+          year_series["evidence"])
+    phased = intel.understand("一期 1,200 万（2027Q1）；二期 1,800 万（2027Q3）；三期 1,800 万（2028Q1）。"
+                              "预计 2028Q2 累计自有流量收入超过投入")
+    check("series: 分期投入是先后承诺（sequence），不是「超过投入」式比较",
+          phased["evidence"] == "sequence" and not phased["comparison"], phased["evidence"])
+    skeleton_text = intel.build_skeleton(deck_plan)
+    check("skeleton: 通用排版纪律只在头部声明一次，逐页不重复",
+          skeleton_text.count(intel.BASE_DISCIPLINE) == 1, str(skeleton_text.count(intel.BASE_DISCIPLINE)))
+    check("skeleton: 跨页锚的规则只在头部说明一次，逐页不重复",
+          skeleton_text.count("跨页锚（anchor") == 1,
+          str(skeleton_text.count("跨页锚（anchor")))
+    # 14 · 断言谓语结尾的标题是结论，不是话题标签（探针：「差距明显」被判 absent，并要求补句）
+    check("claim: 以断言谓语结尾的标题（差距明显）是结论，不追问补句",
+          intel._title_assertive("三个市场的进入成本与回本周期差距明显")
+          and not intel._title_assertive("华东区数据"),
+          str(intel._title_assertive("三个市场的进入成本与回本周期差距明显")))
+    # 15 · 「对比」是页面主题标签（封面「对比评估」），不把封面判成比较页；「N 倍」才是比较
+    check("compare: 「对比评估」作为主题标签不触发比较",
+          not intel.understand("对比评估")["comparison"])
+    check("compare: 「N 倍」是比较断言",
+          intel.understand("高端线售价是泰国的 1.6 倍")["comparison"])
+    # 16 · 规格列举（不同单位的数字）不是序列；同单位的三个数字仍是序列
+    spec = intel.understand("规格：3 次烧成，1280℃，0.6–0.8 毫米")
+    check("series: 不同单位的规格列举不被判为序列",
+          spec["evidence"] != "series", spec["evidence"])
+    # 17 · 群体/角色名词不是可拍的证词主体（「伙伴」「团队」「客户」不触发配图）
+    partner = intel.understand("选择越南，需要先补齐两个渠道伙伴")
+    check("media: 「伙伴」这类群体名词不构成证词，不强制配图",
+          intel.media_necessity(partner, "persuade")["decision"] != "required",
+          str(intel.media_necessity(partner, "persuade")))
+
 
 def test_docs():
     import re
@@ -2477,16 +2429,6 @@ def test_docs():
     check("docs: 文档里没有退役模块名与旧概念",
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
-    dna = json.loads((ROOT / "memory" / "design_dna.json").read_text(encoding="utf-8"))
-    dna_entries = dna.get("entries") if isinstance(dna, dict) else None
-    dna_ids = [entry.get("id") for entry in dna_entries if isinstance(entry, dict)] \
-        if isinstance(dna_entries, list) else []
-    ids_are_valid = all(isinstance(value, str) and value.strip() for value in dna_ids)
-    check("docs: Design DNA 结构有效且 ID 唯一（条目数不设上限）",
-          isinstance(dna_entries, list)
-          and all(isinstance(entry, dict) for entry in dna_entries)
-          and ids_are_valid and len(dna_ids) == len(set(dna_ids)),
-          str(len(dna_entries or [])))
 
 
 def main():
@@ -2504,7 +2446,6 @@ def main():
                          ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries),
                          ("release_evidence", test_release_evidence),
                          ("design_judgment", test_design_judgment),
-                         ("render_evidence", test_render_evidence),
                          ("boundary_typography", test_boundary_typography)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)

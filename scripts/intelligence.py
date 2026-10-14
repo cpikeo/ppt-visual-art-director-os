@@ -21,8 +21,6 @@ import json
 import re
 from pathlib import Path
 
-DNA_STORE = Path(__file__).resolve().parent.parent / "memory" / "design_dna.json"
-
 # ─────────────────────────────────────────────────────────────────────
 # 1 · Brief 加载（唯一加载器：yml / json / 定义 BRIEF|NEED 的模块）
 # ─────────────────────────────────────────────────────────────────────
@@ -102,7 +100,8 @@ _AXIS_TIME_TOKEN = re.compile(r"第\s*(\d+(?:[.,]\d+)?)\s*(个月|月|年|天|�
 #（当前/当时），误剥会吃掉真实从句。
 _CONDITIONAL_CLAUSE = re.compile(
     r"(?:如果|若|假如|倘若|一旦|除非)[^。；;！？!?\n]{0,40}?(?:[，,]|则|就|便)")
-_COMPARISON_WORDS = ("对比", "相比", "vs", " versus ", "高于", "低于", "前者", "后者",
+_MULTIPLE_OF = re.compile(r"\d+(?:\.\d+)?\s*倍")
+_COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "前者", "后者",
                      "优于", "落后", "差距", "benchmark", "对标", "增减",
                      "超过", "超越")
 _SERIES_WORDS = ("趋势", "增长", "下降", "同比", "环比", "逐年", "路径", "曲线",
@@ -113,6 +112,8 @@ _SEQUENCE_WORDS = ("步骤", "流程", "阶段", "路径", "迭代", "先", "然
                    "roadmap", "phase", "step", "milestone", "里程碑")
 # 强顺序标记：本身就是「这是一条流程」的名词。弱标记（先/然后/接着/最后）是连接
 # 副词，单独出现不足以证明形状——「先把 A 压回去，再谈 B」是优先级排序。
+_PHASE_MARKERS = re.compile(r"[一二三四五六七八九十\d]期|第[一二三四五六七八九十\d]+(?:期|阶段|批)"
+                            r"|分[一二三四五六七八九十\d]+(?:期|批|阶段)")
 _SEQUENCE_STRONG = ("步骤", "流程", "阶段", "迭代", "roadmap", "phase", "step",
                     "milestone", "里程碑")
 # 顺序的**形状**标记：箭头链本身就是序列，不需要作者写「步骤」两个字。
@@ -162,8 +163,9 @@ _CHANGE_WORDS = ("降至", "降到", "减到", "增至", "提升", "增加", "�
                  "grow", "drop", "reach", "cut", "exceed")
 _ASK_WORDS = ("请批准", "请决定", "请审议", "请确认", "批准", "表决", "approve", "sign off",
               "approval")
-_HUMAN_WORDS = ("客户", "用户", "团队", "员工", "患者", "伙伴", "受众", "消费者",
-                "customer", "user", "team", "people", "community")
+# 只收可以被看见的具体人物；群体与角色名词（客户、团队、伙伴）是抽象指称，不是证词主体。
+_HUMAN_WORDS = ("患者", "工匠", "师傅", "老师", "学生", "医生", "护士", "农民", "工人",
+                "居民", "孩子", "老人", "patient", "craftsman", "teacher", "nurse")
 # 内容是不是「实体世界」：只有实体世界的开场才靠图像建立现场；
 # 信息世界（纸/墨）的开场由排版与字阶建立——避免策略稿一律配图。
 _PHYSICAL_SUBJECTS = ("stone_architecture", "metal_glass", "botanical", "water_sky",
@@ -646,6 +648,9 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 2026Q2」）是档案坐标，不是这一页的证据——把它算进去会让证据数量、
     # 密度与权重一起虚高。
     nums = numerals(body)
+    # 按年份排列的同一指标是时间序列，不是并置比较；分期（一期/第二阶段）是同一承诺的先后。
+    years = sum(1 for n in nums if n["year"])
+    phased = bool(_PHASE_MARKERS.search(body))
     ev = [n for n in nums if not n["year"]]
     # 标题重复正文的数字、同一数字写两遍：那是**同一个事实**，不是两个证据。
     # 判断证据形态与密度按去重后的数量算；「重复」这件事本身归信息权重管。
@@ -661,19 +666,23 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     same_unit = len({n.get("unit") or "" for n in (compared or ev)}) <= 1
     chars = max(len(text), 1)
     is_subset = distinct >= 2 and bool(_PART_OF_WHOLE.search(body))
-    is_comparison = (_hit(cmp_body, _COMPARISON_WORDS)
-                     or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
+    is_comparison = not phased and (_hit(cmp_body, _COMPARISON_WORDS)
+                                    or bool(_MULTIPLE_OF.search(cmp_body))
+                                    or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
     # 只在无量化竞争/比较/时间推进时采信显式关系；标题不参与关系抽取。
     relation_text = body if content is None else str(content)
     relations = explicit_relations(relation_text)
     if ev or is_comparison or _hit(relation_text, _SEQUENCE_WORDS) or SEQUENCE_MARKERS & set(relation_text):
         relations = []
     modes: dict[str, float] = {}
-    if is_comparison or (distinct >= 2 and has_chart):
+    if is_comparison or (distinct >= 2 and has_chart and years < 2):
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
     if is_subset:
         modes["part_whole"] = 0.84
-    if _hit(_evidence_body(body), _SERIES_WORDS) or distinct >= 3 \
+    # 序列至少两个数据点：「增长/趋势」这类词只有配上两个以上的量才是曲线；
+    # 单独出现在封面或收尾的措辞里（「接管增长」「内容增长负责人」）不是证据。
+    if (distinct >= 2 and _hit(_evidence_body(body), _SERIES_WORDS)) \
+            or (distinct >= 3 and same_unit) \
             or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
@@ -697,6 +706,8 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
             modes["series"] = max(modes.get("series", 0.0), 0.81)
         else:
             modes["sequence"] = 0.75
+    if phased:
+        modes["sequence"] = max(modes.get("sequence", 0.0), 0.9)  # 分期结构压过数值形态（series 上限 0.87）
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
     if relations:
@@ -749,10 +760,15 @@ def _topic_shaped(title: str) -> bool:
 
 # 标题能当结论的**断言证据**：判断词、变化词、范围词。命中任何一个，
 # 这一句就不只是名词标签（「华东区数据」），而是对内容有主张的一句话。
+# 断言谓语：标题里出现这些词，说明作者在下判断（「差距明显」「回本周期缩短」），
+# 而不是给一个名词标签（「华东区数据」）。词表只收谓语，不收题材名词。
 _TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足", "超过", "低于", "高于",
                     "不再", "已经", "正在", "仍未", "尚未", "必须", "需要", "决定", "意味",
                     "成为", "没有", "不能", "无法", "达到", "降至", "升至", "翻倍",
-                    "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成")
+                    "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成",
+                    "明显", "显著", "稳定", "放缓", "收窄", "扩大", "提升", "降低", "缩短",
+                    "拉开", "分化", "集中", "依赖", "领先", "落后", "突破", "加速", "承压",
+                    "见效", "回本", "收敛", "分散", "高企", "偏低", "偏高", "翻番")
 
 
 # 对比式断言：「增长来自复购而非补贴」「不是在赌市场，是在买能力」
@@ -1308,6 +1324,8 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
         + (0.5 if text_len > 120 else 0.0)
     if role == "establish" and not has_image:
         s["big_whitespace"] += 1.5               # 开场建立权威靠空间，不靠铺陈
+    if role == "summarize" and n == 0 and text_len <= 40:
+        s["big_whitespace"] += 1.5               # 一句话收束（致谢/问答）：空间替它把话停住
     preferred = _GRAMMAR_PREFERENCE.get(str(grammar or "").strip())
     if preferred and s.get(preferred, -99) > 0:
         s[preferred] += 0.75                     # 世界的构图纪律只做同分倾向
@@ -1516,6 +1534,10 @@ def measure_of(text_len: int, *, has_long_lead: bool = False) -> dict:
             "limit": f"{_MEASURE_MIN_CJK}–{_MEASURE_MAX_CJK} 汉字/行（启发式建议，实际字体与投影须另验）"}
 
 
+BASE_DISCIPLINE = ("结论按语义停顿断行，动词与对象相连、数字不与单位拆开；"
+                   "标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。")
+
+
 def typography_of(claim: dict, weight: dict, focus: dict, role: str,
                   u: dict | None = None, *, text_len: int = 0,
                   number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
@@ -1524,7 +1546,8 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
     _, primary = number_anchor if number_anchor is not None else number_roles(claim.get("text") or "")
     # 以前拿「结论句—理由」的字符串按空格切，分隔符恰好没空格，
     # 把判断理由当成了将排上页面的主语。主语必须来自 claim/数字事实。
-    focal = primary["raw"] if primary else (claim.get("text") or "未决结论")
+    focal = primary["raw"] if primary else (
+        claim.get("text") or ("本页标题" if claim.get("source") == "frame" else "未决结论"))
     secondary = _weight_label(weak[0]) if weak else None
     if focus.get("type") == "image":
         rule = ("让现场/物件先被看见；注解贴合图像安全区的轴线与负空间，"
@@ -1561,8 +1584,7 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
         rule = ("主数字连同单位先读；说明、出处沿同一阅读轴退后。"
                 "只有真实基期才画比较，用留白而非加字距或卡片填满画面。")
     else:
-        rule = ("结论按语义停顿断行，动词与对象相连、数字不与单位拆开；"
-                "标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。")
+        rule = BASE_DISCIPLINE
     scale = {"lead_break": suggest_break(str(claim.get("text") or "")),
              **measure_of(int(text_len or 0))}
     return {"lead": focal, "support": secondary, "discipline": rule, "scale": scale}
@@ -1941,6 +1963,14 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     if u is None:
         u = understand(text, has_chart=bool(item.get("chart")), content=content)
     claim = extract_claim(item, positional=index in (0, total - 1))
+    # 封面与致谢/问答页的职责是立住或回收整套主张，不承载新结论：没有数字证据、
+    # 带凭证语（提案/谢谢/汇报人…）的首末页，不追问「先写一句结论」。
+    credential_frame = (index in (0, total - 1) and not int(u.get("distinct_numerals") or 0)
+                        and _hit(text, _CREDENTIAL_WORDS))
+    if credential_frame and claim["source"] == "absent":
+        # 「不承载结论」是这一页的设计身份，不是缺口：来源标为 frame，骨架如实表达。
+        claim = {"text": None, "source": "frame",
+                 "why": "凭证型首末页（封面 / 致谢 / 问答）：职责是立住或回收整套主张，不承载新结论，不补句。"}
     if claim["source"] == "absent":
         warnings.append({"rule": "unresolved_content", "scope": item.get("id"),
                          "msg": "这一页没有可复述的结论（content 缺失）："
@@ -2076,178 +2106,6 @@ def _coherence_pass(pages: list) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 13 · Design DNA（判断记忆：为什么有效，不是参数表）
-# ─────────────────────────────────────────────────────────────────────
-RESULT_MEMORY_KEYS = {"palette", "color", "colors", "font", "fonts",
-                      "image_style", "layout", "layout_result"}
-JUDGMENT_KEYS = {"hierarchy", "space", "media", "color_behavior",
-                 "charts", "anchor_rule", "structure", "type_voice"}
-_HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
-
-
-def _load_store(path=None, strict=False) -> dict:
-    target = Path(path) if path else DNA_STORE
-    if not target.exists():
-        return {"version": 1, "entries": []}
-    try:
-        from primitives import json_read_cached
-        value = json_read_cached(target)
-        if not isinstance(value, dict) or not isinstance(value.get("entries"), list):
-            raise ValueError("经验库顶层必须是对象且 entries 必须是数组")
-        return value
-    except Exception as exc:
-        if strict:
-            raise
-        return {"version": 1, "entries": [], "_load_error": f"{type(exc).__name__}: {exc}"}
-
-
-def _leaf_strings(v):
-    if isinstance(v, str):
-        yield v
-    elif isinstance(v, dict):
-        for x in v.values():
-            yield from _leaf_strings(x)
-    elif isinstance(v, (list, tuple)):
-        for x in v:
-            yield from _leaf_strings(x)
-
-
-def recall_dna(brief: dict) -> dict:
-    """brief → 最匹配的设计经验（确定性关键词打分）。DNA 是起点不是模板。"""
-    parts = [str(v) for v in (brief or {}).values() if isinstance(v, (str, int, float))]
-    slides = (brief or {}).get("slides")
-    if isinstance(slides, list):
-        for s in slides:
-            if isinstance(s, dict):
-                parts.extend(str(s[k]) for k in ("title", "content", "subject", "text")
-                             if isinstance(s.get(k), str))
-            elif isinstance(s, str):
-                parts.append(s)
-    low = " ".join(parts).lower()
-    store = _load_store()
-    load_error = store.get("_load_error")
-    entries = [e for e in (store.get("entries") or []) if isinstance(e, dict)]
-    scored = []
-    for e in entries:
-        signature = e.get("signature") if isinstance(e.get("signature"), dict) else {}
-        keywords = signature.get("keywords") if isinstance(signature.get("keywords"), list) else []
-        sig = [str(s).lower() for s in keywords if str(s).strip()]
-        if not sig:
-            continue
-        hits = sum(1 for s in sig if s in low)
-        scored.append((hits / len(sig), hits, e))
-    scored.sort(key=lambda t: (-t[0], -t[1], t[2].get("id", "")))
-    broken = len(entries) - len(scored)
-    if not scored or scored[0][0] <= 0:
-        note = ("无匹配 DNA：按 SKILL.md 与内容判断；有可核验的真实项目证据后，"
-                "才用 python scripts/vao.py dna --add <条目>.json 沉淀例外经验，PASS 本身不是证据")
-        if load_error:
-            note += f"；经验库读取失败，已安全降级（{load_error}）"
-        return {"matched": None, "confidence": 0.0, "dna": None, "alternatives": [],
-                "note": note, "broken_entries": broken,
-                **({"load_error": load_error} if load_error else {})}
-    conf, hits, best = scored[0]
-    return {"matched": best.get("id"), "confidence": round(conf, 2),
-            "judgment": best.get("judgment"), "design_problem": best.get("design_problem"),
-            "avoid": best.get("avoid"), "works_because": best.get("works_because"),
-            "when_not_to": best.get("when_not_to"),
-            "alternatives": [{"id": e.get("id"), "confidence": round(c, 2)}
-                             for c, h, e in scored[1:3] if c > 0],
-            "proven": best.get("proven"), "broken_entries": broken,
-            "note": "关键词命中率不是有效性置信度；先核案源与适用边界，不得覆盖 SKILL.md"}
-
-
-def validate_dna_entry(entry) -> tuple[list, list]:
-    if not isinstance(entry, dict):
-        return ["条目必须是对象（id / signature.keywords / judgment / pattern）"], []
-    errors, warnings = [], []
-    if not str(entry.get("id") or "").strip():
-        errors.append("缺 id：稳定标识，用于去重与人工引用")
-    if not str(entry.get("pattern") or "").strip():
-        errors.append("缺 pattern：这条经验的模式名（一句话说清它解决什么）")
-    judgment = entry.get("judgment")
-    if not judgment or (isinstance(judgment, str) and not judgment.strip()):
-        errors.append("缺 judgment：可迁移的行为判断（不是结果值）")
-    signature = entry.get("signature") if isinstance(entry.get("signature"), dict) else {}
-    keywords = [str(k).strip() for k in (signature.get("keywords") or []) if str(k).strip()]
-    if not keywords:
-        errors.append("缺 signature.keywords：召回只按关键词打分，空 = 永远命不中")
-    if isinstance(judgment, dict):
-        leaked = [str(k) for k in judgment if str(k) in RESULT_MEMORY_KEYS]
-        if leaked:
-            errors.append(f"judgment 里出现结果键 {leaked}：色值/字体/版式结果属于证据，"
-                          "请移到 proven")
-        unknown = sorted(str(k) for k in judgment
-                         if str(k) not in JUDGMENT_KEYS and str(k) not in RESULT_MEMORY_KEYS)
-        if unknown:
-            errors.append(f"judgment 维度 {unknown} 不在合法维度内：{sorted(JUDGMENT_KEYS)}")
-    hexes = sorted({h for leaf in _leaf_strings(judgment) for h in _HEX_COLOR.findall(leaf)})
-    if hexes:
-        errors.append(f"judgment 里写死了色值 {hexes}：判断要与具体值解耦")
-    for key, why in (("design_problem", "当时面对什么矛盾"),
-                     ("works_because", "为什么这个判断成立"),
-                     ("avoid", "什么做法要避开"),
-                     ("when_not_to", "什么情况下不适用")):
-        if not entry.get(key):
-            warnings.append(f"建议补 {key}（{why}）")
-    return errors, warnings
-
-
-def validate_dna_store(path=None) -> dict:
-    store = _load_store(path)
-    load_error = store.get("_load_error")
-    if load_error:
-        return {"ok": False, "entries": 0, "errors": [{"id": None, "reason": load_error}],
-                "warnings": []}
-    errors, warnings, seen = [], [], set()
-    for i, entry in enumerate(store.get("entries") or []):
-        eid = entry.get("id") if isinstance(entry, dict) else None
-        label = str(eid) if eid else f"#{i}"
-        if eid is not None and str(eid) in seen:
-            errors.append({"id": label, "reason": "id 重复（同 id 只会在召回里互相遮蔽）"})
-        seen.add(str(eid))
-        e_errs, e_warns = validate_dna_entry(entry)
-        errors += [{"id": label, "reason": m} for m in e_errs]
-        warnings += [{"id": label, "reason": m} for m in e_warns]
-    return {"ok": not errors, "entries": len(store.get("entries") or []),
-            "errors": errors, "warnings": warnings}
-
-
-def record_dna(entry, path=None, replace=False) -> dict:
-    """写入一条经验：校验 → 去重 → 原子替换。写坏记忆比不写更贵。"""
-    errors, warnings = validate_dna_entry(entry)
-    if errors:
-        return {"added": False, "id": (entry or {}).get("id") if isinstance(entry, dict) else None,
-                "errors": errors, "warnings": warnings}
-    target = Path(path) if path else DNA_STORE
-    store = _load_store(target, strict=True)
-    entries = [e for e in (store.get("entries") or []) if isinstance(e, dict)]
-    eid = str(entry["id"]).strip()
-    same = next((e for e in entries if str(e.get("id") or "").strip() == eid), None)
-    if same is not None and not replace:
-        if same == entry:
-            return {"added": False, "id": eid, "entries": len(entries), "warnings": warnings,
-                    "note": "同 id 且内容一致，已是库中条目（幂等，未改动）"}
-        return {"added": False, "id": eid,
-                "errors": ["同 id 条目已存在且内容不同：确认覆盖时加 --replace"],
-                "warnings": warnings}
-    if same is not None:
-        entries[entries.index(same)] = entry
-        action = "replaced"
-    else:
-        entries.append(entry)
-        action = "added"
-    store["entries"] = entries
-    store["version"] = max(int(store.get("version") or 1), 2)
-    from primitives import json_write
-    json_write(target, store, indent=1)
-    return {"added": True, "action": action, "id": eid, "entries": len(entries),
-            "warnings": warnings, "note": f"{action} {eid} · 经验库现有 {len(entries)} 条"}
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 14 · 单趟规划（think）
-# ─────────────────────────────────────────────────────────────────────
 ADVANCED_TRIGGERS = ("发布会", "品牌", "年报", "旗舰", "形象", "高端", "launch", "brand",
                      "keynote", "manifesto", "premium", "campaign")
 QUALITY_ALIASES = {"fast": "fast", "quick": "fast", "standard": "fast",
@@ -2282,13 +2140,6 @@ def think(brief: dict) -> dict:
     if quality_input and str(quality_input).strip().lower() not in QUALITY_ALIASES:
         warnings.append({"input": quality_input, "canonical": quality,
                          "rule": "quality_fallback"})
-
-    try:
-        dna = recall_dna(brief)
-    except Exception as exc:
-        warnings.append({"rule": "dna_unavailable", "scope": "deck",
-                         "error": f"{type(exc).__name__}: {exc}"})
-        dna = {"matched": None, "confidence": 0.0, "judgment": None, "note": "DNA 不可用"}
 
     raw = brief.get("slides")
     if raw is None:
@@ -2377,7 +2228,6 @@ def think(brief: dict) -> dict:
             "quality": quality,
             "world": world,
             "theme": _theme_seed(world, brief.get("brand_colors")),
-            "dna": dna,
             "coherence": coherence,
         },
         "pages": pages,
@@ -2496,7 +2346,6 @@ def build_skeleton(bundle: dict) -> str:
     world = deck.get("world") or {}
     colors = theme_tokens((deck.get("theme") or {}).get("colors_seed") or {})
     fonts = world.get("fonts") or {"cn": "Source Han Sans SC", "latin": "Arial"}
-    dna = deck.get("dna") or {}
     coherence = deck.get("coherence") or {}
 
     facts = [f"受众: {deck.get('audience') or '未声明'} · 决策: {deck.get('decision') or '未声明'}"
@@ -2517,9 +2366,6 @@ def build_skeleton(bundle: dict) -> str:
                      f"{adj.get('from')}→{adj.get('to')}（{adj.get('why')}）")
     for note in (coherence.get("notes") or [])[:2]:
         facts.append(f"跨页提醒: {note}")
-    if dna.get("matched"):
-        facts.append(f"经验召回（DNA）: {dna['matched']} · 关键词命中率 {dna.get('confidence')}"
-                     "——先核案源与适用边界，不覆盖 SKILL.md")
 
     L = ['# -*- coding: utf-8 -*-',
          'plan → build：逐页判断只在 plan.json 有一份完整记录，几何由作者决定。',
@@ -2527,6 +2373,9 @@ def build_skeleton(bundle: dict) -> str:
          '作业顺序：受众/决定 → 结论/阻力 → 权重 → 焦点/空间/构图 → 字体/媒体/节奏。',
          '完整竞争理由在 plan.json；此处只带着原文与为什么这样落笔的短备忘。',
          '内容必须真实出现，不因骨架省略证据；能删就不加，不能用小字掩盖过载。',
+         f'排版纪律（逐页默认，页内不再重复）: {BASE_DISCIPLINE}',
+         '留白：每处空白说得出保护什么；说不出的是事故。行长建议为非实测容量。',
+         '跨页锚（anchor：眉标 / 页码，≥4 页时由 plan 发）：落成 role=eyebrow / role=page_number 的元素，位置全稿一致。',
          '字段契约 → references/contract.md（一次）；判断有真实缺口才回看 SKILL.md §2–3。',
          f'质量档: {deck.get("quality")} · 页数: {len(pages)}']
     L += [f'  {line}' for line in facts]
@@ -2554,6 +2403,8 @@ def build_skeleton(bundle: dict) -> str:
           '    },',
           '    "slides": [']
     for pg in pages:
+        # 骨架只写「下一步怎么落」：结论、权重、焦点+构图、排版、节奏、必落元素、未决。
+        # 构图/焦点/空间的完整理由只在 plan.json 一处（SKILL §4），不在骨架重抄。
         j = pg.get("judgment") or {}
         claim = j.get("claim") or {}
         weight = j.get("information_weight") or {}
@@ -2563,44 +2414,40 @@ def build_skeleton(bundle: dict) -> str:
         spatial = j.get("spatial") or {}
         media = j.get("media") or {}
         prod = j.get("production") or {}
-        L.append(f'        # ── {pg.get("id")} · 角色:{role.get("role")} · '
-                 f'证据={j.get("understanding", {}).get("evidence")} · '
+        typ = j.get("typography") or {}
+        sc = typ.get("scale") or {}
+        rhythm = j.get("rhythm") or {}
+        evidence = (j.get("understanding") or {}).get("evidence")
+        L.append(f'        # ── {pg.get("id")} · 角色:{role.get("role")} · 证据={evidence} · '
                  f'媒体:{_fmt_items([media.get("decision")], 1)}')
         if pg.get("ref"):
             # JSON 字面转义换行，避免作者原文里的换行破坏 Python 注释/骨架语法。
-            L.append('        #    内容原文: '
-                     + json.dumps(pg["ref"], ensure_ascii=False))
+            L.append('        #    内容原文: ' + json.dumps(pg["ref"], ensure_ascii=False))
         if (pg.get("declarations") or {}).get("audience") \
                 or (pg.get("declarations") or {}).get("decision"):
             L.append(f'        #    本页受众/决定: {j.get("audience")} → {j.get("decision")}')
-        L.append(f'        #    结论[{claim.get("source")}]: '
-                 f'{claim.get("text") or "（缺：先写一句可复述的结论，或删掉这一页）"}')
-        if claim.get("source") != "declared":
-            L.append(f'        #      理由: {claim.get("why")}')
+        ctext = claim.get("text") or ("（本页不承载新结论）" if claim.get("source") == "frame"
+                                      else "（缺：先写一句可复述的结论，或删掉这一页）")
+        why = "" if claim.get("source") == "declared" else f' · 理由: {claim.get("why")}'
+        L.append(f'        #    结论[{claim.get("source")}]: {ctext}{why}')
         t = j.get("tension") or {}
         if t.get("issue"):
             L.append(f'        #    阻力[{t.get("source")}]: {t["issue"]} · {t.get("why")}')
         L.append(f'        #    权重: 主 {_weight_brief(weight.get("maximize"))}；'
                  f'次 {_weight_brief(weight.get("weaken"))}；'
                  f'删除 {_weight_brief(weight.get("delete"))}')
-        L.append(f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）— '
-                 f'{focus.get("why")}')
-        L.append(f'        #    构图: {comp.get("chosen")} — {comp.get("why")}')
-        L.append(f'        #    空间: 路径 {spatial.get("reading_path")} · 主区 '
-                 f'{spatial.get("primary_zone")} · 留白职责 {spatial.get("whitespace_duty")}')
-        typ = j.get("typography") or {}
-        L.append(f'        #    排版: 主语 {typ.get("lead")} · 退后 {typ.get("support") or "无"}；'
-                 f'{typ.get("discipline")}')
-        sc = typ.get("scale") or {}
-        if sc:
-            L.append(f'        #    尺度建议: 正文行长约 {sc.get("body_measure_cjk")} 汉字/行'
-                     f' · {sc.get("why")}；非实测容量')
-            if sc.get("lead_break"):
-                L.append(f'        #    断行: {sc["lead_break"]}'
-                         f'（按语义停顿断，数字与单位同在一行）')
+        L.append(f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）· '
+                 f'构图: {comp.get("chosen")} · 主区: {spatial.get("primary_zone")}')
+        head = f'        #    排版: 主语 {typ.get("lead")} · 退后 {typ.get("support") or "无"}'
+        if sc.get("body_measure_cjk"):
+            head += f' · 行长≈{sc.get("body_measure_cjk")}字'
+        if sc.get("lead_break"):
+            head += f' · 断行: {sc["lead_break"]}'
+        if typ.get("discipline") != BASE_DISCIPLINE:
+            head += f'；{typ.get("discipline")}'
+        L.append(head)
         if media.get("decision") not in (None, "none"):
             L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
-        rhythm = j.get("rhythm") or {}
         L.append(f'        #    跨页节奏[{rhythm.get("move")}]：{rhythm.get("why")}')
         if prod.get("must_place"):
             L.append('        #    必落元素: ' + "；".join(
@@ -2616,8 +2463,6 @@ def build_skeleton(bundle: dict) -> str:
         if pg.get("anchor"):
             # 判断对象原样落进 spec（不是散文提醒）：spec 层从此没有第二个「结论位」——
             # 结论住上面的判断注释，跨页锚住这里，作者一眼能对上是哪一个对象。
-            L.append('            # 跨页锚（眉标角色 / 页码序号，≥4 页时由 plan 发）：'
-                     '落成 role=eyebrow / role=page_number 的元素')
             L.append(f'            "anchor": {json.dumps(pg["anchor"], ensure_ascii=False)},')
         L.append('            "source_zone": {"x": 48, "y": 672, "width": 1184, "height": 32},')
         L.append('            "elements": [  # TODO：按上面的判断落元素')
