@@ -1119,7 +1119,7 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
 # ─────────────────────────────────────────────────────────────────────
 # 7 · 构图推理（Composition Reasoning）
 # ─────────────────────────────────────────────────────────────────────
-# 六个算子的中文释义住文档（references/judgment.md §算子 / SKILL 构图行）：
+# 六个算子的中文释义住文档（SKILL.md §3 构图行）：
 # plan 里 chosen 键已唯一确定算子，label 是零信息重复，不再输出。
 
 
@@ -1374,7 +1374,7 @@ def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
 
 
 def measure_of(text_len: int, *, has_long_lead: bool = False) -> dict:
-    """本页正文的可读行长（汉字/行）：文本越长，栏越窄。"""
+    """按内容长度给栏宽起点；不是实测字体容量或固定排版配额。"""
     if text_len >= 220:
         cjk, note = 30, "长文窄栏：信息密度高，窄栏换取回扫可靠"
     elif text_len >= 120:
@@ -1382,7 +1382,7 @@ def measure_of(text_len: int, *, has_long_lead: bool = False) -> dict:
     else:
         cjk, note = 38, "短文本：栏宽可以放开，但仍不横跨整页"
     return {"body_measure_cjk": cjk, "why": note,
-            "limit": f"{_MEASURE_MIN_CJK}–{_MEASURE_MAX_CJK} 汉字/行（超出即回扫丢行 / 断句破碎）"}
+            "limit": f"{_MEASURE_MIN_CJK}–{_MEASURE_MAX_CJK} 汉字/行（启发式建议，实际字体与投影须另验）"}
 
 
 def typography_of(claim: dict, weight: dict, focus: dict, role: str,
@@ -1424,22 +1424,8 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
     else:
         rule = ("结论按语义停顿断行，动词与对象相连、数字不与单位拆开；"
                 "标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。")
-    # 排版尺度：把「纪律」落成这一页可核对的**数字**（行长/断行/行距/内边距）。
-    # 它不替作者定字号与坐标，只给可读域——越界就是要在投影尺度下丢行。
-    lead_text = str(claim.get("text") or "")
-    # 断行建议始终针对**结论句本身**：焦点是数字时，那句话仍然要被读出来，
-    # 它排成什么形状同样是这一页的排版决定。
-    break_hint = suggest_break(lead_text)
-    scale = {
-        "lead_break": break_hint,
-        "lead_lines": f"主张 2–3 行、每行 ≤ {_LEAD_MAX_CJK} 汉字（靠行数分级，不靠缩放）",
-        **measure_of(int(text_len or 0)),
-        "line_height": {"title": "1.18–1.35", "body": "1.55–1.85"},
-        "padding": "内边距 ≥ 0.5×字号（≥8px）：内边距是真留白，不靠行距凑",
-        "hierarchy": "主张 : 支撑 : 出处 ≈ 3 : 1.5 : 1，共用同一阅读轴",
-        "why": ("行长与行距是投影尺度的物理可读域，不是风格；"
-                "断行处取语义边界，数字与单位同在一行。"),
-    }
+    scale = {"lead_break": suggest_break(str(claim.get("text") or "")),
+             **measure_of(int(text_len or 0))}
     return {"lead": focal, "support": secondary, "discipline": rule, "scale": scale}
 
 
@@ -1889,61 +1875,8 @@ def _rejudge_without_image(entry: dict, *, text: str, world: dict,
             "why": "跨页预算：图位让给更高价值页，本页由排版与数据承担"}
 
 
-def _repick_avoiding(entry: dict, world: dict, text: str, avoid: str) -> dict | None:
-    """连续同构图时取第二选择：内容不成立就不换（内容契合压过节奏）。"""
-    j = entry["judgment"]
-    u = j["understanding"]
-    role = j["visual_role"]["role"]
-    media = j["media"]
-    grammar = world.get("composition_grammar", "")
-    base = _composition_scores(u, role, media, len(text), grammar, j["claim"])
-    penalized = dict(base)
-    if avoid in penalized:
-        penalized[avoid] -= 2.5
-    order = {name: i for i, name in enumerate(_COMPOSITION_TIEBREAK)}
-    new = max(penalized, key=lambda k: (penalized[k], -order[k]))
-    if u.get("relations") and avoid == "linear_structure":
-        return None
-    if new == avoid or base.get(new, 0) <= 0:
-        return None
-    return {"chosen": new,
-            "why": _composition_why(new, u, media) + "（跨页校准：连续同构图时的第二选择）",
-            "rejected": _composition_rejections(new, base)}
-
-
-def _coherence_pass(pages: list, world: dict, texts: dict) -> dict:
-    """整套回看：连续同构图回拨中间页 + 节奏序列 + 焦点连落提醒。
-
-    不是新规则，是单页判断在看到整套之后的重新校准：只改「内容允许第二选择」
-    的页面；作者声明的构图不动；图像叙事不动（每张图各自通过必要性测试，
-    数量由预算管，不由节奏管）。不新增逐页字段。
-    """
-    adjustments: list[dict] = []
-    i = 0
-    while i < len(pages):
-        j = i
-        while (j < len(pages) and pages[j]["judgment"]["composition"]["chosen"]
-               == pages[i]["judgment"]["composition"]["chosen"]):
-            j += 1
-        run = pages[i:j]
-        if len(run) >= 3 and run[0]["judgment"]["composition"]["chosen"] != "image_narrative":
-            for entry in run[1:-1]:
-                if entry["judgment"]["composition"].get("source") == "author":
-                    continue
-                new_comp = _repick_avoiding(entry, world, texts.get(entry["id"], ""),
-                                            run[0]["judgment"]["composition"]["chosen"])
-                if new_comp is None:
-                    continue
-                old = entry["judgment"]["composition"]["chosen"]
-                entry["judgment"]["composition"] = new_comp
-                entry["judgment"]["spatial"] = spatial_of(new_comp, entry["judgment"]["understanding"])
-                entry["judgment"]["production"] = production_spec(
-                    entry["judgment"]["focus"], new_comp, entry["judgment"]["media"],
-                    entry["judgment"]["understanding"], entry["judgment"]["information_weight"])
-                adjustments.append({"page": entry["id"], "field": "composition",
-                                    "from": old, "to": new_comp["chosen"],
-                                    "why": f"连续 {len(run)} 页同构图，内容允许第二选择"})
-        i = j
+def _coherence_pass(pages: list) -> dict:
+    """记录内容已经造成的节奏；连续同构图不是改写页级判断的证据。"""
     notes: list[str] = []
     i = 0
     while i < len(pages) and len(notes) < 3:
@@ -1982,7 +1915,7 @@ def _coherence_pass(pages: list, world: dict, texts: dict) -> dict:
             "densities": [p["judgment"]["production"]["density_target"] for p in pages],
             "roles": [p["judgment"]["visual_role"]["role"] for p in pages],
             "media": media_seq,
-            "adjustments": adjustments or None,
+            "adjustments": None,
             "notes": notes or None}
 
 
@@ -2277,7 +2210,7 @@ def think(brief: dict) -> dict:
             budget_adjustments.append(
                 _rejudge_without_image(entry, text=texts.get(entry["id"], ""),
                                        world=world, budget_why=d["why"]))
-    coherence = _coherence_pass(pages, world, texts)
+    coherence = _coherence_pass(pages)
     coherence["adjustments"] = (budget_adjustments + (coherence["adjustments"] or [])
                                 or None)
     return {
@@ -2433,12 +2366,12 @@ def build_skeleton(bundle: dict) -> str:
                      "——先核案源与适用边界，不覆盖 SKILL.md")
 
     L = ['# -*- coding: utf-8 -*-',
-         '"""plan → build：逐页判断只在 plan.json 有一份完整记录，几何由作者决定。',
+         'plan → build：逐页判断只在 plan.json 有一份完整记录，几何由作者决定。',
          '',
          '作业顺序：受众/决定 → 结论/阻力 → 权重 → 焦点/空间/构图 → 字体/媒体/节奏。',
          '完整竞争理由在 plan.json；此处只带着原文与为什么这样落笔的短备忘。',
          '内容必须真实出现，不因骨架省略证据；能删就不加，不能用小字掩盖过载。',
-         '字段契约 → references/contract.md（一次）；判断有真实缺口才读 judgment.md。',
+         '字段契约 → references/contract.md（一次）；判断有真实缺口才回看 SKILL.md §2–3。',
          f'质量档: {deck.get("quality")} · 页数: {len(pages)}']
     L += [f'  {line}' for line in facts]
     has_media = any((p.get("judgment") or {}).get("media", {}).get("decision")
@@ -2457,7 +2390,7 @@ def build_skeleton(bundle: dict) -> str:
     L += ['填完后一次收口：',
           '  python scripts/vao.py check <本文件> out.pptx --mode release --speed strict'
           + manifest_flag,
-          '"""', '', 'SPEC = {',
+          '', 'SPEC = {',
           '    "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},',
           '    "theme": {',
           f'        "colors": {colors!r},',
@@ -2504,14 +2437,8 @@ def build_skeleton(bundle: dict) -> str:
                  f'{typ.get("discipline")}')
         sc = typ.get("scale") or {}
         if sc:
-            # 排版尺度落成可核对的数字：行长/行距/内边距是投影尺度的可读域，
-            # 不是风格；此前骨架只给一句散文纪律，作者凭手感定栏宽。
-            lh = sc.get("line_height") or {}
-            L.append(f'        #    尺度: 正文行长 ≤{sc.get("body_measure_cjk")} 汉字/行'
-                     f'（{sc.get("why")}；{sc.get("limit")}）'
-                     f' · 行距 标题 {lh.get("title")} / 正文 {lh.get("body")}'
-                     f' · {sc.get("padding")}'
-                     f' · {sc.get("hierarchy")}')
+            L.append(f'        #    尺度建议: 正文行长约 {sc.get("body_measure_cjk")} 汉字/行'
+                     f' · {sc.get("why")}；非实测容量')
             if sc.get("lead_break"):
                 L.append(f'        #    断行: {sc["lead_break"]}'
                          f'（按语义停顿断，数字与单位同在一行）')
@@ -2526,8 +2453,8 @@ def build_skeleton(bundle: dict) -> str:
         if j.get("open_questions"):
             L.append('        #    ⚠ 未决: ' + "；".join(j["open_questions"]))
         if pg.get("declarations"):
-            shown = ", ".join(f"{k}={v!r}" for k, v in list(pg["declarations"].items())[:6])
-            L.append(f'        #    作者声明（原样生效）: {shown[:150]}')
+            shown = ", ".join(f"{k}={v!r}" for k, v in pg["declarations"].items())
+            L.append(f'        #    作者声明（原样生效）: {shown}')
         L.append('        {')
         L.append(f'            "id": {pg.get("id")!r},')
         if pg.get("anchor"):
@@ -2541,4 +2468,14 @@ def build_skeleton(bundle: dict) -> str:
         L.append('            ],')
         L.append('        },')
     L += ['    ],', '}', '']
-    return "\n".join(L)
+    # 所有叙述都是注释，不让作者换行/三引号变成 Python 代码；spec 值仍用 repr/JSON。
+    start = L.index('SPEC = {')
+    lines = []
+    for index, line in enumerate(L):
+        if index < start or line.lstrip().startswith("#"):
+            prefix = "# " if index < start else line[:line.index("#") + 1] + " "
+            text = line if index < start else line[line.index("#") + 1:].lstrip()
+            lines.extend(prefix + part.replace("\0", "\\0") for part in text.splitlines())
+        else:
+            lines.append(line)
+    return "\n".join(lines) + "\n"

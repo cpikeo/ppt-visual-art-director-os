@@ -111,7 +111,24 @@ def make_build(tmp: Path, *, chart: bool = True) -> Path:
 def test_intelligence(tmp: Path):
     import intelligence as intel
 
-    relation_cases = json.loads((ROOT / "evaluation" / "relationship-cases.json").read_text(encoding="utf-8"))
+    # 固定关系正反样本就地保留，核心回归不依赖外部评测目录。
+    relation_cases = [
+        {"id": "previous-round-governance", "title": "四层汇报线明确决策归属", "content": "董事会决定战略；管理层负责预算；区域负责人协调资源；当地负责人执行。", "expect_relations": 3, "expect_role": "explain", "expect_composition": "linear_structure"},
+        {"id": "responsibility", "title": "研发与交付的职责应分开", "content": "甲组负责研发；乙组负责交付。", "expect_relations": 2, "expect_role": "explain", "expect_composition": "linear_structure"},
+        {"id": "reporting", "title": "审批归属必须清楚", "content": "区域负责人向总经理汇报；总经理向董事会汇报。", "expect_relations": 2, "expect_role": "explain", "expect_composition": "linear_structure"},
+        {"id": "renamed-subjects", "title": "职责先于装饰", "content": "青岚组负责质量；澄川组负责交付。", "expect_relations": 2, "expect_role": "explain", "expect_composition": "linear_structure"},
+        {"id": "same-subject", "title": "专人承担研发和交付", "content": "甲组负责研发；甲组负责交付。", "expect_relations": 0},
+        {"id": "question", "title": "职责尚待确认", "content": "谁负责研发？谁负责交付？", "expect_relations": 0},
+        {"id": "negation", "title": "当前职责仍未落实", "content": "甲组不负责研发；乙组未负责交付。", "expect_relations": 0},
+        {"id": "proposal", "title": "分工还在讨论", "content": "建议甲组负责研发；乙组负责交付。", "expect_relations": 0},
+        {"id": "unresolved-objects", "title": "分工还不完整", "content": "甲组负责；乙组执行。", "expect_relations": 0},
+        {"id": "numeric-evidence", "title": "本期执行结果可核验", "content": "甲组执行 12 项；乙组执行 18 项。", "expect_relations": 0},
+        {"id": "sequence", "title": "先研发再交付", "content": "先由甲组负责研发，然后由乙组负责交付。", "expect_relations": 0},
+        {"id": "comparison", "title": "两组的交付率有差异", "content": "甲组负责研发；乙组负责交付。甲组交付率 90%，高于乙组 80%。", "expect_relations": 0, "expect_role": "compare"},
+        {"id": "topic-only", "title": "四层汇报线与矩阵式分工", "content": "", "expect_relations": 0},
+        {"id": "subset-control", "title": "多数试点选择续约", "content": "12 家试点门店中，9 家续约。", "expect_relations": 0, "expect_role": "prove"},
+        {"id": "compound-control", "title": "结构性增长来自续约", "content": "我们必须保留这一增长来源。", "expect_relations": 0},
+    ]
     for case in relation_cases:
         j = intel.page_judgment({**case, "asset": "none"}, index=2, total=7,
                                 brief=BRIEF, world={}, warnings=[])
@@ -586,9 +603,10 @@ def test_intelligence(tmp: Path):
     scale_page = intel.think(dict(BRIEF, slides=[
         {"id": "sc", "title": "真正的阻力不是竞争，是清关与用工这两件我们无法靠补贴解决的事",
          "content": risk}]))["pages"][0]["judgment"]["typography"]["scale"]
-    check("typography: 排版尺度由本页内容量派生（行长上限/行距域/内边距/断行）",
-          scale_page["body_measure_cjk"] <= 45 and scale_page["line_height"]["body"]
-          and scale_page["padding"] and scale_page["lead_break"]
+    check("typography: 保留内容相关尺度/断行，不注入固定字阶/行数/间距配额",
+          scale_page["body_measure_cjk"] <= 45
+          and not ({"hierarchy", "line_height", "padding", "lead_lines"} & set(scale_page))
+          and scale_page["lead_break"]
           and "｜" in scale_page["lead_break"]
           and not scale_page["lead_break"].split("｜")[1].startswith(("，", "。"))
           and not scale_page["lead_break"].split("｜")[0][-1:].isdigit(),
@@ -608,7 +626,7 @@ def test_intelligence(tmp: Path):
                   and p["judgment"]["rhythm"].get("move") for p in bundle["pages"])
           and intel._FONTS["sans"]["cn"] == "Source Han Sans SC")
 
-    # 跨页校准：连续同构图回拨中间页（内容允许第二选择时）
+    # 反事实：去掉重复次数惩罚，不损失原本适合内容的构图。
     streak = intel.think(dict(BRIEF, slides=[
         {"id": f"d{i:02d}", "title": title, "content": content}
         for i, (title, content) in enumerate([
@@ -623,15 +641,10 @@ def test_intelligence(tmp: Path):
                               "adjustments", "notes"}
           and len(streak_coh["compositions"]) == 4
           and len(streak_coh["roles"]) == 4 and len(streak_coh["media"]) == 4)
-    check("coherence: 连续 4 页同构图 → 中间两页回拨，两端保留",
-          streak_comps[0] == streak_comps[3] == "editorial"
-          and streak_comps[1] == streak_comps[2] == "big_whitespace"
-          and len(streak_coh["adjustments"]) == 2
-          and all(a["field"] == "composition" for a in streak_coh["adjustments"]),
-          str(streak_comps))
-    check("coherence: 回拨留痕（为什么里写明跨页原因）",
-          all("跨页校准" in p["judgment"]["composition"]["why"]
-              for p in streak["pages"][1:3]))
+    check("coherence: 连续同构图不再改选次优项",
+          len(set(streak_comps)) == 1 and not streak_coh["adjustments"], str(streak_comps))
+    check("coherence: 节奏仍记录停留，不捏造内容变化",
+          all(p["judgment"]["rhythm"]["move"] == "hold" for p in streak["pages"][1:3]))
     check("coherence: 焦点连续同落点给出提醒（不硬改焦点）",
           bool(streak_coh["notes"]) and "headline" in streak_coh["notes"][0],
           str(streak_coh["notes"]))
@@ -1394,7 +1407,8 @@ def test_production(tmp: Path):
     _ratio_img = tmp / "qc-loop-ratio.png"
     Image.new("RGB", (1024, 768), (214, 206, 192)).save(_ratio_img)
     _m = {"schema": "vao-assets-v2", "assets_dir": str(tmp),
-          "assets": [{"asset_id": "qc-loop-ratio", "slide_ids": ["s1"],
+          "assets": [{"asset_id": "qc-loop-ratio", "decision": "generate",
+                      "prompt": "test", "negative": ["test"], "slide_ids": ["s1"],
                       "ratio": "16:9", "asset_role": "background",
                       "safe_area": {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78},
                       "meta": {"text_color": "dark"}}]}
@@ -1926,6 +1940,158 @@ def test_cli(tmp: Path):
           run_vao("preview", "x.py").returncode != 0)
 
 
+def test_delivery(tmp):
+    from compiler import compile_deck
+    from verify import check_spec
+    from pptx import Presentation
+    from pptx.enum.chart import XL_LEGEND_POSITION
+    import intelligence as intel
+    base = {"id": "chart", "type": "chart", "x": 64, "y": 100,
+            "width": 1100, "height": 480, "label_size": 24,
+            "categories": ["低负载", "高负载"],
+            "series": [{"name": "路径甲", "values": [12, 30]},
+                       {"name": "路径乙", "values": [16, 38]}]}
+    deck = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"fonts": {"cn": "Noto Serif CJK SC", "latin": "Arial"},
+                      "colors": {"background": "#FFFFFF", "ink": "#182B3A", "muted": "#536574",
+                                 "primary": "#233649", "secondary": "#7B919E", "accent": "#BB5D26"}}, "slides": []}
+    for kind in ("line", "column", "area", "bar"):
+        for show in (False, True):
+            deck["slides"].append({"id": f"{kind}-{show}", "elements": [dict(base, chart_kind=kind, show_values=show)]})
+    path = tmp / "identity.pptx"
+    report = compile_deck(deck, path)
+    check("identity: 原生多序列编译无警告", report["passed"] and not report.get("warnings"))
+    for slide, native in zip(deck["slides"], Presentation(path).slides):
+        chart = native.shapes[0].chart
+        check("identity: " + slide["id"], chart.has_legend
+              and chart.legend.position == XL_LEGEND_POSITION.BOTTOM
+              and chart.legend.include_in_layout is False
+              and chart.legend.font.size.pt == 18
+              and chart.legend.font._element.xpath("a:ea/@typeface") == ["Noto Serif CJK SC"]
+              and [s.name for s in chart.series] == ["路径甲", "路径乙"]
+              and [list(s.values) for s in chart.series] == [[12,30], [16,38]]
+              and chart.plots[0].has_data_labels == slide["elements"][0]["show_values"])
+    for kind in ("pie", "donut", "donut_composition"):
+        for show in (False, True):
+            e = {k:v for k,v in base.items() if k not in ("series", "categories")}
+            e.update(chart_kind=kind, show_values=show, data=[{"label": f"类别{i}", "value": i+1} for i in range(7)])
+            pie = dict(deck, slides=[{"id": "composition", "elements": [e]}])
+            report = compile_deck(pie, path)
+            c = Presentation(path).slides[0].shapes[0].chart
+            labels = c.plots[0].data_labels if c.plots[0].has_data_labels else None
+            check(f"identity: {kind}/{show} 隐藏值仍保留七个类别身份",
+                  report["passed"] and not report.get("warnings") and labels is not None and labels.show_category_name
+                  and labels.show_value == show and not c.has_legend
+                  and len(c.series[0].values) == 7)
+    def errors(element):
+        report = check_spec(dict(deck, slides=[{"id": "probe", "elements": [element]}]))
+        return [c for c in report["checks"] if c.get("level") == "error"]
+    for names in (("", "乙"), ("甲", "甲")):
+        e = dict(base, chart_kind="line", series=[{"name": n, "values": [1,2]} for n in names])
+        check("identity: 拒绝缺失/歧义序列名 " + str(names), bool(errors(e)))
+    check("identity: 单序列不强求冗余名称", not errors(dict(base, chart_kind="line", series=[{"values": [1,2]}])))
+    check("identity: 类别名不可为空", bool(errors(dict(base, chart_kind="line", categories=["", "乙"]))))
+    for kind, field, limit in (("process_flow","data",7), ("timeline","data",7), ("steps","data",6),
+            ("matrix","points",12), ("architecture","layers",3), ("ranked_bar","data",8),
+            ("progress_bar","data",6), ("stacked_bar","data",8), ("big_number_row","data",5), ("bubble","data",12)):
+        e = {k:v for k,v in base.items() if k not in ("series", "categories")}
+        e["chart_kind"] = kind
+        items = [f"层{i}" if field == "layers" else {"label": f"节点{i}", "value": i+1, "x": .5, "y": .5} for i in range(limit+1)]
+        e[field] = items[:limit]
+        fits = not errors(e)
+        e[field] = items
+        check("payload: " + kind + " 边界完整/超量阻断", fits and bool(errors(e)))
+    from verify import release_manifest
+    verification = release_manifest(deck, {})["verification"]
+    check("evidence: 未打开/编辑/独立审阅不冒充验收",
+          verification.get("target_powerpoint") == verification.get("native_editing") == "not_verified"
+          and verification.get("independent_visual_review") == "not_performed")
+    for content in ("甲组负责研发；乙组负责交付。", "必须先核验证据再发布。", "效率从 12% 提升到 18%。"):
+        brief = {"slides": [{"id": str(i), "title": "核验依据", "content": content, "asset": "none"} for i in range(6)]}
+        bundle = intel.think(brief)
+        check("rhythm: 重复不能覆盖关系/观点/数据判断 " + content,
+              all(p["judgment"]["composition"] == intel.page_judgment(brief["slides"][i], index=i, total=6,
+                  brief=brief, world=bundle["deck"]["world"], warnings=[])["composition"] for i,p in enumerate(bundle["pages"])))
+
+
+def test_plan_boundaries(tmp):
+    import intelligence as intel
+    import vao, assets
+    from unittest.mock import patch
+    from PIL import Image
+    import contextlib, io
+    base = {"audience": "评审", "decision": "发布", "tension": "核验证据",
+            "slides": [{"id": "page", "title": "保留原文", "content": "信息不可损失", "asset": "none"}]}
+    for field in ("title", "claim", "id", "audience", "tension", "eyebrow"):
+        b = json.loads(json.dumps(base))
+        value = '先验证\n再交付 """ # C:\\notes\r限定条件'
+        b["slides"][0][field] = value
+        sk = intel.build_skeleton(intel.think(b)); scope = {}
+        exec(compile(sk, field, "exec"), scope)
+        check("plan: 多行/引号安全生成 " + field, len(scope["SPEC"]["slides"]) == 1)
+    b = dict(base, audience='讨论 """ 与路径 C:\\new')
+    check("plan: deck 说明不能终止 Python 字符串", compile(intel.build_skeleton(intel.think(b)), "deck", "exec") is not None)
+    brief = tmp / "brief.json"; brief.write_text(json.dumps(base), encoding="utf-8")
+    plan = tmp / "plan.json"; work = tmp / "author.py"
+    old = "SPEC = {'slides': [{'elements': [{'type': 'text', 'text': '作者已完成'}]}]}\n"
+    work.write_text(old, encoding="utf-8")
+    with contextlib.redirect_stdout(io.StringIO()): result = vao.run_plan(str(brief), str(plan), str(work))
+    side = Path(result["workflow"]["skeleton_path"])
+    check("plan: 不执行/不覆盖任何现有作者文件", work.read_text(encoding="utf-8") == old and side != work and side.exists())
+    stamp = side.stat().st_mtime_ns
+    with contextlib.redirect_stdout(io.StringIO()): again = vao.run_plan(str(brief), str(plan), str(work))
+    check("plan: 同输入副本不重写、不产生更多文件", again["workflow"]["skeleton_path"] == str(side.resolve()) and side.stat().st_mtime_ns == stamp)
+    side.write_text("# 第二份作者工作", encoding="utf-8")
+    blocked = False
+    try: vao.run_plan(str(brief), str(plan), str(work))
+    except FileExistsError: blocked = True
+    check("plan: 副本也被保护，不按代码格式猜是否已填稿", blocked and side.read_text(encoding="utf-8") == "# 第二份作者工作")
+    cli = run_vao("plan", str(brief), "--out", str(plan), "--json")
+    compact = json.loads(cli.stdout)
+    check("plan: JSON 仅回摘要，完整判断仍落盘", cli.returncode == 0 and "pages" not in compact
+          and compact["page_count"] == 1 and "pages" in json.loads(plan.read_text(encoding="utf-8"))
+          and len(cli.stdout.encode()) < 4096)
+
+    image = tmp / "original.png"; Image.new("RGB", (1024,768), (214,206,192)).save(image)
+    entry = {"asset_id": "named", "decision": "generate", "expected_filename": image.name,
+             "prompt": "test", "negative": ["test"], "slide_ids": ["s1"], "ratio": "16:9",
+             "allow_crop": True, "meta": {"text_color": "#111111"},
+             "asset_role": "background", "asset_role_source": "author"}
+    manifest = tmp / "assets.json"
+    def save(entry):
+        manifest.write_text(json.dumps({"assets": [entry]}), encoding="utf-8")
+    save(entry); original = manifest.read_bytes()
+    with patch.object(assets, "image_qc", wraps=assets.image_qc) as measure:
+        offline = vao.run_qc(str(manifest), speed="strict")
+    kw = measure.call_args.kwargs
+    check("qc: 同一解析器消费文件名/HEX 字色/裁切声明", Path(measure.call_args.args[0]) == image.resolve()
+          and kw["text_is_dark"] is True and kw["allow_crop"] is True)
+    report, _ = assets.qc_report(manifest, phase="draft", speed="strict", persist=False)
+    check("qc: 离线与生产同判且不写报告/重试状态", offline["results"][0]["action"] == report["results"][0]["policy"]["action"]
+          and manifest.read_bytes() == original and not manifest.with_suffix(".qc.json").exists())
+    save(dict(entry, decision="existing", origin={"kind":"original","path":str(image),"source":"test fixture"}))
+    check("qc: 既有素材按 origin.path 查找，不误报缺失", vao.run_qc(str(manifest), speed="strict")["results"][0]["status"] != "missing")
+    assets.qc_report(manifest, phase="draft", speed="strict")
+    qc_file = manifest.with_suffix(".qc.json"); prior = qc_file.read_bytes()
+    with patch.object(assets, "image_qc", wraps=assets.image_qc) as measure:
+        vao.run_qc(str(manifest), speed="strict")
+    check("qc: 有效报告复用测量且不改写凭证", not measure.called and qc_file.read_bytes() == prior)
+    import os
+    stat = image.stat(); blob = bytearray(image.read_bytes()); blob[-1] ^= 1; image.write_bytes(blob)
+    os.utime(image, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    with patch.object(assets, "image_qc", wraps=assets.image_qc) as measure:
+        vao.run_qc(str(manifest), speed="strict")
+    check("qc: strict 同 size/mtime 换字节不复用旧测量", measure.called and qc_file.read_bytes() == prior)
+    save(dict(entry, expected_filename="missing.png"))
+    missing = run_vao("qc", "--assets-manifest", str(manifest), "--speed", "strict")
+    check("qc: 缺素材退出码非零，不能假成功", missing.returncode == 2 and json.loads(missing.stdout)["status"] == "BLOCKED")
+    save(dict(entry, expected_filename="ambiguous.webp"))
+    image.with_name("ambiguous.png").write_bytes(image.read_bytes())
+    image.with_name("ambiguous.jpg").write_bytes(image.read_bytes())
+    ambiguous = run_vao("qc", "--assets-manifest", str(manifest))
+    check("qc: 多候选不能任取第一个", ambiguous.returncode == 2 and "多个候选" in ambiguous.stderr)
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -1939,8 +2105,8 @@ def test_docs():
     check("docs: SKILL.md 只保留六节（身份/哲学/判断/Context/执行/QA）",
           all(k in skill for k in ("身份", "设计哲学", "判断", "Context", "执行", "QA")),
           str(refs))
-    check("docs: references ≤3 份，无案例堆积文件",
-          len(refs) <= 3 and "precedent" not in refs, str(refs))
+    check("docs: references 只保留执行/资产契约，不维护第二套判断",
+          len(refs) <= 2 and "judgment.md" not in refs, str(refs))
     check("docs: 文档里没有退役模块名与旧概念",
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
@@ -1968,7 +2134,7 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         for name, fn in (("intelligence", test_intelligence), ("verify", test_verify),
-                         ("production", test_production), ("cli", test_cli)):
+                         ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

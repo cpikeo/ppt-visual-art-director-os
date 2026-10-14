@@ -826,6 +826,23 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 原生引擎会为轴/标签留位；预览不能把更大的作者字号画到图框外。
         top += int(value_font.size * 1.4) if native_values else 0
         bottom -= int(category_font.size * 1.6)
+    if len(groups) > 1:
+        # 结构预览也保留序列身份；原生图例实际位置/换行由 Office 决定。
+        names = [name for name, _ in groups]
+        font = native_font(e.get("label_size", 40 / 3), " ".join(names))
+        palette = ctx.series_palette(len(groups), series_highlight_index(e, names, -1))
+        roles = e.get("series_roles") or []
+        lx, ly = left, top
+        for i, name in enumerate(names):
+            tw = d.textlength(name, font=font) + font.size * 2.5
+            if lx > left and lx + tw > right:
+                lx, ly = left, ly + font.size * 1.7
+            role = ctx.chart_role(str(roles[i])) if i < len(roles) else None
+            col = _rgba_color(role if role is not None else palette[i], 0.95)
+            d.rectangle((lx, ly, lx + font.size, ly + font.size), fill=col)
+            d.text((lx + font.size * 1.4, ly), name, font=font, fill=ink, anchor="lt")
+            lx += tw
+        top = int(ly + font.size * 2)
     if len(groups) > 1 and kind in {"line", "area", "trend", "single_trend_line"}:
         # 与产物同形：每条序列一条线（产物里 <c:ser> = 序列数）。
         # 颜色也按产物同一条链取：series_roles 声明的用角色色，否则用系列色阶；

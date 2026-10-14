@@ -9,7 +9,7 @@
 纪律：
   * 一次调用 = 一趟确定性批处理；无逐条修复循环、无 warning 对话。
   * 失败落盘修复包（按根因分组、内嵌明细），成功不写假失败。
-  * 零外部渲染器、零 reference 读取；判断归 references/，执行归这里。
+  * 零外部渲染器、零 reference 读取；判断基准归 SKILL.md，执行归这里。
   * 速度只有两档：fast（默认，两分钟档）/ strict（全量证据档）。
     `--deadline` 可跳过可选预览证据，不可跳过核心正确性。
 """
@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import re
 import sys
 import time
 import types
@@ -200,22 +199,22 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
         timing["asset_manifest_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
     t = time.perf_counter()
-    if out:
-        _json_write(out, bundle)
     if skeleton:
         target = Path(skeleton).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        # 覆写保护：已填稿的骨架（elements 非空）不被重跑冲掉。
-        if target.is_file():
-            old = target.read_text(encoding="utf-8", errors="replace")
-            if re.search(r'"elements"\s*:\s*\[\s*\{', old):
-                safe = target.with_name(target.name + ".new.py")
-                safe.write_text(build_skeleton(bundle), encoding="utf-8")
-                print(f"skeleton: 检测到已填稿的 {target.name}，新骨架改写 {safe.name}（不覆盖作业稿）")
-            else:
-                target.write_text(build_skeleton(bundle), encoding="utf-8")
+        text = build_skeleton(bundle)
+        compile(text, str(target), "exec")  # 验证生成语法，不执行作者文件
+        if target.exists() and target.read_text(encoding="utf-8") != text:
+            target = target.with_name(target.name + ".new.py")
+        if target.exists():
+            if target.read_text(encoding="utf-8") != text:
+                raise FileExistsError(f"保留已有稿件：{target}；请指定新的 --skeleton 路径")
         else:
-            target.write_text(build_skeleton(bundle), encoding="utf-8")
+            with target.open("x", encoding="utf-8") as handle:
+                handle.write(text)
+        bundle["workflow"]["skeleton_path"] = str(target.resolve())
+    if out:
+        _json_write(out, bundle)
     timing["plan_artifact_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -871,43 +870,21 @@ def run_qc(manifest_path: str, assets_dir: str | None = None,
     出图迭代的最短反馈环：作者改一张图，一条命令拿到阻断/建议清单，
     不必跑全量 check 往返，也不必自建 harness（CASE_004 证据）。
     """
-    from assets import image_qc, qc_retry_decision, qc_profile
+    from assets import qc_report, asset_root, qc_profile
     mpath = Path(manifest_path).expanduser().resolve()
     man = json.loads(mpath.read_text(encoding="utf-8"))
-    base = Path(assets_dir).expanduser() if assets_dir \
-        else Path(man.get("assets_dir") or "generated_assets")
-    if not base.is_absolute():
-        base = mpath.parent / base
-    prof = qc_profile(speed)
-    results = []
-    for a in man.get("assets") or []:
-        aid = str(a.get("asset_id"))
-        path = next((base / f"{aid}.{ext}" for ext in ("png", "jpg", "jpeg", "webp")
-                     if (base / f"{aid}.{ext}").is_file()), None)
-        if path is None:
-            results.append({"asset_id": aid, "slide_ids": a.get("slide_ids"),
-                            "status": "missing", "action": "block",
-                            "blocking": ["missing"], "advisory": [], "issues": []})
-            continue
-        meta = a.get("meta") or {}
-        qc = image_qc(str(path), safe_area="left",
-                      text_is_dark=(meta.get("text_color") == "dark")
-                      if meta.get("text_color") else None,
-                      safe_rect=a.get("safe_area"),
-                      background=a.get("background_color") or "#FFFFFF",
-                      expected_ratio=a.get("ratio") or None,
-                      allow_crop=bool(a.get("asset_allow_crop")),
-                      max_side=prof["max_side"])
-        pol = qc_retry_decision(qc, attempt=0, phase="draft",
-                                asset_function=a.get("asset_function"),
-                                asset_role=a.get("asset_role"))
-        results.append({"asset_id": aid, "slide_ids": a.get("slide_ids"),
-                        "status": qc.get("status"), "action": pol["action"],
-                        "blocking": pol["blocking_checks"],
-                        "advisory": pol["advisory_checks"],
-                        "issues": [c.get("issue") for c in qc.get("checks", [])
-                                   if c.get("status") == "issue"]})
-    return {"speed": prof["speed"], "assets_dir": str(base), "results": results}
+    report, _ = qc_report(mpath, assets_dir, phase="draft", speed=speed, persist=False)
+    return {"speed": qc_profile(speed)["speed"],
+            "assets_dir": str(asset_root(man, mpath, assets_dir)),
+            "status": report["status"], "workflow_issues": report["workflow_issues"],
+            "results": [{"asset_id": r["asset_id"], "slide_ids": r["slide_ids"],
+                         "status": "missing" if r["missing"] else r["qc"]["status"],
+                         "action": r["policy"]["action"],
+                         "blocking": r["policy"]["blocking_checks"],
+                         "advisory": r["policy"]["advisory_checks"],
+                         "issues": [c.get("issue") for c in r["qc"].get("checks", [])
+                                    if c.get("status") == "issue"]}
+                        for r in report["results"]]}
 
 
 def force_utf8_stdio() -> None:
@@ -936,7 +913,10 @@ def main(argv=None) -> int:
                               assets_out=args.assets_out, assets_dir=args.assets_dir,
                               asset_cache=args.asset_cache)
             if args.json:
-                print(json.dumps(bundle, ensure_ascii=False, indent=2, default=str))
+                print(json.dumps({"plan_path": str(Path(args.plan_out).expanduser().resolve()),
+                                  "page_count": len(bundle["pages"]),
+                                  "workflow": bundle["workflow"], "warnings": bundle.get("warnings"),
+                                  "performance": bundle["performance"]}, ensure_ascii=False, default=str))
             else:
                 pages = bundle.get("pages") or []
                 media_pages = [p["id"] for p in pages
@@ -960,7 +940,7 @@ def main(argv=None) -> int:
                     print(f"  跨页校准：{len(coherence['adjustments'])} 处回拨（{shown}）")
                 if args.plan_out:
                     print(f"  plan: {args.plan_out}"
-                          + (f" · skeleton: {args.skeleton}" if args.skeleton else ""))
+                          + (f" · skeleton: {bundle['workflow']['skeleton_path']}" if args.skeleton else ""))
             return 0
         if args.command == "check":
             _, code = run_check(args.build, args.output, mode=args.mode,
@@ -974,7 +954,7 @@ def main(argv=None) -> int:
         if args.command == "qc":
             rep = run_qc(args.assets_manifest, args.assets_dir, args.speed)
             print(json.dumps(rep, ensure_ascii=False, indent=2))
-            return 0
+            return 0 if rep["status"] == "PASS" else 2
         if args.command == "dna":
             return _dna(args)
         return 2

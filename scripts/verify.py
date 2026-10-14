@@ -421,6 +421,21 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
     categories = e.get("categories") or []
     n_cat = len(categories) if isinstance(categories, list) else 0
     n_series = len(series) if multi else 0
+    # 这些形状图的实现只消费前 N 项；超量须拆页，不允许静默丢掉尾部证据。
+    limits = {"process_flow": 7, "timeline": 7, "steps": 6, "matrix": 12,
+              "architecture": 3, "ranked_bar": 8, "progress_bar": 6,
+              "stacked_bar": 8, "big_number_row": 5, "bubble": 12}
+    payload = e.get("points") if kind == "matrix" else e.get("layers") if kind == "architecture" else data
+    if kind in limits and isinstance(payload, list) and len(payload) > limits[kind]:
+        add("chart_payload", eid, "error",
+            f"{kind} 有 {len(payload)} 项，当前实现最多完整呈现 {limits[kind]} 项；拆图/拆页，不得截掉尾项")
+    if multi:
+        if any(c is None or not str(c).strip() for c in categories):
+            add("data_integrity", eid, "error", "categories 中的类别名不得为空")
+        if n_series > 1:
+            names = [str(sr.get("name") or "").strip() if isinstance(sr, dict) else "" for sr in series]
+            if not all(names) or len(set(names)) != len(names):
+                add("data_integrity", eid, "error", "多序列必须声明非空且不重复的 name，以辨认数据归属")
     if kind in NUMERIC_CHART_KINDS:
         if multi:
             if not n_cat:
@@ -981,7 +996,10 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
             "visual_evidence": "ghost_preview" if ghost else "structural_only",
             "visual_evidence_scope": (ghost or {}).get("scope", "full") if ghost else None,
             "structural_pages": len(page_ids),
-            "ghost_pages": (ghost or {}).get("count") if ghost else 0},
+            "ghost_pages": (ghost or {}).get("count") if ghost else 0,
+            "target_powerpoint": "not_verified",
+            "native_editing": "not_verified",
+            "independent_visual_review": "not_performed"},
         "compile_report": compile_claim,
         "qa_summary": {k: qa_report.get(k) for k in
                        ("status", "passed", "failure_codes", "blocking_items",

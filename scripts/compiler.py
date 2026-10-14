@@ -11,7 +11,7 @@ from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Pt
 from pptx.chart.data import CategoryChartData
-from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSITION, XL_MARKER_STYLE
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSITION, XL_MARKER_STYLE, XL_LEGEND_POSITION
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
     RenderContext, emu, pt, px_to_pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
@@ -736,6 +736,13 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
             if not existing:
                 font._element.append(node)
 
+    # 名称是数据身份，不是可选装饰。无端点文字时以非覆盖式图例标识多序列。
+    chart.has_legend = len(chart.series) > 1
+    if chart.has_legend:
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
+        style(chart.legend.font, float(element.get("label_size", 40 / 3)), ink)
+
     # 饼/环没有坐标轴；不要用 broad except 吞掉其他图的字体错误。
     if kind not in ("pie", "donut", "donut_composition"):
         chart.value_axis.has_major_gridlines = False
@@ -750,11 +757,14 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
             ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值")
         else:
             ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡")
-    if show:
-        plot = chart.plots[0]
-        plot.has_data_labels = True
+    plot = chart.plots[0]
+    composition = kind in ("pie", "donut", "donut_composition")
+    plot.has_data_labels = bool(show or composition)  # 值可隐藏，类别身份不能丢
+    if show or composition:
         labels = plot.data_labels
-        labels.show_value = True
+        labels.show_value = bool(show)
+        labels.show_category_name = composition
+        labels.show_series_name = False
         style(labels.font, float(element.get("value_size", 12)), ink)
         if element.get("number_format"):
             labels.number_format = str(element["number_format"])
@@ -773,7 +783,7 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     与「类型枚举」互补而非取代：同一个 line geometry，通过 series/highlight/
     end_labels 组合出多序列趋势与末端强调。每序列用系列色，highlight 指定的
     序列升级为 accent + 加粗；end_labels 控制末端**圆点**（这条路径目前只画点，
-    不落文字——多序列无图例时的末端文字标注属未覆盖路径，见 production-contract）。"""
+    不落文字——序列身份由非覆盖式原生图例承担）。"""
     cn, latin = ctx.families(element)
     primary, secondary, ink, muted = chart_colors(element, ctx)
     eid = str(element.get("id", "chart"))
@@ -814,7 +824,6 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
         NATIVE_CHART_TYPES[kind], Emu(emu(x)), Emu(emu(y)), Emu(emu(w)), Emu(emu(h)), data)
     gf.name = eid
     chart = gf.chart
-    chart.has_legend = False
     chart.has_title = False
     _native_chart_text(chart, element, ctx, kind, n_cat * len(parsed), h)
     series_names = [name for name, _nums in parsed]
@@ -882,7 +891,6 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
         Emu(emu(w)), Emu(emu(h)), data)
     gf.name = eid
     chart = gf.chart
-    chart.has_legend = False
     chart.has_title = False
 
     _native_chart_text(chart, element, ctx, kind, len(rows), h)
@@ -941,19 +949,6 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                 pass
 
         if kind in ("donut", "donut_composition", "pie"):
-            # 构成图的类别名必须**直接标注**：图例被全局关掉（has_legend=False），
-            # 只给数值的话，四个扇区就是四块没有名字的色块——读者看不出哪一块是
-            # 自有内容。这是「空间允许时直接标注，而不是图例」在构成图上的落点。
-            # 只标类别名（值已在 show_values 时标出），类别过多时退回图例式省略。
-            if len(rows) <= 6:
-                try:
-                    labels = chart.plots[0].data_labels
-                    labels.show_category_name = True
-                    labels.show_series_name = False
-                    if getattr(labels, "position", None) is not None:
-                        labels.position = XL_LABEL_POSITION.BEST_FIT
-                except Exception as exc:
-                    ctx.warn(f"chart '{eid}': 构成图类别标注未写入（{exc}）")
             if kind != "pie":
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
             hl = int(highlight_index(element, rows, 0))

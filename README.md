@@ -34,7 +34,7 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 # 含图时为同一条 check 加 --assets-manifest <plan 输出的清单路径>
 ```
 
-历次提速与修复的实测记录见 [CHANGELOG.md](CHANGELOG.md)（每条都写明样本、测法与边界）。
+版本差异与关键验证边界见 [CHANGELOG.md](CHANGELOG.md)；完整旧记录可从 Git 历史恢复。
 口径照旧：数字只对写明的样本与本机执行负责，不含外部出图或人工构图时间；
 没有稳定证据的指标（例如常规稿的 cold 全链路）就写「没有证据」，不写结论。
 
@@ -55,15 +55,15 @@ scripts/
 - **QA 只拦硬错误**：编译失败 / 内容缺失 / 溢出 / 越界 / 重叠 / 无效资产 / 无效图表 /
   来源缺失（release）。输出只有 **PASS / BLOCK**；设计质量由逐页判断与作者审阅负责，
   PIL 结构预览不是 Office 像素忠实证明。
-- **不调用 LibreOffice / soffice / poppler**：方向证据由 `ghost.py` 的确定性结构预览给出。
+- **生产入口不依赖外部渲染器**：方向证据由 `ghost.py` 给出；实际 PPTX 须在目标 PowerPoint 验收，替代引擎渲染不能冒充目标环境证明。
 - **一次算完多处复用**：编译缓存、资产判定复用、预览页缓存、单趟归一化。
-- **PPT 全程原生可编辑**：文本、形状、图表在 PowerPoint 对象模型中可直接修改。
+- **产物采用原生对象**：文本、形状、图表不是整页截图；是否能在目标 PowerPoint 正常编辑，仍需打开、修改、另存、重开验证。
 
 ## Context 纪律（JIT）
 
 | 需要解决的问题 | 读取 |
 |---|---|
-| 判断卡确有缺口时的校准（焦点/留白/图像/图表/排版/节奏） | `references/judgment.md`（按需） |
+| 判断卡确有缺口时的校准（焦点/留白/图像/图表/排版/节奏） | `SKILL.md` §2–3（唯一基准） |
 | 落 spec 时查字段、元素契约、失败码 | `references/contract.md`（一次） |
 | plan 判定确需图像媒体 | `references/assets.md`；无图稿跳过 |
 

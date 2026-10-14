@@ -1,10 +1,10 @@
 # Contract（执行契约 · 写 elements 前查）
 
-落地给什么值、什么会被当场抓住。判断校准 → `judgment.md`；资产链 → `assets.md`。
+落地给什么值、什么会被当场抓住。判断基准 → `../SKILL.md`；资产链 → `assets.md`。
 
 ## 判定边界
 
-QA 只回答「这份 PPTX 能不能交付」，只有 **PASS / BLOCK** 二态。
+QA 只回答自动化硬约束与凭证是否通过，只有 **PASS / BLOCK** 二态，不签署视觉终验。
 
 | 拦（error → BLOCK） | 不拦（设计判断，归你） |
 |---|---|
@@ -20,25 +20,11 @@ QA 只回答「这份 PPTX 能不能交付」，只有 **PASS / BLOCK** 二态�
 **验证层不评分、不重新设计、不发明数字、不产生 warning 对话。** 非阻断信号不进对话，
 只作为证据存在；发现问题时按 `fix_plan` 根因组一次改完。
 
-## 排版的物理约束，不是模板字阶
+## 文本测量边界
 
-先看判断卡的 `typography.lead / support / discipline`：谁应先被读到、基期/出处如何退后，
-再定字体、字号、行距和断句。**没有 Statement/Display/Title 等固定档、放之四海的字号比、
-粗体配额或指定行数。** 长文字先重写或删减，不能靠缩小到不可读来硬塞。
-
-文本框须容纳真实文字；Guard 粗估包含折行、段距与两侧内边距，结构预览不是 Office
-字体测量。终稿仍需在目标 PowerPoint 检查字体替代、换行与裁切。字号和行高取决于
-阅读距离、信息长度、字体与投影条件；内容本身才是视觉权重的来源，不因满足一个数字比例
-就变成好设计。
-
-**可读域（物理约束，不是字阶模板）**：plan 按本页内容量派生一份尺度，骨架逐页给出——
-
-| 项 | 域 | 越界后果 |
-|---|---|---|
-| 正文行长 | 22–45 汉字/行（长文取窄栏，plan 报具体值） | 超过 45 汉字，投影尺度下回扫丢行；低于 22 汉字，每行都在半句处折断 |
-| 行距 | 标题 1.18–1.35 · 正文 1.55–1.85 | 正文 <1.5 挤压、>1.9 行间断裂 |
-| 文本框内边距 | ≥ 0.5×字号（≥8px） | 内边距为 0 时中文全角字贴边，与相邻元素互相啃咬 |
-| 断行 | 语义停顿处断；禁则：标点不领行、开引号不收尾、数字与单位不拆行 | 断在数字与单位之间＝把「11.2 元」读成两个信息 |
+Guard 粗估字号、折行、字距、段距及内边距；不是目标字体的真实排版。plan 的
+`typography.scale` 是启发式建议，不是适用于所有投影距离的物理定律或通过阈值。
+排版判断只按 SKILL.md；实际字体、回退、禁则、裁切与可读性须另行渲染核验。
 
 中文禁则回退目前只在 ghost 的折行模型中执行；编译器写入原生文本，实际折行由目标
 PowerPoint 与字体决定，**两者不共享断行实现**。ghost 的违例可以提示人工复核，
@@ -94,7 +80,7 @@ ghost 文本框、形状内文字及本轮覆盖的原生图表标签复用同�
 `text_padding` 字段。`fill: {type: none}` / 省略 `fill` = 真空心，不能让预览画成实心卡片。
 PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过载先删句改写，不压行距。
 
-`chart_kind` 白名单（括号为每页上限）：bar/horizontal_bar/comparison_bar(8) · column(8) ·
+`chart_kind` 支持项（括号为历史建议数量；仅下述截断型硬限额由 Guard 执行）：bar/horizontal_bar/comparison_bar(8) · column(8) ·
 line/trend/single_trend_line(8) · area(8) · donut/pie(8) · stacked_bar(8) · ranked_bar(8) ·
 waterfall(12) · matrix(12) · bubble(12) · sparkline(12) · process_flow(7) · timeline(7) ·
 steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/executive_kpi/big_number
@@ -103,10 +89,14 @@ steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/execu
 `label_collision_policy` 不因 `data` 或 `categories + series` 载荷改变；多序列的
 容量计数为类别数 × 序列数。`label_size` 控制原生轴标签、`value_size` 控制数值标签，
 均为画布 px（写入 PPTX 时乘 0.75 转 pt），中文字体来自 `theme.fonts.cn/body`。
+多序列 `name` 必须非空且唯一，类别名非空；原生图表以底部非覆盖图例标识序列，
+图例复用 `label_size` 和字体角色；`show_values: false` 只隐藏数值，不删除序列身份。
 未声明时保留历史默认值，不把默认小字当成投影可读性证明；需作者按场景给出字号并
 在目标 PowerPoint 检查长标签折行和遮挡。**载荷两式**：数值图表用 `categories + series[].values`；
 复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）
-用元素级 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
+其中 matrix 用 `points`、architecture 用 `layers`，其余用 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
+截断型硬限额：process_flow/timeline 7、steps/progress_bar 6、ranked_bar/stacked_bar 8、
+big_number_row 5、matrix/bubble 12、architecture 3；超过时在编译前 BLOCK，不能静默丢尾项。
 
 **跨页锚的眉标**：`anchor.eyebrow` 由本页结论派生短标（3–6 字，写「这一段在论证里的
 位置」，不写页面类型），作者可在 brief 里逐页声明 `eyebrow` 原样压过派生。
@@ -127,7 +117,8 @@ steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/execu
 - 形状类图表（ranked_bar 等）主叙事色默认强调色；作者用 `primary_color` /
   `color_role` 把非高亮系列压回墨色——强调色只指一个答案，不铺面。
 - `stroke` 只读色值；`{"type":"none"}` = 显式无描边（与 fill 同形写法对齐）。
-- `plan --skeleton` 检测到已填稿（elements 非空）改写 `<name>.new.py`，不覆写作业稿。
+- `plan --skeleton` 不覆盖任何不同内容的现有文件，改写 `<name>.new.py`；同内容不重写，副本也冲突则停止。`workflow.skeleton_path` 是实际路径。
+- `plan --json` 只回摘要与 `plan_path`；完整判断读该文件一次。`typography.scale` 只保留内容相关的栏宽建议与语义断行，不提供固定字阶配额。
 - 资产指纹不含 `safe_area` / `text_color`：校准压字区不使已出图作废；
   二者仍进清单，QC 对成图复核。
 - `vao.py qc --assets-manifest m.json`：离线像素体检（与 check 同判据），
@@ -164,3 +155,6 @@ steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/execu
 （含 output_sha256）/ ghost_preview / asset_workflow / status`。校验三件事：报告盖的 spec 戳与
 当前一致；PPTX 字节戳与磁盘一致（一次哈希比对）；预览证据引用的页面都在当前 spec 内。
 `release_eligible` 仅在 release 档、编译通过且凭证全有效时为真。
+
+`verification.target_powerpoint/native_editing/independent_visual_review` 明确记录未验证状态；
+此工具不消费外部签署，也不会因自动化 PASS 自动升级它们。替代引擎记录与人工审阅须单独附上。

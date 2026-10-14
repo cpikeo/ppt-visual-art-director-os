@@ -1951,7 +1951,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
 # 资产 QC 报告（一次判定、一条修法；判定复用是真性能）
 # ══════════════════════════════════════════════════════════════════
 def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
-              snapshots=None, decoded=None, digests=None):
+              snapshots=None, decoded=None, digests=None, persist=True):
     """资产核验：绑定 → 测量/复用 → 判定。draft 最多一次定向重出。"""
     from primitives import digest_bytes, engine_fingerprint, text_is_dark, witness_same
     manifest_file = _Path(manifest_path).expanduser().resolve()
@@ -2084,7 +2084,7 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
     out_path = prev_path
     report["report_path"] = str(out_path)
     phase_changed = bool(prev_report) and prev_report.get("phase") != qc_phase
-    if (phase_changed or not (prev_report and reuse_base is not None and results
-                              and reused_assets == len(results))):
+    if persist and (phase_changed or not (prev_report and reuse_base is not None and results
+                                         and reused_assets == len(results))):
         json_write(out_path, report)
     return report, 0 if report["status"] == "PASS" else 2
