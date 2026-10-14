@@ -242,6 +242,15 @@ def add_shape(slide, element: dict, ctx: RenderContext) -> None:
         c.name = str(element.get("id", "line"))
         if stroke is not None:
             stroke_color(c.line, stroke, stroke_alpha, sw)
+        elif isinstance(element.get("stroke"), dict) and element["stroke"].get("type") == "none":
+            c.line.fill.background()
+        if kind == "arrow":
+            from pptx.oxml.xmlchemy import OxmlElement
+            end = OxmlElement("a:tailEnd")
+            end.set("type", "triangle")
+            end.set("w", "med")
+            end.set("len", "med")
+            c.line._get_or_add_ln().append(end)
         return
 
     if kind not in SHAPE_TYPES:

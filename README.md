@@ -91,3 +91,17 @@ Python 3.10+，零系统级组件：
 pip install -r requirements.txt
 python scripts/selftest.py   # 核心测试
 ```
+
+## 本轮可复验交付（9.17.1 候选版）
+
+见 [审计与验收报告](acceptance/REPORT.md)：根因、312 项回归、四类 12 页实际 PPTX、
+LibreOffice 页图、前后像素差分、原生对象检查与同环境 A/B 原始计时。
+仅声明自动化通过与替代引擎取证，**不声明目标 PowerPoint 视觉终验或端到端提速**。
+
+```bash
+python acceptance/suite.py run --out /tmp/vao-acceptance
+# 安装 LibreOffice、Poppler 与 Noto CJK 字体后，可选实际渲染：
+python acceptance/suite.py run --render --out /tmp/vao-rendered
+```
+
+这些是固定人工编排的验收夹具，不是新增模板引擎；生产仍只走 `scripts/vao.py`。

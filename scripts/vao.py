@@ -11,7 +11,7 @@
   * 失败落盘修复包（按根因分组、内嵌明细），成功不写假失败。
   * 零外部渲染器、零 reference 读取；判断基准归 SKILL.md，执行归这里。
   * 速度只有两档：fast（默认，两分钟档）/ strict（全量证据档）。
-    `--deadline` 可跳过可选预览证据，不可跳过核心正确性。
+    `--deadline` 可中止预览；release 缺证据即 BLOCK，不可跳过发布硬门。
 """
 from __future__ import annotations
 
@@ -359,6 +359,8 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     explicit_pages = [int(n) for n in pages] if pages is not None else None
     # 缓存的证据范围也是输入：同一 PPTX 请求 2 页，不可复用旧的 5 页声明。
     request = {"pages": explicit_pages,
+               "slide_ids": [str(s.get("id")) for s in (spec.get("slides") or [])
+                             if isinstance(s, dict)],
                "key_page_limit": max(1, int(limit)) if fast and pages is None else None}
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
@@ -491,6 +493,13 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         from verify import fail_result
         result = fail_result({}, [f"输入或执行失败: {type(exc).__name__}: {exc}"])
         result["performance"] = {"total_ms": round((time.perf_counter() - started) * 1000, 1)}
+        if mode == "release":
+            from verify import release_manifest
+            manifest_path = output_path.with_suffix(".manifest.json")
+            manifest = release_manifest({"slides": []}, result, workflow={"image_count": 0})
+            manifest["validation"]["issues"].append(str(exc))
+            _json_write(manifest_path, manifest)
+            result["manifest_path"] = str(manifest_path)
         packet_obj = repair_packet(result, mode, build_path, output_path)
         _json_write(packet_path, packet_obj)
         line = (json.dumps(packet_obj, ensure_ascii=False) if json_output else

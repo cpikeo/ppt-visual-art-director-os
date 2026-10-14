@@ -2092,6 +2092,100 @@ def test_plan_boundaries(tmp):
     check("qc: 多候选不能任取第一个", ambiguous.returncode == 2 and "多个候选" in ambiguous.stderr)
 
 
+def test_release_evidence(tmp: Path):
+    """Evidence is ordered, complete and fail-closed; arrows retain direction."""
+    import copy
+    import contextlib
+    import io
+    import vao
+    from verify import check_spec, release_manifest, preview_issues
+    from primitives import spec_fingerprint, RenderContext
+    from compiler import compile_deck
+    from pptx import Presentation
+    from ghost import ghost_page
+    from PIL import ImageChops
+
+    spec = vao.load_spec(make_build(tmp, chart=False))[0]
+    spec['slides'][0]['id'] = 'z-open'
+    spec['slides'][1]['id'] = 'a-evidence'
+    build = tmp / 'ordered.json'
+    build.write_text(json.dumps(spec), encoding='utf-8')
+    output = tmp / 'ordered.pptx'
+    with contextlib.redirect_stdout(io.StringIO()):
+        result, code = vao.run_check(str(build), str(output), mode='release', speed='strict')
+    check('release: 非字典序叙事 ID 严档一次收口', code == 0 and result['release_eligible'])
+    renamed = copy.deepcopy(spec)
+    for s in renamed['slides']:
+        s['id'] = 'renamed-' + s['id']
+    build.write_text(json.dumps(renamed), encoding='utf-8')
+    with contextlib.redirect_stdout(io.StringIO()):
+        renamed_result, renamed_code = vao.run_check(str(build), str(output), mode='release', speed='strict')
+    check('release: 相同 PPTX 字节但 ID 改名不复用旧页绑定', renamed_code == 0
+          and renamed_result['compile']['output_sha256'] == result['compile']['output_sha256'])
+    build.write_text(json.dumps(spec), encoding='utf-8')
+    with contextlib.redirect_stdout(io.StringIO()):
+        result, code = vao.run_check(str(build), str(output), mode='release', speed='strict')
+    mf = json.loads(output.with_suffix('.manifest.json').read_text(encoding='utf-8'))
+    ghost = mf['ghost_preview']
+    check('release: 持久清单保留逐页证据而非只留目录', ghost['slide_ids'] == [s['id'] for s in spec['slides']] and len(ghost['pages']) == 5)
+    for name, mutate in (
+        ('缺 spec 戳', lambda q: q.pop('source_spec_hash')),
+        ('缺 PPTX 双凭证', lambda q: q.update(compile={'passed': True})),
+        ('缺 PPTX 摘要', lambda q: q['compile'].pop('output_sha256')),
+    ):
+        q = copy.deepcopy(result); mutate(q)
+        m = release_manifest(spec, q, ghost_preview=ghost)
+        check('release: ' + name + ' 必须 BLOCK', m['status'] == 'BLOCKED' and not m['release_eligible'])
+    check('release: 同页 ID 的旧预览不能冒充当前产物', release_manifest(
+        spec, result, ghost_preview={**ghost, 'output_sha256':'0'*64})['status'] == 'BLOCKED')
+    m = release_manifest(spec, result)
+    check('release: 缺预览必须 BLOCK', m['status'] == 'BLOCKED')
+    ids = ghost['slide_ids']
+    for name, mutation in (
+        ('重复页面', {'slide_ids': [ids[0]]*5}),
+        ('重复文件', {'pages': [ghost['pages'][0]]*5}),
+        ('错误顺序', {'slide_ids': ids[::-1]}),
+        ('未知范围', {'scope': 'invented'}),
+    ):
+        check('release: ' + name + ' 凭证拒收', bool(preview_issues({**ghost, **mutation}, ids)))
+    subset = dict(ghost, scope='key_pages', count=1, slide_ids=[ids[0]],
+                  pages=ghost['pages'][:1], key_pages={ids[0]:'cover'})
+    check('release: fast 合法抽样保留接口', not preview_issues(subset, ids))
+    check('release: strict 不接受抽样', release_manifest(spec, result, ghost_preview=subset)['status'] == 'BLOCKED')
+    with contextlib.redirect_stdout(io.StringIO()):
+        expired, code = vao.run_check(str(build), str(output), mode='release', speed='strict', deadline=0.001)
+    check('release: deadline 不升级为可发布', code == 2 and not expired['release_eligible'])
+    # Restore a valid manifest then fail BEFORE parsing; stale PASS must not survive.
+    with contextlib.redirect_stdout(io.StringIO()):
+        vao.run_check(str(build), str(output), mode='release', speed='strict')
+        build.write_text('{broken', encoding='utf-8')
+        failed, code = vao.run_check(str(build), str(output), mode='release', speed='strict')
+    stale = json.loads(output.with_suffix('.manifest.json').read_text(encoding='utf-8'))
+    check('release: 输入异常覆盖旧 PASS 清单', code == 2 and stale['status'] == 'BLOCKED' and not stale['release_eligible'])
+    check('release: 目标环境状态不被自动升级', mf['verification']['target_powerpoint'] == 'not_verified' and mf['verification']['native_editing'] == 'not_verified')
+    dup = copy.deepcopy(spec); dup['slides'][1]['id'] = dup['slides'][0]['id']
+    check('identity: 重复页 ID 在编译前 BLOCK', not check_spec(dup)['passed'])
+    dup = copy.deepcopy(spec); dup['slides'][0]['elements'][1]['id'] = dup['slides'][0]['elements'][0]['id']
+    check('identity: 重复元素 ID 在编译前 BLOCK', not check_spec(dup)['passed'])
+
+    elements = [dict(id=name, type='shape', shape='arrow', x=100, y=100,
+                     width=w, height=h, stroke='#A34225', stroke_width=4)
+                for name,w,h in [('horizontal',160,0),('vertical',0,160),('diagonal',160,160)]]
+    elements += [dict(elements[0],id='ordinary',shape='line',y=320),
+                 dict(elements[0],id='invisible',y=360,stroke={'type':'none'})]
+    arrows = dict(spec, slides=[dict(id='arrows',elements=elements)])
+    path = tmp/'arrows.pptx'; report=compile_deck(arrows,path)
+    shapes=Presentation(path).slides[0].shapes
+    check('arrow: 三方向箭头是原生可编辑连接线', report['passed'] and all(len(shapes[i]._element.xpath('.//a:tailEnd[@type="triangle"]')) == 1 for i in range(3)))
+    check('arrow: 普通线不误加箭头', not shapes[3]._element.xpath('.//a:tailEnd'))
+    check('arrow: 显式无描边保持不可见', bool(shapes[4]._element.xpath('.//a:ln/a:noFill')))
+    for element in elements[:3]:
+        slide=dict(id='arrow-preview',elements=[element])
+        actual=ghost_page(slide,arrows)
+        plain=ghost_page(dict(slide,elements=[dict(element,shape='line')]),arrows)
+        check('arrow: ghost 方向端点 '+element['id'], ImageChops.difference(actual.convert('RGB'),plain.convert('RGB')).getbbox() is not None)
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -2134,7 +2228,7 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         for name, fn in (("intelligence", test_intelligence), ("verify", test_verify),
-                         ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries)):
+                         ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries), ("release_evidence", test_release_evidence)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

@@ -211,11 +211,15 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             pass
 
     # ---- 单趟页面扫描（结构 → 碰撞/来源区/背景资格，同页元素只走一遍）----
+    seen_slide_ids = set()
     for si, slide in enumerate(slides):
         if not isinstance(slide, dict):
             add("slide_schema", "slides", "error", "每个 slide 必须是对象/dict")
             continue
         sid = str(slide.get("id", f"slide_{si}"))
+        if not sid.strip() or sid in seen_slide_ids:
+            add("slide_schema", sid, "error", "页面 id 必须非空且全稿唯一（资产与预览凭证按 id 绑定）")
+        seen_slide_ids.add(sid)
         if "elements" in slide and not isinstance(slide.get("elements"), list):
             add("slide_schema", sid, "error", "slide.elements 必须是数组/list")
         drawable = [e for e in (slide.get("elements") or []) if isinstance(e, dict)]
@@ -227,7 +231,12 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         if isinstance(bg, dict) and isinstance(bg.get("color"), (dict, list, tuple)):
             add("element_schema", sid, "error",
                 "slide.background.color 须为 #HEX 字符串或 theme token")
+        seen_element_ids = set()
         for e in drawable:
+            eid = str(e.get("id", ""))
+            if not eid.strip() or eid in seen_element_ids:
+                add("element_schema", sid, "error", "元素 id 必须非空且页内唯一（修复与焦点按 id 绑定）")
+            seen_element_ids.add(eid)
             _check_element(e, sid, si, add, known_tokens, cw, ch,
                            require_provenance=require_provenance)
         _check_collisions(slide, add, cw, ch, overlap_ratio,
@@ -910,22 +919,27 @@ def fail_result(result: dict, problems: list, code: str = "GUARD_FAIL") -> dict:
 
 def preview_issues(ghost, page_ids: list) -> list:
     """预览证据自洽：声明页 = 渲染页 = 文件数，且每页都在当前稿件内。"""
-    if not isinstance(ghost, dict):
-        return []
+    if not isinstance(ghost, dict) or not ghost:
+        return ["发布缺少结构预览证据；补跑 check，不得以 deadline 跳过发布取证"]
     pages = ghost.get("pages") or []
-    scope = str(ghost.get("scope") or "full")
-    if scope == "key_pages":          # 关键页取证：渲染页数 = 职责标签数 = 文件数，且都在稿内
-        expected = [str(x) for x in (ghost.get("slide_ids") or [])]
-        labels = [str(x) for x in (ghost.get("key_pages") or {})]
-        if (not expected or ghost.get("count") != len(expected)
-                or len(pages) != len(expected) or len(labels) != len(expected)):
-            return ["关键页取证的声明页与实际渲染页不一致"]
-        outside = [x for x in expected if x not in {str(p) for p in page_ids}]
-        if outside:
-            return ["关键页取证引用了当前稿件之外的页面：" + "、".join(outside)]
-    elif (ghost.get("slide_ids") != [str(p) for p in page_ids]
-          or ghost.get("count") != len(page_ids) or len(pages) != len(page_ids)):
-        return ["预览页没有完整覆盖当前稿件"]
+    expected = ghost.get("slide_ids") or []
+    scope = ghost.get("scope")
+    if (not isinstance(pages, list) or not isinstance(expected, list)
+            or not expected or ghost.get("count") != len(expected)
+            or len(pages) != len(expected)
+            or len(set(map(str, expected))) != len(expected)
+            or len(set(map(str, pages))) != len(pages)):
+        return ["预览声明页、唯一文件与实际渲染页数不一致"]
+    if scope == "full":
+        if expected != page_ids:
+            return ["预览页没有按叙事顺序完整覆盖当前稿件"]
+    elif scope in ("key_pages", "explicit_subset"):
+        if any(x not in page_ids for x in expected):
+            return ["预览取证引用了当前稿件之外的页面"]
+        if scope == "key_pages" and set(ghost.get("key_pages") or {}) != set(expected):
+            return ["关键页职责标签与取证页面不一致"]
+    else:
+        return ["未知预览覆盖范围"]
     return []
 
 
@@ -944,19 +958,21 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
     issues: list = []
     notes: list = []
     slides = spec.get("slides") if isinstance(spec.get("slides"), list) else []
-    page_ids = {str(s.get("id")) for s in slides if isinstance(s, dict) and s.get("id")}
+    page_ids = [str(s.get("id")) for s in slides if isinstance(s, dict)]
 
     got = qa_report.get("source_spec_hash")
-    if got and got != spec_hash:
+    if got != spec_hash:
         issues.append("qa_report 来自另一版 spec（source_spec_hash 不符）")
     ghost = ghost_preview if isinstance(ghost_preview, dict) else None
-    if ghost:
-        issues.extend(preview_issues(ghost, sorted(page_ids)))
-        if ghost.get("count") and len(ghost.get("pages") or []) < len(slides):
+    if qa_report.get("status") == "PASS" or ghost:
+        issues.extend(preview_issues(ghost, page_ids))
+        if ghost and ghost.get("count") and len(ghost.get("pages") or []) < len(slides):
             notes.append(f"预览覆盖 {ghost.get('count')}/{len(slides)} 页（关键页取证）")
     compile_claim = qa_report.get("compile") if isinstance(qa_report.get("compile"), dict) else {}
     output_path, output_sha = compile_claim.get("output_path"), compile_claim.get("output_sha256")
-    if output_path or output_sha:
+    if ghost and (not output_sha or ghost.get("output_sha256") != output_sha):
+        issues.append("结构预览不属于当前 PPTX 字节（output_sha256 缺失或不符）")
+    if output_path or output_sha or qa_report.get("status") == "PASS":
         if not output_path or not output_sha:
             issues.append("PPTX 凭证不完整：需要 output_path 与 output_sha256")
         elif output_verified:
@@ -972,6 +988,8 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
             issues.append("qa_report 声称 PASS 但 release_eligible=false")
         if str((qa_report.get("execution") or {}).get("mode", "")).lower() != "release":
             issues.append("qa_report 声称 PASS 但 execution.mode 不是 release")
+        if (qa_report.get("performance") or {}).get("speed_profile") == "strict" and ghost and ghost.get("scope") != "full":
+            issues.append("strict 发布必须逐页取证，不能使用抽样预览")
         if not compile_claim.get("passed"):
             issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")
     # 可读域越界是非阻断证据：只进发布清单的 notes，不进对话、不改判定。
@@ -1004,8 +1022,10 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
         "qa_summary": {k: qa_report.get(k) for k in
                        ("status", "passed", "failure_codes", "blocking_items",
                         "performance", "execution")},
-        "ghost_preview": ({"dir": ghost.get("dir"),
-                           "contact_sheet": ghost.get("contact_sheet")} if ghost else None),
+        "ghost_preview": ({k: ghost.get(k) for k in
+                           ("dir", "contact_sheet", "pages", "slide_ids", "count", "scope",
+                            "key_pages", "pages_rendered", "file_witnesses",
+                            "renderer", "output_sha256", "evidence_scope")} if ghost else None),
         "status": status,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }

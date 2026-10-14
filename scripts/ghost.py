@@ -463,8 +463,16 @@ def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                       fallback=(170, 170, 170))
         width = max(1, int(round(float(e.get("stroke_width", 1) or 1) * scale)))
         overlay = None if color[3] == 255 else Image.new("RGBA", img.size, (0, 0, 0, 0))
-        ImageDraw.Draw(img if overlay is None else overlay, "RGBA").line(
-            [(x, y), (x + w, y + h)], fill=color, width=width)
+        draw = ImageDraw.Draw(img if overlay is None else overlay, "RGBA")
+        draw.line([(x, y), (x + w, y + h)], fill=color, width=width)
+        if shape == "arrow" and (w or h):
+            length = math.hypot(w, h)
+            ux, uy = w / length, h / length
+            head = min(length, max(3 * width, 6 * scale))
+            tx, ty = x + w, y + h
+            bx, by = tx - ux * head, ty - uy * head
+            draw.polygon([(tx, ty), (bx - uy * head / 2, by + ux * head / 2),
+                          (bx + uy * head / 2, by - ux * head / 2)], fill=color)
         if overlay is not None:
             img.alpha_composite(overlay)
         return

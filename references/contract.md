@@ -51,14 +51,17 @@ spec = {
 有自己的风险色相时再显式声明 `colors.negative` 或 `chart_palette.negative` 覆盖它。
 plan 按视觉世界给出种子，作者可覆盖任意一项。**颜色只能写 #HEX 或 token 名**——写错名字会在产物里静默回落，所以必拦。
 
-**元素信封**：`id`（页内唯一）、`type`、`x/y/width/height`（必填）、`role`。
+页面 `id` 全稿唯一；取证顺序跟随 `slides`，不按 ID 字典序重排。
+
+**元素信封**：`id`（非空、页内唯一）、`type`、`x/y/width/height`（必填）、`role`。
 
 **归一化与网格**（作者需要知道的唯一一条）：几何按 4px 机械吸附，`(x,width)` 与
 `(y,height)` **成对**处理——所以「一条细线 + 骑在它上面的对象」吸附后仍然同心，
 不需要手工凑偶数坐标。**厚度小于一个网格的尺寸原样保留**：`height:1` 的发丝线
 就是 1px，不会被抬成 4px（此时吸附的是中心，不是上边缘）。LINE / ARROW 的
 横线可用 `height:0`、竖线可用 `width:0`；归一化保留零厚度轴、只吸附该轴位置，
-不会把竖线扩成斜线。两轴皆零的零长度线及其他退化形状仍由 guard 拦截。
+不会把竖线扩成斜线。`arrow` 从 `(x,y)` 指向 `(x+width,y+height)`，
+在原生连接线的终点写入三角箭头；`line` 不带箭头。两轴皆零的零长度线及其他退化形状仍由 guard 拦截。
 需要完全绕开吸附时写 `snap: false`。
 填充四写法：`"#RRGGBB"` · token 名 · `{type:solid,color,opacity}` ·
 `{type:gradient,angle,stops≥2}` · `{type:none}`。**形状填充走 `fill`、描边走 `stroke`**。
@@ -139,9 +142,10 @@ big_number_row 5、matrix/bubble 12、architecture 3；超过时在编译前 BLO
 | 结构预览 | 关键页取证（封面/章节/画心/密数据/收尾，默认 5 页） | 全 deck 逐页 |
 
 阻断项与阈值两档相同，但快档的多数像素统计在整数箱平均后的工作域，边界案例可能与原生
-分辨率结果不同；文字安全区纹理和硬缝仍看原图。需逐页视觉取证的终稿选 `strict`；
+分辨率结果不同；文字安全区纹理和硬缝仍看原图。需逐页结构取证的终稿选 `strict`；
 `fast` 仅取关键页，不要写成「全页已看过」。`--deadline`（默认 120s）只会跳过可选预览，
-不跳过核心正确性；一旦预览因时限跳过，必须在最终交付前明确补足人工视觉审阅。
+不跳过核心正确性；release 预览因时限跳过即 BLOCK，须补跑同一条 check。
+严格档必须完整覆盖全部页面；快速档允许清单明确记录的关键页抽样。
 
 ## Failure codes
 
@@ -153,7 +157,9 @@ big_number_row 5、matrix/bubble 12、architecture 3；超过时在编译前 BLO
 
 `check --mode release` 生成 `source_spec_hash / validation / verification / compile_report
 （含 output_sha256）/ ghost_preview / asset_workflow / status`。校验三件事：报告盖的 spec 戳与
-当前一致；PPTX 字节戳与磁盘一致（一次哈希比对）；预览证据引用的页面都在当前 spec 内。
+当前一致；PPTX 字节戳与磁盘一致（一次哈希比对）；预览证据的唯一页面/文件数与声明一致，完整取证按叙事顺序覆盖当前 spec。
+缺 spec 戳、PPTX 路径/摘要或预览均不能 PASS。输入异常也覆盖旧 PASS 清单，
+磁盘可能保留旧 PPTX，但它不再代表当前输入的有效交付。
 `release_eligible` 仅在 release 档、编译通过且凭证全有效时为真。
 
 `verification.target_powerpoint/native_editing/independent_visual_review` 明确记录未验证状态；
