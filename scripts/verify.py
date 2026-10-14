@@ -1018,6 +1018,11 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
             "target_powerpoint": "not_verified",
             "native_editing": "not_verified",
             "independent_visual_review": "not_performed"},
+        # 双重结论：结构预览结论与目标软件结论分开写，不把结构通过读成视觉通过。
+        "conclusions": [
+            f"{'PASS' if status == 'PASS' else status} — "
+            f"{'Structural Preview' if ghost else 'Structural Check'}",
+            "NOT VERIFIED — Target PowerPoint"],
         "compile_report": compile_claim,
         "qa_summary": {k: qa_report.get(k) for k in
                        ("status", "passed", "failure_codes", "blocking_items",

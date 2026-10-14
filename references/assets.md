@@ -8,7 +8,8 @@
 
 设计判断只见 `../SKILL.md`；此文件说明如何消费 plan，不重新判断媒体必要性。
 逐页 `asset: required|reuse|none` 为作者声明；`asset_subject` 为画面主体。
-`assets_hint.deferred` 记录自动预算落选页；预算 fast=2 / advanced=4，作者明确要求不截断。
+页面角色与证据可由作者声明 `role` / `evidence`（原样生效，非法值忽略并告警）。
+图像只由作者声明产生（`asset: required|reuse`）；词表命中只写 hint 不出图。声明的图全部进入清单，不设自动额度。`assets_hint.generate` 即声明出图的页。
 `asset_role: background|illustration` 分别传给背景/对象 QC；`asset_function` 记录页面用途。
 `material / lighting / texture` 原样覆盖 plan 推导值；`medium` 与材质独立。
 生成图始终是生成图，不能用 `witness` 字段把它升级为事实证词。

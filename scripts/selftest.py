@@ -342,9 +342,15 @@ def test_intelligence(tmp: Path):
           m_decor["decision"] == "none" and "注意力" in m_decor["necessity"])
     m_subject = intel.media_necessity(intel.understand("产品发布：新一代设备与芯片"),
                                       "establish")
-    check("media: 开场有可指认实体 → witness/subject 才成立",
-          m_subject["decision"] == "required"
-          and m_subject["function"] in ("subject", "witness"))
+    # 词表只提示「有实体」，图像是否成立由作者决定：未声明 → hint（不出图、问作者）；声明 → 出图
+    check("media: 开场有可指认实体，但未声明 → 词表提示，不自动出图",
+          m_subject["decision"] == "none" and m_subject["source"] == "hint"
+          and m_subject["suggested"] == "subject", str(m_subject))
+    m_subject_decl = intel.media_necessity(intel.understand("产品发布：新一代设备与芯片"),
+                                           "establish", declared="required")
+    check("media: 作者声明 asset: required → 出图（来源 author）",
+          m_subject_decl["decision"] == "required" and m_subject_decl["source"] == "author",
+          str(m_subject_decl))
 
     # 判断质量：话题 ≠ 结论；结论句要被抽出来；图像只在「有现场」时成立
     topic = intel.extract_claim(
@@ -361,9 +367,13 @@ def test_intelligence(tmp: Path):
         intel.understand("获客单价 96 元 → 128 元 → 205 元"), "prove")
     scene = intel.media_necessity(
         intel.understand("门店回访现场：店长在高峰时段的记录"), "prove")
-    check("media: 纯数据页不出图，有现场的一页才出图（证词）",
-          info_only["decision"] == "none" and scene["decision"] == "required"
-          and scene["function"] == "witness", f"{info_only} / {scene}")
+    scene_decl = intel.media_necessity(
+        intel.understand("门店回访现场：店长在高峰时段的记录"), "prove", declared="required")
+    check("media: 纯数据页不出图；现场词只提示证词，作者声明后才出证词图",
+          info_only["decision"] == "none" and scene["decision"] == "none"
+          and scene["source"] == "hint" and scene["suggested"] == "witness"
+          and scene_decl["decision"] == "required" and scene_decl["source"] == "author",
+          f"{info_only} / {scene} / {scene_decl}")
 
     # 视觉世界：由内容推导，两个同类 deck 允许得到不同世界
     fin_human = dict(BRIEF, slides=[
@@ -386,45 +396,23 @@ def test_intelligence(tmp: Path):
           and all("declarations" not in p["judgment"] for p in pages)
           and all("text" not in p["judgment"]["understanding"]
                   and "modes" not in p["judgment"]["understanding"] for p in pages))
-    # 资产预算：合格页多于名额时按视觉价值排序，落选页留下理由（不是按页序截断）
-    many = intel.think(dict(BRIEF, slides=[
-        {"id": f"s{i:02d}", "title": title, "content": content} for i, (title, content) in
-        enumerate([
-            ("田间到仓的 48 小时", "采收现场与冷链记录（来源：产地日报）"),
-            ("仓库现场的复盘会", "分拣现场记录：9 个环节耗时（来源：现场复盘）"),
-            ("门店走访的真实反馈", "华东 6 家门店走访记录（来源：走访纪要）"),
-            ("车间班组的交接记录", "车间现场记录（来源：班组日志）"),
-            ("客户回访现场", "12 家客户回访现场（来源：回访记录）"),
-            ("请批准两条产线改造", "首期 600 万于 Q2 启动（来源：预算表）")], 1)]))
-    hinted = many["assets_hint"]
-    deferred_ids = {d["slide_id"] for d in (hinted["deferred"] or [])}
-    check("assets: 图位按视觉价值排序，超额的页进 deferred 并带理由",
-          len(hinted["generate"]) == hinted["cap"] and deferred_ids
-          and set(hinted["generate"]).isdisjoint(deferred_ids)
-          and all(d.get("why") for d in hinted["deferred"]),
-          f"generate={hinted['generate']} cap={hinted['cap']} deferred={hinted['deferred']}")
-    by_many = {p["id"]: p for p in many["pages"]}
-    check("assets: 落选页判断卡当场改写（media 回 none，焦点回到文字/数据）",
-          all(by_many[sid]["judgment"]["media"]["decision"] == "none"
-              for sid in deferred_ids)
-          and all(by_many[sid]["judgment"]["focus"]["type"] != "image"
-                  for sid in deferred_ids)
-          and all("图位" in by_many[sid]["judgment"]["media"]["necessity"]
-                  for sid in deferred_ids))
-    adj_fn = {}
-    for a in (many["deck"]["coherence"]["adjustments"] or []):
-        if a["field"] == "media" and ":" in str(a.get("from") or ""):
-            adj_fn[a["page"]] = str(a["from"]).split(":")[1]
-
-    def _val(pid):
-        j = by_many[pid]["judgment"]
-        fn = j["media"].get("function") or adj_fn.get(pid, "")
-        return intel._MEDIA_VALUE.get(fn, 0.0) \
-            + intel._ROLE_VALUE.get(j["visual_role"]["role"], 0.0)
-
-    check("assets: generate 页价值不低于 deferred 页（价值序，不是页序）",
-          min(_val(p) for p in hinted["generate"])
-          >= max(_val(p) for p in deferred_ids))
+    # 资产：图像只由作者声明产生；词表命中只是 hint（不占额度、不出图）；声明的图全部进入清单
+    decl = intel.think(dict(BRIEF, slides=[
+        {"id": "s01", "title": "田间到仓的 48 小时", "content": "采收现场与冷链记录（来源：产地日报）", "asset": "required"},
+        {"id": "s02", "title": "仓库现场的复盘会", "content": "分拣现场记录：9 个环节耗时（来源：现场复盘）", "asset": "required"},
+        {"id": "s03", "title": "车间班组的交接记录", "content": "车间现场记录（来源：班组日志）", "asset": "required"},
+        {"id": "s04", "title": "客户回访现场", "content": "12 家客户回访现场（来源：回访记录）", "asset": "reuse"},
+        {"id": "s05", "title": "门店走访的真实反馈", "content": "华东 6 家门店走访记录（来源：走访纪要）"},
+    ]))
+    by_decl = {p["id"]: p["judgment"]["media"] for p in decl["pages"]}
+    check("assets: 词表命中但未声明的页不进入图像清单（hint，问作者）",
+          by_decl["s05"]["source"] == "hint" and "s05" not in decl["assets_hint"]["generate"],
+          str(by_decl["s05"]))
+    check("assets: 作者声明的出图全部进入清单，不被自动额度截断（4 张 > fast 额度 2）",
+          decl["assets_hint"]["generate"] == ["s01", "s02", "s03", "s04"],
+          str(decl["assets_hint"]))
+    check("assets: 清单不再保留预算字段（deferred/cap 已随判断删除）",
+          "deferred" not in decl["assets_hint"] and "cap" not in decl["assets_hint"])
     check("plan: 世界只留会被消费的键（无展示用常量/重复串）",
           not {"material", "motion", "chroma", "regime", "background",
                "rejected_worlds"} & set(w_human))
@@ -2409,6 +2397,71 @@ def test_design_judgment(tmp: Path):
     check("media: 「伙伴」这类群体名词不构成证词，不强制配图",
           intel.media_necessity(partner, "persuade")["decision"] != "required",
           str(intel.media_necessity(partner, "persuade")))
+    # 18 · 首页元信息行是标签，不参与角色判定（探针：封面「流程评审」被判成流程页）
+    meta_cover = intel.page_judgment(
+        {"id": "m1", "title": "发布周期能从 6 周压到 4 周，前提是测试前移", "content": "2026 Q4 发布流程评审"},
+        index=0, total=6, brief={"audience": "评审会", "decision": "同意"},
+        world=intel.derive_world({"audience": "评审会"}, [intel.understand("x")]), warnings=[])
+    check("meta: 封面元信息行（带日期/分隔符）不把封面判成流程页",
+          meta_cover["visual_role"]["role"] == "establish"
+          and meta_cover["understanding"]["evidence"] != "sequence",
+          str(meta_cover["visual_role"]["role"]))
+    check("meta: 首页若是一句证词（无日期/分隔符）不被当成元信息丢掉",
+          intel.judgment_view({"title": "走访", "content": "华东 6 家门店走访记录"}, 0)["content"]
+          == "华东 6 家门店走访记录")
+    # 19 · 标题即论断：无正文时，断言谓语/对比句式/「从 A 增至 B」仍是结论；名词标签不是
+    check("claim: 无正文的论断标题（不在…在…）是结论位",
+          intel.extract_claim({"title": "扩张的答案不在开店速度，在单店质量"})["source"] == "extracted")
+    check("claim: 无正文的名词标签（18 个月落地节奏）不编结论",
+          intel.extract_claim({"title": "18 个月落地节奏"})["source"] == "absent")
+    # 20 · 场所词：有可核对数字时它是计数对象；只有证人动作让场所成为现场证词
+    check("media: 「门店 120 家」这类计数句不是现场（数据页不配生活图）",
+          intel.media_necessity(intel.understand("门店规模稳定，单店客单价是 86 元",
+                                                 content="门店 120 家，营收 3.2 亿元"), "prove")["decision"] == "none")
+    walk = intel.media_necessity(intel.understand("华东 6 家门店走访记录"), "prove")
+    check("media: 有证人动作（走访）的带数字现场页：词表提示证词，声明后才出图",
+          walk["decision"] == "none" and walk["source"] == "hint" and walk["suggested"] == "witness"
+          and intel.media_necessity(intel.understand("华东 6 家门店走访记录"), "prove",
+                                    declared="required")["decision"] == "required",
+          str(walk))
+    # 21 · 部分与整体靠算术：两个百分比合计 100% 即整体的两部分；三项并列是结构
+    check("part_whole: 百分比合计 100% 即部分与整体（不靠「其中」一词）",
+          intel.understand("其中 68% 来自老客户，32% 来自新客")["evidence"] == "part_whole")
+    check("structure: 三项以上并列（无数值）是结构",
+          intel.understand("渠道分三类：直营、经销、电商")["evidence"] == "structure")
+    # 22 · 基准的已知缺口登记在册：新增失败必须显式出现，不能被静默忽略
+    import bench as bench_mod
+    bench_report = bench_mod.run()
+    failing = {r["id"] for r in bench_report["cases"] if not r["passed"]}
+    check("bench: 判断基准的失败用例只允许是已登记的已知缺口（M02：词表漏检时既不出图也不提示作者）",
+          failing <= {"M02"}, str(sorted(failing)))
+    check("bench: 基准严重缺陷率为 0（critical 案例全部通过）",
+          bench_report["metrics"]["critical_defect_rate"] == 0.0,
+          str(bench_report["metrics"]))
+    # 23 · 作者声明的角色与证据原样生效；非法声明给 warning，不静默吞掉
+    decl_w: list = []
+    decl_role = intel.page_judgment(
+        {"id": "d1", "title": "净利率 18.4%", "role": "persuade"}, index=3, total=8,
+        brief={"audience": "评审", "decision": "批准"},
+        world=intel.derive_world({"audience": "评审"}, [intel.understand("x")]), warnings=decl_w)
+    check("declare: 作者声明 role 原样生效（source=author），压过内容判断",
+          decl_role["visual_role"]["role"] == "persuade" and decl_role["visual_role"]["source"] == "author",
+          str(decl_role["visual_role"]))
+    bad_w: list = []
+    bad = intel.page_judgment(
+        {"id": "d2", "title": "净利率 18.4%", "role": "hero", "evidence": "magic"}, index=3, total=8,
+        brief={"audience": "评审", "decision": "批准"},
+        world=intel.derive_world({"audience": "评审"}, [intel.understand("x")]), warnings=bad_w)
+    rules = {w["rule"] for w in bad_w}
+    check("declare: 非法 role/evidence 不静默生效：给出 warning 并按内容判断",
+          bad["visual_role"]["role"] == "prove" and bad["visual_role"].get("source") == "judgment"
+          and {"declared_role_invalid", "declared_evidence_invalid"} <= rules, str(rules))
+    check("hint: 词表命中的人物/场所不出图，并把问题交还作者（open_questions 中可见）",
+          any("声明 asset" in q for q in (intel.page_judgment(
+              {"id": "h1", "title": "华东 6 家门店走访记录"}, index=3, total=8,
+              brief={"audience": "评审", "decision": "批准"},
+              world=intel.derive_world({"audience": "评审"}, [intel.understand("x")]),
+              warnings=[]).get("open_questions") or [])))
 
 
 def test_docs():

@@ -47,6 +47,27 @@ Context 按需读取：判断校准读 `SKILL.md §2–3`；写 spec 读 `refere
   → 目标 PowerPoint 打开 / 编辑 / 另存 / 重开（本仓库未验证）→ 专业视觉验收。自动化结果里后两层恒为未验证。
   本仓库不调用 PowerPoint，也不使用 LibreOffice 等替代引擎渲染。
 - **速度**：`fast`（默认）只取关键页预览，`strict` 全页取证。实测数字见 CHANGELOG。
+- **模块分工**（审查标准，不是文件拆分清单）：
+
+  | 模块 | 负责 | 不负责 |
+  |---|---|---|
+  | `SKILL.md` | 设计哲学、判断原则、主流程、质量标准 | 冗长实现细节 |
+  | `intelligence.py` | 内容理解、页面角色、视觉策略与依据 | 无边界的关键词堆积 |
+  | `vao.py` | 组织任务、协调生成与验收 | 重复实现其他模块的判断 |
+  | `verify.py` | 硬错误、交付完整性、结构安全 | 把文件有效等同于审美优秀 |
+  | `ghost.py` | 快速结构预览与可观察缺陷 | 冒充目标软件的真实渲染 |
+  | `selftest.py` / `bench.py` | 回归测试；判断基准（准确率、误判、回归） | 只验证代码能执行 |
+
+### 判断基准
+
+`benchmark/cases.json` 是一组独立于实现写定的判断案例（期望值按设计原则写定，不由输出反推）。
+
+```bash
+python3 scripts/bench.py --baseline benchmark/baseline_9.21.json --out benchmark/result.json
+```
+
+它只检查判断字段（页面角色、证据形态、比较、结论来源、图像决策），不检查构图、字阶与断行。
+案例覆盖的类别、指标定义与当前结果见 CHANGELOG。
 
 ## 测试
 

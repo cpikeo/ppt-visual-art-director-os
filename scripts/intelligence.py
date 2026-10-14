@@ -154,7 +154,7 @@ _SCENE_WORDS = ("现场", "记录", "回访", "走访", "探访", "实录", "课
 _TOPIC_MARKERS = ("如何", "怎样", "有哪些", "为什么", "是什么", "怎么", "介绍", "概览",
                   "背景", "how to", "overview", "introduction")
 _TOPIC_TAILS = ("记录", "流程", "结构", "说明", "概览", "介绍", "方案", "清单", "框架",
-                "体系", "回顾", "背景", "进展", "情况", "梳理")
+                "体系", "回顾", "背景", "进展", "情况", "梳理", "节奏", "趋势", "现状", "数据", "分析", "画像", "对比", "时间表", "路线图")
 # 要决定的一句话：出现它时，这一页的职责是把决定收成可执行的一句。
 # 断言信号：一句真正的主张在**说变化或比较**（降至/超过/持平/翻倍…），
 # 而不是在说相关性（「如何使用…」）。它比长度更接近「结论」的定义。
@@ -173,9 +173,6 @@ _PHYSICAL_SUBJECTS = ("stone_architecture", "metal_glass", "botanical", "water_s
 
 # 图像名额的价值权重：证词（图像就是证据）> 建立（图像就是主语）> 其余角色。
 # 这不是风格偏好，是「删掉这张图，这一页少掉的是什么」的排序。
-_MEDIA_VALUE = {"witness": 3.0, "subject": 2.0}
-_ROLE_VALUE = {"establish": 3.0, "prove": 2.5, "persuade": 2.0, "compare": 1.5,
-               "explain": 1.0, "summarize": 1.0}
 
 # 内容实质 → 材质世界。这不是风格预设表：键是**内容里的实体**，
 # 不是「高级/极简/奢华」这类风格名；命中不了就不猜（走中性纸）。
@@ -224,7 +221,7 @@ _MATERIAL_LEXICON: dict[str, dict] = {
         "textures": ("textile", "clay"),
     },
     "stage_screen": {
-        "words": ("发布", "舞台", "演出", "影像", "直播", "游戏", "电影", "音乐", "屏幕",
+        "words": ("发布会", "舞台", "演出", "影像", "直播", "游戏", "电影", "音乐", "屏幕",
                   "launch", "stage", "screen", "film", "music", "game"),
         "material": "light as material on a dark stage, wet black floor, glass reflection",
         "light": "controlled stage key, deep falloff",
@@ -250,6 +247,18 @@ _REGISTER_WORDS = {
     "working": ("团队", "内部", "周会", "复盘", "培训", "协作", "同事", "内部",
                 "internal", "team", "workshop"),
 }
+
+
+_WITNESS_WORDS = ("现场", "记录", "回访", "走访", "探访", "实录", "on-site", "field visit", "visit")
+# 证词现场需要「有人去看、去记」。场所词单独出现在数据句里（「门店 120 家」「门店规模稳定」）
+# 只说明在哪里发生，不说明有人在场记录；有可核对数字时，它是计数对象。
+_ENUM_LIST = re.compile(r"[^、，,：:。；;\s]+、[^、，,：:。；;\s]+、[^、，,：:。；;\s]+")
+
+
+def _scene_of(body: str, distinct: int) -> bool:
+    if not _hit(body, _SCENE_WORDS):
+        return False
+    return distinct == 0 or _hit(body, _WITNESS_WORDS)
 
 
 def _hit(text: str, words) -> bool:
@@ -665,7 +674,9 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
                 if (round(n["value"], 6), n.get("unit") or "") not in axis_tokens]
     same_unit = len({n.get("unit") or "" for n in (compared or ev)}) <= 1
     chars = max(len(text), 1)
-    is_subset = distinct >= 2 and bool(_PART_OF_WHOLE.search(body))
+    pct = [n["value"] for n in ev if (n.get("unit") or "") in ("%", "％")]
+    pct_whole = len(pct) >= 2 and abs(sum(pct) - 100) < 0.5
+    is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole
     is_comparison = not phased and (_hit(cmp_body, _COMPARISON_WORDS)
                                     or bool(_MULTIPLE_OF.search(cmp_body))
                                     or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
@@ -687,7 +698,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
-    if _hit(_evidence_body(body), _STRUCTURE_WORDS):
+    if _hit(_evidence_body(body), _STRUCTURE_WORDS) or (not ev and _ENUM_LIST.search(body)):
         modes["structure"] = 0.65
     seq_strong = _hit(body, _SEQUENCE_STRONG)
     seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in body)
@@ -725,7 +736,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         "numeric_density": round(distinct / (chars / 100), 2),
         "subjects": subjects,
         "human": _hit(body, _HUMAN_WORDS),
-        "scene": _hit(body, _SCENE_WORDS),
+        "scene": _scene_of(body, distinct),
         "comparison": bool(is_comparison and not is_subset),
         "part_whole": is_subset,
         "same_unit": same_unit,
@@ -768,14 +779,23 @@ _TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足",
                     "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成",
                     "明显", "显著", "稳定", "放缓", "收窄", "扩大", "提升", "降低", "缩短",
                     "拉开", "分化", "集中", "依赖", "领先", "落后", "突破", "加速", "承压",
-                    "见效", "回本", "收敛", "分散", "高企", "偏低", "偏高", "翻番")
+                    "见效", "回本", "收敛", "分散", "高企", "偏低", "偏高", "翻番",
+                    "认为", "应该", "上涨", "下跌", "下滑", "回落", "改善", "恶化")
 
 
 # 对比式断言：「增长来自复购而非补贴」「不是在赌市场，是在买能力」
 # ——中文商业写作里最典型的判断句形，和「唯一/只有」同样属于断言证据。
 _CONTRAST_ASSERTION = re.compile(
-    r"而非|不是[^，。；]{0,12}(?:而是|是)|不在于|不再只是|关键在于|取决于|本质上是|"
+    r"而非|不是[^，。；]{0,12}(?:而是|是)|不在于|不在[^。；]{1,12}?[，,、]?在|不再只是|关键在于|取决于|本质上是|"
     r"差别不在|问题不在|真正的")
+
+
+def _title_thesis(title: str) -> bool:
+    """标题本身就是一个论断（与正文无关）：话题标签不是；断言谓语、对比句式、
+    「从 A 增至 B」的变化句是。作者写下的这句话就是结论位，不是我们替他编的。"""
+    return bool(title) and not _topic_shaped(title) and (
+        _hit(title, _TITLE_ASSERTION) or bool(_CONTRAST_ASSERTION.search(title))
+        or bool(_FROM_TO_QUANTITY.search(title)))
 
 
 def _title_assertive(title: str) -> bool:
@@ -843,10 +863,11 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
         # 首/末页是**陈述位**：没有证据也不等于没有主张。封面与收尾的职责就是
         # 立住或回收那一句话，它的证据在别的页上——把它们按「缺内容」扣分，
         # 会逼作者给封面补数据、或把收尾页降级成章节页（CASE_006 s01/s12 实测）。
-        bonus = 1.2 if (content or positional) else 0.6
+        thesis = _title_thesis(title)
+        bonus = 1.2 if (content or positional or thesis) else 0.6
         if _topic_shaped(title):
             bonus -= 0.8
-        elif content and _title_assertive(title):
+        elif (content or thesis) and _title_assertive(title):
             # 结论位加权：标题不像标签、内容也在场时，它是作者写下的结论位
             # （brief 契约：标题写结论）。少了这一档，一句没有数字的结论
             # （「三年前的第一间门店，今天还在同一个街角」）会被内容里的证据表
@@ -937,7 +958,7 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
         score = round(score, 6)
         if score > best_score:
             best, best_score, best_bits = sent, score, bits
-    threshold = 1.2 if content else 2.0
+    threshold = 1.2 if (content or _title_thesis(title)) else 2.0
     if best and best_score > threshold:
         return {"text": best, "source": "extracted",
                 "why": " ＋ ".join(best_bits) + "；发布前请作者确认口径。"}
@@ -1593,6 +1614,14 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
 # ─────────────────────────────────────────────────────────────────────
 # 9 · 媒体必要性（Media Necessity：为什么没有它页面会下降）
 # ─────────────────────────────────────────────────────────────────────
+def _media_hint(function: str, cue: str) -> dict:
+    """词表提示而非决定：标明来源是 hint，并给出作者如何声明。"""
+    return {"decision": "none", "source": "hint", "function": None,
+            "suggested": function,
+            "necessity": f"词表命中（{cue}），但它是否构成{'证词' if function == 'witness' else '主体'}需要作者判断："
+                         "未声明则不出图。如需图像，在 brief 声明 asset: required（画面主体写 asset_subject）。"}
+
+
 def media_necessity(u: dict, role: str, *, declared: str | None = None,
                     has_chart: bool = False) -> dict:
     """图片必须通过必要性测试：**没有它，这一页会下降在哪里？**
@@ -1611,20 +1640,14 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
                 "necessity": "本页已有图表承担注意力，再放图片＝两个焦点互相削价。"}
     presence = bool(u.get("human") or u.get("scene"))
     physical = [s for s in (u.get("subjects") or []) if s in _PHYSICAL_SUBJECTS]
+    # 词表只能提示「内容里可能有人/场所/实体」，不能决定「这张图是证词还是主语」。
+    # 图像是否成立要作者判断：未声明则不出图，并把问题交还作者（不是默默不出、也不默默出）。
     if role == "establish" and presence:
-        return {"decision": "required", "source": "judgment",
-                "function": "subject",
-                "necessity": "开场页要建立世界：内容里有可指认的人/场所，观众先看见它，"
-                             "才愿意读主张。"}
+        return _media_hint("subject", "人物或场所词")
     if role == "establish" and physical:
-        return {"decision": "required", "source": "judgment",
-                "function": "subject",
-                "necessity": f"这一副讲的是实体世界（{physical[0]}）：开场让材质与光先说话，"
-                             "比一句抽象主张更快建立可信度。"}
+        return _media_hint("subject", f"实体世界词（{physical[0]}）")
     if role == "prove" and presence and str(u.get("evidence")) not in ("series", "comparison", "part_whole"):
-        return {"decision": "required", "source": "judgment",
-                "function": "witness",
-                "necessity": "这一页靠「确有其事」成立：图像是现场记录，页面上的话才有出处。"}
+        return _media_hint("witness", "人物、场所或记录动作")
     reasons = {
         "compare": "对比页的注意力属于两端本身，图片会把比较读成氛围。",
         "explain": "结构页的注意力属于关系本身，图片无法替代关系。",
@@ -1950,6 +1973,54 @@ def _apply_declared_spot(focus: dict, comp: dict, declared) -> tuple[dict, dict]
     return focus, comp
 
 
+_CLAUSE_MARK = re.compile(r"[。；;，,！!？?→]")
+_DATE_TOKEN = re.compile(r"(?:19|20)\d{2}|\bQ[1-4]\b|\d{4}[.\-/年]\d")
+
+
+def _is_meta_line(content: str, index: int) -> bool:
+    """首页的一行是文档元信息（部门 · 日期 · 活动名），而不是这一页的论证。
+
+    判据是**文档元信息的形状**：有分隔符（· | @）、有日期/季度、或有凭证词
+    （提案、部门、汇报人）；并且没有子句或箭头。只靠「短」不够：首页也可能是一句
+    证词（「华东 6 家门店走访记录」），那不是元信息。
+    """
+    text = content.strip()
+    if index != 0 or not 0 < len(text) <= 30 or _CLAUSE_MARK.search(text):
+        return False
+    return bool(_META_LINE.search(text) or _DATE_TOKEN.search(text)
+                or _hit(text, _CREDENTIAL_WORDS))
+
+
+def judgment_view(item: dict, index: int) -> dict:
+    """判断视图：首页的文档元信息行不参与角色、证据、结论与图像判定。
+
+    例如「2026 Q4 发布流程评审」若参与判断，会把封面判成流程页。它照常渲染；
+    凭证词检测仍读原文。非元信息的内容原样保留。
+    """
+    if _is_meta_line(str(item.get("content") or ""), index):
+        return {**item, "content": ""}
+    return item
+
+
+_DECLARABLE_ROLES = ("establish", "explain", "compare", "prove", "persuade", "summarize")
+
+
+def _declared_intent(item: dict, warnings: list) -> tuple[str, str]:
+    """作者可在页面上声明 role / evidence：合法值原样生效，非法值 warning 后忽略。"""
+    role = str(item.get("role") or "").strip().lower()
+    evidence = str(item.get("evidence") or "").strip().lower()
+    if role and role not in _DECLARABLE_ROLES:
+        warnings.append({"rule": "declared_role_invalid", "scope": item.get("id"), "input": role,
+                         "msg": f"role 只能是 {'/'.join(_DECLARABLE_ROLES)}；已忽略，按内容判断"})
+        role = ""
+    if evidence and evidence not in EVIDENCE_MODES:
+        warnings.append({"rule": "declared_evidence_invalid", "scope": item.get("id"),
+                         "input": evidence,
+                         "msg": f"evidence 只能是 {'/'.join(EVIDENCE_MODES)}；已忽略，按内容判断"})
+        evidence = ""
+    return role, evidence
+
+
 def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dict,
                   warnings: list, u: dict | None = None) -> dict:
     """逐页判断：受众/决定/主张/阻力/权重/角色/焦点/空间/构图/排版/媒体/生产。
@@ -1958,15 +2029,17 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     添加。`u` 由 think 一次算好传进来（整页只理解一次）；直接调用时当场算。
     """
     title = str(item.get("title") or "").strip()
-    content = str(item.get("content") or "").strip()
+    raw_content = str(item.get("content") or "").strip()
+    view = judgment_view(item, index)
+    content = str(view.get("content") or "").strip()
     text = f"{title} {content}".strip()
     if u is None:
         u = understand(text, has_chart=bool(item.get("chart")), content=content)
-    claim = extract_claim(item, positional=index in (0, total - 1))
+    claim = extract_claim(view, positional=index in (0, total - 1))
     # 封面与致谢/问答页的职责是立住或回收整套主张，不承载新结论：没有数字证据、
     # 带凭证语（提案/谢谢/汇报人…）的首末页，不追问「先写一句结论」。
     credential_frame = (index in (0, total - 1) and not int(u.get("distinct_numerals") or 0)
-                        and _hit(text, _CREDENTIAL_WORDS))
+                        and _hit(f"{title} {raw_content}", _CREDENTIAL_WORDS))
     if credential_frame and claim["source"] == "absent":
         # 「不承载结论」是这一页的设计身份，不是缺口：来源标为 frame，骨架如实表达。
         claim = {"text": None, "source": "frame",
@@ -1979,8 +2052,15 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     audience = str(item.get("audience") or brief.get("audience") or "").strip()
     decision = str(item.get("decision") or brief.get("decision") or "").strip()
     page_tension = str(item.get("tension") or brief.get("tension") or "").strip()
+    declared_role, declared_ev = _declared_intent(item, warnings)
+    if declared_ev:
+        u = {**u, "evidence": declared_ev, "evidence_source": "author"}
     role = visual_role(u, index=index, total=total,
                        tension=page_tension, claim=claim)
+    role.setdefault("source", "judgment")
+    if declared_role:
+        role = {"role": declared_role, "source": "author", "alternatives": [],
+                "why": "作者声明页面角色（原样生效）；内容判断保留为对照。"}
     tension = tension_of(item, brief, role["role"])
     media = media_necessity(u, role["role"],
                             declared=str(item.get("asset") or "").lower() or None,
@@ -2010,6 +2090,8 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
     if media["source"] == "judgment" and media["decision"] == "required":
         open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）")
+    if media["source"] == "hint":
+        open_q.append("图像：内容提到人物或场所，但未声明是否配图；需要时声明 asset: required")
     if u.get("evidence") == "comparison" and not u.get("same_unit", True) \
             and claim_units_conflict(claim_text):
         open_q.append("比较量的单位不同：先统一口径，或在同屏解释两端不可直接相减。")
@@ -2021,44 +2103,6 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
             "visual_role": role, "focus": focus, "composition": comp, "spatial": spatial,
             "typography": typography, "media": media, "production": prod,
             "understanding": u, "open_questions": open_q or None}
-
-
-def _rejudge_without_image(entry: dict, *, text: str, world: dict,
-                           budget_why: str) -> dict:
-    """图位落选：media 回 none，焦点/构图/空间/生产随之重算。
-
-    跨页预算校准单页——落选页不再是「要图但没图位」，而是「不要图」：
-    焦点回到文字/数据，构图回到非图像算子，未决事项里不再追问图像主题。
-    """
-    j = entry["judgment"]
-    old_fn = j["media"].get("function")
-    media = {"decision": "none", "source": "judgment", "function": None,
-             "necessity": budget_why}
-    j["media"] = media
-    u = j["understanding"]
-    role = j["visual_role"]["role"]
-    claim_text = str(j["claim"].get("text") or "")
-    # 与 page_judgment 同一处口径：图位落选后重算焦点时，主张仍按主张锚定。
-    anchor = number_roles(claim_text, claim_text or None)
-    if not anchor[0] and role in ("prove", "compare") \
-            and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
-        anchor = number_roles(text, claim_text or None)
-    focus = focus_of(role, u, j["claim"], media, number_anchor=anchor,
-                     page_text=text)
-    comp = composition_of(role, u, composition_grammar=world.get("composition_grammar", ""),
-                          media=media, claim=j["claim"], content_len=len(text))
-    focus, comp = _apply_declared_spot(focus, comp, entry.get("declarations"))
-    j["focus"] = focus
-    j["composition"] = comp
-    j["spatial"] = spatial_of(comp, u)
-    j["typography"] = typography_of(j["claim"], j["information_weight"], focus, role, u,
-                                    text_len=len(text), number_anchor=anchor)
-    j["production"] = production_spec(focus, comp, media, u, j["information_weight"])
-    j["open_questions"] = ([q for q in (j.get("open_questions") or [])
-                            if not q.startswith("图像主题由作者确认")] or None)
-    return {"page": entry["id"], "field": "media",
-            "from": f"required:{old_fn}", "to": "none",
-            "why": "跨页预算：图位让给更高价值页，本页由排版与数据承担"}
 
 
 def _coherence_pass(pages: list) -> dict:
@@ -2148,8 +2192,10 @@ def think(brief: dict) -> dict:
         raise TypeError("brief.slides must be a list of page briefs")
     items = [it if isinstance(it, dict) else {"title": str(it)} for it in raw]
 
-    understanding = [understand(f"{it.get('title') or ''} {it.get('content') or ''}".strip(),
-                               has_chart=bool(it.get("chart")), content=str(it.get("content") or "")) for it in items]
+    views = [judgment_view(it, i) for i, it in enumerate(items)]
+    understanding = [understand(f"{v.get('title') or ''} {v.get('content') or ''}".strip(),
+                               has_chart=bool(v.get("chart")), content=str(v.get("content") or ""))
+                     for v in views]
     world = derive_world(brief, understanding)
     if str(brief.get("design_direction") or "").strip():
         warnings.append({"rule": "direction_retired", "scope": "deck",
@@ -2169,7 +2215,7 @@ def think(brief: dict) -> dict:
             # 不只留在回显里——否则「写了主题却不出图」，声明等于没写。
             declared["asset"] = "required"
         texts[sid] = f"{it.get('title') or ''} {it.get('content') or ''}".strip()
-        judgment = page_judgment({**it, "id": sid,
+        judgment = page_judgment({**views[i], "id": sid,
                                   "asset": declared.get("asset", it.get("asset"))},
                                  index=i, total=len(items), brief=brief,
                                  world=world, warnings=warnings, u=understanding[i])
@@ -2186,40 +2232,8 @@ def think(brief: dict) -> dict:
                       "anchor": anchor,
                       "declarations": declared or None})
 
-    # 资产预算：只约束判断产生的出图；作者声明永不被截断。
-    # 名额按**视觉价值**排（证词 > 建立 > 其余），不按页序截断——第 8 页的证词
-    # 比第 1 页的装饰更值一张图。
-    def _value(page: dict) -> float:
-        media = page["judgment"]["media"]
-        return _MEDIA_VALUE.get(str(media.get("function") or ""), 0.0) \
-            + _ROLE_VALUE.get(page["judgment"]["visual_role"]["role"], 0.0)
-
-    judged = [(p["id"], _value(p)) for p in pages
-              if p["judgment"]["media"]["decision"] == "required"
-              and p["judgment"]["media"]["source"] == "judgment"]
-    declared_need = [p["id"] for p in pages
-                     if p["judgment"]["media"]["decision"] in ("required", "reuse")
-                     and p["judgment"]["media"]["source"] == "author"]
-    cap = 2 if quality == "fast" else 4
-    ranked = sorted(judged, key=lambda kv: (-kv[1], kv[0]))
-    keep = {sid for sid, _ in ranked[:cap]}
-    deferred = [{"slide_id": sid,
-                 "why": f"图位按视觉价值分配（{cap} 张）：本页的图像价值低于 "
-                        f"{'、'.join(s for s, _ in ranked[:cap])}，本页由排版与数据承担注意力。"}
-                for sid, _ in ranked[cap:]]
-    # 跨页预算执行：落选页的判断卡当场改写（media 回 none + 焦点/构图重算），
-    # 而不是「判断说要图、清单说没图位」两张皮。
-    by_id = {p["id"]: p for p in pages}
-    budget_adjustments = []
-    for d in deferred:
-        entry = by_id.get(d["slide_id"])
-        if entry is not None:
-            budget_adjustments.append(
-                _rejudge_without_image(entry, text=texts.get(entry["id"], ""),
-                                       world=world, budget_why=d["why"]))
+    # 图像清单只收作者声明的出图：词表命中只产生 hint，不自动占图位，因此没有额度需要分配。
     coherence = _coherence_pass(pages)
-    coherence["adjustments"] = (budget_adjustments + (coherence["adjustments"] or [])
-                                or None)
     return {
         "deck": {
             "audience": audience or None,
@@ -2233,9 +2247,8 @@ def think(brief: dict) -> dict:
         "pages": pages,
         "assets_hint": {
             "generate": [p["id"] for p in pages
-                         if p["id"] in keep or p["id"] in declared_need],
-            "cap": cap,
-            "deferred": deferred or None},
+                         if p["judgment"]["media"]["decision"] in ("required", "reuse")
+                         and p["judgment"]["media"]["source"] == "author"]},
         "warnings": warnings,
     }
 

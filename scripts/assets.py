@@ -1834,8 +1834,6 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     plan_deck = bundle.get("deck") or {}
     hint = bundle.get("assets_hint") or {}
     generation_ids = set(hint.get("generate") or [])
-    deferred = {str(d.get("slide_id")): str(d.get("why") or "")
-                for d in (hint.get("deferred") or []) if isinstance(d, dict)}
     prompt_cache: dict = {}
     cache_file = _Path(cache_path).expanduser() if cache_path else None
     if cache_file:
@@ -1846,7 +1844,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         except (OSError, ValueError, TypeError):
             prompt_cache = {}
     cache_hits = 0
-    cap = int(hint.get("cap") or len(generation_ids) or 0)
+    cap = len(generation_ids)  # 作者声明的出图数；图像不设自动额度
     assets: list = []
     by_fingerprint: dict = {}
     generated_count = 0
@@ -1892,8 +1890,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             continue
         if sid not in generation_ids:
             skipped_pages.append({"slide_id": sid, "decision": "reuse",
-                                  "reason": deferred.get(sid) or
-                                            "本轮图位未分配给这一页（按视觉价值排序，非页序）",
+                                  "reason": "未声明出图：词表提示不自动出图（需 asset: required）",
                                   "fingerprint": fingerprint})
             continue
         asset_id = f"asset-{fingerprint.removeprefix('asset-')}"
