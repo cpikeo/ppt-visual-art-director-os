@@ -81,6 +81,12 @@ EVIDENCE_MODES = ("comparison", "series", "part_whole", "number", "structure",
 # 会被读成无单位数字 186，判断卡与骨架里就这么丢了量纲（实测：主语写成
 # 「186」，读者无法知道这是公里还是家数）。只收真实出现的量词，不引入
 # 任何业务口径。
+# 条件结果句（「只要…就能…」「若…则…」）是一个**判断**：它给出的是带条件的结论，
+# 不是「各自是多少」的证据行。多量纲列举判据要用它排除，否则这类结论会被读成一张
+# 规格表，页面的主张随之被判 absent（登记缺口 I01）。
+_CONDITION_RESULT = re.compile(
+    r"(?:只要|如果|若|假如|倘若|一旦|除非|当)[^。；;！？!?\n]{0,44}?"
+    r"(?:则|就|便|才|就能|将会|就会|即可|可以)")
 _NUM = re.compile(
     r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*"
     r"(亿美元|万美元|亿元|万元|万家|万人|万次|个月|分钟|小时|美元|公里|千米|"
@@ -90,6 +96,40 @@ _NUM = re.compile(
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
 _NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|[不未]超[过越]")
+# 出处标注不是内容：尾部的「（来源：…）」与**夹在句子中间**的口径/样本说明
+# （「（口径：可比门店，剔除新开业 90 天内门店）」）都是档案坐标，不是这一页的证据。
+# 尾部标注由 _SOURCE_TAIL 管；中间标注此前无人处理，于是「可比门店」里的一个「比」
+# 就把整页判成两端对比，焦点、构图与未决项一起落到并不存在的比较上（实测：翻台率页
+# 被判 comparison，未决项问「两端不可直接相减」）。
+_SOURCE_TAIL = re.compile(r"[（(]\s*(来源|数据来源|source)[:：]?.*?[)）]\s*$", re.I)
+_ANNOTATION = re.compile(
+    r"[（(][^（()）\n]{0,80}?(?:口径|来源|样本|统计|抽样|数据来源|basis|source)"
+    r"[^（()）\n]{0,80}?[)）]")
+# 档案坐标的**子句**同样不是内容：「样本 42 家门店；口径 2023 年 1 月—2025 年 6 月；
+# 来源 内部经营系统」是取证范围，不是这一页的证据。它们不参与证据形态、人物/现场与
+# 结论判定，也不该顶掉作者写下的主张（实测：样本行的「42 家」成了页面主语，主张与
+# 焦点一起落到取证范围上）。与封面元信息同一条原则，只是作用范围是全页。
+_SCOPE_HEADS = ("样本", "口径", "期间", "统计", "数据来源", "来源", "取数", "抽样",
+                "基准日", "截止", "注", "说明来源")
+_SCOPE_HEAD_RE = re.compile(r"^\s*(?:" + "|".join(_SCOPE_HEADS) + r")\s*[:：]?\s*")
+# 取证段从**句首或分隔符之后**开始（不认空格后的标签：「客户来源是口碑」不是取证段）。
+_SCOPE_SEGMENT = re.compile(r"(?:^|(?<=[；;。\n]))\s*(?:"
+                            + "|".join(_SCOPE_HEADS) + r")\s*[:：]?[^；;。\n]*")
+
+
+def _strip_scope_clauses(text: str) -> str:
+    """剥离档案坐标子句（「样本 42 家门店」「来源 内部经营系统」）：取证范围不是内容。
+
+    只剥从**句首或分隔符之后**开始的整段，避免误伤正常句子里的同一个词
+    （「客户来源是口碑」「我们统计了 42 家门店」照原样保留）。
+    """
+    raw = str(text or "")
+    out, cursor = [], 0
+    for match in _SCOPE_SEGMENT.finditer(raw):
+        out.append(raw[cursor:match.start()])
+        cursor = match.end()
+    out.append(raw[cursor:])
+    return "".join(out)
 # 「第 3 个月 / 第 6 个月」是序列位置，不是可比量（见 same_unit 的说明）。
 _AXIS_TIME_TOKEN = re.compile(r"第\s*(\d+(?:[.,]\d+)?)\s*(个月|月|年|天|周|季度|季|日)")
 # 条件从句里的比较词是**边界条件**，不是本页要展示的比较：决策页写
@@ -101,6 +141,15 @@ _AXIS_TIME_TOKEN = re.compile(r"第\s*(\d+(?:[.,]\d+)?)\s*(个月|月|年|天|�
 _CONDITIONAL_CLAUSE = re.compile(
     r"(?:如果|若|假如|倘若|一旦|除非)[^。；;！？!?\n]{0,40}?(?:[，,]|则|就|便)")
 _MULTIPLE_OF = re.compile(r"\d+(?:\.\d+)?\s*倍")
+# 被否定的比较仍然是比较：「尚未超过对手」讲的就是这个落差。判据是**宾语类型**——
+# 否定词 + 超过 + 名词宾语（对手/同行/去年…）＝两端被并置后否定；否定词 + 超过 + 数字
+# （「误差不超过 5%」）＝界限，不是两端。只按宾语形态分，不靠「对手」这类词表。
+_NEGATED_COMPARISON = re.compile(
+    r"(?:没(?:有)?|未|不)超[过越](?![^，,。；;！？!?\n\d]{0,6}\d)"
+    r"(?=[^，,。；;！？!?\n\d]{1,10}(?:[，,。；;！？!?]|\s|$))")
+# 两个带单位的量由「A 对 B」并置＝两端对照（中文里最常见的比较句式之一）。
+# 数值图表的载荷与规格行不含这个形状，不会被误收。
+_TWO_ENDS_JOINED = re.compile(r"\d[^，,。；;\n]{0,10}?\s*(?:对|vs\.?|VS\.?)\s*\d")
 _THRESHOLD_WORDS = ("高于", "低于", "超过")
 _COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "前者", "后者",
                      "优于", "落后", "差距", "benchmark", "对标", "增减",
@@ -122,10 +171,25 @@ SEQUENCE_MARKERS = {"→", "⇒", "➜", "⇢"} | {"-"}
 _QUANTIFIED_ARROW = re.compile(
     r"\d+(?:[.,]\d+)?\s*(?:%|％|pp|万|亿|元|家|人|次)?\s*"
     r"(?:→|⇒|➜|⇢|->)\s*\d+")
+# 端点变化：**同单位的两个量**由变化连接符（到/至/达/→）连起来，就是一条变化的形状。
+# 不枚举变化动词——降至/压到/提升到/掉到/拉长到是开放集合，词表永远漏掉下一个；
+# 改判形状：单位相同 + 连接符 + 单位相同。旧写法把「从」和单位都写死，且只认
+# 金额/家数/次数，于是「从 19 个月压到 11 个月」整页落到 evidence=none，主张里的
+# 两个量在判断里凭空消失（实测）。
+_ENDPOINT_UNIT = (r"亿美元|万美元|亿元|万元|百分点|平方米|立方米|公里|千米|公斤|"
+                  r"万|亿|元|%|％|pp|倍|个月|月|年|天|周|小时|分钟|秒|吨|克|米|"
+                  r"家|人|名|位|个|次|台|套|件|份|页|张")
 _FROM_TO_QUANTITY = re.compile(
-    r"(?:从|\bfrom\b)\s*\d+(?:[.,]\d+)?\s*(%|％|万元|元|万|亿|家|人|次)"
-    r"\s*(?:到|至|\bto\b)\s*\d+(?:[.,]\d+)?\s*\1", re.I)
-_BETWEEN_METRICS = re.compile(r"(?<!占)(?<!同)比(?![例率值])")
+    r"\d+(?:[.,]\d+)?\s*(?P<u>" + _ENDPOINT_UNIT + r")"
+    r"[^。；;!?！？\n，,、]{0,6}?(?:到|至|达|→|⇒|➜|⇢|->)\s*"
+    r"\d+(?:[.,]\d+)?\s*(?P=u)"
+    r"|(?:从|由|\bfrom\b)\s*\d+(?:[.,]\d+)?\s*(?:到|至|达|→|⇒|➜|⇢|->)\s*"
+    r"\d+(?:[.,]\d+)?\s*(?P<u2>" + _ENDPOINT_UNIT + r")", re.I)
+# 「比」只有在真把两个量并置时才是比较（另有 distinct≥2 的量化前提）。排除项只收
+# 「比」不表示比较的构词：占比、同比/环比（期间变化）、可比（口径词）。
+# 不排除「对比」——它是真比较动词（「甲对比乙：61% 对 38%」实测）；话题标签
+# 「对比评估」由「没有数字就不构成比较」这条前提挡住，不需要靠词形排除。
+_BETWEEN_METRICS = re.compile(r"(?<!占)(?<!同)(?<!环)(?<!可)比(?![例率值])")
 # 『12 家试点门店中，9 家续约』是总体与子集，不是 12→9 的下降。
 _PART_OF_WHOLE = re.compile(
     r"(?P<total>\d+(?:[.,]\d+)?\s*(?P<unit>家|人|个|台|名|位|件|%|％))"
@@ -358,6 +422,25 @@ def numerals(text: str) -> list[dict]:
 
 def evidence_numerals(text: str) -> list[dict]:
     return [n for n in numerals(text) if not n["year"]]
+
+
+# 「同样的东西，各是多少」：同一句式连续排开（规格行「1280℃、1450℃、1320℃」
+# 「12 / 24 / 36 个月」）。这样的行是**并列量**，不是一条变化的路径——它没有先后、
+# 没有两端，形状是枚举。序列需要时间或到达语义（年份、从…到…、箭头），
+# 不能只靠「三个以上数字 + 同单位」推断（旧写法就是这么误判的：规格列举被读成一条
+# 曲线，构图落到曲线上，而页面上根本没有序列）。
+_QUANT_RUN = re.compile(r"\d[^，,、；;。\n]{0,10}$")
+
+
+def _is_quantile_row(body: str) -> bool:
+    """同一连接符隔开的同构数字行：至少 3 个片段、每段都以数字开头、分隔符一致。"""
+    for sep in ("、", "；", ";"):
+        parts = [p.strip() for p in body.split(sep) if p.strip()]
+        if len(parts) < 3:
+            continue
+        if all(_QUANT_RUN.search(p) or p[:1].isdigit() for p in parts):
+            return True
+    return False
 
 
 _ARRIVAL_CUE = re.compile(
@@ -659,9 +742,20 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     确定性、无副作用；它是判断的输入，不是判定的结果。
     """
     text = str(text or "")
-    # 出处标注（「（来源：门店台账）」）不是内容：世界推导、人物/现场判定、
-    # 证据形态都不该被它触发——否则一张台账的名字就能给整页配图。
-    body = _SOURCE_TAIL.sub("", text).strip() or text
+    # 出处与口径标注（「（来源：门店台账）」「（口径：可比门店…）」）不是内容：
+    # 世界推导、人物/现场判定、证据形态都不该被它触发——否则一张台账的名字就能给
+    # 整页配图，或一个「比」字就把页面判成两端对比。先剥标注，再剥档案坐标子句，
+    # 然后判形状。标注只从**正文**里剥：写在标题里的「来源」是作者的判断，不动。
+    annotated = _ANNOTATION.sub("", _SOURCE_TAIL.sub("", text))
+    if content is not None and content and text.endswith(content):
+        # 取证段只从正文里剥：标题本身是作者的判断，标题里的「来源/统计」不动。
+        prefix = annotated[:len(annotated) - len(content)] if annotated.endswith(content) \
+            else text[:len(text) - len(content)]
+        cleaned_content = _strip_scope_clauses(
+            _ANNOTATION.sub("", _SOURCE_TAIL.sub("", content)))
+        body = (prefix + cleaned_content).strip() or annotated
+    else:
+        body = _strip_scope_clauses(annotated).strip() or annotated
     # 「不超过/未超过」是界限不是对比：先剥掉再匹配，否则「误差不超过5%」
     # 会被判成两端对比（A超过B但C不超过D——真的超过不受影响）。
     cmp_body = _CONDITIONAL_CLAUSE.sub("", _NEGATED_EXCEED.sub("", body))
@@ -700,7 +794,11 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         strong_cmp
         or (_hit(cmp_body, _THRESHOLD_WORDS) and not threshold_list)
         or bool(_MULTIPLE_OF.search(cmp_body))
-        or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
+        or (distinct >= 2 and bool(_TWO_ENDS_JOINED.search(body)))
+        or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body)))
+        # 被否定的比较在 body 上判（cmp_body 已经把否定剥掉了）：剥否定是为了
+        # 「界限不是对比」，而宾语是名词时它本来就不是界限。
+        or (distinct >= 2 and bool(_NEGATED_COMPARISON.search(body))))
     # 只在无量化竞争/比较/时间推进时采信显式关系；标题不参与关系抽取。
     relation_text = body if content is None else str(content)
     relations = explicit_relations(relation_text)
@@ -713,8 +811,11 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         modes["part_whole"] = 0.84
     # 序列至少两个数据点：「增长/趋势」这类词只有配上两个以上的量才是曲线；
     # 单独出现在封面或收尾的措辞里（「接管增长」「内容增长负责人」）不是证据。
+    # 「三个以上同单位数字」不是序列的充分条件：规格行/并列量同样满足它，
+    # 但没有时间与到达语义——那种形状是枚举，不是路径（_is_quantile_row）。
+    quantile_row = _is_quantile_row(body)
     if (distinct >= 2 and _hit(_evidence_body(body), _SERIES_WORDS)) \
-            or (distinct >= 3 and same_unit) \
+            or (distinct >= 3 and same_unit and not quantile_row) \
             or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
@@ -771,7 +872,8 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
 # ─────────────────────────────────────────────────────────────────────
 # 3 · 结论抽取（Claim Extraction）
 # ─────────────────────────────────────────────────────────────────────
-_SOURCE_TAIL = re.compile(r"[（(]\s*(来源|数据来源|source)[:：]?.*?[)）]\s*$", re.I)
+# _SOURCE_TAIL / _ANNOTATION 定义在证据形态一节（§2），此处不再重复定义：
+# 同一判据只有一处 owner，避免两条正则在后续修改里分叉。
 _META_LINE = re.compile(r"[·｜|]|@|https?://|confidential|机密", re.I)
 _CREDENTIAL_WORDS = ("提案", "汇报人", "主讲", "日期", "部门", "内部资料", "谢谢", "thanks",
                      "subtitle", "presented by")
@@ -804,7 +906,10 @@ _TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足",
                     "明显", "显著", "稳定", "放缓", "收窄", "扩大", "提升", "降低", "缩短",
                     "拉开", "分化", "集中", "依赖", "领先", "落后", "突破", "加速", "承压",
                     "见效", "回本", "收敛", "分散", "高企", "偏低", "偏高", "翻番",
-                    "认为", "应该", "上涨", "下跌", "下滑", "回落", "改善", "恶化")
+                    "认为", "应该", "上涨", "下跌", "下滑", "回落", "改善", "恶化",
+                    # 复合主张的谓语：「A、B、C 缺一不可」是对三项并列下的判断，
+                    # 不是一张清单。这里收的仍是谓语，不是题材名词。
+                    "缺一不可", "不可或缺", "不可偏废", "同等重要", "都不能少")
 
 
 # 对比式断言：「增长来自复购而非补贴」「不是在赌市场，是在买能力」
@@ -843,6 +948,10 @@ def _is_data_listing(sent: str) -> bool:
     """
     if _hit(sent, _CONCLUSION_WORDS) or _hit(sent, _ASK_WORDS) \
             or _hit(sent, _COMPARISON_WORDS):
+        return False
+    if _CONDITION_RESULT.search(sent):
+        # 带条件的结论仍是结论：条件结果句回答的是「什么情况下会怎样」，
+        # 不是「各是多少」。列举判据只适用于后者。
         return False
     if len(_ARRIVAL_CUE.findall(sent)) >= 2:
         return True                      # 两条以上的变化并排 = 比较证据行
@@ -970,6 +1079,12 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
         if _META_LINE.search(sent) or _hit(sent, _CREDENTIAL_WORDS):
             score -= 2.0     # 署名/提案/日期行不是结论
             bits.append("署名行扣分")
+        if _SCOPE_HEAD_RE.match(sent):
+            # 「样本 42 家门店」这类取证范围行是档案坐标，不是结论：它回答「在什么
+            # 范围内取得」，不回答「所以呢」。不扣分的话，样本量会顶掉作者写下的标题
+            # （实测：页面的主语变成样本量 42 家）。
+            score -= 2.0
+            bits.append("样本/口径说明行（取证范围，不是结论）")
         if _hit(sent, _TOPIC_MARKERS):
             # 「如何使用/有哪些/概览」是话题：它说了要讲什么，没说结论——
             # 数字与短句都不该把它救成主张。
@@ -1697,7 +1812,8 @@ def _media_hint(function: str, cue: str) -> dict:
     return {"decision": "none", "source": "hint", "function": None,
             "suggested": function,
             "necessity": f"命中人物线索（{cue}），但它是否构成{'证词' if function == 'witness' else '主体'}需要作者判断："
-                         "未声明则不出图。如需图像，在 brief 声明 asset: required（画面主体写 asset_subject）。"}
+                         "未声明则不出图。如需图像，在 brief 声明 asset: required（画面主体写 asset_subject；"
+                         "asset_role 只能写 background|illustration|hybrid）。"}
 
 
 def media_necessity(u: dict, role: str, *, declared: str | None = None,

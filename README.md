@@ -61,9 +61,10 @@ Context 按需读取：判断校准读 `SKILL.md §2–3`；写 spec 读 `refere
 ### 判断基准
 
 `benchmark/cases.json` 是一组独立于实现写定的判断案例（期望值按设计原则写定，不由输出反推）。
+（本仓库的 `benchmark/` 目录为重建件：上游从未提交过它，来源与基线口径写在文件的 `provenance` 字段里。）
 
 ```bash
-python3 scripts/bench.py --baseline benchmark/baseline_9.21.json --out benchmark/result.json
+python3 scripts/bench.py --baseline benchmark/baseline_9.26.json --out benchmark/result.json
 ```
 
 它只检查判断字段（页面角色、证据形态、比较、结论来源、图像决策），不检查构图、字阶与断行。

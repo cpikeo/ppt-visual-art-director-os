@@ -26,6 +26,15 @@ from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGH
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+# 字面回落台账（角色 → 次数）：候选字面全不存在时 `_font` 只能用 PIL 默认位图字体，
+# 那个字体没有中文字形——整页中文会画成空白/豆腐块，而预览记录依旧写着「已渲染全页」。
+# 预览是拿来做方向判断的证据，不能被静默降级成误导；所以回落必须可查、必须出声。
+_FONT_FALLBACKS: dict[str, int] = {}
+
+
+def font_fallbacks() -> dict:
+    """本轮进程内发生的字面回落（角色 → 次数）；空字典 = 每个字面都取到了真字体。"""
+    return dict(_FONT_FALLBACKS)
 _FONT_CANDIDATES = {
     "latin": (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -124,6 +133,9 @@ def _font(size: float, *, cjk: bool = False, bold: bool = False,
         except (OSError, ValueError):
             continue
     if loaded is None:
+        # 本机没有任何候选字面（Linux 容器缺 fonts-noto-cjk、Windows 缺 msyh 等）：
+        # 用默认位图字体顶上并记账。默认字体不含中文字形，这一轮的预览只能当结构线看。
+        _FONT_FALLBACKS[base] = _FONT_FALLBACKS.get(base, 0) + 1
         loaded = ImageFont.load_default()
     _FONT_CACHE[key] = loaded
     return loaded
@@ -1480,6 +1492,33 @@ def _page_media_stamp(slide: dict, spec: dict) -> list:
     return stamps
 
 
+_FONT_STAMP: str | None = None
+
+
+def _font_stamp() -> str:
+    """字面身份（进程内一次）：每个角色实际命中的第一个候选文件的路径/大小/时间戳。
+
+    页缓存存的是像素，像素由字面决定：本机装上或换掉 Noto/微软雅黑之后，
+    同一页必须重画——否则旧的无字形页面会以「缓存命中」的名字继续当证据用。
+    只做 stat，不加载 PIL。
+    """
+    global _FONT_STAMP
+    if _FONT_STAMP is None:
+        parts = []
+        for role, names in sorted(_FONT_CANDIDATES.items()):
+            hit = None
+            for name in names:
+                try:
+                    st = Path(name).stat()
+                except OSError:
+                    continue
+                hit = f"{name}:{st.st_size}:{st.st_mtime_ns}"
+                break
+            parts.append(f"{role}={hit or 'default'}")
+        _FONT_STAMP = "|".join(parts)
+    return _FONT_STAMP
+
+
 def _page_key(slide: dict, spec: dict, scale: float, supersample: int,
               compress_level: int) -> str:
     """一页预览的身份：内容/画布/主题/图像字节/渲染口径/渲染器指纹。
@@ -1492,6 +1531,7 @@ def _page_key(slide: dict, spec: dict, scale: float, supersample: int,
         "media": _page_media_stamp(slide, spec),
         "scale": round(float(scale), 4), "supersample": int(supersample),
         "compress": int(compress_level), "engine": _engine_stamp(),
+        "fonts": _font_stamp(),
     }, schema="vao-preview-page-v1", short=20)
 
 

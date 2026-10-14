@@ -436,7 +436,9 @@ def resolve_asset_role(declared=None) -> tuple[str, str]:
             raise ValueError(
                 f"未知 asset_role: {declared!r}（合法值 {'|'.join(ASSET_ROLES)}）："
                 "background=承载页面空间 / illustration=表达页面对象 / "
-                "hybrid=同一资产确实同时承担两者")
+                "hybrid=同一资产确实同时承担两者。注意这与「用途/功能」不是同一轴："
+                "判断卡上的 witness（现场证词）通常落成 illustration，主体特写同理；"
+                "整页环境落成 background；两者都要才写 hybrid。")
         return role, "declared"
     return DEFAULT_ASSET_ROLE, "assumed"
 

@@ -1128,9 +1128,42 @@ class RenderContext:
 
 
 
+    def _series_ladder(self, index: int):
+        """主题没有派生出色阶时的机械补档（`derive_tokens` 要求纸与主色成对，缺一整体不派生）。
+
+        口径与 `derive_tokens` 的单信号色分支同一条：以本稿信号色为基相，按背景明度
+        向反方向逐档拉开，相邻档相对明度差 ≥0.06，灰度打印下仍可辨。
+        这是「引擎推导」而不是「兜底告警」——与 negative 色同一条原则。
+
+        为什么必须非 None（实测）：系列色为 None 时编译器把 None 写进
+        `series.format.line.color.rgb`，触发 python-pptx 的 RGBColor 断言；
+        于是整条序列的线宽、端点标记全都落不下去，交付在 release 档被判
+        COMPILE_FAIL——而作者只是少声明了一个主色。颜色是引擎的职责，
+        不该把「主题没写」变成「整页图表编译失败」。
+        """
+        def _hex_of(value):
+            raw = self.colors.get(value)
+            if isinstance(raw, str) and raw.startswith("#"):
+                return raw
+            c = self.color(value)
+            return _hex(c) if c is not None else None
+
+        base = _hex_of("accent") or _hex_of("primary") or _hex_of("ink")
+        if base is None:
+            return fallback_ink()
+        bg = _hex_of("background")
+        ink = _hex_of("ink")
+        if bg and luminance(bg) > 0.5:
+            target = ink or "#FFFFFF"
+        else:
+            target = ink or "#000000"
+        step = (0.0, 0.18, 0.34, 0.50, 0.66, 0.82)[index % 6]
+        color, _alpha = parse_token(base if step == 0.0 else blend(base, target, step))
+        return color if color is not None else fallback_ink()
+
     def series_color(self, index: int):
-        """按顺序取系列色（循环使用）。"""
-        return self.color(f"series{(index % 6) + 1}")
+        """按顺序取系列色（循环使用）；主题未派生色阶时按明度阶梯机械补档。"""
+        return self.color(f"series{(index % 6) + 1}") or self._series_ladder(index)
 
     def series_palette(self, count: int, highlight: int = -1) -> list:
         """一次算完一组序列色：高亮位用 accent，其余按明度阶梯顺次取。
@@ -1140,10 +1173,14 @@ class RenderContext:
         默认第 0 段、第 1 段取 series1=accent → 两段同色；「高亮第 2 序列」时
         第 1 序列同样撞色）。accent 的强调语义也一并被稀释。
         非高亮序列从第 2 档起，任何组合下都不与高亮撞色。
+        任何一档都保证拿到颜色（见 `_series_ladder`）。
         """
         step = 1 if highlight >= 0 else 0
-        return [self.color("accent") if i == highlight else self.series_color(i + step)
-                for i in range(max(0, int(count)))]
+        out = []
+        for i in range(max(0, int(count))):
+            color = self.color("accent") if i == highlight else self.series_color(i + step)
+            out.append(color if color is not None else self.series_color(i + step))
+        return out
 
     # -- 图表角色色（Chart Color Role System）─────────────────────────
     # 图表不写死色值，声明语义角色：primary=主叙事 / secondary=对比 /

@@ -634,7 +634,9 @@ def _check_metric_units(slides: list, add) -> None:
 SPACING_STEP = 4
 _COLOR_FIELDS = ("color", "background", "border_color", "stroke", "accent",
                  "fill_color", "track_color", "label_color")
-_REPORT_ITEM_CAP = 200
+# 明细是给人看的样例，计数才是权威：24 条足够说明「归一化动了什么」，
+# 再多的重复条目只增加清单体积。超出部分不隐藏——changes_omitted 记账。
+_REPORT_ITEM_CAP = 24
 
 
 def _snap_pos(value: float, grid: int) -> int:
@@ -692,9 +694,15 @@ def _canonical_color(value, tokens: dict) -> tuple:
 
 
 def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True) -> tuple[dict, dict]:
-    """几何落 8/4 单位、颜色/字体名规范化。单趟机械变换：对已规范输入是恒等。"""
+    """几何落 8/4 单位、颜色/字体名规范化。单趟机械变换：对已规范输入是恒等。
+
+    报告只留**计数 + 有上限的样例**：`counts` 是权威数字，`changes` 是给人看的样本。
+    逐条明细在二十页以上的稿子里能涨到上万字节，而它没有任何消费者（发布清单、
+    修复包与骨架都只读 counts/规范化后的 spec）；此前超过 200 条还会**静默**
+    截断——读者无从知道明细不全。现在把「一共多少条、省了多少条」写清楚。
+    """
     import copy
-    report = {"changes": [], "counts": {}}
+    report = {"changes": [], "counts": {}, "changes_total": 0, "changes_omitted": 0}
     out = copy.deepcopy(spec) if isinstance(spec, dict) else {}
     theme = out.get("theme") or {}
     colors_map = theme.get("colors") if isinstance(theme.get("colors"), dict) else {}
@@ -702,9 +710,12 @@ def normalize_spec(spec: dict, *, grid: bool = True, colors: bool = True) -> tup
 
     def record(scope, eid, field, old, new, rule):
         report["counts"][rule] = report["counts"].get(rule, 0) + 1
+        report["changes_total"] += 1
         if len(report["changes"]) < _REPORT_ITEM_CAP:
             report["changes"].append({"scope": scope, "id": eid, "field": field,
                                       "from": old, "to": new, "rule": rule})
+        else:
+            report["changes_omitted"] += 1
 
     grid_step = SPACING_STEP
     for slide in (out.get("slides") or []):

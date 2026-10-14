@@ -248,6 +248,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
     cache_root = output_path.with_name(output_path.stem + "_vao")
     view = None
     compile_report = None
+    probe_error = None
     t_probe = time.perf_counter()
     try:
         cache_root.mkdir(parents=True, exist_ok=True)
@@ -256,9 +257,14 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
         compile_report = compile_reuse(cache_root, output_path, view,
                                        fast_probe=(speed == "fast"), speed=speed)
         cache_reason = "hit" if compile_report is not None else "miss"
-    except Exception:
+    except Exception as exc:
+        # 缓存坏掉不能挡住编译，但也不能**无声**降级成「每次都重编」：把原因带进
+        # 遥测，作者/CI 才看得出这是缓存故障而不是冷启动（此前只剩一个 probe_failed）。
         cache_reason = "probe_failed"
+        probe_error = f"{type(exc).__name__}: {exc}"
         compile_report = None
+        print(f"VAO warning: 编译缓存探测失败（本轮改为完整编译）：{probe_error}",
+              file=sys.stderr)
     cache_probe_ms = (time.perf_counter() - t_probe) * 1000
 
     compile_ms = 0.0
@@ -327,6 +333,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
         "attestation_ms": round(attestation_ms, 2),
         "cache_write_ms": round(cache_write_ms, 2),
         "cache_reason": cache_reason,
+        "cache_probe_error": probe_error,
         "cache_enabled": True,
         "cache_dir": str(cache_root),
     }
@@ -443,6 +450,16 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     info["engine"] = engine
     info["renderer_speed"] = str(speed)
     info["request"] = request
+    # 字面回落必须随预览一起交付：本机缺 CJK 字面时页图仍会「成功」产出，
+    # 但中文字形是缺的。预览记录不带这一条，读图的人无从分辨「排版如此」和
+    # 「本机没字体」——那正是把结构预览当成真实排版的开端。
+    from ghost import font_fallbacks
+    fallbacks = font_fallbacks()
+    if fallbacks:
+        info["font_fallbacks"] = fallbacks
+        print("VAO warning: 本机缺少预览字面 " + "、".join(sorted(fallbacks))
+              + "；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。",
+              file=sys.stderr)
     # 页图与联络表是交付证据，不仅要存在，还得是上轮验证的那份字节。
     info["file_witnesses"] = {str(p): preview_witness(p)
                               for p in [*paths, *([contact] if contact else [])]}
@@ -450,8 +467,12 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     try:
         target.mkdir(parents=True, exist_ok=True)
         marker.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
-    except (OSError, TypeError, ValueError):
-        pass
+    except (OSError, TypeError, ValueError) as exc:
+        # 写不下 marker 只是失去「下轮复用」的机会，预览本身仍然有效；但静默失败会
+        # 让下一轮莫名重画，所以留一行诊断（不改变本轮结论）。
+        info["marker_write_error"] = f"{type(exc).__name__}: {exc}"
+        print(f"VAO warning: 预览凭证写盘失败（本轮预览有效，下轮无法复用）：{exc}",
+              file=sys.stderr)
     return info
 
 

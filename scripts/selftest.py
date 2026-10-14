@@ -1009,6 +1009,25 @@ def test_production(tmp: Path):
     compile_deck(spec, out2)
     check("compiler: 同 spec 两次编译字节一致（确定性）",
           file_digest(out1) == file_digest(out2))
+    # 系列色必须由引擎补齐，不能是 None：主题只声明 accent 时 `derive_tokens` 不派生
+    # 色阶，此前 series_palette 直接吐 None → 编译器把 None 写进 line.color.rgb，
+    # python-pptx 抛断言，整条序列的线宽/端点标记全落不下去（release 档 COMPILE_FAIL）。
+    from primitives import RenderContext
+    _minimal_theme = {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                "muted": "#777777", "accent": "#AA0000"}}
+    _pal = RenderContext(_minimal_theme, {"width": 1280, "height": 720}).series_palette(4, -1)
+    check("primitives: 主题未派生色阶时系列色由引擎推导（非 None、互不相同）",
+          all(c is not None for c in _pal) and len({str(c) for c in _pal}) == 4, str(_pal))
+    minimal_deck = {"canvas": {"width": 1280, "height": 720}, "theme": _minimal_theme,
+                    "slides": [{"id": "s01", "elements": [
+                        {"type": "chart", "id": "c1", "chart_kind": "line", "x": 80, "y": 120,
+                         "width": 640, "height": 320,
+                         "categories": ["2023", "2024", "2025"],
+                         "series": [{"name": "毛利率", "values": [58, 63, 67]}]}]}]}
+    minimal_report = compile_deck(minimal_deck, tmp / "min_theme_chart.pptx", speed="fast")
+    check("compiler: 该主题下多序列图表零告警编译（缺主色不等于页面编译失败）",
+          minimal_report["passed"] and not minimal_report["warnings"],
+          str(minimal_report["warnings"])[:200])
 
     from pptx import Presentation
     prs = Presentation(str(out1))
@@ -1439,6 +1458,31 @@ def test_production(tmp: Path):
     sel_pages, sel_roles = key_selection(spec["slides"], limit=3)
     check("ghost: 单次取证与两次调用结论一致（结构只扫一遍）",
           sel_pages == pages and sel_roles == labels)
+    # 字面回落必须可查：本机缺 CJK 字面时页图仍「成功」产出，但中文字形是缺的。
+    # 预览记录不带这一条，读图的人就分不清「排版如此」与「本机没字体」。
+    import ghost as ghost_mod
+    key_with_fonts = _page_key(spec["slides"][0], spec, 0.4, 1, 1)
+    saved_candidates = ghost_mod._FONT_CANDIDATES
+    saved_stamp, saved_fallbacks = ghost_mod._FONT_STAMP, dict(ghost_mod._FONT_FALLBACKS)
+    saved_font_cache = dict(ghost_mod._FONT_CACHE)
+    try:
+        ghost_mod._FONT_CANDIDATES = {role: () for role in saved_candidates}
+        ghost_mod._FONT_STAMP = None
+        ghost_mod._FONT_CACHE.clear()          # 字面已缓存时不会走回落分支
+        ghost_mod._FONT_FALLBACKS.clear()
+        ghost_mod.ghost_page(spec["slides"][0], spec, scale=0.4, supersample=1)
+        fallbacks = ghost_mod.font_fallbacks()
+        check("ghost: 无字面可用时记账（预览不得静默丢掉中文字形）",
+              fallbacks.get("cjk") == 1 or fallbacks.get("cjk_serif") == 1, str(fallbacks))
+        check("ghost: 字面身份进页缓存键（换字体必须重画）",
+              _page_key(spec["slides"][0], spec, 0.4, 1, 1) != key_with_fonts)
+    finally:
+        ghost_mod._FONT_CANDIDATES = saved_candidates
+        ghost_mod._FONT_STAMP = saved_stamp
+        ghost_mod._FONT_CACHE.clear()
+        ghost_mod._FONT_CACHE.update(saved_font_cache)
+        ghost_mod._FONT_FALLBACKS.clear()
+        ghost_mod._FONT_FALLBACKS.update(saved_fallbacks)
 
     media_src = tmp / "preview-source.png"
     Image.new("RGB", (32, 32), (180, 40, 40)).save(media_src)
@@ -2405,10 +2449,21 @@ def test_design_judgment(tmp: Path):
         {"id": "m1", "title": "发布周期能从 6 周压到 4 周，前提是测试前移", "content": "2026 Q4 发布流程评审"},
         index=0, total=6, brief={"audience": "评审会", "decision": "同意"},
         world=intel.derive_world({"audience": "评审会"}, [intel.understand("x")]), warnings=[])
+    # 本断言的职责是「元信息行不参与形状判断」：它不得让封面变成流程页。
+    # 角色本身由内容先决（「从 6 周压到 4 周」是量化主张 → 证明页），与上一条数据页
+    # 规则同源；此前把断言绑在 role == establish 上，是因为端点变化识别不全、
+    # 该页证据被判成 none（10 月 14 日修正）。判据改为形状：证据不是 sequence、
+    # 构图不是线性结构、焦点不是流程/结构位、结论仍是作者写下的那句主张。
     check("meta: 封面元信息行（带日期/分隔符）不把封面判成流程页",
-          meta_cover["visual_role"]["role"] == "establish"
-          and meta_cover["understanding"]["evidence"] != "sequence",
-          str(meta_cover["visual_role"]["role"]))
+          meta_cover["understanding"]["evidence"] != "sequence"
+          and meta_cover["composition"]["chosen"] != "linear_structure"
+          and meta_cover["focus"]["element_role"] not in ("structure_map", "process_flow",
+                                                          "timeline")
+          and str(meta_cover["claim"].get("text") or "").startswith("发布周期"),
+          str({"ev": meta_cover["understanding"]["evidence"],
+               "comp": meta_cover["composition"]["chosen"],
+               "focus": meta_cover["focus"]["element_role"],
+               "claim": meta_cover["claim"].get("text")}))
     check("meta: 首页若是一句证词（无日期/分隔符）不被当成元信息丢掉",
           intel.judgment_view({"title": "走访", "content": "华东 6 家门店走访记录"}, 0)["content"]
           == "华东 6 家门店走访记录")
@@ -2432,14 +2487,60 @@ def test_design_judgment(tmp: Path):
           intel.understand("其中 68% 来自老客户，32% 来自新客")["evidence"] == "part_whole")
     check("structure: 三项以上并列（无数值）是结构",
           intel.understand("渠道分三类：直营、经销、电商")["evidence"] == "structure")
+    # 29 · 证据形状第二轮（10 月 14 日）：标注不是内容、端点变化是形状、并列量不是路径、
+    # 全角括号里的口径不产生比较、被否定的比较仍是比较、跨单位的两端仍并置
+    _anno = intel.understand(
+        "翻台率 3.4 次，同店销售额连续 8 个季度为正 2025 年 Q2 同店销售额同比 +12.4%"
+        "（口径：可比门店，剔除新开业 90 天内门店）")
+    check("shape: 口径标注里的「可比」不产生比较（标注不是内容）",
+          _anno["comparison"] is False and _anno["evidence"] == "series",
+          str({"cmp": _anno["comparison"], "ev": _anno["evidence"]}))
+    check("shape: 端点变化（从 A 到 B，同单位）是变化的形状，不是「无证据」",
+          intel.understand("单店回本周期从 19 个月压到 11 个月 样本 42 家门店")["evidence"] == "series"
+          and intel.understand("毛利率从 58% 提升到 67%（来源：月报）")["evidence"] == "series",
+          str(intel.understand("单店回本周期从 19 个月压到 11 个月")["evidence"]))
+    check("shape: 同单位的并列量（规格行）不是序列（三个数字不是充分条件）",
+          intel.understand("规格：3 次烧成、1280℃、1450℃、1320℃")["evidence"] != "series"
+          and intel.understand("2023 年 38%，2024 年 47%，2025 年 61%")["evidence"] == "series")
+    check("shape: 期间词（环比/同比）不是两端比较（变化不是并置）",
+          intel.understand("环比 +12.4%；占比 68% 的品类在增长")["comparison"] is False)
+    _neg = intel.understand("尚未超过对手 对手门店数 420 家；我们 180 家（来源：行业年报）")
+    check("shape: 被否定的比较仍是比较（宾语是名词，不是界限）",
+          _neg["comparison"] is True, str(_neg))
+    check("shape: 界限（「不超过 5%」）不被当成两端比较（尺子没被放松）",
+          intel.understand("毛利率 58%；退货率不超过 5%（来源：月报）")["comparison"] is False)
+    check("shape: 「A 对 B」两端的跨单位对照仍构成比较",
+          intel.understand("营收 1.2 亿元对 1,800 万元（来源：财报）")["comparison"] is True)
+    check("claim: 条件结果句（只要…就能…）是结论，不是证据行",
+          intel.extract_claim({"title": "配送门槛",
+                               "content": "只要门店密度达到每 10 万人 1.2 家，"
+                                          "配送成本就能压到 8 元以内（来源：模型）"})["source"]
+          == "extracted")
+    check("claim: 复合主张（并列三项 + 缺一不可）是结论，不是清单",
+          intel.extract_claim({"title": "降价、扩店、换帅三件事缺一不可"})["source"] == "extracted")
+    # 30 · 档案坐标全页生效：样本/口径/来源行是取证范围，不是内容、不是结论、不是主语
+    _scoped = intel.understand("单店回本周期从 19 个月压到 11 个月 "
+                              "样本 42 家门店；口径 2023 年 1 月—2025 年 6 月；来源 内部经营系统",
+                              content="样本 42 家门店；口径 2023 年 1 月—2025 年 6 月；来源 内部经营系统")
+    check("scope: 取证范围行不进证据量（样本量不冒充页面的量）",
+          [n["raw"] for n in _scoped["numerals"]] == ["19 个月", "11 个月"],
+          str([n["raw"] for n in _scoped["numerals"]]))
+    check("scope: 取证范围行不夺结论位（样本行不是主张）",
+          intel.extract_claim({"title": "原材料成本上行的传导",
+                               "content": "样本 42 家门店；口径 2023 年 1 月—2025 年 6 月"})["source"]
+          == "absent")
+    check("scope: 语义相同的普通句子不被误剥（「客户来源是口碑」照原样参与判断）",
+          [n["raw"] for n in intel.understand(
+              "客户来源结构 客户来源是口碑推荐，占比 62%；来源 调研 2025",
+              content="客户来源是口碑推荐，占比 62%；来源 调研 2025")["numerals"]] == ["62%"])
     # 22 · 基准的已知缺口登记在册：新增失败必须显式出现，不能被静默忽略
     import bench as bench_mod
     bench_report = bench_mod.run()
     failing = {r["id"] for r in bench_report["cases"] if not r["passed"]}
-    # 已登记缺口（修复前后见 benchmark/hard_*.json）：N02/X02 比较判定、I01/K01 主张抽取。
-    # 集合固定：新增失败必须显式出现；修掉一个则从集合删除并记入 CHANGELOG。
-    check("bench: 失败集合恰为已登记的 4 个困难缺口（N02/X02 比较，I01/K01 主张），M02 已修复",
-          failing == {"N02", "X02", "I01", "K01"}, str(sorted(failing)))
+    # 已登记缺口已于 10 月 14 日的判断修复中全部关闭（N02/X02 比较判定、I01/K01 主张抽取）；
+    # 集合现在必须是空的——任何新失败都要显式出现，不允许用改期望值的方式消失。
+    check("bench: 全部案例通过（4 个已登记缺口 I01/K01/N02/X02 已修复，集合为空）",
+          failing == set(), str(sorted(failing)))
     m02 = next(r for r in bench_report["cases"] if r["id"] == "M02")
     check("bench: M02「一位釉工…」media_source=hint 且 suggested=witness（个体语法信号，非词表）",
           m02["actual"]["media_source"] == "hint" and m02["actual"]["media_suggested"] == "witness",
