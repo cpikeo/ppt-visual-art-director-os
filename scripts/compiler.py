@@ -665,8 +665,10 @@ def _rows(element: dict) -> list[dict]:
             if display is None:
                 display = raw if isinstance(raw, str) else (
                     int(num) if float(num).is_integer() else num)
+            # desc 是说明行：归一化必须保留，否则下游分支只能读到 None（此前 steps 的
+            # desc 分支因此一直是死代码，big_number_row / timeline 也从未显示说明）。
             rows.append({"label": str(it["label"]), "value": num,
-                         "display": display, "_index": i,
+                         "display": display, "desc": it.get("desc"), "_index": i,
                          "missing": missing, "invalid": invalid})
         elif (isinstance(it, (int, float)) and not isinstance(it, bool)
               and math.isfinite(float(it))):
@@ -704,6 +706,19 @@ def _display(row, element, fallback=""):
     if value is not None:
         return str(value)
     return fallback if fallback != "" else str(row.get("value", ""))
+
+
+NUMERIC_UNIT_KINDS = frozenset({"bar", "horizontal_bar", "column", "comparison_bar", "stacked_bar",
+                                "line", "trend", "single_trend_line", "area", "donut",
+                                "donut_composition", "pie", "waterfall", "ranked_bar",
+                                "progress_bar", "bubble", "sparkline"})
+
+
+def _unit_number_format(unit) -> str | None:
+    """元素级 unit → 数据标签的 Excel 数字格式（General 保留小数，单位以引号字面量输出）。"""
+    if not isinstance(unit, str) or not unit.strip():
+        return None
+    return 'General"' + unit.strip().replace('"', "") + '"'
 
 
 def _label(shape, text, element, ctx, color, default_size=14):
@@ -775,14 +790,29 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
         labels.show_category_name = composition
         labels.show_series_name = False
         style(labels.font, float(element.get("value_size", 12)), ink)
-        if element.get("number_format"):
-            labels.number_format = str(element["number_format"])
+        # 单位是作者声明的量纲，必须落到可见的标签上（审计：P02 声明了「元」却只显示裸数字）。
+        # General 保留小数位；作者显式给的 number_format 优先。
+        fmt = element.get("number_format") or _unit_number_format(element.get("unit"))
+        if fmt:
+            labels.number_format = str(fmt)
             labels.number_format_is_linked = False
+        if element.get("unit") and not show and kind in NUMERIC_UNIT_KINDS:
+            ctx.warn(f"chart '{element.get('id')}': 声明了 unit 但 show_values 关闭，单位不可见")
         labels.position = (XL_LABEL_POSITION.OUTSIDE_END if kind in
                            ("bar", "horizontal_bar", "comparison_bar", "column")
                            else XL_LABEL_POSITION.BEST_FIT)
         if kind not in ("pie", "donut", "donut_composition"):
             chart.value_axis.tick_label_position = XL_TICK_LABEL_POSITION.NONE
+            # 外侧数值标签需要留白：最长柱不能顶到绘图区右缘（否则标签越出图表框）。
+            single = not (isinstance(element.get("series"), list) and element.get("series"))
+            if kind in ("bar", "horizontal_bar", "comparison_bar", "column") and single:
+                rows_ = element.get("data") or []
+                vals = [float(r["value"]) for r in (rows_ if isinstance(rows_, list) else [])
+                        if isinstance(r, dict) and isinstance(r.get("value"), (int, float))
+                        and not isinstance(r.get("value"), bool) and math.isfinite(float(r["value"]))]
+                top = max(vals, default=0.0)
+                if top > 0:
+                    chart.value_axis.maximum_scale = top * 1.15
 
 
 def _add_multi_series(slide, element: dict, ctx: RenderContext,
@@ -1072,6 +1102,17 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             p.text = row["label"]
             p.alignment = PP_ALIGN.CENTER
             set_para_font(p, latin, cn, px_to_pt(element.get("label_size", 13)), ink, False)
+            desc = str(row.get("desc", "") or "").strip()
+            if desc:
+                db = slide.shapes.add_textbox(
+                    Emu(emu(cx - w / n / 2)), Emu(emu(axis_y + 40)),
+                    Emu(emu(w / n)), Emu(emu(h * 0.30)))
+                db.name = f"{eid}__desc_{i}"
+                p = db.text_frame.paragraphs[0]
+                p.text = desc
+                p.alignment = PP_ALIGN.CENTER
+                set_para_font(p, latin, cn, px_to_pt(element.get("desc_size", 14)),
+                              ctx.color("muted"), False)
         return
 
     if kind == "steps":
@@ -1441,6 +1482,12 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             _textbox(slide, f"{eid}__label_{i}", cx + 12, y + h * 0.56, vw, h * 0.30,
                      r.get("label", ""), float(element.get("label_size", 14)),
                      ctx.color("muted"), ctx, element)
+            # 说明行：作者写了 desc 就必须落进产物（此前被静默丢弃，release 硬门也放行）
+            desc = str(r.get("desc", "") or "").strip()
+            if desc:
+                _textbox(slide, f"{eid}__desc_{i}", cx + 12, y + h * 0.56 + 34, vw, h * 0.34,
+                         desc, float(element.get("desc_size", 16)),
+                         ctx.color("muted"), ctx, element)
         return
 
     if kind == "bubble":

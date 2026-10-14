@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -496,11 +497,11 @@ def test_intelligence(tmp: Path):
     anchors = [s.get("anchor") for s in four_vars["SPEC"]["slides"]]
     role_1 = four_pages["pages"][1]["judgment"]["visual_role"]["role"].upper()
     check("skeleton: 跨页锚以判断对象落进 spec（不是散文提醒），spec 不留第二个结论位",
-          isinstance(anchors[1], dict) and bool(anchors[1].get("eyebrow"))
-          # 眉标是**内容派生**的短标，不是视觉角色的英文枚举（枚举 12 页里
-          # 会有 7 页同为 PROVE，读起来就是模板）
-          and anchors[1].get("eyebrow") != role_1
-          and anchors[1].get("page_number") == 2 and anchors[0].get("page_number") is None
+          isinstance(anchors[1], dict) and anchors[1].get("page_number") == 2
+          # 标题「第N页结论句」派不出主题：眉标省略，而不是输出角色词或英文枚举
+          # （枚举 12 页里会有 7 页同为 PROVE；角色词全稿重复，读起来是模板）
+          and "eyebrow" not in anchors[1] and anchors[1].get("eyebrow") != role_1
+          and (anchors[0] is None or "page_number" not in anchors[0])
           and all("page_intent" not in s for s in four_vars["SPEC"]["slides"]),
           str(anchors))
     # 眉标：内容派生 + 作者声明压过推导 + 不输出半截词
@@ -524,11 +525,12 @@ def test_intelligence(tmp: Path):
     splice_bad = None
     for _t, _want in (("中国 800 元以上的葡萄酒，是唯一两位数增长的赛道", "葡萄酒"),
                       ("东南亚市场1是我们唯一的结构性增长来源", "东南亚市场"),
-                      ("本轮 1.8 亿元里，67% 投向库存与藤园", "证明")):
+                      ("本轮 1.8 亿元里，67% 投向库存与藤园", "")):
         _got = intel.section_label({}, {"text": _t}, "prove")
         if _got != _want:
             splice_bad = (_t, _want, _got); break
-    check("眉标: 不缝合数字两侧的汉字（宁可退回角色词）",
+    # 派不出主题就省略眉标：角色词在全稿重复，读起来是模板（见 section_label）
+    check("眉标: 不缝合数字两侧的汉字；派不出主题时省略，不退回角色词",
           splice_bad is None, str(splice_bad))
     # 封面 / 收尾是**陈述位**：没有证据不等于没有主张。
     # 实测（CASE_006）：一句封面主张被判成「结构说明页」，焦点落到一张并不存在的
@@ -1953,7 +1955,8 @@ def test_delivery(tmp):
             ("progress_bar","data",6), ("stacked_bar","data",8), ("big_number_row","data",5), ("bubble","data",12)):
         e = {k:v for k,v in base.items() if k not in ("series", "categories")}
         e["chart_kind"] = kind
-        items = [f"层{i}" if field == "layers" else {"label": f"节点{i}", "value": i+1, "x": .5, "y": .5} for i in range(limit+1)]
+        # 数据行只带渲染器消费的键；x/y 只属于 matrix.points（未消费字段门会拦截数据行上的 x/y）
+        items = [f"层{i}" if field == "layers" else {"label": f"节点{i}", "value": i+1} for i in range(limit+1)]
         e[field] = items[:limit]
         fits = not errors(e)
         e[field] = items
@@ -2433,8 +2436,227 @@ def test_design_judgment(tmp: Path):
     import bench as bench_mod
     bench_report = bench_mod.run()
     failing = {r["id"] for r in bench_report["cases"] if not r["passed"]}
-    check("bench: 判断基准的失败用例只允许是已登记的已知缺口（M02：词表漏检时既不出图也不提示作者）",
-          failing <= {"M02"}, str(sorted(failing)))
+    # 已登记缺口（修复前后见 benchmark/hard_*.json）：N02/X02 比较判定、I01/K01 主张抽取。
+    # 集合固定：新增失败必须显式出现；修掉一个则从集合删除并记入 CHANGELOG。
+    check("bench: 失败集合恰为已登记的 4 个困难缺口（N02/X02 比较，I01/K01 主张），M02 已修复",
+          failing == {"N02", "X02", "I01", "K01"}, str(sorted(failing)))
+    m02 = next(r for r in bench_report["cases"] if r["id"] == "M02")
+    check("bench: M02「一位釉工…」media_source=hint 且 suggested=witness（个体语法信号，非词表）",
+          m02["actual"]["media_source"] == "hint" and m02["actual"]["media_suggested"] == "witness",
+          str(m02["actual"]))
+    # 25 · 阈值列举 ≠ 比较：多个子句各带不同单位的数（万元 / % / 人）是并列条件；
+    # 两端可比的真比较仍然是比较。实测（S05 风险页）：阈值列举被判成 comparison，
+    # 焦点落到不可相减的两个量上。
+    thr = intel.understand("单店月净利连续两月低于 15 万元；退货率高于 8%；核心店长流失超过 2 人。")
+    check("threshold: 单位互不相容的阈值列举是结构（并列条件），不是比较",
+          thr["comparison"] is False and thr["evidence"] == "structure", str(thr["evidence"]))
+    check("threshold: 无阈值词的两个不同单位陈述（「开业前 60 天…缩短 4 个月」）不是结构",
+          intel.understand("一位店长记录：开业前 60 天完成本地客群访谈的门店，回本周期平均缩短 4 个月。")["evidence"] != "structure")
+    check("threshold: 两端同单位的「高于」仍是比较（真比较不被误伤）",
+          intel.understand("华东高端线均价 480 元高于泰国 300 元")["comparison"] is True)
+    check("threshold: 「是……的 1.6 倍」仍是比较",
+          intel.understand("高端线售价是泰国的 1.6 倍")["comparison"] is True)
+    # 眉标不取数量残片（「15 万元」的「万元」）；派不出主题就省略，不输出角色词
+    check("眉标: 数量短语的残片（「万元」）不作眉标",
+          intel.section_label({}, {"text": "单店月净利连续两月低于 15 万元"}, "compare") == "")
+    check("眉标: 派不出主题时不退回角色词（「解释」「对比」）",
+          intel.section_label({}, {"text": "第1页结论句"}, "explain") == "")
+    # 26 · 产物行为：说明行（desc）必须真的进入 PPTX（此前 big_number_row / timeline 静默丢弃，
+    # release 硬门放行）；溢出的修复包必须指到具体页（此前只报元素 id，页面无法定位）。
+    from pptx import Presentation as _Prs
+    def _pptx_texts(path: Path) -> list[str]:
+        return [sh.text_frame.text for sl in _Prs(str(path)).slides
+                for sh in sl.shapes if sh.has_text_frame]
+    desc_build = tmp / "desc_build.py"
+    desc_build.write_text(
+        "SPEC = " + repr({
+            "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
+            "theme": {"colors": {"background": "#F4EEE8", "ink": "#12120F", "muted": "#8B8883",
+                                 "primary": "#12120F", "secondary": "#8B8883", "accent": "#A2563F"},
+                      "fonts": {"cn": "Source Han Serif SC", "latin": "Georgia"}},
+            "slides": [
+                {"id": "d1", "elements": [
+                    {"id": "t", "type": "text", "x": 48, "y": 96, "width": 1184, "height": 64,
+                     "text": "风险可控：三个触发条件任一出现即暂停", "size": 40, "color": "ink", "role": "title"},
+                    {"id": "trig", "type": "chart", "chart_kind": "big_number_row", "x": 48, "y": 236,
+                     "width": 1184, "height": 380, "role": "focus",
+                     "data": [{"label": "单店月净利", "value": 15, "display": "15 万元",
+                               "desc": "DESC_ALPHA 连续两月低于 15 万元"},
+                              {"label": "退货率", "value": 8, "display": "8%", "desc": "DESC_BETA"}]}]},
+                {"id": "d2", "elements": [
+                    {"id": "t", "type": "text", "x": 48, "y": 96, "width": 1184, "height": 64,
+                     "text": "三步推进", "size": 40, "color": "ink", "role": "title"},
+                    {"id": "tl", "type": "chart", "chart_kind": "timeline", "x": 48, "y": 200,
+                     "width": 1184, "height": 440, "role": "focus",
+                     "data": [{"label": "Q4 2026", "value": 3, "desc": "DESC_GAMMA 3 家试点"},
+                              {"label": "2027 上半年", "value": 12, "desc": "DESC_DELTA"}]}]}]}),
+        encoding="utf-8")
+    # 溢出稿件单独成件：draft 会 BLOCK，不产出 PPTX；它只用来验证修复包的页面定位。
+    over_build = tmp / "over_build.py"
+    over_build.write_text(
+        "SPEC = " + repr({
+            "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
+            "theme": {"colors": {"background": "#F4EEE8", "ink": "#12120F", "muted": "#8B8883",
+                                 "primary": "#12120F", "secondary": "#8B8883", "accent": "#A2563F"},
+                      "fonts": {"cn": "Source Han Serif SC", "latin": "Georgia"}},
+            "slides": [
+                {"id": "d3", "elements": [
+                    {"id": "big", "type": "text", "x": 48, "y": 200, "width": 1184, "height": 60,
+                     "text": "这是一段会溢出框高的超长文字" * 6, "size": 60, "color": "ink",
+                     "role": "focus"}]}]}), encoding="utf-8")
+    desc_out = tmp / "desc_out.pptx"
+    rd = run_vao("check", str(desc_build), str(desc_out), "--mode", "draft", "--speed", "fast")
+    over_out = tmp / "over_out.pptx"
+    run_vao("check", str(over_build), str(over_out), "--mode", "draft", "--speed", "fast")
+    texts = " ".join(_pptx_texts(desc_out)) if desc_out.exists() else ""
+    check("desc: big_number_row 与 timeline 的说明行进入 PPTX（不再静默丢弃）",
+          all(k in texts for k in ("DESC_ALPHA", "DESC_BETA", "DESC_GAMMA", "DESC_DELTA")),
+          rd.stdout[-300:] + rd.stderr[-300:])
+    # 根因：compiler._rows 归一化丢弃 desc 键，下游 desc 分支成为死代码。文字存在不够，
+    # 说明行必须落在页内（几何断言；此前只检查文字，页外的文字也会通过）。
+    _prs = _Prs(str(desc_out)) if desc_out.exists() else None
+    _inside = bool(_prs) and all(
+        sh.left >= 0 and sh.top >= 0 and sh.left + sh.width <= _prs.slide_width
+        and sh.top + sh.height <= _prs.slide_height
+        for sl in _prs.slides for sh in sl.shapes
+        if sh.has_text_frame and "DESC_" in sh.text_frame.text)
+    check("desc: 说明行几何落在页内（不只是文字存在）", _inside)
+    locs = []
+    try:
+        rep = json.loads((over_out.with_suffix(".repair.json")).read_text(encoding="utf-8"))
+        locs = rep.get("affected_slides") or []
+    except Exception as exc:  # 缺修复包即失败，不静默吞
+        locs = [f"<no repair packet: {exc}>"]
+    check("repair: 溢出修复包指到具体页面（affected_slides 含页 id，不只元素 id）",
+          "d3" in locs, str(locs))
+    # 27 · 设计代码化回归（审计 2026-10-14：三个失败案例先固化，再修复）
+    # R1 语域：受众文本里的「媒体」只是受众描述，不能把整副 deck 切成深色舞台。
+    def _paper(aud, occ, dec):
+        return intel.think({"audience": aud, "occasion": occ, "decision": dec,
+                            "slides": [{"id": "a", "title": "华东单店利润 18.4 万元",
+                                        "content": "同比 +6.2%（来源：台账）"}]})["deck"]["world"]["paper"]
+    check("R1 register: 受众文本中的「媒体」不切换为深色舞台（纸色稳定）",
+          _paper("渠道伙伴与媒体", "", "报名参加华东渠道合作计划")
+          == _paper("董事会与投资人", "", "批准预算"))
+    check("R1 register: 真实的发布场景（场合写明发布会）仍切换为舞台语域",
+          _paper("渠道伙伴", "新品发布会现场", "报名参加") != _paper("董事会与投资人", "", "批准预算"))
+    # R3 节奏：证据为零的叙事页不因平局全部落到同一构图
+    _narr = [{"id": "b1", "title": "一位店长的经验，决定了新店能否快速回本",
+              "content": "一位店长记录：开业前 60 天完成客群访谈的门店，回本周期更短。"},
+             {"id": "b2", "title": "她每天最早到店，最晚离开", "content": "店长李敏记录了一个月的值班日志。"},
+             {"id": "b3", "title": "这套做法，是从一次失败的开店里学来的",
+              "content": "第一家店关门后，团队用三周复盘了选址。"}]
+    _np = intel.think({"audience": "董事会与投资人", "decision": "批准下一阶段预算",
+                       "tension": "投入是否值得？", "slides": _narr})["pages"]
+    _comps = [p["judgment"]["composition"]["chosen"] for p in _np]
+    check("R3 rhythm: 证据为零的叙事页不因平局连续同构（人物故事 3 页不全相同）",
+          len(set(_comps)) > 1, str(_comps))
+    # R4 结构：话题清单（选址、排班、库存……）不是结构证据；有分类动词的才是
+    _topic = "我们在过去两年里反复讨论门店选址、排班、库存与会员运营之间的关系，每一次复盘都会发现新的依赖。"
+    check("R4 structure: 叙述中的话题清单不判为结构证据（无分类线索）",
+          intel.understand(_topic, content=_topic)["evidence"] != "structure")
+    check("R4 structure: 明示分类的列举仍是结构（渠道分三类：直营、经销、电商）",
+          intel.understand("渠道分三类：直营、经销、电商")["evidence"] == "structure")
+    # 28 · 设计代码化第二轮（R2 收束决定 / R5 删除候选 / 未消费字段门 / 单位落地）
+    # R2：末页的决定类型决定焦点；带数字或主张已请求的末页不被覆盖
+    _r2_base = [{"id": "p1", "title": "华东单店利润 18.4 万元，同比增长 6.2%",
+                 "content": "2026 年 Q3 华东 42 家门店（来源：门店台账）"}]
+    _r2_close = {"id": "pz", "title": "我们需要董事会在本月内给出明确答复", "content": "两种选择各有代价，答复决定下一步节奏。"}
+    _r2_focus = {d: intel.think({"audience": "董事会", "decision": d, "slides": _r2_base + [_r2_close]})["pages"][-1]["judgment"]["focus"]["element_role"]
+                 for d in ("批准 2027 华东门店扩张预算", "报名参加华东渠道合作计划", "评估华东扩张的方法论是否可复用")}
+    check("R2 closing: 决定类型不同 → 末页焦点不同（批准/报名/评估 三类）",
+          len(set(_r2_focus.values())) == 3, str(_r2_focus))
+    _r2_num = intel.think({"audience": "董事会", "decision": "批准预算", "slides": _r2_base + [
+        {"id": "pz", "title": "扩张 30 家门店，回本周期 14 个月", "content": "两种选择各有代价（来源：测算）"}]})["pages"][-1]["judgment"]["focus"]["element_role"]
+    check("R2 closing: 带数字的末页不被决定文本覆盖", _r2_num != "decision_ask", _r2_num)
+    _r2_ask = intel.think({"audience": "董事会", "decision": "批准预算", "slides": _r2_base + [
+        {"id": "pz", "title": "请确认评审名单", "content": "请于本周五前确认"}]})["pages"][-1]["judgment"]["focus"]["element_role"]
+    check("R2 closing: 主张已点名请求（请确认…）时焦点就是主张，不另换", _r2_ask != "decision_ask", _r2_ask)
+    # R5：高密度页给删除候选（按贡献排序、不含主张数字的句子），硬禁令保持为空
+    _dense = {"id": "d1", "title": "华东单店利润 18.4 万元，同比增长 6.2%",
+              "content": ("2026 年 Q3 华东 42 家门店参与统计；门店类型包括直营 18 家、加盟 24 家；"
+                          "我们在过去两年反复复盘选址、排班、库存与会员运营之间的依赖关系；"
+                          "其中 3 个月的数据来自 6 次专项走访，样本覆盖 9 个城市；"
+                          "这些问题的讨论记录超过 120 页，团队形成了一套跨部门协作的方式。")}
+    _dj = intel.think({"audience": "董事会", "decision": "批准预算", "slides": [_dense]})["pages"][0]["judgment"]
+    check("R5 delete: 高密度页给出删除候选（delete_candidates 非空）",
+          len(_dj["information_weight"]["delete_candidates"]) >= 1, str(_dj["information_weight"]))
+    check("R5 delete: 候选不是硬禁令（delete 与 must_not 不被候选填充）",
+          _dj["information_weight"]["delete"] == [] and _dj["production"]["must_not"] == [])
+    check("R5 delete: 携带主张数字的句子永不成为候选",
+          not any("42 家" in c or "18.4" in c for c in _dj["information_weight"]["delete_candidates"]))
+    _sparse = intel.think({"audience": "董事会", "decision": "批准预算", "slides": [
+        {"id": "s1", "title": "华东单店利润 18.4 万元", "content": "同比 +6.2%（来源：台账）"}]})["pages"][0]["judgment"]
+    check("R5 delete: 低密度页不产生候选（不为凑数删内容）",
+          _sparse["information_weight"]["delete_candidates"] == [])
+    # 未消费字段门：单位必须落到可见标签；行上的 unit/period 等键必须被 release 硬门拦截
+    _unit_dict = ({
+        "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
+        "theme": {"colors": {"background": "#F4EEE8", "ink": "#12120F", "muted": "#8B8883",
+                             "primary": "#12120F", "secondary": "#8B8883", "accent": "#A2563F"},
+                  "fonts": {"cn": "Source Han Serif SC", "latin": "Georgia"}},
+        "slides": [{"id": "u1", "elements": [
+            {"id": "t", "type": "text", "x": 48, "y": 96, "width": 1184, "height": 64,
+             "text": "华东高端线售价", "size": 40, "color": "ink", "role": "title"},
+            {"id": "c", "type": "chart", "chart_kind": "comparison_bar", "x": 48, "y": 200,
+             "width": 1184, "height": 440, "role": "focus", "unit": "元",
+             "source": "来源：门店监测", "period": "2026 年 9 月", "basis": "同口径",
+             "data": [{"label": "华东", "value": 480}, {"label": "泰国", "value": 300}]}]}]})
+    _unit_spec = "SPEC = " + repr(_unit_dict)
+    _u_build = tmp / "unit_build.py"
+    _u_build.write_text(_unit_spec, encoding="utf-8")
+    _u_out = tmp / "unit_out.pptx"
+    run_vao("check", str(_u_build), str(_u_out), "--mode", "draft", "--speed", "fast")
+    import zipfile as _zf
+    _chart_xml = ""
+    if _u_out.exists():
+        with _zf.ZipFile(_u_out) as _z:
+            _chart_xml = " ".join(_z.read(n).decode("utf-8", "ignore") for n in _z.namelist()
+                                  if n.startswith("ppt/charts/") and n.endswith(".xml"))
+    check("unit: 元素级单位落到数据标签（General\"元\"），不再静默丢弃",
+          'General&quot;元&quot;' in _chart_xml or 'General"元"' in _chart_xml)
+    check("unit: 数值轴上限为最大值的 1.15 倍（外侧标签留白，XML 层确认；ghost 不读取该值）",
+          re.search(r'<c:max val="(\d+(?:\.\d+)?)"', _chart_xml) is not None
+          and abs(float(re.search(r'<c:max val="(\d+(?:\.\d+)?)"', _chart_xml).group(1)) - 480 * 1.15) < 0.01)
+    import copy as _copy
+    _bd = _copy.deepcopy(_unit_dict)
+    _bd["slides"][0]["elements"][1]["data"][0]["unit"] = "元"   # 行级 unit：渲染器不消费 → 必须拦截
+    _bad = "SPEC = " + repr(_bd)
+    _bad_build = tmp / "unit_bad.py"
+    _bad_build.write_text(_bad, encoding="utf-8")
+    _rb = run_vao("check", str(_bad_build), str(tmp / "unit_bad.pptx"), "--mode", "release", "--speed", "fast")
+    check("unit gate: release 硬门拦截图表行上的未消费字段 unit",
+          "BLOCKED" in _rb.stdout, _rb.stdout[-300:] + _rb.stderr[-200:])
+    _ok = run_vao("check", str(_u_build), str(tmp / "unit_ok.pptx"), "--mode", "release", "--speed", "fast")
+    check("unit gate: 元素级 unit 的正向样例 release 仍 PASS", "PASS" in _ok.stdout, _ok.stdout[-200:])
+    # R6 盲评通道：一致性计算的边界；评审不足三位时不宣称共识（盲评本身仍未执行）
+    import bench as _bench
+    check("blind: ICC(2,1) 完全一致时为 1，完全随机时低于共识线",
+          abs(_bench._icc_2_1([[1, 1, 1], [3, 3, 3], [5, 5, 5]]) - 1.0) < 1e-9
+          and (_bench._icc_2_1([[1, 5, 3], [5, 1, 3], [3, 3, 5], [1, 3, 1]]) or 0) < 0.5)
+    _bsheet = tmp / "blind_sheet.csv"
+    _bsheet.write_text("reviewer,item,narrative,focus,composition,typography,completeness,reason\n"
+                       "r1,V01,4,4,4,4,4,\nr1,V02,3,3,3,3,3,\n", encoding="utf-8")
+    _bkey = tmp / "blind.key.json"
+    _bkey.write_text('{"V01": "a.pptx", "V02": "b.pptx"}', encoding="utf-8")
+    check("blind: 评审不足三位时输出 NOT_ENOUGH_REVIEWERS（不宣称共识）",
+          _bench.blind_score([str(_bsheet)], str(_bkey))["consensus"] == "NOT_ENOUGH_REVIEWERS")
+    # R7 文档：SKILL 保留逐页五问，且五问不被删成空话
+    check("docs: SKILL §3 保留逐页五问（受众 / 主张 / 证据 / 焦点 / 构图理由）",
+          all(k in (ROOT / "SKILL.md").read_text(encoding="utf-8")
+              for k in ("每页先答五问", "唯一主张", "证据关系", "视觉焦点", "构图理由")))
+    # 24 · 个体语法信号：一位具体的人是证词线索；计数（12 位客户）不是个体；新职业不靠词表
+    check("individual: 「一位釉工」为个体（不依赖职业词表）",
+          intel.understand("一位釉工用了三十年时间调配这一抹青")["individual"] is True)
+    check("individual: 「12 位企业客户」是计数，不是个体",
+          intel.understand("来自 12 位企业客户访谈")["individual"] is False)
+    check("individual: 新职业「一名窑工」同样为个体",
+          intel.understand("一名窑工靠手感判断温度")["individual"] is True)
+    check("individual: 「位/名」的非人复合词（名称/名单/位置）不误判为个体",
+          not any(intel.understand(x)["individual"] for x in ("这名称由团队统一确定", "该名单每周更新", "某位置的库存已调整")))
+    check("individual: 个体只在证词角色下出 hint；compare 角色不把人物当证词",
+          intel.media_necessity(intel.understand("一位釉工用了三十年时间调配这一抹青"), "persuade")["source"] == "hint"
+          and intel.media_necessity(intel.understand("一位釉工用了三十年时间调配这一抹青"), "compare")["decision"] == "none")
     check("bench: 基准严重缺陷率为 0（critical 案例全部通过）",
           bench_report["metrics"]["critical_defect_rate"] == 0.0,
           str(bench_report["metrics"]))

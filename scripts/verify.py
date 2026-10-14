@@ -29,6 +29,8 @@ ROWS_CHART_KINDS = ("bar", "horizontal_bar", "column", "comparison_bar", "stacke
                     "donut_composition", "pie", "waterfall", "ranked_bar",
                     "progress_bar", "bubble", "sparkline", "process_flow", "timeline",
                     "steps", "big_number_row")
+# 行级渲染键（compiler._rows 与各图形分支实际读取的键）；其余键即未消费字段。
+ROW_RENDERED_KEYS = frozenset({"label", "value", "display", "desc", "subtotal", "is_total", "total", "max"})
 ELEMENT_METRIC_KINDS = ("kpi", "executive_kpi", "big_number")
 RULE_SHAPES = frozenset({"line", "arrow"})
 _COLOR_ROLE_FIELDS = ("color", "fill", "stroke", "border_color", "track_color",
@@ -288,7 +290,9 @@ def _unknown_color(value, known_tokens) -> str | None:
 
 def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
                    ch: float, *, require_provenance: bool = False) -> None:
-    eid = str(e.get("id", f"{sid}[{si}]"))
+    # 定位符带上页面 id：「focus」在全稿多页重复，修复包必须能指到具体哪一页。
+    # 约定 `页面:元素`，修复包的 affected_slides 按此前缀归页。
+    eid = f"{sid}:{e.get('id', f'[{si}]')}"
     typ = str(e.get("type", "text"))
     if typ not in ELEMENT_TYPES:
         add("element_type", eid, "error",
@@ -424,6 +428,20 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
         if not multi and not usable:
             add("chart_payload", eid, "error",
                 f"{kind} 需要 data 行（每行含非空 label）；空载荷会画出空白页")
+
+    # 未消费字段门（审计：release 硬门放行了图表行上的 unit 等字段，渲染器静默丢弃）。
+    # 行级只允许渲染器真正读取的键；作者想表达的单位/期间/口径放在元素级。
+    if isinstance(data, list) and kind not in ("matrix", "architecture"):
+        for di, row in enumerate(data):
+            if isinstance(row, dict):
+                extra = sorted(k for k in row if k not in ROW_RENDERED_KEYS)
+                if extra:
+                    add("chart_field_unconsumed", f"{eid}[{di}]", "error",
+                        f"图表行字段 {extra} 不会被渲染（行级只消费 {sorted(ROW_RENDERED_KEYS)}）；"
+                        "单位/期间/口径请写在图表元素级，否则是静默丢失")
+    if "unit" in e and kind not in NUMERIC_CHART_KINDS:
+        add("chart_field_unconsumed", eid, "warn",
+            f"{kind} 不渲染元素级 unit；单位需写进数据 display 或删除，避免作者以为已显示")
 
     series = e.get("series")
     multi = isinstance(series, list) and bool(series) and isinstance(series[0], dict)

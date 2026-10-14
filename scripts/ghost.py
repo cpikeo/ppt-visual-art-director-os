@@ -1080,7 +1080,8 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 与 compiler 同形：值一行 + 标签一行 + 列间发丝竖线（不是柱子！）
         n = min(len(rows), 5)
         col_w = w / max(n, 1)
-        vfont = _font(px_to_pt(float(e.get("value_size", 52)) * scale), bold=True)
+        # 数值行可含中文单位（「15 万元」）：必须走 CJK 字体，否则预览出现豆腐块。
+        vfont = _font(px_to_pt(float(e.get("value_size", 52)) * scale), bold=True, cjk=True)
         lfont = _font(px_to_pt(float(e.get("label_size", 14)) * scale), cjk=True)
         for i, row in enumerate(rows[:n]):
             cx = x + i * col_w
@@ -1095,6 +1096,11 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.text((int(cx + 12 * scale), int(y + h * 0.56 + h * 0.10)),
                    str(row.get("label", ""))[:18], font=lfont,
                    fill=_rgba(ctx, "muted", 0.9), anchor="lm")
+            desc = str(row.get("desc", "") or "").strip()
+            if desc:  # 与 compiler 同形：说明行
+                dfont = _font(px_to_pt(float(e.get("desc_size", 16)) * scale), cjk=True)
+                d.text((int(cx + 12 * scale), int(y + h * 0.56 + h * 0.10 + 34 * scale)),
+                       desc[:24], font=dfont, fill=_rgba(ctx, "muted", 0.9), anchor="lm")
     elif kind == "steps":
         # 与 compiler 同形：序号 + 标题 + 说明 + 列间连接线
         n = min(len(rows), 6)
@@ -1130,6 +1136,11 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                       fill=fill)
             d.text((int(cx), int(axis_y + 16 * scale)), str(row.get("label", ""))[:14],
                    font=lfont, fill=ink, anchor="ma")
+            desc = str(row.get("desc", "") or "").strip()
+            if desc:  # 与 compiler 同形：节点说明
+                dfont = _font(px_to_pt(float(e.get("desc_size", 14)) * scale), cjk=True)
+                d.text((int(cx), int(axis_y + 40 * scale)), desc[:16], font=dfont,
+                       fill=_rgba(ctx, "muted", 0.9), anchor="ma")
     elif kind == "waterfall":
         # 与 compiler 同形：浮动柱（starts→ends）+ 零轴 + 小计整段 + 段间桥接虚线。
         cum = 0.0

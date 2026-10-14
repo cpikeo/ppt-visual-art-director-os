@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 import intelligence as intel
@@ -41,7 +42,8 @@ def _actual(case: dict) -> dict:
     u = judged["understanding"]
     return {"role": judged["visual_role"]["role"], "evidence": u.get("evidence"),
             "comparison": bool(u.get("comparison")), "claim": judged["claim"]["source"],
-            "media": judged["media"]["decision"], "media_source": judged["media"]["source"]}
+            "media": judged["media"]["decision"], "media_source": judged["media"]["source"],
+            "media_suggested": judged["media"].get("suggested")}
 
 
 def _checks(expect: dict, actual: dict) -> list[dict]:
@@ -125,6 +127,92 @@ def regression(current: dict, baseline: dict) -> dict:
             "regression_rate": round(len(broke) / max(len(base_pass), 1), 3)}
 
 
+# ── 盲评通道（R6）：视觉质量由人评，不写入自动化门。本模块只负责打乱、改名、汇总与一致性。
+BLIND_DIMS = ("narrative", "focus", "composition", "typography", "completeness")
+BLIND_DIMS_CN = {"narrative": "叙事", "focus": "焦点", "composition": "构图",
+                 "typography": "中文排版", "completeness": "整体完成度"}
+
+
+def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict:
+    """打乱并改名待评版本。映射写入 out_dir 之外的 key 文件，评审目录里只有匿名件与空白评分表。"""
+    import random
+    import shutil
+    rng = random.Random(seed)
+    order = list(range(len(items)))
+    rng.shuffle(order)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    mapping, rows = {}, []
+    for n, idx in enumerate(order, 1):
+        src = Path(items[idx])
+        code = f"V{n:02d}"
+        dst = out_dir / f"{code}{src.suffix}"
+        if src.is_dir():
+            shutil.copytree(src, out_dir / code, dirs_exist_ok=True)
+        else:
+            shutil.copyfile(src, dst)
+        mapping[code] = str(src)
+        rows.append(code)
+    key_path = out_dir.parent / (out_dir.name + ".key.json")
+    key_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8")
+    sheet = out_dir / "score_sheet.csv"
+    header = ["reviewer", "item"] + list(BLIND_DIMS) + ["reason"]
+    sheet.write_text(",".join(header) + "\n" +
+                     "\n".join(f",{c},,,,,," for c in rows) + "\n", encoding="utf-8")
+    return {"items": rows, "sheet": str(sheet), "key": str(key_path)}
+
+
+def _icc_2_1(matrix: list[list[float]]) -> float | None:
+    """ICC(2,1)：双向随机效应、单次测量的绝对一致性。matrix[target][rater]。"""
+    n = len(matrix)
+    k = len(matrix[0]) if n else 0
+    if n < 2 or k < 2:
+        return None
+    grand = sum(sum(r) for r in matrix) / (n * k)
+    row_m = [sum(r) / k for r in matrix]
+    col_m = [sum(matrix[i][j] for i in range(n)) / n for j in range(k)]
+    ssr = k * sum((m - grand) ** 2 for m in row_m)
+    ssc = n * sum((m - grand) ** 2 for m in col_m)
+    sst = sum((matrix[i][j] - grand) ** 2 for i in range(n) for j in range(k))
+    sse = sst - ssr - ssc
+    msr, msc = ssr / (n - 1), ssc / (k - 1)
+    mse = sse / ((n - 1) * (k - 1)) if (n - 1) * (k - 1) else 0.0
+    den = msr + (k - 1) * mse + k * (msc - mse) / n
+    return None if den == 0 else (msr - mse) / den
+
+
+def blind_score(sheet_paths: list[str], key_path: str) -> dict:
+    """汇总多位评审的评分表：每版本每维度均值 + ICC(2,1)。一致性低时不宣称共识。"""
+    import csv
+    key = json.loads(Path(key_path).read_text(encoding="utf-8"))
+    by_reviewer: dict[str, dict[str, dict]] = {}
+    for sp in sheet_paths:
+        for row in csv.DictReader(Path(sp).read_text(encoding="utf-8").splitlines()):
+            if not row.get("item") or not row.get("reviewer"):
+                continue
+            vals = {d: row.get(d) for d in BLIND_DIMS}
+            if all(vals[d] not in (None, "") for d in BLIND_DIMS):
+                by_reviewer.setdefault(row["reviewer"], {})[row["item"]] = {
+                    d: float(vals[d]) for d in BLIND_DIMS}
+    reviewers = sorted(by_reviewer)
+    items = sorted({i for r in by_reviewer.values() for i in r})
+    complete = [r for r in reviewers if set(by_reviewer[r]) == set(items)]
+    report = {"reviewers": len(reviewers), "complete_reviewers": len(complete),
+              "items": items, "dimensions": {}, "consensus": "NOT_ENOUGH_REVIEWERS"}
+    if len(complete) < 3:
+        return report
+    consensus = True
+    for d in BLIND_DIMS:
+        mat = [[by_reviewer[r][i][d] for r in complete] for i in items]
+        icc = _icc_2_1(mat)
+        means = {i: round(sum(by_reviewer[r][i][d] for r in complete) / len(complete), 2) for i in items}
+        report["dimensions"][BLIND_DIMS_CN[d]] = {"icc": None if icc is None else round(icc, 3),
+                                                  "mean": {key.get(i, i): means[i] for i in items}}
+        if icc is None or icc < 0.5:
+            consensus = False
+    report["consensus"] = "CONSENSUS_WEAK_OR_OK" if consensus else "NO_CONSENSUS"
+    return report
+
+
 def _print(report: dict) -> None:
     for r in report["cases"]:
         mark = "PASS" if r["passed"] else "FAIL"
@@ -146,6 +234,17 @@ def _print(report: dict) -> None:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["blind"]:
+        if len(argv) >= 3 and argv[1] == "pack":
+            print(json.dumps(blind_pack(argv[3:], Path(argv[2])), ensure_ascii=False, indent=2))
+            return 0
+        if len(argv) >= 4 and argv[1] == "score":
+            print(json.dumps(blind_score(argv[3:], argv[2]), ensure_ascii=False, indent=2))
+            return 0
+        print("用法：bench.py blind pack <评审目录> <版本1> <版本2> ...\n"
+              "      bench.py blind score <key.json> <评分表1.csv> <评分表2.csv> ...", file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cases", default=str(DEFAULT_CASES))
     parser.add_argument("--baseline", default=None)

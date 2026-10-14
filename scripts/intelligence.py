@@ -101,6 +101,7 @@ _AXIS_TIME_TOKEN = re.compile(r"第\s*(\d+(?:[.,]\d+)?)\s*(个月|月|年|天|�
 _CONDITIONAL_CLAUSE = re.compile(
     r"(?:如果|若|假如|倘若|一旦|除非)[^。；;！？!?\n]{0,40}?(?:[，,]|则|就|便)")
 _MULTIPLE_OF = re.compile(r"\d+(?:\.\d+)?\s*倍")
+_THRESHOLD_WORDS = ("高于", "低于", "超过")
 _COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "前者", "后者",
                      "优于", "落后", "差距", "benchmark", "对标", "增减",
                      "超过", "超越")
@@ -252,7 +253,18 @@ _REGISTER_WORDS = {
 _WITNESS_WORDS = ("现场", "记录", "回访", "走访", "探访", "实录", "on-site", "field visit", "visit")
 # 证词现场需要「有人去看、去记」。场所词单独出现在数据句里（「门店 120 家」「门店规模稳定」）
 # 只说明在哪里发生，不说明有人在场记录；有可核对数字时，它是计数对象。
+# 顿号列举成为结构，必须有**分类动作**（分三类、分为、包括、由…组成、三层）。
+# 只有并列（「选址、排班、库存」）是话题清单：审计实测被判成 structure → 画成流程图。
+_TAXONOMY_CUE = re.compile(r"分[为成]|分[一二两三四五六七八九十\d]+[类层块部]|包括|组成|"
+                           r"[一二两三四五六七八九十\d]+个?(?:层|类|板块|环节|部分|阶段)")
 _ENUM_LIST = re.compile(r"[^、，,：:。；;\s]+、[^、，,：:。；;\s]+、[^、，,：:。；;\s]+")
+
+
+# 量词「位/名」本身指人。Chinese 数词或指示词（一、某、这、那、该）+ 位/名 个体化一个具体的人
+# （「一位釉工」「这位店长」），这是证人线索；阿拉伯数字 + 位（「12 位客户」）是计数，不是个体。
+# 这是语法信号，不是职业词表：没见过的职业（窑工、染匠）同样生效。
+_INDIVIDUAL_PERSON = re.compile(r"[一某这那该](?:位|名)(?!(?:置|称|单|字|额|义|数|于|列|次|份|版))[\u4e00-\u9fff]{1,6}")
+# 「位/名」的非人复合头（位置/名称/名单…）：只挡误报，不列职业。
 
 
 def _scene_of(body: str, distinct: int) -> bool:
@@ -677,9 +689,18 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     pct = [n["value"] for n in ev if (n.get("unit") or "") in ("%", "％")]
     pct_whole = len(pct) >= 2 and abs(sum(pct) - 100) < 0.5
     is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole
-    is_comparison = not phased and (_hit(cmp_body, _COMPARISON_WORDS)
-                                    or bool(_MULTIPLE_OF.search(cmp_body))
-                                    or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
+    # 阈值列举：多个子句各带一个数、且单位互不相容（「连续两月低于 15 万元；退货率高于 8%；
+    # 流失超过 2 人」）是并列条件，没有两端可比的量。「高于/低于/超过」在这里只是阈值词，
+    # 不能单独构成比较；只有明确的比较措辞（相比/优于/对标…）仍按比较处理。
+    num_clauses = {i for i, c in enumerate(_CLAUSE_SPLIT.split(body)) if _NUM.search(c)}
+    threshold_list = (_hit(cmp_body, _THRESHOLD_WORDS) and len(num_clauses) >= 2
+                      and len({n.get("unit") or "" for n in ev}) >= 2)
+    strong_cmp = _hit(cmp_body, _COMPARISON_WORDS) and not _hit(cmp_body, _THRESHOLD_WORDS)
+    is_comparison = not phased and (
+        strong_cmp
+        or (_hit(cmp_body, _THRESHOLD_WORDS) and not threshold_list)
+        or bool(_MULTIPLE_OF.search(cmp_body))
+        or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body))))
     # 只在无量化竞争/比较/时间推进时采信显式关系；标题不参与关系抽取。
     relation_text = body if content is None else str(content)
     relations = explicit_relations(relation_text)
@@ -698,7 +719,9 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
-    if _hit(_evidence_body(body), _STRUCTURE_WORDS) or (not ev and _ENUM_LIST.search(body)):
+    if _hit(_evidence_body(body), _STRUCTURE_WORDS) \
+            or (not ev and _ENUM_LIST.search(body) and _TAXONOMY_CUE.search(body)) \
+            or threshold_list:
         modes["structure"] = 0.65
     seq_strong = _hit(body, _SEQUENCE_STRONG)
     seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in body)
@@ -737,6 +760,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         "subjects": subjects,
         "human": _hit(body, _HUMAN_WORDS),
         "scene": _scene_of(body, distinct),
+        "individual": bool(_INDIVIDUAL_PERSON.search(body)),
         "comparison": bool(is_comparison and not is_subset),
         "part_whole": is_subset,
         "same_unit": same_unit,
@@ -978,6 +1002,44 @@ _FILLERS = ("赋能", "助力", "打造", "全方位", "闭环", "抓手", "生�
             "引领", "加持", "焕新", "新高度")
 
 
+# 高密度页：正文超过此字数，或不同数字超过 _DENSE_NUMERALS 个。阈值只决定「是否需要裁决」，
+# 不决定删什么——删什么由句子对主张的贡献排序给出。
+_DENSE_CHARS = 110
+_DENSE_NUMERALS = 5
+
+
+def _cjk_bigrams(s: str) -> set:
+    chars = re.findall(r"[一-鿿]", str(s or ""))
+    return {a + b for a, b in zip(chars, chars[1:])}
+
+
+def _delete_candidates(text: str, claim_text: str, carried: list, u: dict) -> list[str]:
+    """R5 删除候选：高密度页列出对主张贡献最低的句子，给作者裁决（保留 / 移到备注 / 删除）。
+
+    贡献 = 2 × 与主张的二元组重合率 − 0.25 × 句内非主张数字个数；分数越低越先删。
+    携带主张数字的句子永远不是候选（它就是证据）。
+    """
+    distinct = int(u.get("distinct_numerals") or 0)
+    if len(re.findall(r"[一-鿿]", str(text or ""))) < _DENSE_CHARS and distinct < _DENSE_NUMERALS:
+        return []
+    claim_grams = _cjk_bigrams(claim_text)
+    carried_raw = {n["raw"] for n in carried}
+    scored = []
+    for sent in _sentences(text):
+        if not sent or sent in claim_text or claim_text in sent:
+            continue
+        nums = numerals(sent)
+        if any(n["raw"] in carried_raw for n in nums):
+            continue
+        grams = _cjk_bigrams(sent)
+        overlap = len(grams & claim_grams) / max(len(grams), 1)
+        contribution = 2.0 * overlap - 0.25 * len(nums)
+        scored.append((contribution, overlap, len(nums), sent))
+    scored.sort(key=lambda t: t[0])
+    return [f"「{sent[:28]}」— 删除候选（与主张重合 {ov:.0%}，非主张数字 {k} 个，贡献 {c:.2f}）：作者裁决保留、移到备注或删除"
+            for c, ov, k, sent in scored[:3]]
+
+
 def information_weight(u: dict, claim: dict, text: str = "", *,
                        number_anchor: tuple[list[dict], dict | None] | None = None) -> dict:
     """三档权重：必须最大化 / 必须弱化 / 必须删除——每条给出理由。"""
@@ -1050,7 +1112,8 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
         for n in (u.get("numerals") or []) if n["raw"] == raw)]
     if dupes:
         kill.append(f"{'、'.join(dupes[:3])} 的重复出现 — 同一数字在一页出现两次就删一次")
-    return {"maximize": maxi, "weaken": weak, "delete": kill}
+    return {"maximize": maxi, "weaken": weak, "delete": kill,
+            "delete_candidates": _delete_candidates(text, claim_text, claim_nums, u)}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1414,7 +1477,7 @@ def _composition_why(chosen: str, u: dict, media: dict) -> str:
 
 def composition_of(role: str, u: dict, *, composition_grammar: str = "",
                    media: dict | None = None, claim: dict | None = None,
-                   content_len: int = 0) -> dict:
+                   content_len: int = 0, avoid: str | None = None) -> dict:
     """为什么是这种构图，为什么不是其他几种——从这一页的事实推，不查表。
 
     体量取整页内容长度（空间需求），不是结论句长度：长内容撑得起编辑节奏，
@@ -1425,9 +1488,21 @@ def composition_of(role: str, u: dict, *, composition_grammar: str = "",
     text_len = int(content_len or 0) or len(claim.get("text") or "")
     picked = _composition_choice(u, role, media, text_len, composition_grammar, claim)
     chosen = picked["chosen"]
-    return {"chosen": chosen,
-            "why": _composition_why(chosen, u, media),
-            "rejected": picked["rejected"]}
+    why = _composition_why(chosen, u, media)
+    # 只对「证据为零」的叙事页生效：它的构图纯粹由平局顺序决定（审计：连续留白）。
+    # 有证据形态（数字、观点、比较、结论、决定）的页面，同构是内容决定的，不换。
+    # 同时要求分数接近：有明确优势的算子永远不被替换。
+    # 主张本身是决定或结论（「请批准…」「必须…」）时，同构是内容的立场，不是平局。
+    stated = _hit(str(claim.get("text") or ""), _ASK_WORDS + _CONCLUSION_WORDS)
+    if avoid and chosen == avoid and u.get("evidence") == "none" and not stated:
+        s = _composition_scores(u, role, media, text_len, composition_grammar, claim)
+        alts = [k for k in s if k != avoid and s[k] > -50 and s[k] >= s[avoid] - 0.5]
+        if alts:
+            chosen = max(alts, key=lambda k: (s[k], -_COMPOSITION_TIEBREAK.index(k)
+                                              if k in _COMPOSITION_TIEBREAK else -99))
+            why = (f"与前一页同构且分数接近：改选{chosen}以保持节奏；"
+                   + _composition_why(chosen, u, media))
+    return {"chosen": chosen, "why": why, "rejected": picked["rejected"]}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1593,6 +1668,9 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
     elif focus.get("element_role") == "structure_map" or role == "explain":
         rule = ("节点→机制沿一条清楚的轴线排字；标签、解释共用文字边界，"
                 "在语义节点断行，节点间距比容器与图标更能表达顺序。")
+    elif focus.get("element_role") in ("decision_ask", "action_ask", "criteria_ask"):
+        rule = ("收束页的唯一落点：决定/动作/判据的字阶最大，对象与条件同行；"
+                "理由与出处退一层，不与落点争字阶。")
     elif focus.get("element_role") == "kpi_main" and role == "summarize":
         rule = ("请求动作与资源量同行，数字及单位不拆行；期限在下一阅读层沿同轴退后，"
                 "两种单位不共用数量刻度，不用等权卡片制造第二焦点。")
@@ -1618,7 +1696,7 @@ def _media_hint(function: str, cue: str) -> dict:
     """词表提示而非决定：标明来源是 hint，并给出作者如何声明。"""
     return {"decision": "none", "source": "hint", "function": None,
             "suggested": function,
-            "necessity": f"词表命中（{cue}），但它是否构成{'证词' if function == 'witness' else '主体'}需要作者判断："
+            "necessity": f"命中人物线索（{cue}），但它是否构成{'证词' if function == 'witness' else '主体'}需要作者判断："
                          "未声明则不出图。如需图像，在 brief 声明 asset: required（画面主体写 asset_subject）。"}
 
 
@@ -1640,6 +1718,9 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
                 "necessity": "本页已有图表承担注意力，再放图片＝两个焦点互相削价。"}
     presence = bool(u.get("human") or u.get("scene"))
     physical = [s for s in (u.get("subjects") or []) if s in _PHYSICAL_SUBJECTS]
+    # 一个具体的人的话/做法是证词线索，不依赖职业词表；compare/explain/summarize 的注意力不属于人物。
+    if u.get("individual") and role in ("establish", "prove", "persuade"):
+        return _media_hint("witness", "一位具体的人")
     # 词表只能提示「内容里可能有人/场所/实体」，不能决定「这张图是证词还是主语」。
     # 图像是否成立要作者判断：未声明则不出图，并把问题交还作者（不是默默不出、也不默默出）。
     if role == "establish" and presence:
@@ -1702,10 +1783,19 @@ def production_spec(focus: dict, comp: dict, media: dict, u: dict,
 # ─────────────────────────────────────────────────────────────────────
 # 11 · 视觉世界（由内容推导，不查风格预设表）
 # ─────────────────────────────────────────────────────────────────────
-def register_of(text: str) -> str:
-    for name in ("document", "stage", "working"):
-        if _hit(text, _REGISTER_WORDS[name]):
-            return name
+# 舞台语域只由**场合**决定（发布会、路演…）。「媒体」「客户」「用户」描述的是读者是谁，
+# 不是场合是什么：审计实测「渠道伙伴与媒体」一词即把整副 deck 切成深色舞台。
+_STAGE_SCENE = ("发布会", "路演", "大会", "演讲", "keynote", "launch", "roadshow", "campaign", "public")
+
+
+def register_of(audience: str = "", occasion: str = "", decision: str = "") -> str:
+    everything = f"{audience} {occasion} {decision}"
+    if _hit(everything, _REGISTER_WORDS["document"]):
+        return "document"
+    if _hit(f"{occasion} {decision}", _STAGE_SCENE):
+        return "stage"
+    if _hit(everything, _REGISTER_WORDS["working"]):
+        return "working"
     return "document"
 
 
@@ -1744,9 +1834,7 @@ def derive_world(brief: dict, understanding: list) -> dict:
     decision = str(brief.get("decision") or "")
     tension = str(brief.get("tension") or "")
     occasion = " ".join(str(brief.get(k) or "") for k in ("occasion", "subject", "visual_world"))
-    register = register_of(audience + " " + occasion + " " + decision)
-    if register == "document" and _hit(audience + occasion, _REGISTER_WORDS["stage"]):
-        register = "stage"
+    register = register_of(audience, occasion, decision)
 
     hits: dict[str, int] = {}
     for u in understanding:
@@ -1901,6 +1989,12 @@ _LABEL_TAIL_STOP = set("做在为有成给使让占到把被与和或并且而�
                        "不没无未仍还也都又再更才就只仅正已将且")
 
 
+# 计量单位本身不是主题短语（只收量词/单位，不收题材名词）。
+_MEASURE_CORES = frozenset({"亿元", "万元", "元", "万户", "万单", "万人", "万家", "万次", "个月",
+                            "分钟", "小时", "美元", "家", "人", "个", "台", "名", "位", "件", "次",
+                            "天", "月", "年", "倍", "万", "亿", "度", "年度"})
+
+
 def section_label(item: dict, claim: dict, role: str) -> str:
     """眉标：本页结论的**主题短语**（3–6 字），派不出来才退回中文角色词。
 
@@ -1917,9 +2011,10 @@ def section_label(item: dict, claim: dict, role: str) -> str:
             text = text[len(prefix):]
             break
     head = re.split(r"[，。；：！？\n]", text, maxsplit=1)[0].strip()
-    fallback = _ROLE_LABEL_CN.get(str(role), str(role))
+    # 派不出主题就返回空：角色词（「解释」「对比」）在全稿重复，读起来是模板，
+    # 不是定位。页码仍然保留，眉标缺省。
     if not head:
-        return fallback
+        return ""
 
     def _label_of(seg: str) -> str:
         """按虚词/谓语切段，取**第一个干净的名词短语**作眉标（2–6 字，优取 3–6）。
@@ -1932,6 +2027,10 @@ def section_label(item: dict, claim: dict, role: str) -> str:
         for part in _BOUNDARY_SPLIT.split(seg):
             q = part.strip()
             core = re.sub(r"[^一-鿿]", "", q)
+            # 以数字开头的段是数量短语（「15 万元」「2 人」）：残留的单位字不是主题。
+            # 实测：「单店月净利…低于 15 万元」的眉标被派成「万元」。
+            if re.match(r"\s*[0-9]", q) or core in _MEASURE_CORES:
+                continue
             # 数字/拉丁夹在汉字之间（「中国 800 元以上」）说明这段不是连续名词，
             # 硬删会把数字两侧的字缝成一个不存在的词；只在边缘的（「东南亚市场1」）
             # 是编号，去掉边缘编号仍是同一个名词。
@@ -1955,7 +2054,7 @@ def section_label(item: dict, claim: dict, role: str) -> str:
         label = _label_of(stripped)
         if label:
             return label
-    return fallback
+    return ""
 
 
 def _apply_declared_spot(focus: dict, comp: dict, declared) -> tuple[dict, dict]:
@@ -2021,8 +2120,55 @@ def _declared_intent(item: dict, warnings: list) -> tuple[str, str]:
     return role, evidence
 
 
+# R2 收束页：决定类型（批准 / 报名 / 评估）决定收束页的角色与焦点，使其成为可测输入。
+# 只在末页、有决定、无凭证语、无作者声明、主张不带数字时生效；带数字的收束页仍由数字决定焦点。
+_DECISION_CLASSES = (
+    ("commit", ("批准", "审批", "审议", "表决", "决定", "确认", "授权", "拨付", "同意", "签署",
+                "approve", "sign off")),
+    ("enroll", ("报名", "参加", "加入", "申请", "注册", "登记", "签约", "接入", "apply", "join", "register")),
+    ("evaluate", ("评估", "评审", "复核", "检验", "审查", "evaluate", "assess", "review")),
+)
+_CLOSING_FOCUS = {
+    "commit": ("decision_ask",
+               "收束页的落点是待批的决定本身（{d}）：批准的对象与量级同屏，理由退一层。",
+               [["headline", "标题写成陈述而不写要批的对象：读者不知道究竟批什么"],
+                ["kpi_row", "预算数字先排成一行：数字在前，决定在后"]]),
+    "enroll": ("action_ask",
+               "收束页的落点是要对方做的动作（{d}）：动作与进入条件同屏，不让读者自己去找入口。",
+               [["banner_quote", "引用框把行动包成广告"],
+                ["card_grid_4", "四张并列卡片稀释唯一的动作"]]),
+    "evaluate": ("criteria_ask",
+                 "收束页的落点是评估判据（{d}）：口径、样本与通过线先于结论，不替读者下结论。",
+                 [["statement_text", "把评估写成结论：评估页只交出判据"],
+                  ["donut", "环形图画不出判据的边界"]]),
+}
+
+
+def _closing_ask(*, index: int, total: int, decision: str, u: dict, claim_text: str,
+                 credential: bool, declared: bool) -> dict | None:
+    if declared or credential or index != total - 1 or not decision:
+        return None
+    if u.get("evidence") not in ("none", "proposition"):
+        return None
+    if number_roles(claim_text, claim_text or None)[0]:
+        return None
+    # 主张已经点名了请求（「请确认…」）：焦点就是它，不另换决定文本。
+    if _hit(claim_text, _ASK_WORDS):
+        return None
+    cls = next((c for c, words in _DECISION_CLASSES if _hit(decision, words)), None)
+    if cls is None:
+        return None
+    element_role, why, rejected = _CLOSING_FOCUS[cls]
+    return {"role": {"role": "summarize", "source": "decision", "alternatives": [],
+                     "why": f"末页按决定类型（{cls}）收束：主张保留在页上，焦点让给决定本身。"},
+            "focus": {"element_role": element_role, "type": "text",
+                      "why": why.format(d=decision),
+                      "rejected": [{"option": o, "why_not": w} for o, w in rejected]}}
+
+
 def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dict,
-                  warnings: list, u: dict | None = None) -> dict:
+                  warnings: list, u: dict | None = None,
+                  avoid_composition: str | None = None) -> dict:
     """逐页判断：受众/决定/主张/阻力/权重/角色/焦点/空间/构图/排版/媒体/生产。
 
     执行依赖允许媒体必要性先于焦点、构图先于由它推导的空间；节奏在整套回看时
@@ -2061,6 +2207,11 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     if declared_role:
         role = {"role": declared_role, "source": "author", "alternatives": [],
                 "why": "作者声明页面角色（原样生效）；内容判断保留为对照。"}
+    ask = _closing_ask(index=index, total=total, decision=decision, u=u,
+                       claim_text=str(claim.get("text") or ""), credential=credential_frame,
+                       declared=bool(declared_role or declared_ev))
+    if ask:
+        role = ask["role"]
     tension = tension_of(item, brief, role["role"])
     media = media_necessity(u, role["role"],
                             declared=str(item.get("asset") or "").lower() or None,
@@ -2074,11 +2225,12 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
             and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
         # 结论在标题、结果值在证据中：主张照样锚定「哪一个量」是本页主语
         anchor = number_roles(content, claim_text or None)
-    focus = focus_of(role["role"], u, claim, media, number_anchor=anchor,
-                     page_text=content)
+    focus = ask["focus"] if ask else focus_of(role["role"], u, claim, media,
+                                              number_anchor=anchor, page_text=content)
     comp = composition_of(role["role"], u,
                           composition_grammar=world.get("composition_grammar", ""),
-                          media=media, claim=claim, content_len=len(text))
+                          media=media, claim=claim, content_len=len(text),
+                          avoid=avoid_composition)
     focus, comp = _apply_declared_spot(focus, comp, item)
     spatial = spatial_of(comp, u)
     weight = information_weight(u, claim, text, number_anchor=anchor)
@@ -2086,6 +2238,8 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                                 text_len=len(text), number_anchor=anchor)
     prod = production_spec(focus, comp, media, u, weight)
     open_q = []
+    if weight.get("delete_candidates"):
+        open_q.append(f"删除候选 {len(weight['delete_candidates'])} 句待作者裁决（高密度页，按对主张的贡献排序）")
     if claim["source"] == "absent":
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
     if media["source"] == "judgment" and media["decision"] == "required":
@@ -2206,6 +2360,7 @@ def think(brief: dict) -> dict:
 
     pages = []
     texts: dict[str, str] = {}
+    prev_composition: str | None = None   # R3：平局时避免与前页连续同构
     for i, it in enumerate(items):
         sid = str(it.get("id") or f"s{i + 1:02d}")
         declared = {k: it[k] for k in _PAGE_DECLARATIONS if _intent_value(it.get(k))}
@@ -2218,13 +2373,16 @@ def think(brief: dict) -> dict:
         judgment = page_judgment({**views[i], "id": sid,
                                   "asset": declared.get("asset", it.get("asset"))},
                                  index=i, total=len(items), brief=brief,
-                                 world=world, warnings=warnings, u=understanding[i])
+                                 world=world, warnings=warnings, u=understanding[i],
+                                 avoid_composition=prev_composition)
+        prev_composition = judgment["composition"]["chosen"]
         anchor = None
         if len(items) >= 4:
-            anchor = {"eyebrow": section_label(
-                it, judgment["claim"], judgment["visual_role"]["role"])}
+            eyebrow = section_label(it, judgment["claim"], judgment["visual_role"]["role"])
+            anchor = {"eyebrow": eyebrow} if eyebrow else {}
             if i > 0:
                 anchor["page_number"] = i + 1
+            anchor = anchor or None
         pages.append({"id": sid,
                       # BUILD 不能只看到前 88/120 字后再猜剩余证据；原文只保留一份。
                       "ref": texts[sid],
