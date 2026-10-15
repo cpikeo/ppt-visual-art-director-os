@@ -1,0 +1,15 @@
+PASS J01 [critical] 职责并列不是时间线                role=explain ev=structure cmp=False claim=extracted media=none
+PASS J02 [critical] 数字与单位绑定不等于真实排版通过         role=prove ev=number cmp=False claim=extracted media=none
+PASS J03 [high    ] 相加为百不证明共同分母              role=persuade ev=proposition cmp=False claim=extracted media=none
+PASS J04 [high    ] 教研组与教务组不是先后步骤            role=persuade ev=none cmp=False claim=extracted media=none
+PASS J05 [high    ] 维护周期由19个月缩至11个月          role=prove ev=series cmp=False claim=extracted media=none
+PASS J06 [high    ] 流程真实存在时按方向讲述             role=explain ev=sequence cmp=False claim=absent media=none
+PASS J07 [critical] 尚未获批，不应写成已执行             role=persuade ev=none cmp=False claim=extracted media=none
+PASS J08 [high    ] 误差不超过5%不是两端对比            role=prove ev=number cmp=False claim=extracted media=none
+PASS J09 [high    ] 季度履约改善仍待归因               role=prove ev=proposition cmp=False claim=extracted media=none
+PASS J10 [high    ] 资料归档不是项目落地               role=persuade ev=none cmp=False claim=extracted media=none
+PASS J11 [critical] 职责分别落到两个团队               role=explain ev=structure cmp=False claim=absent media=none
+PASS J12 [high    ] 未决归属不补连线                 role=persuade ev=none cmp=False claim=absent media=none
+PASS J13 [high    ] 相加为百不等于共同分母              role=persuade ev=none cmp=False claim=extracted media=none
+
+案例通过 13/13 · 判断准确率 100.0% · 图像/图表/结构误判率 0.0% · 严重缺陷率 0.0%（4 个 critical 案例）

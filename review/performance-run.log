@@ -1,0 +1,28 @@
+text5 0 before PASS
+text5 0 after PASS
+text5 1 after PASS
+text5 1 before PASS
+text5 2 before PASS
+text5 2 after PASS
+text15 0 before PASS
+text15 0 after PASS
+text15 1 after PASS
+text15 1 before PASS
+text15 2 before PASS
+text15 2 after PASS
+image15 0 before PASS
+image15 0 after PASS
+image15 1 after PASS
+image15 1 before PASS
+image15 2 before PASS
+image15 2 after PASS
+text5 cold 431.74 394.03 -8.73
+text5 warm 57.82 57.1 -1.25
+text5 iteration 338.2 335.71 -0.74
+text15 cold 641.56 649.33 1.21
+text15 warm 60.71 61.69 1.61
+text15 iteration 493.04 489.43 -0.73
+image15 cold 825.81 824.91 -0.11
+image15 warm 64.66 68.77 6.36
+image15 iteration 533.7 546.69 2.43
+equal 27 / 27

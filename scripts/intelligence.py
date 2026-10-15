@@ -99,7 +99,7 @@ _NUM = re.compile(
     r"%|％|pp|倍|万|亿|元|家|人|个|名|位|件|次|天|月|年|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
-_NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|[不未]超[过越]")
+_NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|不得超[过越]|[不未]超[过越]")
 # 出处标注不是内容：尾部的「（来源：…）」与**夹在句子中间**的口径/样本说明
 # （「（口径：可比门店，剔除新开业 90 天内门店）」）都是档案坐标，不是这一页的证据。
 # 尾部标注由 _SOURCE_TAIL 管；中间标注此前无人处理，于是「可比门店」里的一个「比」
@@ -210,6 +210,20 @@ _COMPOUND_NOUNS = re.compile(r"结构性(?:增长|提升|变化|下降|调整|�
 def _evidence_body(body: str) -> str:
     """证据形态只按**谓词**判定：复合名词（结构性增长）不产生证据形态。"""
     return _COMPOUND_NOUNS.sub("", body)
+
+
+# 被明确否定的表达形态不构成该形态的证据。只剥离否定短语，保留其他
+# 实际职责/量值/箭头；「不是流程」不可抵消同页另一条真正的流程。
+_NEGATED_FORM = re.compile(
+    r"(?:不是|并非|不等于|不代表|没有|无需|不造|不要|不按)"
+    r"[^。；;，,\n]{0,8}?(?:时间序列|时间线|时间轴|先后顺序|流程|步骤|阶段|"
+    r"路径|迭代|里程碑|对比|比较)")
+
+
+def _affirmed_relations(text: str) -> str:
+    return _NEGATED_FORM.sub("", text)
+
+
 _CONCLUSION_WORDS = ("结论", "所以", "因此", "必须", "唯一", "只有", "本质", "关键",
                      "决定", "建议", "请批准", "意味着", "证明")
 # 现场/记录信号：内容里出现可指认的场所与记录动作时，图像才可能是证词。
@@ -722,6 +736,13 @@ def explicit_relations(content: str) -> list[dict]:
     """保留原句事实；至少两个不同主体才足以构成同屏关系，不据顺序推上下级。"""
     if re.search(r"[?？]|(?:谁|如何|是否|可能|如果|建议|应该|应当|拟|尚未)", content):
         return []
+    # brief 常把表格复制为「主体\n关系\n对象」。仅当中间行是明确关系词、
+    # 两侧都是单一文本项时恢复同一句；不按相邻行位置推断上下级或先后。
+    content = re.sub(
+        r"(?m)^([^\s，,；;。！？!?：:]{1,24})\n"
+        r"(负责|决定|协调|执行|隶属)\n"
+        r"([^\s，,；;。！？!?：:]{1,32})$",
+        r"\1\2\3", content)
     found = []
     for raw in re.split(r"[，,；;。\n]", _SOURCE_TAIL.sub("", content)):
         clause = re.sub(r"^\s*(?:[0-9]+[、.)）]\s*)?", "", raw).strip()
@@ -762,7 +783,8 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         body = _strip_scope_clauses(annotated).strip() or annotated
     # 「不超过/未超过」是界限不是对比：先剥掉再匹配，否则「误差不超过5%」
     # 会被判成两端对比（A超过B但C不超过D——真的超过不受影响）。
-    cmp_body = _CONDITIONAL_CLAUSE.sub("", _NEGATED_EXCEED.sub("", body))
+    affirmed = _affirmed_relations(body)
+    cmp_body = _CONDITIONAL_CLAUSE.sub("", _NEGATED_EXCEED.sub("", affirmed))
     # 证据量只从**内容本体**扫描：出处标注里的台账编号与日期（「来源：投放台账
     # 2026Q2」）是档案坐标，不是这一页的证据——把它算进去会让证据数量、
     # 密度与权重一起虚高。
@@ -809,7 +831,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         # 「界限不是对比」，而宾语是名词时它本来就不是界限。
         or (distinct >= 2 and bool(_NEGATED_COMPARISON.search(body))))
     # 只在无量化竞争/比较/时间推进时采信显式关系；标题不参与关系抽取。
-    relation_text = body if content is None else str(content)
+    relation_text = affirmed if content is None else _affirmed_relations(str(content))
     relations = explicit_relations(relation_text)
     if ev or is_comparison or _hit(relation_text, _SEQUENCE_WORDS) or any(mark in relation_text for mark in SEQUENCE_MARKERS):
         relations = []
@@ -835,8 +857,8 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
             or (not ev and _ENUM_LIST.search(body) and _TAXONOMY_CUE.search(body)) \
             or threshold_list:
         modes["structure"] = 0.65
-    # 否定某种表达关系不是该关系的证据；只去掉被直接否定的形态词。
-    sequence_body = re.sub(r"(?:不是|并非|不代表|不等于)(?:时间序列|流程|步骤|阶段|路径|迭代|里程碑)", "", body)
+    # 否定某种表达形态不构成该形态的证据；与比较/显式关系共用同一口径。
+    sequence_body = affirmed
     seq_strong = _hit(sequence_body, _SEQUENCE_STRONG)
     seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in sequence_body)
     if seq_strong or seq_hits >= 2:
@@ -928,7 +950,7 @@ _TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足",
 # 对比式断言：「增长来自复购而非补贴」「不是在赌市场，是在买能力」
 # ——中文商业写作里最典型的判断句形，和「唯一/只有」同样属于断言证据。
 _CONTRAST_ASSERTION = re.compile(
-    r"而非|不是[^，。；]{0,12}(?:而是|是)|不在于|不在[^。；]{1,12}?[，,、]?在|不再只是|关键在于|取决于|本质上是|"
+    r"而非|不等于|不代表|并非|不是[^，。；]{0,12}(?:而是|是)|不在于|不在[^。；]{1,12}?[，,、]?在|不再只是|关键在于|取决于|本质上是|"
     r"差别不在|问题不在|真正的")
 
 
@@ -947,7 +969,8 @@ def _title_assertive(title: str) -> bool:
     把它当结论等于替作者编了一句他没写下的话——所以只有带断言证据或数字的
     标题才占结论位，其余退回从内容里抽。
     """
-    return bool(evidence_numerals(title)) or any(w in title for w in _TITLE_ASSERTION)
+    return (bool(evidence_numerals(title)) or _hit(title, _TITLE_ASSERTION + _CHANGE_WORDS)
+            or bool(_CONTRAST_ASSERTION.search(title)))
 
 
 def _is_data_listing(sent: str) -> bool:
@@ -1039,6 +1062,11 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
         is_title = bool(title) and rank == 0
         bits = ["标题" if is_title else
                 "首句" if rank == (1 if title else 0) else "正文"]
+        if is_title and thesis and content:
+            # 作者在标题已经写出断言；正文数字/条件是证据，不能凭「短句+数字」
+            # 抢走结论。正文明确的更强请求仍可竞争，而非无条件锁死标题。
+            score += 0.6
+            bits.append("作者标题为断言")
         if is_title and not content:
             bits.append("无内容支撑")
         if is_title and title.endswith(_TOPIC_TAILS):
@@ -1052,7 +1080,8 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
         if is_title and positional and not content:
             score += 2.0
             bits.append("首末页陈述位（不要求本页证据）")
-        if _hit(sent, _ASK_WORDS):
+        if _hit(sent, _ASK_WORDS) and not _CONDITION_RESULT.search(sent):
+            # 条件里的「若批准则…」不是向观众提出批准请求，不能顶掉标题。
             # 要决定的话本身就是结论（「请批准试点预算」没写也得算写了）：
             # 否则 ask 全在标题里时结论判 absent，role 会把要决定的页判成别的。
             score += 2.0
@@ -1256,7 +1285,9 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
     这个叙事位置决定 establish / summarize。
     """
     ev = str(u.get("evidence") or "none")
-    witness = bool(u.get("human") or u.get("scene"))
+    # 群体名词（患者/老师等）不是可指认的人物证词；只有具体个体或
+    # 可指认现场才允许以「确有其事」判 prove，避免泛称夺走页面主张。
+    witness = bool(u.get("individual") or u.get("scene"))
     ask = _hit(str(claim.get("text") or ""), _ASK_WORDS)
     if u.get("comparison") or ev == "comparison":
         role = "compare"
@@ -1844,7 +1875,7 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
         return {"decision": "none", "source": "judgment",
                 "function": None,
                 "necessity": "本页已有图表承担注意力，再放图片＝两个焦点互相削价。"}
-    presence = bool(u.get("human") or u.get("scene"))
+    presence = bool(u.get("individual") or u.get("scene"))
     physical = [s for s in (u.get("subjects") or []) if s in _PHYSICAL_SUBJECTS]
     # 一个具体的人的话/做法是证词线索，不依赖职业词表；compare/explain/summarize 的注意力不属于人物。
     if u.get("individual") and role in ("establish", "prove", "persuade"):
@@ -1891,7 +1922,7 @@ def production_spec(focus: dict, comp: dict, media: dict, u: dict,
         must.append({"role": "source", "type": "text"})
     if media["decision"] in ("required", "reuse"):
         must.append({"role": "image", "type": "image"})
-    if u.get("human") and media["decision"] == "none":
+    if (u.get("individual") or u.get("scene")) and media["decision"] == "none":
         must.append({"role": "witness_line", "type": "text"})
     # must_not 只收真正独立的硬约束（信息权重的删除清单）：focus/comp 的
     # rejected 是 Intelligence 的竞争证据，canonical owner 是它们自己——

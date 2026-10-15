@@ -47,6 +47,7 @@ jobs:
           python scripts/bench.py --baseline benchmark/baseline_9.26.json
           python scripts/bench.py --cases benchmark/holdout.json
           python scripts/bench.py --cases benchmark/transfer.json
+          python scripts/bench.py --cases benchmark/semantic_transfer.json
 
       - name: Whitespace check
         if: matrix.os == 'ubuntu-latest'

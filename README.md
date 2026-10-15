@@ -14,7 +14,7 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 ```bash
 pip install -r requirements.txt          # Python 3.10+；无系统级依赖
 python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py
-# 作者按骨架原文与判断落元素（有图时按 asset_manifest.json 出图并写 asset_id）
+# 作者按骨架原文与判断落元素（骨架的 elements 为空；有图时按 asset_manifest.json 出图并写 asset_id）
 python scripts/vao.py check build.py out.pptx --mode release --speed strict
 python scripts/selftest.py               # 核心自检
 ```
@@ -77,10 +77,11 @@ python3 scripts/bench.py --baseline benchmark/baseline_9.26.json --out benchmark
 python scripts/selftest.py   # 退出码即门槛；数量以实际输出为准
 ```
 
-本次审计的实测、修改与未验证边界见 [audit/REPORT.md](audit/REPORT.md)；样稿见 `acceptance/out.pptx`。
+9.29.1 本地修复、语义与 Windows 管道复现、性能及未完成验收见 [review/REPORT.md](review/REPORT.md)；历史审计见 [audit/REPORT.md](audit/REPORT.md)。
+样稿 `acceptance/out.pptx` 由人工编写 `acceptance/build.py` 生成，**不是 brief 自动落版**。`plan` 仅输出判断与空元素骨架，真正自动设计与目标 PowerPoint 验收仍未证明。
 
-CI（`.github/workflows/ci.yml`）在 ubuntu / windows × Python 3.10 / 3.12 / 3.13 上运行自检，
-并做 spec 档冒烟（断言 spec 模式不加载 python-pptx）。
+CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 / 3.13 自检、四组判断基准，
+以及 spec 档冒烟（断言 spec 模式不加载 python-pptx）。此处是工作流配置，不表示本地未推送修改已在远端执行。
 
 ## 版本与历史
 

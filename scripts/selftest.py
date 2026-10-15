@@ -2842,11 +2842,23 @@ def test_audit_boundaries(tmp):
     import os
     import ghost as g
     import bench
+    import intelligence
     from unittest.mock import patch
     from primitives import file_digest, json_read_cached
     holdout = bench.run(ROOT / "benchmark" / "holdout.json")
-    for row in holdout["cases"] + bench.run(ROOT / "benchmark" / "transfer.json")["cases"]:
-        check("holdout: " + row["id"], row["passed"], str(row["checks"]))
+    for row in (holdout["cases"]
+                + bench.run(ROOT / "benchmark" / "transfer.json")["cases"]
+                + bench.run(ROOT / "benchmark" / "semantic_transfer.json")["cases"]):
+        check("judgment regression: " + row["id"], row["passed"], str(row["checks"]))
+    acceptance = intelligence.load_brief(ROOT / "acceptance" / "brief.json")
+    pages = {p["id"]: p["judgment"] for p in intelligence.think(acceptance)["pages"]}
+    check("plan: 泛称不是证词、并列职责不是时间轴、证据不能顶替标题",
+          pages["s02"]["visual_role"]["role"] == "persuade"
+          and pages["s03"]["understanding"]["evidence"] == "structure"
+          and pages["s03"]["composition"]["chosen"] == "linear_structure"
+          and len(pages["s03"]["understanding"].get("relations") or []) == 2
+          and pages["s05"]["claim"]["text"] == acceptance["slides"][4]["title"]
+          and pages["s06"]["claim"]["text"] == acceptance["slides"][5]["title"])
     probe = subprocess.run([sys.executable, "-c",
         f"import sys; sys.path.insert(0, {str(SCRIPTS)!r}); import compiler; assert 'xlsxwriter' not in sys.modules"],
         capture_output=True, encoding="utf-8")
@@ -2858,7 +2870,17 @@ def test_audit_boundaries(tmp):
         "expect": {"evidence": ["impossible"]}}]}), encoding="utf-8")
     proc = subprocess.run([sys.executable, str(SCRIPTS / "bench.py"), "--cases", str(bad_cases)],
                           capture_output=True, encoding="utf-8")
-    check("bench: 判断失败必须非零退出", proc.returncode == 1 and "FAIL" in proc.stdout)
+    check("bench: 判断失败必须非零退出", proc.returncode == 1 and "FAIL" in proc.stdout,
+          f"returncode={proc.returncode}; stdout={proc.stdout[-250:]}; stderr={proc.stderr[-250:]}")
+    # 真实 Windows 回归：英文 runner 的 ANSI 管道常为 cp1252；命令行须仍输出
+    # UTF-8 的 FAIL 详情并保持非零退出，不能只因 UnicodeEncodeError 退出 1。
+    legacy_env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    legacy = subprocess.run([sys.executable, str(SCRIPTS / "bench.py"), "--cases", str(bad_cases)],
+                            capture_output=True, encoding="utf-8", errors="replace", env=legacy_env)
+    check("bench: ANSI 管道下保留负例与 UTF-8 诊断",
+          legacy.returncode == 1 and "FAIL" in legacy.stdout
+          and "impossible" in legacy.stdout and "UnicodeEncodeError" not in legacy.stderr,
+          f"returncode={legacy.returncode}; stdout={legacy.stdout[-200:]}; stderr={legacy.stderr[-300:]}")
     # 保持 size/mtime 的外部写入不能绕过同进程 JSON 与摘要缓存。
     f = tmp / "identity.json"
     f.write_text('{"v": 1}', encoding="utf-8")
@@ -2873,7 +2895,7 @@ def test_audit_boundaries(tmp):
     check("identity: 同尺寸同 mtime 的原子替换仍失效",
           file_digest(f) != first and json_read_cached(f) == {"v": 3})
     # 同图跨页与不同 QC 区域：一个事实一个主条目，不让重复 ID 阻断整稿。
-    import assets, intelligence
+    import assets
     from PIL import Image, ImageDraw
     image = tmp / "reuse.png"
     pic = Image.new("RGB", (1280, 720), (240, 236, 228))

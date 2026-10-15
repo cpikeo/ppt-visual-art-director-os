@@ -1,0 +1,2853 @@
+{
+  "baseline_commit": "5bfb09a673f7e229e4e8fc5c558d92275f2dc846",
+  "tracked_count": 410,
+  "by_root": {
+    ".github": 1,
+    ".gitignore": 1,
+    "CHANGELOG.md": 1,
+    "LICENSE.txt": 1,
+    "README.md": 1,
+    "SKILL.md": 1,
+    "acceptance": 5,
+    "audit": 381,
+    "benchmark": 4,
+    "pyproject.toml": 1,
+    "references": 2,
+    "requirements.txt": 1,
+    "scripts": 9,
+    "templates": 1
+  },
+  "rows": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 4461,
+      "sha256": "3297f4fba7d66ac12594bd500a008e299d91426a75db2bf56d9458e1d224e6ef",
+      "kind": "text",
+      "lines": 107
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 984,
+      "sha256": "c97beeb6055251124b936f908d609a9d7f44921f61789dbdf9325eed4b172270",
+      "kind": "text",
+      "lines": 39
+    },
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 43768,
+      "sha256": "937d4383b03f40233a8baf08b0aa150342b6dc2f499348b14d7c0b9fd5b6b846",
+      "kind": "text",
+      "lines": 486
+    },
+    {
+      "path": "LICENSE.txt",
+      "bytes": 1351,
+      "sha256": "5626f89c2f251d0d79871ab40adc3de06e8ac45c6e40e1af8966483e89f05365",
+      "kind": "text",
+      "lines": 25
+    },
+    {
+      "path": "README.md",
+      "bytes": 5018,
+      "sha256": "286b302d4fc157c3a642f9f1bdbd632799ed41ca8d5aaa25257194241aa87bb5",
+      "kind": "text",
+      "lines": 90
+    },
+    {
+      "path": "SKILL.md",
+      "bytes": 11380,
+      "sha256": "67560164fa6d3db7db81e6ae7f352811d2c3cd4af6aafeea16aa3c3aa4edfba2",
+      "kind": "text",
+      "lines": 169
+    },
+    {
+      "path": "acceptance/brief.json",
+      "bytes": 2362,
+      "sha256": "f79c4e5b40a20e3f5d79347702d2eb49fac6ea2930e12d3a09e54584b2036369",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "acceptance/build.py",
+      "bytes": 6661,
+      "sha256": "3a32ffa1dc30dc9c6f7e54123ea861e4e56a55ce94a247b5355af56b25a389e8",
+      "kind": "python",
+      "functions": 3
+    },
+    {
+      "path": "acceptance/out.manifest.json",
+      "bytes": 9981,
+      "sha256": "4694e43ceced0754da1ea2362d0da3f30a625207a9f54cb9650172c885608260",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "acceptance/out.pptx",
+      "bytes": 57467,
+      "sha256": "dd7d95193e7d7ba45259ebb0ee412bb0bd7931519a272dd923377bbd7a595445",
+      "pptx_parts": 53,
+      "zip_corrupt_part": null,
+      "kind": "pptx"
+    },
+    {
+      "path": "acceptance/skeleton.py",
+      "bytes": 12418,
+      "sha256": "853bb6712b659632764dad52126a2781b460c06b698b10b31c7dc7415434820f",
+      "kind": "python",
+      "functions": 0
+    },
+    {
+      "path": "audit/REPORT.md",
+      "bytes": 20733,
+      "sha256": "3174e92b5d5843f39f816f19e24825b3d2ae5b752950b659f786370587240cd2",
+      "kind": "text",
+      "lines": 250
+    },
+    {
+      "path": "audit/acceptance-before-check.log",
+      "bytes": 3758,
+      "sha256": "50158bad517a0ac84c0dcc6e5fbc525be6da894b06d5e62913d934144232d7fe",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/acceptance-check.log",
+      "bytes": 3754,
+      "sha256": "6985425676cae975f818292c1f8bfe77135750efd1fcea44952644f379bade8e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/acceptance-plan.log",
+      "bytes": 183,
+      "sha256": "1313be21a4e3b4c704fb29751cedf7af9a1e59883f93fe47485c01443811c091",
+      "kind": "text",
+      "lines": 2
+    },
+    {
+      "path": "audit/after-bench.json",
+      "bytes": 20841,
+      "sha256": "78a8768c34d24bb3fafeeaeb27996e16f3e3d6d1d7c2b10304100301d181b71d",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/after-bench.log",
+      "bytes": 3493,
+      "sha256": "3b77f08919f18976a68fac09e489a4eb88aec4b703c87f3d5b1e56f47c74a439",
+      "kind": "text",
+      "lines": 29
+    },
+    {
+      "path": "audit/after-selftest-first.log",
+      "bytes": 30487,
+      "sha256": "f18db6cb09daec45a3dcfba5dc31296b978eb9413ae847e57e8abca9f9a24020",
+      "kind": "text",
+      "lines": 440
+    },
+    {
+      "path": "audit/after-selftest-second.log",
+      "bytes": 30225,
+      "sha256": "78e9730e706f107be100d830bba2d041abd0bb3ac2685948561b3ea56ce9c02d",
+      "kind": "text",
+      "lines": 440
+    },
+    {
+      "path": "audit/analyze.py",
+      "bytes": 2676,
+      "sha256": "59347d82743f13a028c04382b051a137ecf70c1b669250ff91c7871451872fa5",
+      "kind": "python",
+      "functions": 2
+    },
+    {
+      "path": "audit/architecture-after.json",
+      "bytes": 153959,
+      "sha256": "d8c4369034122849e3eb49fea1987855b619b297638f9e36215626d948553e81",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/architecture-before.json",
+      "bytes": 152311,
+      "sha256": "19a5494fc109c07f381f87f2bed3c976a640eed3118d29e7adc282970df0dd93",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/baseline-bench.json",
+      "bytes": 20841,
+      "sha256": "78a8768c34d24bb3fafeeaeb27996e16f3e3d6d1d7c2b10304100301d181b71d",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/baseline-bench.log",
+      "bytes": 3493,
+      "sha256": "3b77f08919f18976a68fac09e489a4eb88aec4b703c87f3d5b1e56f47c74a439",
+      "kind": "text",
+      "lines": 29
+    },
+    {
+      "path": "audit/baseline-env.json",
+      "bytes": 124,
+      "sha256": "3cab0a438b6175902e949b575d20dadbce62e1d1f39d7299f72b1828ce07e9fb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/baseline-no-bold.log",
+      "bytes": 29519,
+      "sha256": "7f74f5963117d633c458c6bb7929fb021c93ed424119c292737f8562777e784e",
+      "kind": "text",
+      "lines": 421
+    },
+    {
+      "path": "audit/baseline-selftest.log",
+      "bytes": 29498,
+      "sha256": "944e3e5841cb68d8d8790558728e1bc8fee1f6ce395e390018e331b59ae03db5",
+      "kind": "text",
+      "lines": 421
+    },
+    {
+      "path": "audit/bench-cases-3-10-22.json",
+      "bytes": 20685,
+      "sha256": "689aa613dbaba4fb7b71409bca3e034082e730d8e5a94f410d41018f7c783e46",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-cases-3-10-22.log",
+      "bytes": 3416,
+      "sha256": "537c4a2403d9831c0f916ae894c0ccb2d7f7e8f0d8a0e43b6552c133030e7509",
+      "kind": "text",
+      "lines": 28
+    },
+    {
+      "path": "audit/bench-cases-3-12-15.json",
+      "bytes": 20685,
+      "sha256": "689aa613dbaba4fb7b71409bca3e034082e730d8e5a94f410d41018f7c783e46",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-cases-3-12-15.log",
+      "bytes": 3416,
+      "sha256": "537c4a2403d9831c0f916ae894c0ccb2d7f7e8f0d8a0e43b6552c133030e7509",
+      "kind": "text",
+      "lines": 28
+    },
+    {
+      "path": "audit/bench-cases-3-13-16.json",
+      "bytes": 20685,
+      "sha256": "689aa613dbaba4fb7b71409bca3e034082e730d8e5a94f410d41018f7c783e46",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-cases-3-13-16.log",
+      "bytes": 3416,
+      "sha256": "537c4a2403d9831c0f916ae894c0ccb2d7f7e8f0d8a0e43b6552c133030e7509",
+      "kind": "text",
+      "lines": 28
+    },
+    {
+      "path": "audit/bench-holdout-3-10-22.json",
+      "bytes": 8538,
+      "sha256": "22b84494e77daebc49eb5161023f9eb65e081aad4ad844d7fa45a7eb32d3db22",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-holdout-3-10-22.log",
+      "bytes": 1570,
+      "sha256": "fbfc5dc60518f3fade33040e3f0ea00ce878d22190d237839d2cba0859795011",
+      "kind": "text",
+      "lines": 14
+    },
+    {
+      "path": "audit/bench-holdout-3-12-15.json",
+      "bytes": 8538,
+      "sha256": "22b84494e77daebc49eb5161023f9eb65e081aad4ad844d7fa45a7eb32d3db22",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-holdout-3-12-15.log",
+      "bytes": 1570,
+      "sha256": "fbfc5dc60518f3fade33040e3f0ea00ce878d22190d237839d2cba0859795011",
+      "kind": "text",
+      "lines": 14
+    },
+    {
+      "path": "audit/bench-holdout-3-13-16.json",
+      "bytes": 8538,
+      "sha256": "22b84494e77daebc49eb5161023f9eb65e081aad4ad844d7fa45a7eb32d3db22",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-holdout-3-13-16.log",
+      "bytes": 1570,
+      "sha256": "fbfc5dc60518f3fade33040e3f0ea00ce878d22190d237839d2cba0859795011",
+      "kind": "text",
+      "lines": 14
+    },
+    {
+      "path": "audit/bench-transfer-3-10-22.json",
+      "bytes": 3828,
+      "sha256": "980022788d3a959308f7aa1b80694e5b3d01cf0dee8c7096890755ebf4f674e5",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-transfer-3-10-22.log",
+      "bytes": 796,
+      "sha256": "847fa5bb7c20d70639f4fd3de973518222b10d0918fc0f63eefdb37e996f4d88",
+      "kind": "text",
+      "lines": 8
+    },
+    {
+      "path": "audit/bench-transfer-3-12-15.json",
+      "bytes": 3828,
+      "sha256": "980022788d3a959308f7aa1b80694e5b3d01cf0dee8c7096890755ebf4f674e5",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-transfer-3-12-15.log",
+      "bytes": 796,
+      "sha256": "847fa5bb7c20d70639f4fd3de973518222b10d0918fc0f63eefdb37e996f4d88",
+      "kind": "text",
+      "lines": 8
+    },
+    {
+      "path": "audit/bench-transfer-3-13-16.json",
+      "bytes": 3828,
+      "sha256": "980022788d3a959308f7aa1b80694e5b3d01cf0dee8c7096890755ebf4f674e5",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/bench-transfer-3-13-16.log",
+      "bytes": 796,
+      "sha256": "847fa5bb7c20d70639f4fd3de973518222b10d0918fc0f63eefdb37e996f4d88",
+      "kind": "text",
+      "lines": 8
+    },
+    {
+      "path": "audit/blind-pack.json",
+      "bytes": 117,
+      "sha256": "f7dfa669c0049326648a2b0ab5ff1f8a16ce898946e0ecd5f208d41fafd42b6c",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/blind-status.json",
+      "bytes": 122,
+      "sha256": "484603953e62081bfa796748e2f11b61cfbb2c1179d44f17a3ab86cf1555e9f4",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/blind.key.json",
+      "bytes": 69,
+      "sha256": "be1cc9cf1ba4112ebf8b2f10deae4086b3384bb139ed2ab4082c45b2e2c63be8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/blind/score_sheet.csv",
+      "bytes": 95,
+      "sha256": "fc8877c67862e5e54f303b9d17b3015601e4cf0aba45fe2f7944d59fb261df12",
+      "kind": "text",
+      "lines": 3
+    },
+    {
+      "path": "audit/changes.patch",
+      "bytes": 104944,
+      "sha256": "cc97bc95aedd28f820aa06120c0f9f8c7188b9ecc499b2e96c6408b6c25a666f",
+      "kind": "text",
+      "lines": 1907
+    },
+    {
+      "path": "audit/ci-annotations-before.json",
+      "bytes": 1499,
+      "sha256": "dde9ba81276500a5d87510ed655a1dc3b16884f6b91e8b4b1bc65263332f1144",
+      "kind": "json",
+      "root_type": "list"
+    },
+    {
+      "path": "audit/ci-before.json",
+      "bytes": 78994,
+      "sha256": "cdb8b5e099aa4d862ac3540a304fc8b881d1b4fa2aa5077cead6db7e838e9ea2",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/ci-jobs-before.json",
+      "bytes": 27535,
+      "sha256": "8f9820cedb23f2d7f464915b1fb56fd0aac2ecdc46e0d2dde34a9094700cf6c0",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/compile-3-10-22.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "text",
+      "lines": 0
+    },
+    {
+      "path": "audit/compile-3-12-15.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "text",
+      "lines": 0
+    },
+    {
+      "path": "audit/compile-3-13-16.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "text",
+      "lines": 0
+    },
+    {
+      "path": "audit/diff-stat.txt",
+      "bytes": 695,
+      "sha256": "27a4589bc23797dbabea0d2b5d78026a14c9dc0098746ae4e1509150a46f7c04",
+      "kind": "text",
+      "lines": 16
+    },
+    {
+      "path": "audit/git-status-final.txt",
+      "bytes": 392,
+      "sha256": "ddc126fdc2b1d27a91a9d57e34977e2f590316f7a815a65150dd8e429a1a13ab",
+      "kind": "text",
+      "lines": 19
+    },
+    {
+      "path": "audit/holdout-after.json",
+      "bytes": 8538,
+      "sha256": "22b84494e77daebc49eb5161023f9eb65e081aad4ad844d7fa45a7eb32d3db22",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/holdout-after.log",
+      "bytes": 1570,
+      "sha256": "fbfc5dc60518f3fade33040e3f0ea00ce878d22190d237839d2cba0859795011",
+      "kind": "text",
+      "lines": 14
+    },
+    {
+      "path": "audit/holdout-before.json",
+      "bytes": 8586,
+      "sha256": "b675889713ec92772450517c5f17dba7b7163e3af32b502852432f3f7b4afed8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/holdout-before.log",
+      "bytes": 1956,
+      "sha256": "cf15ba280fcaa9ba3b9c535d89d8b41f74273d221ecc66c6e0b387edebf40664",
+      "kind": "text",
+      "lines": 19
+    },
+    {
+      "path": "audit/install-310.log",
+      "bytes": 418,
+      "sha256": "6dcea49c17c070e91216a0d2bd0d3052bfb4f54fbb24c6dd58c940dd807ff6ca",
+      "kind": "text",
+      "lines": 17
+    },
+    {
+      "path": "audit/install-312.log",
+      "bytes": 417,
+      "sha256": "7a061c110b8a19bcfe0dd6582f71375f4786a2c0ff50fee03f87c5fad40cdcc2",
+      "kind": "text",
+      "lines": 17
+    },
+    {
+      "path": "audit/install.log",
+      "bytes": 2468,
+      "sha256": "2cc732614421d4473c446becce03dd60b55a3ab5f41e347664be783b7ebfae1a",
+      "kind": "text",
+      "lines": 29
+    },
+    {
+      "path": "audit/no-fonts-3-13-16.log",
+      "bytes": 30850,
+      "sha256": "1d296fe98bcdd031f13fa404299b4b56edbc7063102dbe6fd748792693da4925",
+      "kind": "text",
+      "lines": 452
+    },
+    {
+      "path": "audit/performance-run.log",
+      "bytes": 5042,
+      "sha256": "8a3f181ad2658928d4fe0e9748e48fbc236d601e0614581fd35ede2933d6ef43",
+      "kind": "text",
+      "lines": 222
+    },
+    {
+      "path": "audit/performance.json",
+      "bytes": 848590,
+      "sha256": "19e88daaa9b89d79d4ea0e482a4bafde2f7a8b44702fde29c112af08ce752734",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-after/assets.json",
+      "bytes": 3142,
+      "sha256": "9df74511ec016d8e7424ed002ffe1a83efd036552dc7c5a78014c51aa5b757cd",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-after/brief.json",
+      "bytes": 6781,
+      "sha256": "71959e5d576e1701ff13f159e74d2262a3c989aeeb6a43786596ee17dd952037",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-after/cold.log",
+      "bytes": 3858,
+      "sha256": "80c6704cab6d9c34b113418d117f64aff446af6115efccc0a309cbc71917a944",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-after/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-0-after/iteration.log",
+      "bytes": 3856,
+      "sha256": "c48effa3c36aedfc467a9a02ba6c6a38f5786f51f0c497856aaef6518f1675b2",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-after/plan.log",
+      "bytes": 990,
+      "sha256": "56e0ec6c7aa26579fad83bf365fb1385c698640b64e7e5849722a599b9a64e5b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-after/spec.json",
+      "bytes": 45113,
+      "sha256": "1a10111fc98185bd42f421ef2bc20f643c0cb486d2e8b325e4638332bd383e51",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-after/warm.log",
+      "bytes": 3846,
+      "sha256": "b40770fb97268178b2a35861fbb2e5a8792d242dc662df40a3827fc3fbefab1c",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-before/assets.json",
+      "bytes": 3145,
+      "sha256": "c76a74fec454be401a113e29ab87591cb32ef051ea725852a24b207cbc9f0235",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-before/brief.json",
+      "bytes": 6782,
+      "sha256": "632ca3d9ec8dfc2273b64eac785cb84abe40334e592850b0e1f486a5f1e86531",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-before/cold.log",
+      "bytes": 3861,
+      "sha256": "bdaa8aa0597f6d3fcd978932ac80d1c25120327c899daa990ec5f19ec4f05703",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-before/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-0-before/iteration.log",
+      "bytes": 3856,
+      "sha256": "5e7a77f43714e2345aead34ce5019e4e35a71729ca49f34f47918f31d005ccf3",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-before/plan.log",
+      "bytes": 994,
+      "sha256": "8ec58a50639a83fdb904c3cf268501bb437b4f5f19c8824d3af3f0cb00429f8a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-0-before/spec.json",
+      "bytes": 45113,
+      "sha256": "1ce98dfd52d2ab08954fa70fa1b74a2603c3128fff07bcdc935921178dbd7a04",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-0-before/warm.log",
+      "bytes": 3845,
+      "sha256": "94fbf7635cebfcdace5f18f77ba5ef92789e1b01319085521efdb794c8cabd3d",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-after/assets.json",
+      "bytes": 3142,
+      "sha256": "784f1bad99ed8b84fb6bb5c3524c08d4b57a5af84a6b79c99fcca2da62f53949",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-1-after/brief.json",
+      "bytes": 6781,
+      "sha256": "51349fc22c291487ddc82802c01aa7d18eab3f371240f956dd3003f47fe5263a",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-1-after/cold.log",
+      "bytes": 3860,
+      "sha256": "a2dc89f1618ea3bdf0e2d6ebc5b938d8e0200742d2c027f0856376fad2f7282b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-after/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-1-after/iteration.log",
+      "bytes": 3851,
+      "sha256": "0c06762f0f9b2a87c9e35955f5c810a70df798b83d5d1e70534020ba1a831a54",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-after/plan.log",
+      "bytes": 988,
+      "sha256": "be7080a3df206b79f85802659c3bed040a0b0b5b22272f347b25c8670d4d8b28",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-after/spec.json",
+      "bytes": 45113,
+      "sha256": "afc7b1e4dcee8493882887df5687ec920c2b4521e012d0e4601083dca13aee1b",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-1-after/warm.log",
+      "bytes": 3844,
+      "sha256": "8e7093bffe255518e03dca476a9aeb26891e6542c60898e0d87ae74728f365cf",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-before/assets.json",
+      "bytes": 3145,
+      "sha256": "fa975d796baca73a73accb31f967bddcc8527412a9002ef5764e2be04f570957",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-1-before/brief.json",
+      "bytes": 6782,
+      "sha256": "defd78c6ac48231b4fee77fc74d9a85256b02cb549a3764427def817c56515ec",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-1-before/cold.log",
+      "bytes": 3861,
+      "sha256": "752ea204e9b9ad9c1a8cb0b85159f20838b1582254445cfde2925a3931e761fd",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-before/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-1-before/iteration.log",
+      "bytes": 3855,
+      "sha256": "83ec574c402e791b7d64ec4935a00e38cf71f8e6aae39d17916a88bc197f3877",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-before/plan.log",
+      "bytes": 994,
+      "sha256": "eb8084cad14ce232b892893ee719bbf36dfb3a7c74c1f278e9e033f1e99aac13",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-1-before/spec.json",
+      "bytes": 45113,
+      "sha256": "b60060fb7dc6e65fabc6010fa1ef6c68bc60e8409e9e73458646bf764cac84b7",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-1-before/warm.log",
+      "bytes": 3844,
+      "sha256": "6717cfc0099a06d2a71a32412bd24921cc862eb7d7063a1bfb285e5e76f8c61b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-after/assets.json",
+      "bytes": 3142,
+      "sha256": "b6639e4dc8e0d96c67ac34dd02b3b76fc465c2cee8d3d5c10c13bf8e0f529b33",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-2-after/brief.json",
+      "bytes": 6781,
+      "sha256": "fbece35cf03ea7239e35157b830db94f353a34733c827daf7990291c9647b0bb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-2-after/cold.log",
+      "bytes": 3857,
+      "sha256": "1ca9a52d9327f72a5bb90a42889561b471c1c3ab7e7eedd99dab853eccd72458",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-after/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-2-after/iteration.log",
+      "bytes": 3858,
+      "sha256": "85d8420c15064994a2c918273ae70a8e72dca455c20f4dc12e3b9c6e874b34b6",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-after/plan.log",
+      "bytes": 990,
+      "sha256": "ac203b7836a4d87a5adb2907974f8718ae475f6ce5643c4c8d85a7428273e73e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-after/spec.json",
+      "bytes": 45113,
+      "sha256": "781c37ed2e8e00237f85799548de6d736122954c1d8f9f8b9c6638d39f9c81e8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-2-after/warm.log",
+      "bytes": 3845,
+      "sha256": "9da5e90a02e335a2f095b7660b1ee74eb513b8c2f8b45e4c84ad22180ff8bf29",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-before/assets.json",
+      "bytes": 3145,
+      "sha256": "116439b4e923b38aed6022627275a5d0b206760efdea0a853804609dbe79ed2c",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-2-before/brief.json",
+      "bytes": 6782,
+      "sha256": "0331fb7a2900bf8ef66c63f7e48db097b90b67a935321fd7be4372887f019f55",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-2-before/cold.log",
+      "bytes": 3860,
+      "sha256": "f89ce412fef6823d60eed18d894a01f2e38dd6c9c139ec74b757bfb49877c266",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-before/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-2-before/iteration.log",
+      "bytes": 3857,
+      "sha256": "e913055198a8ce88bbacfaa8f02cc9ef5adcc8298d8a583c41ed2c16f0e9e32c",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-before/plan.log",
+      "bytes": 993,
+      "sha256": "a8299638cf4320a3f6317f9b04d342e26fc37d6eca39d4f904c48b820ea61994",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-2-before/spec.json",
+      "bytes": 45113,
+      "sha256": "fae39abd4dc3308e832fc8d2efd9b15b947716f8c85b0740abfcd57bf7a5e0af",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-2-before/warm.log",
+      "bytes": 3845,
+      "sha256": "8b7e47484f96bdba942a98071ff590092744a16d3bff380de992b5b1ddd7696e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-after/assets.json",
+      "bytes": 3142,
+      "sha256": "73ac219fb09cb9fa0724bd24a5ee759c43becd8eeb6b6249d7f78b662d59572c",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-3-after/brief.json",
+      "bytes": 6781,
+      "sha256": "4e1b4bfdadac3da1124aab4ac5f7cfe0aef2fb8523514857e2e325aa92fa45d7",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-3-after/cold.log",
+      "bytes": 3860,
+      "sha256": "6db0482003547e3d6ca83dfef3afa5037da33d4a103c11a8f37cdfe52b54e3bd",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-after/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-3-after/iteration.log",
+      "bytes": 3856,
+      "sha256": "0bcb867de0b01c9fec42914223986b7ba144f428ee59a8208edac49ccecb22ba",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-after/plan.log",
+      "bytes": 988,
+      "sha256": "a923dbc95bb5f7dd2862d0fef7a1da4e3be29bd5135cc1a1e5123ecacb7fc027",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-after/spec.json",
+      "bytes": 45113,
+      "sha256": "27720ecba0fd48d8024802edab737fd96d660a486768c6079b1f49956e541781",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-3-after/warm.log",
+      "bytes": 3843,
+      "sha256": "41044498786a0a9ac26034bb48f294542d0234ca9b1df6b4468a964e64b53877",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-before/assets.json",
+      "bytes": 3145,
+      "sha256": "97c17d3c842717770c1e593989dfde7e251ca20868d08eae9a5d8577eb90a3fd",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-3-before/brief.json",
+      "bytes": 6782,
+      "sha256": "79aed31e7b6272851c9504ec9ec6346d9531947f6a1c84449a79403d24c7ed96",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-3-before/cold.log",
+      "bytes": 3860,
+      "sha256": "9579c5b0d0e7b18eef3f85865723f05e379d8c489d0d74ed358d404798a0416a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-before/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-3-before/iteration.log",
+      "bytes": 3855,
+      "sha256": "931b1ed9e824e75a40fbdfec88ddfb509cbe2db2cc34513f9114cb0834d86d08",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-before/plan.log",
+      "bytes": 994,
+      "sha256": "223a495e578469c9377dd57777acb5546e4d890fa1b2b35e5a2d5748e6ba5543",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-3-before/spec.json",
+      "bytes": 45113,
+      "sha256": "3e97e8461d5c8c6e76cf8ca245ee605424e8b603dbc1b3dd96e90f17bc0c0cc1",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-3-before/warm.log",
+      "bytes": 3844,
+      "sha256": "9f1799ba7fd8fba088b2a9bde81e4681a4faf3d5f23f5d9e353751ad50f42ead",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-after/assets.json",
+      "bytes": 3142,
+      "sha256": "8c3bd52a911de7bc17f8d216f827af9c1ffab38d009d4502c79b0af044741378",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-4-after/brief.json",
+      "bytes": 6781,
+      "sha256": "fa6006371bb0a1f556976fdbeaae0f114a2e4e233ef9ee4ca8ba363484c2c133",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-4-after/cold.log",
+      "bytes": 3857,
+      "sha256": "276d883585fc3815eafea774c380f63639747beb50bd8f8f8a11b3f57b936e0a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-after/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-4-after/iteration.log",
+      "bytes": 3854,
+      "sha256": "e4b7b461802b07b27f3cd8b5e55bf69f8d9d85da0a902900c513684b6bc6688e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-after/plan.log",
+      "bytes": 990,
+      "sha256": "e84f7c3fddc5c7c107205a66e4bb8df907623a1f92254ca847287fcf81e62bb2",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-after/spec.json",
+      "bytes": 45113,
+      "sha256": "bc54395c10759abbad777839f7969a63e088b21834815e417ef7db100349619b",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-4-after/warm.log",
+      "bytes": 3844,
+      "sha256": "a2172826beda8f3f2fbeba5d55d9a1641f91fd995a01cd8fed6818c9273add9d",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-before/assets.json",
+      "bytes": 3145,
+      "sha256": "7b54790f2552ed6a8d7ede38d81ff3ddba62e607192141574e951fd6780c44b8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-4-before/brief.json",
+      "bytes": 6782,
+      "sha256": "8ccd731fc451bc09c2d33737b1700c7356a4dd8c4d32752b9c007d9719117dc8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-4-before/cold.log",
+      "bytes": 3859,
+      "sha256": "a86803f9891f415483ded397288700e2cf3e9a2c9be67e525e702811145f1bac",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-before/fixture.png",
+      "bytes": 13729,
+      "sha256": "45e6d1aee4422287a4d100f6500c42d29d2648bd5bd084b6d81fe8d4ed05fbac",
+      "kind": "image"
+    },
+    {
+      "path": "audit/performance/image15-4-before/iteration.log",
+      "bytes": 3855,
+      "sha256": "675988b17de0da85d3e9d552e934010b2fca9e911ae1aa2ddf28f8538e7e5b9b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-before/plan.log",
+      "bytes": 992,
+      "sha256": "552a1d8325c12d5253fba83fd9058bfc9705095709133030f0dd09e628bece62",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/image15-4-before/spec.json",
+      "bytes": 45113,
+      "sha256": "723bad58620b4e4f5d4275e4ff4666ad51bc02197054ffc24a24ebd6ae849ba9",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/image15-4-before/warm.log",
+      "bytes": 3846,
+      "sha256": "204cb2c7fd4516a2d2c5c776f0c934c188808b7d9a05ac5e62c2982c57a026d5",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-after/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-0-after/cold.log",
+      "bytes": 3820,
+      "sha256": "fe0396407b7128a2a66e4d12face4589c661b5e2e10009407f6ad3a2f6a2015c",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-after/iteration.log",
+      "bytes": 3820,
+      "sha256": "b74c721182a296b52713a5ce3fdf4eae22a97a655b4b7b6a660d9c9157b46490",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-after/plan.log",
+      "bytes": 652,
+      "sha256": "8aa604fc7b74f25fe47a2333307c63fb85329b2d1e58c8de089517a6a16886af",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-after/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-0-after/warm.log",
+      "bytes": 3811,
+      "sha256": "ef7101d265996a4603e238d84be2c8a58fc1ce2b2fc37ec54123a49ba9c718d6",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-before/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-0-before/cold.log",
+      "bytes": 3823,
+      "sha256": "ef62ae8a9f8cc93811600f4d26404dc4cf1a33d2abfb0aafee5a76bd3fcc0d61",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-before/iteration.log",
+      "bytes": 3822,
+      "sha256": "29b6681bfd697d44ea87e87e8b644faadf23b1535eee686480b7dd4b9e143e24",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-before/plan.log",
+      "bytes": 654,
+      "sha256": "0afeb48824543112e38d8697ea95e320c2658b61b4a3c2d4c19529e205d0dd37",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-0-before/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-0-before/warm.log",
+      "bytes": 3811,
+      "sha256": "1c8a0ab4d39f41907927bcc408c3db48e86d7580d71b5f0490d1dfa96b251515",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-after/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-1-after/cold.log",
+      "bytes": 3821,
+      "sha256": "a626171575a07accafd397b885b03466db45725b9843df6dd3947f7412c465b0",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-after/iteration.log",
+      "bytes": 3821,
+      "sha256": "70a7a5725423e90d62d838b14dfb48bbe2577d22cc43f9fd5378712bd10a115b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-after/plan.log",
+      "bytes": 652,
+      "sha256": "99ebfe5d08b802c86c319010e9543a484aa826a0daf6d9721c1e2ae8846514fc",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-after/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-1-after/warm.log",
+      "bytes": 3810,
+      "sha256": "4fd8c65807c1f1687f14a58697bde4d1cd6e2ef885c6fbc60196110ed7fc6bf9",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-before/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-1-before/cold.log",
+      "bytes": 3823,
+      "sha256": "f0738315c2dcbee55c5e181e206ff9b81cdb5ec52bcbf2c23c72f3ff734681e4",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-before/iteration.log",
+      "bytes": 3820,
+      "sha256": "ef48b1637ab227bf56d90ee844eb7f1d59fed2759e3d82b4f0433c7ff96a9901",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-before/plan.log",
+      "bytes": 654,
+      "sha256": "1dc1845be277136f447d76e20bab847eb044d01587b7bd4bbaebb76825c80f73",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-1-before/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-1-before/warm.log",
+      "bytes": 3812,
+      "sha256": "9a2d4b8708c83c6e44f5f3c91718a6e2cea85bec1f5374f6763d77ca5a8de7d6",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-after/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-2-after/cold.log",
+      "bytes": 3821,
+      "sha256": "18caf909b547365bf2f67b3786175db4f1f2c946fb3abce3f729ec25db027e93",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-after/iteration.log",
+      "bytes": 3821,
+      "sha256": "4f3562ea4ca088c81dbe17c3f1565aad54fbcdd7b80397f7eb980522b85c6688",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-after/plan.log",
+      "bytes": 653,
+      "sha256": "f151a526766aec2cebd582fdacb7b3fcd1b470b66892715de43b7fec123f5e37",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-after/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-2-after/warm.log",
+      "bytes": 3809,
+      "sha256": "9ce2592cc3e2e307be652f1f923f793c803a392950a60f70076239d19afc1794",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-before/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-2-before/cold.log",
+      "bytes": 3822,
+      "sha256": "63e7e9ab89e940dda9c41d9c72242bffb25998378896a72c3a02511621773d10",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-before/iteration.log",
+      "bytes": 3822,
+      "sha256": "02922727381f8c211b9456075d7547e5c6cebb7ec65fc2c512e09ca8e9299e03",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-before/plan.log",
+      "bytes": 654,
+      "sha256": "7e4977452596623881dc60852b3e14b7f33ea5c75e73eddbc014edf571a68bd1",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-2-before/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-2-before/warm.log",
+      "bytes": 3811,
+      "sha256": "4f83a0ecf470cfb4010b85df31878f97ddfec5886502fa297fdb1c951ca8894d",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-after/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-3-after/cold.log",
+      "bytes": 3821,
+      "sha256": "34e825d03d0702b5a0a0b7e611d9869f761de7fa688c8eeeff50c57d3fb9f8d4",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-after/iteration.log",
+      "bytes": 3821,
+      "sha256": "21be50638a1f6560c875e0ba0c28a82363608089f1a8c66faaa3c62878d3afb7",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-after/plan.log",
+      "bytes": 650,
+      "sha256": "083de83a76967969acce0255c158646e76cebee6782877c41efccad8fabed919",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-after/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-3-after/warm.log",
+      "bytes": 3809,
+      "sha256": "479d490ae73a8b6783068d7e37cae1dbe487d0ea1e6b79065f6b58e1b4d14239",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-before/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-3-before/cold.log",
+      "bytes": 3820,
+      "sha256": "96634fc381e5163e1396919cf3896d797e34faa1c6f8999c28ecd59ada5b05b0",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-before/iteration.log",
+      "bytes": 3822,
+      "sha256": "bd73026fed0faa27f19ce6e20d7f7b525fe09a7a7a7cda5e54d627609d3000e2",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-before/plan.log",
+      "bytes": 654,
+      "sha256": "ca974ccac8cbdc22cdaa766ac24d0b9a158b47c16f44fb21d7149f97591d6044",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-3-before/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-3-before/warm.log",
+      "bytes": 3812,
+      "sha256": "9c0643a4cd3324a3541e4648e38005c7afa6c0a68125503a2825e209a6c362a2",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-after/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-4-after/cold.log",
+      "bytes": 3822,
+      "sha256": "57921ccd651be69eccb7bd495d2f4771694681ea6c14b2597012522b304bf3bf",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-after/iteration.log",
+      "bytes": 3821,
+      "sha256": "d3d6f376f7ce8b26639b2f8aa8cb9eed53d12c5834620cdc16055e0ad48b6f33",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-after/plan.log",
+      "bytes": 653,
+      "sha256": "6ad2c2dea83b1041eab187efff91c5e27d07b5a603da6fead9a0173b0e06ebae",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-after/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-4-after/warm.log",
+      "bytes": 3811,
+      "sha256": "831c1185d0cad1808f1b57edea9d4f63578a98858ef7c8cd034f1f63abd9682a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-before/brief.json",
+      "bytes": 6600,
+      "sha256": "ffc24e00b7ac7435fb5664a4206ad30977d092d8b20cad5f1b21b2e39014cf08",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-4-before/cold.log",
+      "bytes": 3822,
+      "sha256": "ec75ca30286ca58136417979f836d8da2b6480f3aa54e316fbeef55b17a5d6c1",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-before/iteration.log",
+      "bytes": 3820,
+      "sha256": "f14d22c10e2e80c4ede157413e2d948c8b3ca9d33f5f863085f744452f32449e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-before/plan.log",
+      "bytes": 654,
+      "sha256": "7537a2f176290abb217ce60b6e98180b6821d3e65561c038dd013336cb247d56",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text15-4-before/spec.json",
+      "bytes": 46276,
+      "sha256": "7bf20c1c04f9ed4e96d7a656f2e223c79434f9fd987a9997f96db9bd8a22adfb",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text15-4-before/warm.log",
+      "bytes": 3811,
+      "sha256": "dfa4c98a5fa39822111e76784ac36e881bd90fb87591dd84b96c57fbc5631f83",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-after/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-0-after/cold.log",
+      "bytes": 3824,
+      "sha256": "73e45650d5aca41e928af5f7261dfdb9f18af85034885202af781577d2defca0",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-after/iteration.log",
+      "bytes": 3824,
+      "sha256": "699722f965476e345dc6266c37d290d0415438e599d0bcaeb193b6bb6a9700f4",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-after/plan.log",
+      "bytes": 653,
+      "sha256": "9fa5561abe2a797147e609a9a32357a124221bc7a4099553cb2339fbad3cae2b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-after/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-0-after/warm.log",
+      "bytes": 3813,
+      "sha256": "dad912b7cb6b44605c1024413d5cbe918f793124621d1e5b8a56aca5662fd6ed",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-before/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-0-before/cold.log",
+      "bytes": 3826,
+      "sha256": "4b485dd94b4ed4f7811ea835eb30aaedf4ee624d68eff86b2e3d522e43ed0a15",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-before/iteration.log",
+      "bytes": 3824,
+      "sha256": "3b02faa65bfebc81337ee3fec2e2f0c7aae067ac5a4caa0f6bebdd13b533a987",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-before/plan.log",
+      "bytes": 655,
+      "sha256": "eb47dba1d2a8c9ac8c1c0de4147ed5a678796b0d8cd34a99db25c9ae95fe789a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-0-before/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-0-before/warm.log",
+      "bytes": 3814,
+      "sha256": "547b6b7c88810e6d5ace81a66eafc6f05b5215c1f3035d50814df1f40a265083",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-after/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-1-after/cold.log",
+      "bytes": 3825,
+      "sha256": "cc6e91520adaa68d6dac1619c5858eed01eb02e727f6594b1accc25fe359c39f",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-after/iteration.log",
+      "bytes": 3822,
+      "sha256": "1d999e051606530e2a40d916e138a9dda65f9a8f074f39f801d81633b36fc28b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-after/plan.log",
+      "bytes": 654,
+      "sha256": "ef5478edf5199abdba588800f3dab5fd19076cac78ef8660ab1aa8836d108f37",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-after/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-1-after/warm.log",
+      "bytes": 3813,
+      "sha256": "4026dbcc3092ac060768af5b58ce48a1bdd43f68f2b84c76f9042242b93d6aa5",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-before/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-1-before/cold.log",
+      "bytes": 3826,
+      "sha256": "8046eebe4efafd92ba4eac0d4483e26a8416ab04e4b2c6855d8991ba33547a91",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-before/iteration.log",
+      "bytes": 3824,
+      "sha256": "8afbe856b45e6e9b99b2ad1765a491f6afd08e2c85ee408a37a415a54f15ea7e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-before/plan.log",
+      "bytes": 654,
+      "sha256": "77fb8815459b713130272add8bb618faafe3f579125c4b8227a8650300690c30",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-1-before/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-1-before/warm.log",
+      "bytes": 3813,
+      "sha256": "6551211b7257a0c04dc9dbbf7d97c4219801342b9d709b6cae406e38dd383230",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-after/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-2-after/cold.log",
+      "bytes": 3825,
+      "sha256": "6fb7838bfda1c5a11541f62e63993a822c2f41513fa050ede0082ed186172b68",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-after/iteration.log",
+      "bytes": 3822,
+      "sha256": "baa91ceb6522e37593b8626a3b2bfa083eca773b00b9827e0d90d99e5c3eb965",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-after/plan.log",
+      "bytes": 653,
+      "sha256": "99cc1695c7aa642316433ec1d1ca405d0e921ca967129670efe462b2717775c3",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-after/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-2-after/warm.log",
+      "bytes": 3811,
+      "sha256": "8ef66f6ddce134bf27c268d51f3d1398dbc14927662022953c391f59b019a4d7",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-before/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-2-before/cold.log",
+      "bytes": 3825,
+      "sha256": "99bb13f66b6cbea6bf80e751b5e8605ec28bc207623179f20b1bf50bbaf65525",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-before/iteration.log",
+      "bytes": 3825,
+      "sha256": "35670c8b8530c3cb6d67598c80c6c53cb40021a956564a2b3d7f666083e3693f",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-before/plan.log",
+      "bytes": 654,
+      "sha256": "f32cedf7bea55e4dd765c1cd9b9082b4f531d0ba957b5df20bf3df3b308e8b9c",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-2-before/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-2-before/warm.log",
+      "bytes": 3814,
+      "sha256": "f6773a65cb6c00bb3a762cdb26dfcb2161c6400d7da4d7dea08d5f34f8ae4644",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-after/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-3-after/cold.log",
+      "bytes": 3823,
+      "sha256": "3a8c7d1eceebfed05f3b15aad7d5316d1eaa4c02f23560924b1618f249512512",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-after/iteration.log",
+      "bytes": 3824,
+      "sha256": "668e2f5ea6f93f665d11f42a8016694d5a7c6516c7d027aa896ad47d82a7f5f2",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-after/plan.log",
+      "bytes": 653,
+      "sha256": "cf10bd0568dd6f75dbb93e248e59db03d3185efdcd0f636e3fc4bed2a6d8d2bc",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-after/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-3-after/warm.log",
+      "bytes": 3812,
+      "sha256": "3bac36259ee62b4c4384517e02e242f9f012c17cbe0e00203d6305afdb3076ff",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-before/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-3-before/cold.log",
+      "bytes": 3823,
+      "sha256": "962d9f0fe2d6f4d6945355a847dd28de4699e7c8ff4ff95010e1758b2e09c316",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-before/iteration.log",
+      "bytes": 3822,
+      "sha256": "1bc04817fa00d60501cea4a8588c20cc2bd353c38e7cba769e899df9b370b685",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-before/plan.log",
+      "bytes": 655,
+      "sha256": "2f1e6b6d7bbfb66299fe82fa309359679514c7a80b13500fa9e52d65ae795957",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-3-before/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-3-before/warm.log",
+      "bytes": 3813,
+      "sha256": "f8c3a663c98110b209276abdc1f58e16d2e15b7791a896708e27deef22c75241",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-after/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-4-after/cold.log",
+      "bytes": 3825,
+      "sha256": "0748d1d796d21553544aca963948cda77e0e51449b4de797b9c74ce38e0afe33",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-after/iteration.log",
+      "bytes": 3823,
+      "sha256": "5e0b6b71142bcfa6554099faf3cb7c9563428dbd207f4291d66a1661a24bfc24",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-after/plan.log",
+      "bytes": 653,
+      "sha256": "2f49496b5b113d3c082d16591caad108a5d242668f954bdb12b4efbb5115160d",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-after/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-4-after/warm.log",
+      "bytes": 3813,
+      "sha256": "d8c643912d1e6a81be3f89a3e1f83975579ae16c65f06a2b3fd459bba32c1120",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-before/brief.json",
+      "bytes": 13066,
+      "sha256": "d555ddae8e213ac1c6818d5fe3f00a2c9df527fbef235e769811e75d21e5c451",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-4-before/cold.log",
+      "bytes": 3826,
+      "sha256": "3d788094a74ee2324ad2da3ada5388721f40ce1438f14df310b24c0ba7df7b67",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-before/iteration.log",
+      "bytes": 3825,
+      "sha256": "b69a1a38e51dfb7e97cec62263e7390c11889e659e9d212c905c002e2d478ba9",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-before/plan.log",
+      "bytes": 654,
+      "sha256": "50bff3a7ca36e9ace690e5c3d6e9ea3338fe2f5ace0409e7df2f563586e9a576",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text30-4-before/spec.json",
+      "bytes": 93004,
+      "sha256": "3ecd4e280881ba27cdc4b1718015300c6a5fba02ab801fb5ea0774f4075530f8",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text30-4-before/warm.log",
+      "bytes": 3812,
+      "sha256": "670e97fb79683e69ba8e0ab8b42a76b1cb5577373281617b3064c89fdffd200b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-after/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-0-after/cold.log",
+      "bytes": 3814,
+      "sha256": "4c8b2def7e3929a5565effd05718ed74dbb48110566bdf3674a7a91e0399b85a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-after/iteration.log",
+      "bytes": 3811,
+      "sha256": "b07c54cdabf4072267715324d5b6877dd27fc0a13a9f8408ae0712fc8f82d826",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-after/plan.log",
+      "bytes": 650,
+      "sha256": "6649b49a9d3d40624690d97f87804564e6ca21f367f955b4bb69aed1a7e1a024",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-after/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-0-after/warm.log",
+      "bytes": 3803,
+      "sha256": "478b0ec72b2c5522f64420e66618c17ca8d1f009e54d93cd2f6fbd2837e984f1",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-before/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-0-before/cold.log",
+      "bytes": 3815,
+      "sha256": "92309d945ddff27ec38574e221b2555f01746f6537390c2f698d234d214164d0",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-before/iteration.log",
+      "bytes": 3814,
+      "sha256": "fa98b5033ca393571d7c13dc619adc00631416e50ef4b7ba20812eaab4ff8e52",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-before/plan.log",
+      "bytes": 651,
+      "sha256": "170eefbf7f4354b957e0c3ad663ed81a8ef98016ed665dd92f40f91d933c570a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-0-before/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-0-before/warm.log",
+      "bytes": 3805,
+      "sha256": "0b4c4461788ff32cf32a08373d4f7e76f920e00ac009e2957c3605520460a9d9",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-after/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-1-after/cold.log",
+      "bytes": 3815,
+      "sha256": "f5f4d9f0b11dd990c0739cf84c7b78f9e8231e7f605e50c30559baa58064a672",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-after/iteration.log",
+      "bytes": 3813,
+      "sha256": "782c9d6c49b7c483b7ff9eb644a14f437fbfd861b67e592dc5b449c8caf48a33",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-after/plan.log",
+      "bytes": 650,
+      "sha256": "6c563fb5385856b97ad383154c90c7fafe4c77a742a09e51a3a484fedad92113",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-after/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-1-after/warm.log",
+      "bytes": 3803,
+      "sha256": "f11d61a4d795009fc0f151de458c6411ba4462c2410650275205c073345ffb96",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-before/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-1-before/cold.log",
+      "bytes": 3816,
+      "sha256": "72ee1590110f4723cdd6b80be4ede4592152c2d7ccb0961b09d0cc39e918a94b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-before/iteration.log",
+      "bytes": 3813,
+      "sha256": "9691c72e539dad3236ec8b57e114b77826e7736df47aa56c26d489abbc6234ff",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-before/plan.log",
+      "bytes": 652,
+      "sha256": "4578d4bb6256d6fe2775f25e4b1491c70329b1ebebd63eae1c023c93e40831d4",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-1-before/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-1-before/warm.log",
+      "bytes": 3804,
+      "sha256": "007c9c7aa34e82288dc14a29bdc90d8b13e26d48decb6545d225d6105fc6af88",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-after/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-2-after/cold.log",
+      "bytes": 3815,
+      "sha256": "2e46ab0222130d1456b15a99c53324e51276508727b60512f113fca3ebece132",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-after/iteration.log",
+      "bytes": 3813,
+      "sha256": "955a44c4ecccc9bd7ae5535928f01c2208a1d4a0c832c83542546ce4ad7aa8ff",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-after/plan.log",
+      "bytes": 649,
+      "sha256": "d2890e54b3e7280e00adbb57965ea5cdfcbb33578eb779dc6b233f77ecd45c6f",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-after/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-2-after/warm.log",
+      "bytes": 3804,
+      "sha256": "49f519b1fd431642158ca4bb49f3c0d382a25c75f78dfccc710c049f456fadfc",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-before/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-2-before/cold.log",
+      "bytes": 3815,
+      "sha256": "4de401acb8d9f6a85587c037afedb43f174a254d0b5a52c719befa8638ed89fa",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-before/iteration.log",
+      "bytes": 3814,
+      "sha256": "0c2338a96ef3d82fb0334015c0db2a30535a3d382bca662fb6b55e18fd4b621b",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-before/plan.log",
+      "bytes": 652,
+      "sha256": "9ae77dff9adc9cb273dfbba5fd4c7d7d7cbcd93687e12ef5d8caec2af0c73ee8",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-2-before/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-2-before/warm.log",
+      "bytes": 3804,
+      "sha256": "ac769ef95904e0af74c8cf634ad44c3d3f0de4ebcfbb935d7a351db8540b3a7a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-after/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-3-after/cold.log",
+      "bytes": 3814,
+      "sha256": "98807eccf64c6d691f84ea51d18dc83800293e1a15bff28c1e4c3b880d1d715a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-after/iteration.log",
+      "bytes": 3814,
+      "sha256": "d30d5022a5b53c76aee03936affdba5f0dd8568290db36931691db98b173a746",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-after/plan.log",
+      "bytes": 650,
+      "sha256": "ddd2d5754d627921869a290480e8ade43bbaa60cbc5c9d2d9a2b9f009a92c6ec",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-after/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-3-after/warm.log",
+      "bytes": 3804,
+      "sha256": "045907d880d96358fc3df1b24460899aaf300b2ca7eae644c95af7cc08fc282d",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-before/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-3-before/cold.log",
+      "bytes": 3814,
+      "sha256": "a5f890d2eca11e2e48176c4bdd0f24df2d80424d67ca93d2a53319c9ba3bd3e8",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-before/iteration.log",
+      "bytes": 3814,
+      "sha256": "ebf8b64a83421d4ff1cbb63c4e52a7e43c31e4b8e408e09c23328b2cd645247e",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-before/plan.log",
+      "bytes": 650,
+      "sha256": "36ab7089b75131bff5ebe4ce39b4862108a7f08bc91754d5a23501350a35e8e8",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-3-before/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-3-before/warm.log",
+      "bytes": 3805,
+      "sha256": "df142f43453644514078c47d95e336fe79ec46053c7fd9e3ddf5e0309ddcd22c",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-after/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-4-after/cold.log",
+      "bytes": 3814,
+      "sha256": "f81165a07491bffebf2ce5aa18627f774090fbf939995f7a8a1545d0891109ce",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-after/iteration.log",
+      "bytes": 3811,
+      "sha256": "329eb6e086936d627b24fdfeee1a2d35124bc4821e52d78fe3f197fd68fac53f",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-after/plan.log",
+      "bytes": 648,
+      "sha256": "df78f72138e9121575e6269dfb83da4247bbb1241b3093c959a579204dd936a6",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-after/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-4-after/warm.log",
+      "bytes": 3804,
+      "sha256": "b727a79cd1d40852eaeb57f9b29dfbdf84dda2355c21e2c0d5186b2804fb1158",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-before/brief.json",
+      "bytes": 2288,
+      "sha256": "788a7ef42c93ea68ab0f4190ff2c3eb9b613037cb0d5833bc25e5f33796da76f",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-4-before/cold.log",
+      "bytes": 3816,
+      "sha256": "0db74aa9b66ce1fe69ce253757e393db24aebb789d48e1ec105e7dc0bcf03896",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-before/iteration.log",
+      "bytes": 3813,
+      "sha256": "a322095413c35756c625bfc04700163e2e17a35ba19c5b5b29c71d576bb61a3d",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-before/plan.log",
+      "bytes": 652,
+      "sha256": "67cefe23dbce1beb6f5272d3300704c33c5877ebef3ccaf69d80fc9bd545930a",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/performance/text5-4-before/spec.json",
+      "bytes": 16905,
+      "sha256": "4ae37889f9f3e55c9e4e8249e3e8af15dfd84c5941a16eb8fc6fa3026fa8da20",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/performance/text5-4-before/warm.log",
+      "bytes": 3805,
+      "sha256": "077f78543d053040d4dabbc7a900071c21bb7b4704c663b1975dc52cc2d1d7f9",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/pptx-structure.json",
+      "bytes": 543,
+      "sha256": "3042c0d94dbf3096dc213c7e49a2b13014ca54027a1b217ff8f658ae843f0193",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/profile-before.log",
+      "bytes": 238,
+      "sha256": "0ce415ed74198aa9bd4b5ed447bbd0b9be5a1c05990bdcd0844f8428ce3fc28b",
+      "kind": "text",
+      "lines": 4
+    },
+    {
+      "path": "audit/python-install.log",
+      "bytes": 540,
+      "sha256": "523ddf060ff2d585ec6180bd950f1f1ac988e75f603c80e36f127b1121692b16",
+      "kind": "text",
+      "lines": 8
+    },
+    {
+      "path": "audit/repro-415.log",
+      "bytes": 29519,
+      "sha256": "7f74f5963117d633c458c6bb7929fb021c93ed424119c292737f8562777e784e",
+      "kind": "text",
+      "lines": 421
+    },
+    {
+      "path": "audit/reproduce.py",
+      "bytes": 10898,
+      "sha256": "b8ff3729208c2604599c8a59753b18a8c109c960da982aca795662f54f1d1277",
+      "kind": "python",
+      "functions": 6
+    },
+    {
+      "path": "audit/reuse-e2e/bad-cases.json",
+      "bytes": 160,
+      "sha256": "95b97783603702bb2996c0c23712e779e4c03849737eebd4b1647b34e0c5eef5",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/build.py",
+      "bytes": 4139,
+      "sha256": "880a67ca1eaa74decdf011602b4413d7b819359dada957b8778280474eafada9",
+      "kind": "python",
+      "functions": 0
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost-01.png",
+      "bytes": 8070,
+      "sha256": "8055b78db05a933ef9fc0478e7c7b557206d9bce5ca560f9a12631bf6216db73",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost-02.png",
+      "bytes": 8497,
+      "sha256": "716126e2cbb2e0d7f850eded0f10111556c5ef3f834c7d71cc8d837aa7d08580",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost-03.png",
+      "bytes": 8583,
+      "sha256": "db8361caebe9c83da9fdea2a71d87f207f568195d55573f99094295a31a8dbd2",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost-04.png",
+      "bytes": 8381,
+      "sha256": "cc6101902d5d747d8e314a29338ddc7c93067d4f9d4005bbeb32a0d057b8f410",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost-05.png",
+      "bytes": 8506,
+      "sha256": "125aa1acca1a47407fd0c4badd3644aa58c9d9cf23e8cbf5896993cf08d6fab5",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost-contact-sheet.png",
+      "bytes": 46195,
+      "sha256": "cad9743e9e98ed599e0497f967b5bd14fe1f0810ea3c5a598e80f500b8d35e18",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/ghost.meta.json",
+      "bytes": 5394,
+      "sha256": "cd7f4f52fe778e386d19d1de4ec5d8ae3825003c66387e9d0a672720da52db96",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/002c3e276b9f30054ce2.png",
+      "bytes": 8497,
+      "sha256": "716126e2cbb2e0d7f850eded0f10111556c5ef3f834c7d71cc8d837aa7d08580",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/07934db8e61f26d592e6.png",
+      "bytes": 8381,
+      "sha256": "cc6101902d5d747d8e314a29338ddc7c93067d4f9d4005bbeb32a0d057b8f410",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/2bee1977ab065f002dea.png",
+      "bytes": 8583,
+      "sha256": "db8361caebe9c83da9fdea2a71d87f207f568195d55573f99094295a31a8dbd2",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/3ce53eb3dcf6d4328aa7.png",
+      "bytes": 8506,
+      "sha256": "125aa1acca1a47407fd0c4badd3644aa58c9d9cf23e8cbf5896993cf08d6fab5",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/4b453e40865179b7359e.png",
+      "bytes": 8864,
+      "sha256": "9a1806e9baf8a68bfc90424a46ac5a02b56ba80a0270031e34dcc0523fb3ecf5",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/50b0bf3718a2e66c5a6b.png",
+      "bytes": 8070,
+      "sha256": "8055b78db05a933ef9fc0478e7c7b557206d9bce5ca560f9a12631bf6216db73",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/6cf914f181f713047e8f.png",
+      "bytes": 8879,
+      "sha256": "73b32db04cf56a968e65577d9b9a1bbc0369a0cb99be58a6013b2d69759022d6",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/7663fd80704bdbd61884.png",
+      "bytes": 8070,
+      "sha256": "8055b78db05a933ef9fc0478e7c7b557206d9bce5ca560f9a12631bf6216db73",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/87def46da1fe4b8ec177.png",
+      "bytes": 8482,
+      "sha256": "4e166b4ee48ddfdb02ae4d07da0691e024029910eecce22e792e33cb7e1c502b",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/8f205471ccbfc65ec2cd.png",
+      "bytes": 8879,
+      "sha256": "73b32db04cf56a968e65577d9b9a1bbc0369a0cb99be58a6013b2d69759022d6",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/91f1c79e32e1214227d1.png",
+      "bytes": 8482,
+      "sha256": "4e166b4ee48ddfdb02ae4d07da0691e024029910eecce22e792e33cb7e1c502b",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/ad2263e3a0b7918a9f46.png",
+      "bytes": 8506,
+      "sha256": "125aa1acca1a47407fd0c4badd3644aa58c9d9cf23e8cbf5896993cf08d6fab5",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/ad8351fbea85fc097d05.png",
+      "bytes": 8718,
+      "sha256": "7eda3f269a7636845d92fb15631b7f5bd645d568af5f1aeb359d03ffa046942d",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/add2ca6148d182e577bb.png",
+      "bytes": 8718,
+      "sha256": "7eda3f269a7636845d92fb15631b7f5bd645d568af5f1aeb359d03ffa046942d",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/bbb356f66cdf2651b39d.png",
+      "bytes": 8864,
+      "sha256": "9a1806e9baf8a68bfc90424a46ac5a02b56ba80a0270031e34dcc0523fb3ecf5",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/cbd6943b36957fa3b94e.png",
+      "bytes": 8497,
+      "sha256": "716126e2cbb2e0d7f850eded0f10111556c5ef3f834c7d71cc8d837aa7d08580",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/cd90095e85324950048a.png",
+      "bytes": 8891,
+      "sha256": "f97636b592ba6b7c24de0de68cf2015b812c7badb345d80d236ad7f49ac188dd",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/cf4018aee31552bbbddc.png",
+      "bytes": 8583,
+      "sha256": "db8361caebe9c83da9fdea2a71d87f207f568195d55573f99094295a31a8dbd2",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/ebd122fbea015336d1f3.png",
+      "bytes": 8381,
+      "sha256": "cc6101902d5d747d8e314a29338ddc7c93067d4f9d4005bbeb32a0d057b8f410",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/fc902ff7c4d2433ce3f7.png",
+      "bytes": 8891,
+      "sha256": "f97636b592ba6b7c24de0de68cf2015b812c7badb345d80d236ad7f49ac188dd",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/sheet-03069eaf09b813359e79.png",
+      "bytes": 47134,
+      "sha256": "3c696f2c3956a9b40c8b725c21234c18c709b36ddca6179fad47b22677f39879",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/sheet-54249ef40da1c487625d.png",
+      "bytes": 47134,
+      "sha256": "3c696f2c3956a9b40c8b725c21234c18c709b36ddca6179fad47b22677f39879",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/sheet-961206d47a4307577456.png",
+      "bytes": 46195,
+      "sha256": "cad9743e9e98ed599e0497f967b5bd14fe1f0810ea3c5a598e80f500b8d35e18",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/fonts-preview/pages/sheet-b66c0e423152774d4d05.png",
+      "bytes": 46195,
+      "sha256": "cad9743e9e98ed599e0497f967b5bd14fe1f0810ea3c5a598e80f500b8d35e18",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-e2e/identity.json",
+      "bytes": 8,
+      "sha256": "b460644a73d5df6998c57c4eaf43ebc3e595bd06930af6e42d0008f84d91c849",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/reuse-assets.json",
+      "bytes": 1325,
+      "sha256": "34574f2e2418cc845c1d8cf0613fd90679f821947cd7bbbdd50a310608fe7f59",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/reuse-brief.json",
+      "bytes": 968,
+      "sha256": "57b8ae7a8dbb8a082e444dd4e4f2943afb79250dda2a884b00bc8b1a2c5fe1b2",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/reuse-plan.json",
+      "bytes": 12730,
+      "sha256": "71b371b9423b37077ba7ee5730d5fb6b71dd1a6a03e803bee53382b45e569ae4",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/reuse-spec.json",
+      "bytes": 434,
+      "sha256": "a4b4cba2bc4abb56699404bd7fc75d432e1c707a10c3d4f221a24807f2b1f8f2",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/reuse-e2e/reuse.png",
+      "bytes": 5434,
+      "sha256": "f607234bb68f1a95815117a980ac45defb82cf8a96872b023b4c25e3f092b5ad",
+      "kind": "image"
+    },
+    {
+      "path": "audit/reuse-test.log",
+      "bytes": 1185,
+      "sha256": "b8e6afe13e1896e76c735aaa56d310e596a4071b41a48f35b4d3a4f396d56c5c",
+      "kind": "text",
+      "lines": 30
+    },
+    {
+      "path": "audit/selftest-3-10-22.log",
+      "bytes": 30656,
+      "sha256": "d1260e243170c93cb36172498237c8b886bdbdaf0ff665474c69cdd4a227d758",
+      "kind": "text",
+      "lines": 451
+    },
+    {
+      "path": "audit/selftest-3-12-15.log",
+      "bytes": 30656,
+      "sha256": "d1260e243170c93cb36172498237c8b886bdbdaf0ff665474c69cdd4a227d758",
+      "kind": "text",
+      "lines": 451
+    },
+    {
+      "path": "audit/selftest-3-13-16.log",
+      "bytes": 30656,
+      "sha256": "d1260e243170c93cb36172498237c8b886bdbdaf0ff665474c69cdd4a227d758",
+      "kind": "text",
+      "lines": 451
+    },
+    {
+      "path": "audit/size.json",
+      "bytes": 1338,
+      "sha256": "55c7755bf4dfeab6099c6975bda7d9a435305f2421ef6f51399453228f6cd693",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/size.log",
+      "bytes": 1338,
+      "sha256": "55c7755bf4dfeab6099c6975bda7d9a435305f2421ef6f51399453228f6cd693",
+      "kind": "text",
+      "lines": 57
+    },
+    {
+      "path": "audit/smoke-3-10-22.log",
+      "bytes": 1435,
+      "sha256": "515d0f645d853a21950f4ce380f18ee2f1f2236e278b2ff706e643f377d7c163",
+      "kind": "text",
+      "lines": 3
+    },
+    {
+      "path": "audit/smoke-3-12-15.log",
+      "bytes": 1436,
+      "sha256": "0e22113d6c876c3aa4d3d05995bbc849d27c3314346624e9b8b58bffeaf9421c",
+      "kind": "text",
+      "lines": 3
+    },
+    {
+      "path": "audit/smoke-3-13-16.log",
+      "bytes": 1437,
+      "sha256": "a1fc68c4c39f2fa0aef124e8dfcd928e9ec99c66a0de17d4d2e378bf9c5c5f70",
+      "kind": "text",
+      "lines": 3
+    },
+    {
+      "path": "audit/target-review.csv",
+      "bytes": 924,
+      "sha256": "5f453c28fe5c83e58e835aadf4cfa4e7b04ed9d949b96e268237fcf7ef9b3f6b",
+      "kind": "text",
+      "lines": 8
+    },
+    {
+      "path": "audit/transfer-after.json",
+      "bytes": 3828,
+      "sha256": "980022788d3a959308f7aa1b80694e5b3d01cf0dee8c7096890755ebf4f674e5",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "audit/transfer-after.log",
+      "bytes": 796,
+      "sha256": "847fa5bb7c20d70639f4fd3de973518222b10d0918fc0f63eefdb37e996f4d88",
+      "kind": "text",
+      "lines": 8
+    },
+    {
+      "path": "audit/uv-install.log",
+      "bytes": 423,
+      "sha256": "3cb0a601414fe2798cc1b2fd1c90398dbd6077aa22aaffe9b1d63a7d68e489a2",
+      "kind": "text",
+      "lines": 6
+    },
+    {
+      "path": "audit/validate.py",
+      "bytes": 3746,
+      "sha256": "cc20570991e428cd6f675b14e04290a5a968bd04023bd70c0c3039c1bbcd4890",
+      "kind": "python",
+      "functions": 1
+    },
+    {
+      "path": "audit/validation-run.log",
+      "bytes": 416,
+      "sha256": "b950f2eb68f9f3a155b7c4956c5f1b2a90b880dc98cc17f7ab5cd123e617ad0c",
+      "kind": "text",
+      "lines": 21
+    },
+    {
+      "path": "audit/validation.json",
+      "bytes": 11342,
+      "sha256": "dedd4351a85847f82233f11d27a0237bdb4c4712ce31cad185974b59f85333fd",
+      "kind": "json",
+      "root_type": "list"
+    },
+    {
+      "path": "audit/vulture-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "text",
+      "lines": 0
+    },
+    {
+      "path": "audit/vulture-install.log",
+      "bytes": 205,
+      "sha256": "f92552c97f87b77bc7955a1e578afd2c8255d666a6c10966ee79a5687b04298d",
+      "kind": "text",
+      "lines": 5
+    },
+    {
+      "path": "audit/vulture.log",
+      "bytes": 80,
+      "sha256": "39018888d03b5c34c97cc38568ebfa851d0c5cf90b0ffcdf742c806568c5ddb7",
+      "kind": "text",
+      "lines": 1
+    },
+    {
+      "path": "audit/whitespace.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "text",
+      "lines": 0
+    },
+    {
+      "path": "benchmark/baseline_9.26.json",
+      "bytes": 18157,
+      "sha256": "fda498431363b03aec08bcacf3d545437c75b0f5b534dadd81e2e2f66e6cf802",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "benchmark/cases.json",
+      "bytes": 10946,
+      "sha256": "be8ab6e87e8dd07d5d9da89723623b6534a16b348271c5a59b67764d3baf8c44",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "benchmark/holdout.json",
+      "bytes": 4974,
+      "sha256": "def354336ce12f56da6680f6eae873041aa30bed4d4e1478e77aac457cb37663",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "benchmark/transfer.json",
+      "bytes": 2054,
+      "sha256": "7ff5cc416fecca8389cafb159d83a43f557f025ba92af4688b8dd759aadad536",
+      "kind": "json",
+      "root_type": "dict"
+    },
+    {
+      "path": "pyproject.toml",
+      "bytes": 1691,
+      "sha256": "992e51427c2cbcc1f778e7d4a4653d556956a3cec0afdf9592b3e9c02497dad6",
+      "kind": "text",
+      "lines": 44
+    },
+    {
+      "path": "references/assets.md",
+      "bytes": 3260,
+      "sha256": "5842417120155058faa884e7fdcfdeefe9b2b7b04558125bcce45bf953eed08b",
+      "kind": "text",
+      "lines": 50
+    },
+    {
+      "path": "references/contract.md",
+      "bytes": 11022,
+      "sha256": "fdc3395675bd3153081937f9d53ed24c0266a7d343d0ed64f9189feb9fa87fea",
+      "kind": "text",
+      "lines": 138
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 392,
+      "sha256": "89f6b6917b5a094e4e6a57c55c716418bc0de10d2d263b2332678f8b45cbc799",
+      "kind": "text",
+      "lines": 7
+    },
+    {
+      "path": "scripts/assets.py",
+      "bytes": 113767,
+      "sha256": "54fab9936a259d1d7f9fb05309e73617baa8c9691a2240425a97620edd2175a2",
+      "kind": "python",
+      "functions": 42
+    },
+    {
+      "path": "scripts/bench.py",
+      "bytes": 13903,
+      "sha256": "89285827f0c385027a6ee014aebd45bedb1806bee1a83e0b7e3888f147b6b4af",
+      "kind": "python",
+      "functions": 11
+    },
+    {
+      "path": "scripts/compiler.py",
+      "bytes": 91324,
+      "sha256": "da1ca1ca475f7d5d0238b3d92ef7fb3cec2d0d4d932c6d2a7199dc559a9ee1a1",
+      "kind": "python",
+      "functions": 31
+    },
+    {
+      "path": "scripts/ghost.py",
+      "bytes": 87527,
+      "sha256": "187dd23bc414c77cdc36bbc40f80537ce2687d9ffb1c74593d769156dcc98ce6",
+      "kind": "python",
+      "functions": 38
+    },
+    {
+      "path": "scripts/intelligence.py",
+      "bytes": 176432,
+      "sha256": "93eef46316c556437e491be05338bcc3e39dbc4de79883bc7918bed564b67bbf",
+      "kind": "python",
+      "functions": 70
+    },
+    {
+      "path": "scripts/primitives.py",
+      "bytes": 73739,
+      "sha256": "3454b6dd796804452c674c15cb2c1a2a4526ef71413bef6f3e6123198d17eeb8",
+      "kind": "python",
+      "functions": 63
+    },
+    {
+      "path": "scripts/selftest.py",
+      "bytes": 206039,
+      "sha256": "efde9e53024b7ba8041b3d53b1d17fd74731bc1f4c6c2b2d87f7771cd1a204de",
+      "kind": "python",
+      "functions": 15
+    },
+    {
+      "path": "scripts/vao.py",
+      "bytes": 52122,
+      "sha256": "e214fe5123569715fe7d42b31a105f39a81c0f24c50808897a48f84480249576",
+      "kind": "python",
+      "functions": 15
+    },
+    {
+      "path": "scripts/verify.py",
+      "bytes": 57302,
+      "sha256": "20455e3331b81d48317639a1ec929fd09d2ac4aa038b5c0e0663c22112c7b8d8",
+      "kind": "python",
+      "functions": 31
+    },
+    {
+      "path": "templates/brief.yml",
+      "bytes": 4591,
+      "sha256": "0dc5a923ad9276fd98bf6ab2b774630c91c2794890137553387f65514116c1d2",
+      "kind": "text",
+      "lines": 65
+    }
+  ],
+  "note": "Paths are tracked in HEAD; file bytes are read from the current working tree (may be modified). New untracked review/ and benchmark fixture files are not included. Audit is historical evidence, not rerun."
+}

@@ -1,0 +1,4 @@
+FAIL fail [critical] 话题                       role=summarize ev=none cmp=False claim=extracted media=none
+      ✗ evidence: 期望 ∈ ['impossible']，实际 none
+
+案例通过 0/1 · 判断准确率 0.0% · 图像/图表/结构误判率 100.0% · 严重缺陷率 100.0%（1 个 critical 案例）

@@ -42,6 +42,7 @@ def _actual(case: dict) -> dict:
     u = judged["understanding"]
     return {"role": judged["visual_role"]["role"], "evidence": u.get("evidence"),
             "comparison": bool(u.get("comparison")), "claim": judged["claim"]["source"],
+            "claim_text": judged["claim"].get("text"),
             "media": judged["media"]["decision"], "media_source": judged["media"]["source"],
             "media_suggested": judged["media"].get("suggested")}
 
@@ -234,6 +235,10 @@ def _print(report: dict) -> None:
 
 
 def main(argv=None) -> int:
+    # 与生产入口共用 UTF-8 管道契约。Windows 的 cp1252 stdout 会在打印
+    # 中文 FAIL 详情前抛 UnicodeEncodeError：退出码仍是 1，却不是真实负例结果。
+    from vao import force_utf8_stdio
+    force_utf8_stdio()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["blind"]:
         if len(argv) >= 3 and argv[1] == "pack":
