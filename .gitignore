@@ -6,7 +6,7 @@ __pycache__/
 venv/
 
 # 产物与本地状态（可重新生成，不入库）
-*.pptx
+
 *.pdf
 *_vao/
 *_preview/
