@@ -10,7 +10,6 @@ import math
 from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Pt
-from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSITION, XL_MARKER_STYLE, XL_LEGEND_POSITION
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
@@ -819,6 +818,7 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
         ctx.warn(f"chart '{eid}': 多序列图缺少 series 或 categories，已跳过")
         return
     n_cat = len(categories)
+    from pptx.chart.data import CategoryChartData  # 无原生图表时不加载工作簿写入器
     data = CategoryChartData()
     data.categories = categories
     for name, nums in parsed:
@@ -886,6 +886,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
     invalid = [r for r in rows if r.get("invalid")]
     if invalid:
         ctx.warn(f"chart '{element.get('id')}': {len(invalid)} 个数据值无法解析为有限数字，已按 0 计算；请修正原始数据")
+    from pptx.chart.data import CategoryChartData  # 无原生图表时不加载工作簿写入器
     data = CategoryChartData()
     data.categories = [r["label"] for r in rows]
     data.add_series(str(element.get("series_name", "")), [r["value"] for r in rows])

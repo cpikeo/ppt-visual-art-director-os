@@ -1488,24 +1488,33 @@ def test_production(tmp: Path):
     # 字面回落必须可查：本机缺 CJK 字面时页图仍「成功」产出，但中文字形是缺的。
     # 预览记录不带这一条，读图的人就分不清「排版如此」与「本机没字体」。
     import ghost as ghost_mod
-    key_with_fonts = _page_key(spec["slides"][0], spec, 0.4, 1, 1)
-    saved_candidates = ghost_mod._FONT_CANDIDATES
-    saved_stamp, saved_fallbacks = ghost_mod._FONT_STAMP, dict(ghost_mod._FONT_FALLBACKS)
+    import primitives as font_facts
+    saved_candidates = dict(ghost_mod._FONT_CANDIDATES)
+    saved_bold_candidates = dict(ghost_mod._FONT_BOLD_CANDIDATES)
+    saved_stamp, saved_fallbacks = font_facts._PREVIEW_FONT_STAMP, dict(ghost_mod._FONT_FALLBACKS)
     saved_font_cache = dict(ghost_mod._FONT_CACHE)
+    # 候选身份变更是测试输入，不依赖宿主是否安装任何字库。
+    probe_font = tmp / "identity-probe.ttf"
+    probe_font.write_bytes(b"identity fixture, not a usable font")
+    ghost_mod._FONT_CANDIDATES["cjk"] += (str(probe_font),)
+    ghost_mod._font_stamp(refresh=True)
+    key_with_fonts = _page_key(spec["slides"][0], spec, 0.4, 1, 1)
     try:
-        ghost_mod._FONT_CANDIDATES = {role: () for role in saved_candidates}
-        ghost_mod._FONT_STAMP = None
+        ghost_mod._FONT_CANDIDATES.update({role: () for role in saved_candidates})
+        ghost_mod._FONT_BOLD_CANDIDATES.update({role: () for role in saved_bold_candidates})
+        font_facts._PREVIEW_FONT_STAMP = None
         ghost_mod._FONT_CACHE.clear()          # 字面已缓存时不会走回落分支
         ghost_mod._FONT_FALLBACKS.clear()
         ghost_mod.ghost_page(spec["slides"][0], spec, scale=0.4, supersample=1)
         fallbacks = ghost_mod.font_fallbacks()
         check("ghost: 无字面可用时记账（预览不得静默丢掉中文字形）",
-              fallbacks.get("cjk") == 1 or fallbacks.get("cjk_serif") == 1, str(fallbacks))
+              sum(fallbacks.get(r, 0) for r in ("cjk", "cjk_serif")) >= 1, str(fallbacks))
         check("ghost: 字面身份进页缓存键（换字体必须重画）",
               _page_key(spec["slides"][0], spec, 0.4, 1, 1) != key_with_fonts)
     finally:
-        ghost_mod._FONT_CANDIDATES = saved_candidates
-        ghost_mod._FONT_STAMP = saved_stamp
+        ghost_mod._FONT_CANDIDATES.update(saved_candidates)
+        ghost_mod._FONT_BOLD_CANDIDATES.update(saved_bold_candidates)
+        font_facts._PREVIEW_FONT_STAMP = saved_stamp
         ghost_mod._FONT_CACHE.clear()
         ghost_mod._FONT_CACHE.update(saved_font_cache)
         ghost_mod._FONT_FALLBACKS.clear()
@@ -1569,6 +1578,12 @@ def test_production(tmp: Path):
     saved_fonts = dict(_g._FONT_CACHE)
     try:
         with patch.object(Path, "exists", return_value=True), \
+                patch.dict(_g._FONT_CANDIDATES, {
+                    "cjk": ("/fonts/NotoSansCJK-Regular.ttc",),
+                    "cjk_serif": ("/fonts/NotoSerifCJK-Regular.ttc",)}), \
+                patch.dict(_g._FONT_BOLD_CANDIDATES, {
+                    "cjk": ("/fonts/NotoSansCJK-Bold.ttc",),
+                    "cjk_serif": ("/fonts/NotoSerifCJK-Bold.ttc",)}), \
                 patch.object(_g.ImageFont, "truetype") as load_font:
             _g._FONT_CACHE.clear()
             for family in ("", "_serif"):
@@ -2470,7 +2485,7 @@ def test_design_judgment(tmp: Path):
           not intel.understand("对比评估")["comparison"])
     check("compare: 「N 倍」是比较断言",
           intel.understand("高端线售价是泰国的 1.6 倍")["comparison"])
-    # 16 · 规格列举（不同单位的数字）不是序列；同单位的三个数字仍是序列
+    # 16 · 规格列举不是序列；同单位也需要明确时间/变化轴
     spec = intel.understand("规格：3 次烧成，1280℃，0.6–0.8 毫米")
     check("series: 不同单位的规格列举不被判为序列",
           spec["evidence"] != "series", spec["evidence"])
@@ -2517,8 +2532,8 @@ def test_design_judgment(tmp: Path):
           and intel.media_necessity(intel.understand("华东 6 家门店走访记录"), "prove",
                                     declared="required")["decision"] == "required",
           str(walk))
-    # 21 · 部分与整体靠算术：两个百分比合计 100% 即整体的两部分；三项并列是结构
-    check("part_whole: 百分比合计 100% 即部分与整体（不靠「其中」一词）",
+    # 21 · 部分与整体需要明确分解语义；算术相加本身不是共同分母的证据
+    check("part_whole: 明示其中且合计 100% 的构成候选",
           intel.understand("其中 68% 来自老客户，32% 来自新客")["evidence"] == "part_whole")
     check("structure: 三项以上并列（无数值）是结构",
           intel.understand("渠道分三类：直营、经销、电商")["evidence"] == "structure")
@@ -2822,6 +2837,116 @@ def test_design_judgment(tmp: Path):
               warnings=[]).get("open_questions") or [])))
 
 
+def test_audit_boundaries(tmp):
+    """独立关系不变式 + 字体/文件缓存身份；不把结构证据升级为视觉终验。"""
+    import os
+    import ghost as g
+    import bench
+    from unittest.mock import patch
+    from primitives import file_digest, json_read_cached
+    holdout = bench.run(ROOT / "benchmark" / "holdout.json")
+    for row in holdout["cases"] + bench.run(ROOT / "benchmark" / "transfer.json")["cases"]:
+        check("holdout: " + row["id"], row["passed"], str(row["checks"]))
+    probe = subprocess.run([sys.executable, "-c",
+        f"import sys; sys.path.insert(0, {str(SCRIPTS)!r}); import compiler; assert 'xlsxwriter' not in sys.modules"],
+        capture_output=True, encoding="utf-8")
+    check("import: 无原生图表任务不预载工作簿写入器", probe.returncode == 0, probe.stderr[-300:])
+    # 基准 CLI 是质量门，不能打印 FAIL 后仍退 0。
+    bad_cases = tmp / "bad-cases.json"
+    bad_cases.write_text(json.dumps({"cases": [{"id": "fail", "category": "test",
+        "severity": "critical", "index": 0, "total": 1, "title": "话题",
+        "expect": {"evidence": ["impossible"]}}]}), encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(SCRIPTS / "bench.py"), "--cases", str(bad_cases)],
+                          capture_output=True, encoding="utf-8")
+    check("bench: 判断失败必须非零退出", proc.returncode == 1 and "FAIL" in proc.stdout)
+    # 保持 size/mtime 的外部写入不能绕过同进程 JSON 与摘要缓存。
+    f = tmp / "identity.json"
+    f.write_text('{"v": 1}', encoding="utf-8")
+    first = file_digest(f); json_read_cached(f); st = f.stat()
+    f.write_text('{"v": 2}', encoding="utf-8")
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    check("identity: 同尺寸恢复 mtime 的覆盖仍失效",
+          file_digest(f) != first and json_read_cached(f) == {"v": 2})
+    st = f.stat(); first = file_digest(f)
+    other = tmp / "replacement.json"; other.write_text('{"v": 3}', encoding="utf-8")
+    os.utime(other, ns=(st.st_atime_ns, st.st_mtime_ns)); os.replace(other, f)
+    check("identity: 同尺寸同 mtime 的原子替换仍失效",
+          file_digest(f) != first and json_read_cached(f) == {"v": 3})
+    # 同图跨页与不同 QC 区域：一个事实一个主条目，不让重复 ID 阻断整稿。
+    import assets, intelligence
+    from PIL import Image, ImageDraw
+    image = tmp / "reuse.png"
+    pic = Image.new("RGB", (1280, 720), (240, 236, 228))
+    ImageDraw.Draw(pic).ellipse((700, 200, 1000, 500), fill=(120, 90, 60))
+    pic.save(image)
+    common = dict(title="图像绑定", content="原创测试插图，不是证词", asset="required",
+                  asset_role="background", asset_source=dict(kind="original", path=str(image), source="synthetic fixture"))
+    brief = dict(BRIEF, slides=[dict(common, id="a"), dict(common, id="b")])
+    bundle = intelligence.think(brief)
+    manifest = assets.build_manifest(brief, bundle)
+    entries = assets.asset_entries(manifest)
+    check("asset: 同图同 QC 契约合并主条目和页绑定",
+          len(entries) == 1 and entries[0]["slide_ids"] == ["a", "b"])
+    brief["slides"][1]["safe_area"] = dict(x=0.5, y=0.1, width=0.3, height=0.7)
+    split = assets.asset_entries(assets.build_manifest(brief, intelligence.think(brief)))
+    check("asset: 同图不同安全区不合并 QC", len(split) == 2 and split[0]["asset_id"] != split[1]["asset_id"])
+    # 完整入口复验两页复用：真实像素 QC / 绑定 / 编译 / 全页取证都必须通过。
+    brief["slides"][1].pop("safe_area")
+    brief_path = tmp / "reuse-brief.json"
+    brief_path.write_text(json.dumps(brief), encoding="utf-8")
+    plan_path, manifest_path = tmp / "reuse-plan.json", tmp / "reuse-assets.json"
+    plan_run = run_vao("plan", str(brief_path), "--out", str(plan_path), "--assets-out", str(manifest_path), "--json")
+    planned = json.loads(manifest_path.read_text(encoding="utf-8"))
+    aid = planned["assets"][0]["asset_id"]
+    deck = dict(canvas=dict(width=1280, height=720), theme={"colors": {"background": "#FFFFFF"}}, slides=[dict(id=sid,
+        elements=[dict(id="image", type="image", asset_id=aid, x=80, y=120, width=640, height=360, fit="cover")]) for sid in ("a", "b")])
+    build = tmp / "reuse-spec.json"; build.write_text(json.dumps(deck), encoding="utf-8")
+    production = run_vao("check", str(build), str(tmp / "reuse.pptx"), "--assets-manifest", str(manifest_path), "--mode", "release", "--speed", "strict", "--json")
+    check("asset: 两页同图复用端到端 release strict 通过", plan_run.returncode == 0 and production.returncode == 0, production.stdout[-500:])
+    import primitives as font_facts
+    saved = (font_facts._PREVIEW_FONT_STAMP, dict(g._FONT_CACHE), dict(g._FONT_FALLBACKS), g._FONT_IDENTITY)
+    try:
+        # mock 字体对象而非依赖宿主是否装 Noto：无候选/坏候选均精确计数。
+        with patch.object(Path, "exists", return_value=False), \
+                patch.object(g.ImageFont, "load_default", wraps=g.ImageFont.load_default) as default:
+            g._FONT_CACHE.clear(); g._FONT_FALLBACKS.clear()
+            g._font(20, cjk=True); g._font(20, cjk=True)
+            g._font(28, cjk=True); g._font(20, cjk=True, bold=True)
+            check("font: 回退按字号字重缓存项累计，命中不重复记账",
+                  default.call_count == 3 and g.font_fallbacks() == {"cjk": 3})
+        with patch.object(Path, "exists", return_value=True), \
+                patch.object(g.ImageFont, "truetype", side_effect=OSError("bad font")), \
+                patch.object(g.ImageFont, "load_default", return_value=object()) as default:
+            g._FONT_CACHE.clear(); g._FONT_FALLBACKS.clear()
+            g._font(20, cjk=True, bold=True)
+            check("font: 所有候选损坏仍回退并记账", default.call_count == 1 and g.font_fallbacks() == {"cjk": 1})
+        build = make_build(tmp, chart=False)
+        from vao import load_spec, _ghost
+        spec = load_spec(build)[0]
+        target = tmp / "fonts-preview"
+        initial = _ghost(spec, target, speed="strict", output_sha="test")
+        warm = _ghost(spec, target, speed="strict", output_sha="test")
+        code = (f"import sys; sys.path.insert(0, {str(SCRIPTS)!r}); "
+                "import primitives as f; "
+                f"f.PREVIEW_FONT_CANDIDATES.update({g._FONT_CANDIDATES!r}); "
+                f"f.PREVIEW_FONT_BOLD_CANDIDATES.update({g._FONT_BOLD_CANDIDATES!r}); "
+                "from vao import load_spec, _ghost; "
+                f"r = _ghost(load_spec({str(build)!r})[0], {str(target)!r}, speed='strict', output_sha='test'); "
+                "assert r['reused']; assert not {'ghost', 'PIL', 'compiler', 'pptx'} & set(sys.modules)")
+        probe = subprocess.run([sys.executable, "-c", code], capture_output=True, encoding="utf-8")
+        check("font: 暖预览仍核对字体身份且零 PIL/ghost/Office 导入", probe.returncode == 0, probe.stderr[-300:])
+        with patch.dict(g._FONT_BOLD_CANDIDATES, {"cjk_serif": (str(tmp / "changed-bold.ttf"),)}):
+            changed = _ghost(spec, target, speed="strict", output_sha="test")
+        check("font: 未变整套预览复用，粗体候选变化使整套和页缓存失效",
+              warm["reused"] and not changed["reused"]
+              and changed["fonts"] != initial["fonts"] and changed["pages_drawn"] == 5)
+    finally:
+        font_facts._PREVIEW_FONT_STAMP = saved[0]
+        g._FONT_IDENTITY = saved[3]
+        g._FONT_CACHE.clear(); g._FONT_CACHE.update(saved[1])
+        g._FONT_FALLBACKS.clear(); g._FONT_FALLBACKS.update(saved[2])
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -2857,7 +2982,8 @@ def main():
                          ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries),
                          ("release_evidence", test_release_evidence),
                          ("design_judgment", test_design_judgment),
-                         ("boundary_typography", test_boundary_typography)):
+                         ("boundary_typography", test_boundary_typography),
+                         ("audit_boundaries", test_audit_boundaries)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

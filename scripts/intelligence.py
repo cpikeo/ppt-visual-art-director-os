@@ -171,7 +171,7 @@ _PHASE_MARKERS = re.compile(r"[一二三四五六七八九十\d]期|第[一二�
 _SEQUENCE_STRONG = ("步骤", "流程", "阶段", "迭代", "roadmap", "phase", "step",
                     "milestone", "里程碑")
 # 顺序的**形状**标记：箭头链本身就是序列，不需要作者写「步骤」两个字。
-SEQUENCE_MARKERS = {"→", "⇒", "➜", "⇢"} | {"-"}
+SEQUENCE_MARKERS = ("→", "⇒", "➜", "⇢", "->")
 _QUANTIFIED_ARROW = re.compile(
     r"\d+(?:[.,]\d+)?\s*(?:%|％|pp|万|亿|元|家|人|次)?\s*"
     r"(?:→|⇒|➜|⇢|->)\s*\d+")
@@ -785,7 +785,12 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     same_unit = len({n.get("unit") or "" for n in (compared or ev)}) <= 1
     chars = max(len(text), 1)
     pct = [n["value"] for n in ev if (n.get("unit") or "") in ("%", "％")]
-    pct_whole = len(pct) >= 2 and abs(sum(pct) - 100) < 0.5
+    # 算术相加不能证明共同分母或互斥；必须有作者的分解语义。
+    pct_clauses = [c for c in _CLAUSE_SPLIT.split(body) if re.search(r"\d\s*[%％]", c)]
+    pct_whole = (len(pct) >= 2 and all(0 <= p <= 100 for p in pct)
+                 and abs(sum(pct) - 100) < 0.5
+                 and (_hit(body, ("其中", "构成", "分配", "份额"))
+                      or (pct_clauses and all("占比" in c for c in pct_clauses))))
     is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole
     # 阈值列举：多个子句各带一个数、且单位互不相容（「连续两月低于 15 万元；退货率高于 8%；
     # 流失超过 2 人」）是并列条件，没有两端可比的量。「高于/低于/超过」在这里只是阈值词，
@@ -806,8 +811,9 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 只在无量化竞争/比较/时间推进时采信显式关系；标题不参与关系抽取。
     relation_text = body if content is None else str(content)
     relations = explicit_relations(relation_text)
-    if ev or is_comparison or _hit(relation_text, _SEQUENCE_WORDS) or SEQUENCE_MARKERS & set(relation_text):
+    if ev or is_comparison or _hit(relation_text, _SEQUENCE_WORDS) or any(mark in relation_text for mark in SEQUENCE_MARKERS):
         relations = []
+    evidence_body = _evidence_body(body)  # 复合名词过滤一次，下游共用
     modes: dict[str, float] = {}
     if is_comparison or (distinct >= 2 and has_chart and years < 2):
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
@@ -818,18 +824,21 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 「三个以上同单位数字」不是序列的充分条件：规格行/并列量同样满足它，
     # 但没有时间与到达语义——那种形状是枚举，不是路径（_is_quantile_row）。
     quantile_row = _is_quantile_row(body)
-    if (distinct >= 2 and _hit(_evidence_body(body), _SERIES_WORDS)) \
-            or (distinct >= 3 and same_unit and not quantile_row) \
+    if (distinct >= 2 and _hit(evidence_body, _SERIES_WORDS)) \
+            or (distinct >= 2 and same_unit and (years >= 2 or len(axis_tokens) >= 2)
+                and not quantile_row) \
             or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
-    if _hit(_evidence_body(body), _STRUCTURE_WORDS) \
+    if _hit(evidence_body, _STRUCTURE_WORDS) \
             or (not ev and _ENUM_LIST.search(body) and _TAXONOMY_CUE.search(body)) \
             or threshold_list:
         modes["structure"] = 0.65
-    seq_strong = _hit(body, _SEQUENCE_STRONG)
-    seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in body)
+    # 否定某种表达关系不是该关系的证据；只去掉被直接否定的形态词。
+    sequence_body = re.sub(r"(?:不是|并非|不代表|不等于)(?:时间序列|流程|步骤|阶段|路径|迭代|里程碑)", "", body)
+    seq_strong = _hit(sequence_body, _SEQUENCE_STRONG)
+    seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in sequence_body)
     if seq_strong or seq_hits >= 2:
         # 顺序词出现得越多，形状越是「有步骤的行动」，越不该被一个孤立的时长数字
         # 压成 number（实测：三段里程碑 + 总计 18 个月的排期页被判成 number）。
@@ -837,7 +846,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         # 扩张」是优先级，不是流程）。只有流程名（步骤/流程/里程碑…）或两个以上
         # 顺序标记才构成序列形状，否则决策页会被派成时间轴。
         modes["sequence"] = 0.6 + 0.05 * min(seq_hits or 1, 4)
-    if SEQUENCE_MARKERS & set(body):
+    if any(mark in body for mark in SEQUENCE_MARKERS):
         # 两个可比较的量由箭头连起来是变化，不是『步骤模板』；有明确阶段词
         # 则仍由真实流程承担形状。无数字的箭头链维持原先的顺序判定。
         phases = _hit(body, ("阶段", "步骤", "流程", "里程碑", "phase", "step"))
@@ -855,7 +864,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 主题实体也走复合名词过滤：「结构性增长」里的「结构」不是建筑实体，
     # 否则一句抽象封面主张会推导出一个石头与混凝土的世界，并给封面派一张图。
     subjects = [name for name, spec in _MATERIAL_LEXICON.items()
-                if _hit(_evidence_body(body), spec["words"])]
+                if _hit(evidence_body, spec["words"])]
     return {
         "evidence": dominant,
         **({"relations": relations} if relations else {}),
@@ -1736,7 +1745,7 @@ def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
     return best
 
 
-def measure_of(text_len: int, *, has_long_lead: bool = False) -> dict:
+def measure_of(text_len: int) -> dict:
     """按内容长度给栏宽起点；不是实测字体容量或固定排版配额。"""
     if text_len >= 220:
         cjk, note = 30, "长文窄栏：信息密度高，窄栏换取回扫可靠"
@@ -2365,6 +2374,8 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
         open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）")
     if media["source"] == "hint":
         open_q.append("图像：内容提到人物或场所，但未声明是否配图；需要时声明 asset: required")
+    if u.get("evidence") == "part_whole":
+        open_q.append("构成候选：核对共同分母、期间与类别互斥性；合计 100% 本身不证明整体。")
     if u.get("evidence") == "comparison" and not u.get("same_unit", True) \
             and claim_units_conflict(claim_text):
         open_q.append("比较量的单位不同：先统一口径，或在同屏解释两端不可直接相减。")

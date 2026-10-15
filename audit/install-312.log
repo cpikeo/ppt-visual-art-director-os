@@ -1,0 +1,17 @@
+Using Python 3.12.15 environment at: /home/user/.venv312
+Resolved 7 packages in 45ms
+Downloading lxml (5.0MiB)
+Downloading pillow (6.6MiB)
+Downloading numpy (16.0MiB)
+ Downloaded lxml
+ Downloaded pillow
+ Downloaded numpy
+Prepared 4 packages in 423ms
+Installed 7 packages in 17ms
+ + lxml==6.1.3
+ + numpy==2.5.4
+ + pillow==12.3.0
+ + python-pptx==1.0.2
+ + pyyaml==6.0.3
+ + typing-extensions==4.16.0
+ + xlsxwriter==3.2.9

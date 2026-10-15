@@ -1849,6 +1849,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     cap = len(generation_ids)  # 作者声明的出图数；图像不设自动额度
     assets: list = []
     by_fingerprint: dict = {}
+    by_existing: dict = {}
     generated_count = 0
     skipped_pages: list = []
     for page in pages:
@@ -1865,8 +1866,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             op = _Path(origin["path"]).expanduser()
             base = _Path((bundle.get("workflow") or {}).get("brief_path") or ".").resolve().parent
             origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
-            aid = "existing-" + digest(origin)[:16]
-            assets.append({"asset_id": aid, "slide_ids": [sid], "decision": "existing",
+            entry = {"slide_ids": [sid], "decision": "existing",
                            "origin": origin,
                            "asset_function": raw.get("asset_function", "context"),
                            "asset_role": str(raw.get("asset_role") or "").strip().lower() or None,
@@ -1875,7 +1875,15 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
                                raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
                            "meta": {"text_color": raw.get("text_color")},
                            "retry_budget": 0,
-                           "background_color": _page_background_color(raw, plan_deck)})
+                           "background_color": _page_background_color(raw, plan_deck)}
+            # 同素材/同 QC 契约只测一次；不同压字区/底色不能被错误合并。
+            aid = "existing-" + digest({k: v for k, v in entry.items() if k != "slide_ids"})[:16]
+            if aid in by_existing:
+                by_existing[aid]["slide_ids"].append(sid)
+            else:
+                entry["asset_id"] = aid
+                by_existing[aid] = entry
+                assets.append(entry)
             continue
         if decision == "none":
             skipped_pages.append({"slide_id": sid, "decision": "skip",

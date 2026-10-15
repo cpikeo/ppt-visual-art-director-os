@@ -70,60 +70,21 @@ def _stamp_after_write(target: Path, before_ns: int | None) -> None:
         pass
 
 
-# 进程级的「这一轮文件是什么」：一个键（size + mtime_ns）+ 一份读到的内容。
-# 字节摘要与 JSON 解析共用同一个 stat 与同一个键空间——同一份文件在一轮执行里
-# 只 stat 一次、只判一次新鲜度；两个缓存各写一套是重复劳动。
-_FILE_KEY_CACHE: dict[str, tuple[tuple[int, int], dict]] = {}
-FILE_KEY_CACHE_MAX = 512
-
-
 def file_digest(path) -> str | None:
-    """全文件字节 SHA-256（全库唯一实现，qa/asset_workflow/compile_cache 共用）。
-    缺失/不可读返回 None——证据链把 None 当「文件不存在」处理，不当空串。
+    """读取当前字节的 SHA-256；元数据不充当 strict 的内容凭证。
 
-    同一进程内同一份字节只算一次（凭证 = size + mtime_ns，与读一次/缓存探测同一套口径）：
-    发布证据链要在多处核对同一批产物（预览页、QC 引擎、锁定的产物），它们在一个进程里
-    不会变——重算只是把同样的字节再读一遍。字节变了凭证立刻变，重算照旧。
+    同尺寸、恢复 mtime、同一 ctime 刻度内的写入在真实文件系统上都可能发生。
+    同一轮已在手的摘要由调用方显式传递；不在进程全局猜测磁盘未变。
     """
-    hit = _file_state(path)
-    if hit is None:
-        return None
-    target, stamp, cached = hit
-    if cached.get("digest") is not None:
-        return cached["digest"]
     try:
         h = hashlib.sha256()
-        with target.open("rb") as f:
+        with Path(path).expanduser().open("rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):
                 h.update(chunk)
-        value = h.hexdigest()
+        return h.hexdigest()
     except (OSError, TypeError, ValueError):
         return None
-    cached["digest"] = value
-    return value
 
-
-def _file_state(path):
-    """(路径, 当前 key, 该文件的缓存槽)；路径不可用返回 None。
-
-    一轮执行里同一份文件只 stat 一次：新鲜度判据只有一条（size + mtime_ns），
-    写入方全是原子写 + fsync，所以 key 变了就是内容变了。路径先归一化——
-    同一个文件被不同层用相对/绝对路径指向时，缓存必须认出它们是同一份。
-    """
-    try:
-        target = Path(path).expanduser().resolve()
-        stat = target.stat()
-    except (OSError, TypeError, ValueError):
-        return None
-    stamp = (stat.st_size, stat.st_mtime_ns)
-    key = str(target)
-    hit = _FILE_KEY_CACHE.get(key)
-    if hit is None or hit[0] != stamp:
-        if len(_FILE_KEY_CACHE) >= FILE_KEY_CACHE_MAX:
-            _FILE_KEY_CACHE.clear()
-        hit = (stamp, {})
-        _FILE_KEY_CACHE[key] = hit
-    return target, stamp, hit[1]
 
 # ══════════════════════════════════════════════════════════════════════════
 # 身份（Identity）：全库唯一的「同一事实 → 同一个值」入口
@@ -227,6 +188,94 @@ def engine_fingerprint(scope: str, *, short: int | None = None) -> str:
                      schema=f"vao-engine-{scope}-v1", short=short)
     _ENGINE_CACHE[key] = value
     return value
+
+
+# ── 预览字体事实与身份（零 PIL / 零 Office 依赖）───────────────────────────
+PREVIEW_FONT_CANDIDATES = {
+    "latin": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+    ),
+    "latin_serif": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+        "/Library/Fonts/Times New Roman.ttf",
+        "C:/Windows/Fonts/times.ttf",
+    ),
+    "cjk": (
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/System/Library/Fonts/PingFang.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+    ),
+    "cjk_serif": (
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/System/Library/Fonts/Songti.ttc",
+        "C:/Windows/Fonts/simsun.ttc",
+    ),
+}
+# 粗体候选：产物里 PowerPoint 逐 run 真加粗（set_run_font bold=True），预览此前
+# **从不**换粗体字面（cjk 分支连 candidates 都不动），于是同一页「产物粗、预览细」，
+# 字重反差在预览里根本看不见——保真缺口，与「预览宽容度必须 = 交付链」冲突。
+PREVIEW_FONT_BOLD_CANDIDATES = {
+    "latin": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+    ),
+    "latin_serif": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+        "/Library/Fonts/Times New Roman Bold.ttf",
+        "C:/Windows/Fonts/timesbd.ttf",
+    ),
+    "cjk": (
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+    ),
+    "cjk_serif": (
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+        "/System/Library/Fonts/Songti.ttc",
+        "C:/Windows/Fonts/simsunb.ttf",
+    ),
+}
+
+
+def preview_font_names(base: str, bold: bool) -> tuple:
+    """加载与缓存身份共用同一个候选顺序；粗体失败仍可回落常规字面。"""
+    return (PREVIEW_FONT_BOLD_CANDIDATES[base] if bold else ()) + PREVIEW_FONT_CANDIDATES[base]
+
+
+_PREVIEW_FONT_STAMP: str | None = None
+
+
+def preview_font_stamp(*, refresh: bool = False) -> str:
+    """常规/粗体所有候选的 stat 身份；每轮入口刷新，页内直接复用。
+
+    记录所有候选而非第一个存在的文件：前者可能损坏而由下一字面接手。
+    字体对象层按本身份切换缓存与回落台账，不复用旧像素。
+    """
+    global _PREVIEW_FONT_STAMP
+    if refresh or _PREVIEW_FONT_STAMP is None:
+        parts = []
+        for role in sorted(PREVIEW_FONT_CANDIDATES):
+            for bold in (False, True):
+                candidates = []
+                for name in preview_font_names(role, bold):
+                    try:
+                        st = Path(name).stat()
+                        state = (st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+                    except OSError:
+                        state = None
+                    candidates.append((name, state))
+                parts.append((role, bold, candidates))
+        stamp = repr(parts)
+        _PREVIEW_FONT_STAMP = stamp
+    return _PREVIEW_FONT_STAMP
 
 
 # ── python-pptx 延迟加载（契约，别改回顶层 import）────────────────────
@@ -911,27 +960,26 @@ def stroke_color(line, color, alpha=None, width=None) -> None:
 
 
 
-# --------------------------------------------------------------------------
-# 读一次（单进程内的读缓存）
-# --------------------------------------------------------------------------
-# 一轮 check 里同一份 JSON 会被多个层读（绑定、核验、缓存投影各一次）：plan.json
-# 50KB 读三遍、manifest 读三遍。文件不大，但这种「同一份事实读三遍」正是运行时
-# 重复劳动的来源，而且三处各解析一次 JSON 迟早会有一处读到半写入的状态。
-# 判据是身份而不是时间：size + mtime_ns 变了就失效（写入方全是原子写 + fsync）。
-# 进程级、上限 64 条：只服务一轮执行，不跨运行做新鲜度假设。
+# 内容身份复用 JSON 解析，不以 size/mtime 推断字节相同。
+_JSON_CACHE: dict[str, tuple[str, dict]] = {}
+
+
 def json_read_cached(path) -> dict:
-    """读 JSON 一次，随后复用（与 file_digest 共用同一份文件状态）。失败一律重读。"""
+    """读取当前字节；内容相同时复用解析结果。失败不缓存。"""
     import json
-    state = _file_state(path)
-    if state is None:
-        raise OSError(f"读不到 JSON: {path}")
-    target, _stamp, cached = state
-    if cached.get("json") is not None:
-        return cached["json"]
-    value = json.loads(target.read_text(encoding="utf-8"))
+    target = Path(path).expanduser().resolve()
+    raw = target.read_bytes()
+    digest = digest_bytes(raw)
+    key = str(target)
+    hit = _JSON_CACHE.get(key)
+    if hit is not None and hit[0] == digest:
+        return hit[1]
+    value = json.loads(raw.decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"JSON 顶层必须为对象: {path}")
-    cached["json"] = value
+    if len(_JSON_CACHE) >= 512:
+        _JSON_CACHE.clear()
+    _JSON_CACHE[key] = (digest, value)
     return value
 
 

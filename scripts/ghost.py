@@ -36,58 +36,11 @@ _FONT_FALLBACKS: dict[str, int] = {}
 def font_fallbacks() -> dict:
     """本轮进程内发生的字面回落（角色 → 次数）；空字典 = 每个字面都取到了真字体。"""
     return dict(_FONT_FALLBACKS)
-_FONT_CANDIDATES = {
-    "latin": (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-    ),
-    "latin_serif": (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
-        "/Library/Fonts/Times New Roman.ttf",
-        "C:/Windows/Fonts/times.ttf",
-    ),
-    "cjk": (
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-        "/System/Library/Fonts/PingFang.ttc",
-        "C:/Windows/Fonts/msyh.ttc",
-    ),
-    "cjk_serif": (
-        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
-        "/System/Library/Fonts/Songti.ttc",
-        "C:/Windows/Fonts/simsun.ttc",
-    ),
-}
-# 粗体候选：产物里 PowerPoint 逐 run 真加粗（set_run_font bold=True），预览此前
-# **从不**换粗体字面（cjk 分支连 candidates 都不动），于是同一页「产物粗、预览细」，
-# 字重反差在预览里根本看不见——保真缺口，与「预览宽容度必须 = 交付链」冲突。
-_FONT_BOLD_CANDIDATES = {
-    "latin": (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "C:/Windows/Fonts/arialbd.ttf",
-    ),
-    "latin_serif": (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
-        "/Library/Fonts/Times New Roman Bold.ttf",
-        "C:/Windows/Fonts/timesbd.ttf",
-    ),
-    "cjk": (
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/System/Library/Fonts/PingFang.ttc",
-        "C:/Windows/Fonts/msyhbd.ttc",
-    ),
-    "cjk_serif": (
-        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
-        "/System/Library/Fonts/Songti.ttc",
-        "C:/Windows/Fonts/simsunb.ttf",
-    ),
-}
+from primitives import (PREVIEW_FONT_CANDIDATES as _FONT_CANDIDATES,
+                        PREVIEW_FONT_BOLD_CANDIDATES as _FONT_BOLD_CANDIDATES,
+                        preview_font_names as _font_names,
+                        preview_font_stamp as _font_stamp)
+_FONT_IDENTITY: str | None = None
 
 
 from primitives import is_cjk as _is_cjk   # 单一实现（范围与 guard 曾经不一致）
@@ -112,14 +65,18 @@ def _font_family(element: dict, ctx: RenderContext) -> str:
 
 def _font(size: float, *, cjk: bool = False, bold: bool = False,
           family: str = "") -> ImageFont.ImageFont:
+    global _FONT_IDENTITY
+    stamp = _font_stamp()
+    if stamp != _FONT_IDENTITY:
+        _FONT_CACHE.clear()
+        _FONT_FALLBACKS.clear()
+        _FONT_IDENTITY = stamp
     px = max(1, int(round(size)))
     base = ("cjk" if cjk else "latin") + ("_serif" if "_serif" in str(family) else "")
     key = (base, px, bold)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
-    candidates = list(_FONT_CANDIDATES[base])
-    if bold:
-        candidates = list(_FONT_BOLD_CANDIDATES[base]) + candidates
+    candidates = _font_names(base, bold)
     loaded: ImageFont.ImageFont | None = None
     for name in candidates:
         try:
@@ -1499,31 +1456,6 @@ def _page_media_stamp(slide: dict, spec: dict) -> list:
     return stamps
 
 
-_FONT_STAMP: str | None = None
-
-
-def _font_stamp() -> str:
-    """字面身份（进程内一次）：每个角色实际命中的第一个候选文件的路径/大小/时间戳。
-
-    页缓存存的是像素，像素由字面决定：本机装上或换掉 Noto/微软雅黑之后，
-    同一页必须重画——否则旧的无字形页面会以「缓存命中」的名字继续当证据用。
-    只做 stat，不加载 PIL。
-    """
-    global _FONT_STAMP
-    if _FONT_STAMP is None:
-        parts = []
-        for role, names in sorted(_FONT_CANDIDATES.items()):
-            hit = None
-            for name in names:
-                try:
-                    st = Path(name).stat()
-                except OSError:
-                    continue
-                hit = f"{name}:{st.st_size}:{st.st_mtime_ns}"
-                break
-            parts.append(f"{role}={hit or 'default'}")
-        _FONT_STAMP = "|".join(parts)
-    return _FONT_STAMP
 
 
 def _page_key(slide: dict, spec: dict, scale: float, supersample: int,

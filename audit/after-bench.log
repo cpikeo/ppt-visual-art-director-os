@@ -1,0 +1,29 @@
+PASS R01 [critical] 发布周期可以再压缩一半              role=establish ev=none cmp=False claim=extracted media=none
+PASS R02 [normal  ] 对比评估                     role=establish ev=none cmp=False claim=extracted media=none
+PASS R03 [critical] 扩张的答案不在开店速度，在单店质量        role=persuade ev=none cmp=False claim=extracted media=none
+PASS R04 [normal  ] 谢谢，欢迎质询                  role=summarize ev=none cmp=False claim=frame media=none
+PASS R05 [high    ] 华东区数据                    role=prove ev=number cmp=False claim=extracted media=none
+PASS D01 [critical] 自有流量占比三年翻了一倍             role=prove ev=series cmp=False claim=extracted media=none
+PASS D05 [critical] 门店规模稳定，单店客单价 86 元        role=persuade ev=none cmp=False claim=extracted media=none
+PASS D06 [normal  ] 自有内容正在接管增长，预算应该跟上        role=persuade ev=none cmp=False claim=extracted media=none
+PASS D07 [critical] 老客贡献是基本盘                 role=prove ev=part_whole cmp=False claim=extracted media=none
+PASS D02 [high    ] 同一件事的三种口径                role=persuade ev=none cmp=False claim=absent media=none
+PASS D03 [high    ] 冷链自营后毛利结构改变              role=prove ev=series cmp=False claim=extracted media=none
+PASS S01 [normal  ] 渠道分三类：直营、经销、电商           role=explain ev=structure cmp=False claim=absent media=none
+PASS S03 [critical] 三个市场的进入成本与回本周期差距明显       role=compare ev=comparison cmp=True claim=extracted media=none
+PASS S04 [high    ] 回本周期缩短，但店长培养周期在变长        role=prove ev=series cmp=False claim=extracted media=none
+PASS S05 [high    ] 增长不是靠补贴，是靠复购             role=persuade ev=none cmp=False claim=extracted media=none
+PASS S06 [normal  ] 组织承接能力是扩张的上限             role=explain ev=structure cmp=False claim=extracted media=none
+PASS M01 [high    ] 选择越南，需要先补齐两个渠道伙伴         role=persuade ev=none cmp=False claim=extracted media=none
+PASS M02 [critical] 一位釉工用了三十年时间调配这一抹青        role=persuade ev=none cmp=False claim=absent media=none
+PASS A01 [normal  ] 净利率 18.4%                role=persuade ev=number cmp=False claim=absent media=none
+PASS A02 [normal  ] 扩张的节奏由组织承接能力决定           role=persuade ev=proposition cmp=False claim=extracted media=none
+PASS A03 [normal  ] 门店里的一天                   role=prove ev=none cmp=False claim=absent media=required
+PASS A04 [normal  ] 华东 6 家门店走访记录             role=prove ev=number cmp=False claim=absent media=none
+PASS I01 [high    ] 配送门槛                     role=persuade ev=none cmp=False claim=extracted media=none
+PASS K01 [high    ] 降价、扩店、换帅三件事缺一不可          role=persuade ev=none cmp=False claim=extracted media=none
+PASS N02 [high    ] 尚未超过对手                   role=compare ev=comparison cmp=True claim=extracted media=none
+PASS X02 [high    ] 营收 1.2 亿元对 1,800 万元      role=compare ev=comparison cmp=True claim=extracted media=none
+
+案例通过 26/26 · 判断准确率 100.0% · 图像/图表/结构误判率 0.0% · 严重缺陷率 0.0%（7 个 critical 案例）
+修复回归率 0.0% · 回归 无 · 新修复 ['I01', 'K01', 'N02', 'X02']

@@ -1,0 +1,168 @@
+{
+  "cases": [
+    {
+      "id": "T01",
+      "category": "manufacturing",
+      "severity": "high",
+      "title": "质量指标",
+      "actual": {
+        "role": "persuade",
+        "evidence": "none",
+        "comparison": false,
+        "claim": "absent",
+        "media": "none",
+        "media_source": "judgment",
+        "media_suggested": null
+      },
+      "checks": [
+        {
+          "field": "evidence_not",
+          "expected": "不是 ['part_whole']",
+          "actual": "none",
+          "ok": true,
+          "misjudge_class": true
+        }
+      ],
+      "passed": true,
+      "why": ""
+    },
+    {
+      "id": "T02",
+      "category": "services",
+      "severity": "high",
+      "title": "经营指标",
+      "actual": {
+        "role": "persuade",
+        "evidence": "none",
+        "comparison": false,
+        "claim": "extracted",
+        "media": "none",
+        "media_source": "judgment",
+        "media_suggested": null
+      },
+      "checks": [
+        {
+          "field": "evidence_not",
+          "expected": "不是 ['part_whole']",
+          "actual": "none",
+          "ok": true,
+          "misjudge_class": true
+        }
+      ],
+      "passed": true,
+      "why": ""
+    },
+    {
+      "id": "T03",
+      "category": "healthcare",
+      "severity": "high",
+      "title": "科室用时",
+      "actual": {
+        "role": "persuade",
+        "evidence": "none",
+        "comparison": false,
+        "claim": "absent",
+        "media": "none",
+        "media_source": "judgment",
+        "media_suggested": null
+      },
+      "checks": [
+        {
+          "field": "evidence_not",
+          "expected": "不是 ['series', 'sequence']",
+          "actual": "none",
+          "ok": true,
+          "misjudge_class": true
+        }
+      ],
+      "passed": true,
+      "why": ""
+    },
+    {
+      "id": "T04",
+      "category": "operations",
+      "severity": "high",
+      "title": "维护记录",
+      "actual": {
+        "role": "prove",
+        "evidence": "number",
+        "comparison": false,
+        "claim": "extracted",
+        "media": "none",
+        "media_source": "hint",
+        "media_suggested": "witness"
+      },
+      "checks": [
+        {
+          "field": "evidence_not",
+          "expected": "不是 ['sequence']",
+          "actual": "number",
+          "ok": true,
+          "misjudge_class": true
+        }
+      ],
+      "passed": true,
+      "why": ""
+    },
+    {
+      "id": "T05",
+      "category": "public-service",
+      "severity": "high",
+      "title": "审批程序",
+      "actual": {
+        "role": "explain",
+        "evidence": "sequence",
+        "comparison": false,
+        "claim": "absent",
+        "media": "none",
+        "media_source": "judgment",
+        "media_suggested": null
+      },
+      "checks": [
+        {
+          "field": "evidence",
+          "expected": "∈ ['sequence']",
+          "actual": "sequence",
+          "ok": true,
+          "misjudge_class": true
+        }
+      ],
+      "passed": true,
+      "why": ""
+    },
+    {
+      "id": "T06",
+      "category": "retail",
+      "severity": "high",
+      "title": "三年复购率",
+      "actual": {
+        "role": "prove",
+        "evidence": "series",
+        "comparison": false,
+        "claim": "absent",
+        "media": "none",
+        "media_source": "judgment",
+        "media_suggested": null
+      },
+      "checks": [
+        {
+          "field": "evidence",
+          "expected": "∈ ['series']",
+          "actual": "series",
+          "ok": true,
+          "misjudge_class": true
+        }
+      ],
+      "passed": true,
+      "why": ""
+    }
+  ],
+  "metrics": {
+    "cases": 6,
+    "cases_passed": 6,
+    "accuracy": 1.0,
+    "misjudge_rate_image_chart_structure": 0.0,
+    "critical_defect_rate": 0.0,
+    "critical_cases": 0
+  }
+}

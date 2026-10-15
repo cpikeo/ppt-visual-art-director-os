@@ -1,0 +1,91 @@
+{
+  "schema": "vao-judgment-bench-v1",
+  "provenance": "Second transfer batch frozen after root-cause fixes; evaluated without subsequent case-specific tuning. Not an external independent review.",
+  "cases": [
+    {
+      "id": "T01",
+      "category": "manufacturing",
+      "title": "质量指标",
+      "content": "装配线合格率 52%，返工率 48%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high"
+    },
+    {
+      "id": "T02",
+      "category": "services",
+      "title": "经营指标",
+      "content": "研发占比25%，客户满意度75%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high"
+    },
+    {
+      "id": "T03",
+      "category": "healthcare",
+      "title": "科室用时",
+      "content": "三科室用时分别为9分钟、14分钟和22分钟。",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high"
+    },
+    {
+      "id": "T04",
+      "category": "operations",
+      "title": "维护记录",
+      "content": "设备AX-97正在维护。",
+      "expect": {
+        "evidence_not": [
+          "sequence"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high"
+    },
+    {
+      "id": "T05",
+      "category": "public-service",
+      "title": "审批程序",
+      "content": "受理 -> 复核 -> 归档",
+      "expect": {
+        "evidence": [
+          "sequence"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high"
+    },
+    {
+      "id": "T06",
+      "category": "retail",
+      "title": "三年复购率",
+      "content": "2023年复购率32%，2024年复购率43%，2025年复购率59%。",
+      "expect": {
+        "evidence": [
+          "series"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high"
+    }
+  ]
+}

@@ -74,8 +74,10 @@ python3 scripts/bench.py --baseline benchmark/baseline_9.26.json --out benchmark
 ## 测试
 
 ```bash
-python scripts/selftest.py   # 退出码即门槛；当前全部通过（数量见 selftest 输出）
+python scripts/selftest.py   # 退出码即门槛；数量以实际输出为准
 ```
+
+本次审计的实测、修改与未验证边界见 [audit/REPORT.md](audit/REPORT.md)；样稿见 `acceptance/out.pptx`。
 
 CI（`.github/workflows/ci.yml`）在 ubuntu / windows × Python 3.10 / 3.12 / 3.13 上运行自检，
 并做 spec 档冒烟（断言 spec 模式不加载 python-pptx）。

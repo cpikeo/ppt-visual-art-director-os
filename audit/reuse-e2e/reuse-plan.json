@@ -1,0 +1,365 @@
+{
+  "deck": {
+    "audience": "董事会与投资人",
+    "decision": "批准 2026 自有内容预算",
+    "tension": "投放成本上升，自有内容回报周期长",
+    "quality": "advanced",
+    "world": {
+      "name": "document/neutral",
+      "source": "neutral_fallback",
+      "visual_world": "neutral matte ground, one light source, nothing decorative",
+      "light": "even diffuse daylight, no visible source",
+      "texture_keys": [
+        "paper"
+      ],
+      "chart_style": "hairline + direct label",
+      "composition_grammar": "soft_asymmetry",
+      "type_voice": "austerity with human warmth：窄栏、大字阶、克制的粗体",
+      "fonts": {
+        "cn": "Source Han Serif SC",
+        "latin": "Georgia"
+      },
+      "paper": "#F1EFEA",
+      "ink": "#12120F",
+      "accent": "#6E6A63",
+      "accent_role": "指向被批准的那一件事",
+      "accent_why": "品牌色覆盖：强调色的语义由 deck 决定，色相由品牌决定",
+      "reasons": {
+        "register": "受众与场合语域＝document（决定纸、字与克制程度）",
+        "subject": "内容里没有可指认的主题实体：退到中性纸世界，不猜风格",
+        "regime": "浅色纸面：文档语域下纸面托住信息",
+        "accent_role": "强调色语义＝指向被批准的那一件事（颜色服从语义，不服从风格）",
+        "composition": "世界级构图纪律＝soft_asymmetry（由人的存在与数字密度推开，不是预设）",
+        "type_voice": "austerity with human warmth：窄栏、大字阶、克制的粗体"
+      }
+    },
+    "theme": {
+      "colors_seed": {
+        "foundation": "#F1EFEA",
+        "information": "#1A3A5C",
+        "supporting": "#8A8984",
+        "accent": "#C8501E"
+      },
+      "seed_source": "brand_colors",
+      "slots_overridden": [
+        "accent",
+        "information"
+      ]
+    },
+    "coherence": {
+      "compositions": [
+        "image_narrative",
+        "image_narrative"
+      ],
+      "densities": [
+        "sparse",
+        "sparse"
+      ],
+      "roles": [
+        "establish",
+        "summarize"
+      ],
+      "media": [
+        "required:declared",
+        "required:declared"
+      ],
+      "adjustments": null,
+      "notes": null
+    }
+  },
+  "pages": [
+    {
+      "id": "a",
+      "ref": "图像绑定 原创测试插图，不是证词",
+      "judgment": {
+        "audience": "董事会与投资人",
+        "decision": "批准 2026 自有内容预算",
+        "claim": {
+          "text": null,
+          "source": "absent",
+          "why": "最接近的是标题（只有位置分，1.2分）：没有结论措辞/数字/决定句——先补一句结论，或把它降级为章节/证据页。"
+        },
+        "tension": {
+          "issue": null,
+          "source": "not_asserted",
+          "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+        },
+        "information_weight": {
+          "maximize": [],
+          "weaken": [],
+          "delete": [],
+          "delete_candidates": []
+        },
+        "visual_role": {
+          "role": "establish",
+          "why": "开场页建立世界与主张：观众从这里决定要不要继续读。",
+          "alternatives": [
+            [
+              "explain",
+              "开场就解释细节＝在观众建立兴趣之前要求注意力"
+            ]
+          ],
+          "source": "judgment"
+        },
+        "focus": {
+          "element_role": "image_subject",
+          "type": "image",
+          "why": "本页的图像是主语/证词（已通过必要性测试）：第一落点是它，文字退到解说位——否则图像就只是背景花纹。",
+          "rejected": [
+            {
+              "option": "hero_statement",
+              "why_not": "用一句话当第一落点＝把已经赢得的现场感再退回文字"
+            },
+            {
+              "option": "kpi_row",
+              "why_not": "把数字排成一行＝观众先看数字后看主张，顺序反了"
+            }
+          ]
+        },
+        "composition": {
+          "chosen": "image_narrative",
+          "why": "这一页的主语是具体实体（declared）：图像承担现场，文字退到解说位。",
+          "rejected": [
+            {
+              "option": "big_whitespace",
+              "why_not": "这一页需要同屏参照，大留白会把该比的拆散"
+            },
+            {
+              "option": "editorial",
+              "why_not": "这一页的字数与数字撑不起编辑节奏：排版会显得在凑版面"
+            }
+          ]
+        },
+        "spatial": {
+          "reading_path": "画心 → 标题 → 说明",
+          "primary_zone": "画心（图像主体）",
+          "quiet_zone": "文字侧负空间",
+          "whitespace_duty": "承载情绪与现场：文字侧留白是给标题的呼吸位"
+        },
+        "typography": {
+          "lead": "未决结论",
+          "support": null,
+          "discipline": "让现场/物件先被看见；注解贴合图像安全区的轴线与负空间，文本框边距保持可读，不用大标题遮住证词主体。",
+          "scale": {
+            "lead_break": null,
+            "body_measure_cjk": 38,
+            "why": "短文本：栏宽可以放开，但仍不横跨整页",
+            "limit": "22–45 汉字/行（启发式建议，实际字体与投影须另验）"
+          }
+        },
+        "media": {
+          "decision": "required",
+          "source": "author",
+          "function": "declared",
+          "necessity": "作者显式声明：压过一切判断。"
+        },
+        "production": {
+          "must_place": [
+            {
+              "role": "image_subject",
+              "type": "image"
+            },
+            {
+              "role": "claim_text",
+              "type": "text"
+            },
+            {
+              "role": "image",
+              "type": "image"
+            }
+          ],
+          "must_not": [],
+          "density_target": "sparse"
+        },
+        "understanding": {
+          "evidence": "none",
+          "numerals": [],
+          "distinct_numerals": 0,
+          "numeric_density": 0.0,
+          "subjects": [],
+          "human": false,
+          "scene": false,
+          "individual": false,
+          "comparison": false,
+          "part_whole": false,
+          "same_unit": true,
+          "has_chart": false
+        },
+        "open_questions": [
+          "本页结论：先写出一句可复述的话（或删掉这一页）"
+        ],
+        "rhythm": {
+          "move": "open",
+          "previous": null,
+          "why": "建立整套主张：先让观众知道要判断什么。"
+        }
+      },
+      "anchor": null,
+      "declarations": {
+        "asset": "required",
+        "asset_role": "background",
+        "asset_source": {
+          "kind": "original",
+          "path": "/home/user/ppt-visual-art-director-os/audit/reuse-e2e/reuse.png",
+          "source": "synthetic fixture"
+        }
+      }
+    },
+    {
+      "id": "b",
+      "ref": "图像绑定 原创测试插图，不是证词",
+      "judgment": {
+        "audience": "董事会与投资人",
+        "decision": "批准 2026 自有内容预算",
+        "claim": {
+          "text": null,
+          "source": "absent",
+          "why": "最接近的是标题（只有位置分，1.2分）：没有结论措辞/数字/决定句——先补一句结论，或把它降级为章节/证据页。"
+        },
+        "tension": {
+          "issue": null,
+          "source": "not_asserted",
+          "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+        },
+        "information_weight": {
+          "maximize": [],
+          "weaken": [],
+          "delete": [],
+          "delete_candidates": []
+        },
+        "visual_role": {
+          "role": "summarize",
+          "source": "decision",
+          "alternatives": [],
+          "why": "末页按决定类型（commit）收束：主张保留在页上，焦点让给决定本身。"
+        },
+        "focus": {
+          "element_role": "decision_ask",
+          "type": "text",
+          "why": "收束页的落点是待批的决定本身（批准 2026 自有内容预算）：批准的对象与量级同屏，理由退一层。",
+          "rejected": [
+            {
+              "option": "headline",
+              "why_not": "标题写成陈述而不写要批的对象：读者不知道究竟批什么"
+            },
+            {
+              "option": "kpi_row",
+              "why_not": "预算数字先排成一行：数字在前，决定在后"
+            }
+          ]
+        },
+        "composition": {
+          "chosen": "image_narrative",
+          "why": "这一页的主语是具体实体（declared）：图像承担现场，文字退到解说位。",
+          "rejected": [
+            {
+              "option": "big_whitespace",
+              "why_not": "这一页需要同屏参照，大留白会把该比的拆散"
+            },
+            {
+              "option": "editorial",
+              "why_not": "这一页的字数与数字撑不起编辑节奏：排版会显得在凑版面"
+            }
+          ]
+        },
+        "spatial": {
+          "reading_path": "画心 → 标题 → 说明",
+          "primary_zone": "画心（图像主体）",
+          "quiet_zone": "文字侧负空间",
+          "whitespace_duty": "承载情绪与现场：文字侧留白是给标题的呼吸位"
+        },
+        "typography": {
+          "lead": "未决结论",
+          "support": null,
+          "discipline": "收束页的唯一落点：决定/动作/判据的字阶最大，对象与条件同行；理由与出处退一层，不与落点争字阶。",
+          "scale": {
+            "lead_break": null,
+            "body_measure_cjk": 38,
+            "why": "短文本：栏宽可以放开，但仍不横跨整页",
+            "limit": "22–45 汉字/行（启发式建议，实际字体与投影须另验）"
+          }
+        },
+        "media": {
+          "decision": "required",
+          "source": "author",
+          "function": "declared",
+          "necessity": "作者显式声明：压过一切判断。"
+        },
+        "production": {
+          "must_place": [
+            {
+              "role": "decision_ask",
+              "type": "text"
+            },
+            {
+              "role": "claim_text",
+              "type": "text"
+            },
+            {
+              "role": "image",
+              "type": "image"
+            }
+          ],
+          "must_not": [],
+          "density_target": "sparse"
+        },
+        "understanding": {
+          "evidence": "none",
+          "numerals": [],
+          "distinct_numerals": 0,
+          "numeric_density": 0.0,
+          "subjects": [],
+          "human": false,
+          "scene": false,
+          "individual": false,
+          "comparison": false,
+          "part_whole": false,
+          "same_unit": true,
+          "has_chart": false
+        },
+        "open_questions": [
+          "本页结论：先写出一句可复述的话（或删掉这一页）"
+        ],
+        "rhythm": {
+          "move": "close",
+          "previous": "a",
+          "why": "回收开场的决定，不用新装饰或谢谢页稀释请求。"
+        }
+      },
+      "anchor": null,
+      "declarations": {
+        "asset": "required",
+        "asset_role": "background",
+        "asset_source": {
+          "kind": "original",
+          "path": "/home/user/ppt-visual-art-director-os/audit/reuse-e2e/reuse.png",
+          "source": "synthetic fixture"
+        }
+      }
+    }
+  ],
+  "assets_hint": {
+    "generate": [
+      "a",
+      "b"
+    ]
+  },
+  "warnings": [
+    {
+      "rule": "unresolved_content",
+      "scope": "a",
+      "msg": "这一页没有可复述的结论（content 缺失）：标题不是证据，不得脑补数据/案例——补真实内容，或把它降级为章节页，或删掉"
+    },
+    {
+      "rule": "unresolved_content",
+      "scope": "b",
+      "msg": "这一页没有可复述的结论（content 缺失）：标题不是证据，不得脑补数据/案例——补真实内容，或把它降级为章节页，或删掉"
+    }
+  ],
+  "workflow": {
+    "planned_at": "2026-10-15T01:41:57.241168+00:00",
+    "brief_path": "/home/user/ppt-visual-art-director-os/audit/reuse-e2e/reuse-brief.json",
+    "brief_file_sha256": "57b8ae7a8dbb8a082e444dd4e4f2943afb79250dda2a884b00bc8b1a2c5fe1b2",
+    "assets_manifest_path": "/home/user/ppt-visual-art-director-os/audit/reuse-e2e/reuse-assets.json"
+  }
+}

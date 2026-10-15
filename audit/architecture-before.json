@@ -1,0 +1,6472 @@
+{
+  "scripts/assets.py": {
+    "lines": 2089,
+    "imports": [
+      "PIL",
+      "__future__",
+      "colorsys",
+      "datetime",
+      "io",
+      "json",
+      "math",
+      "numpy",
+      "pathlib",
+      "primitives"
+    ],
+    "local_dependencies": [
+      "primitives"
+    ],
+    "functions": {
+      "_term_hit": {
+        "line": 94,
+        "end": 100,
+        "direct_calls": [
+          "latin_word_match"
+        ]
+      },
+      "subject_implies_people": {
+        "line": 103,
+        "end": 113,
+        "direct_calls": [
+          "' '.join",
+          "' '.join((str(x) for k in ('subject', 'world', 'style') for x in _as_list(card.get(k)))).lower",
+          "_as_list",
+          "_term_hit",
+          "any",
+          "card.get",
+          "isinstance",
+          "str"
+        ]
+      },
+      "ink_gate_active": {
+        "line": 150,
+        "end": 175,
+        "direct_calls": [
+          "' '.join",
+          "' '.join((str(x) for seg in fields for x in _as_list(seg))).lower",
+          "_as_list",
+          "any",
+          "card.get",
+          "fields.append",
+          "isinstance",
+          "str",
+          "str(card.get(f'{key}_source') or 'declared').lower",
+          "t.lower"
+        ]
+      },
+      "photo_gate_active": {
+        "line": 201,
+        "end": 217,
+        "direct_calls": [
+          "' '.join",
+          "' '.join((str(card.get(k) or '') for k in ('style', 'subject', 'material', 'lighting'))).lower",
+          "any",
+          "card.get",
+          "ink_gate_active",
+          "isinstance",
+          "str",
+          "str(card.get('medium') or card.get('render_mode') or '').strip",
+          "str(card.get('medium') or card.get('render_mode') or '').strip().lower"
+        ]
+      },
+      "grammar_phrase": {
+        "line": 258,
+        "end": 263,
+        "direct_calls": [
+          "GRAMMAR_PHRASES.get",
+          "str",
+          "str(value or '').strip",
+          "text.lower"
+        ]
+      },
+      "hex_to_color_name": {
+        "line": 275,
+        "end": 305,
+        "direct_calls": [
+          "' '.join",
+          "''.join",
+          "colorsys.rgb_to_hls",
+          "int",
+          "len",
+          "max",
+          "min",
+          "next",
+          "str",
+          "str(value or '').strip",
+          "str(value or '').strip().lstrip"
+        ]
+      },
+      "normalize_safe_area": {
+        "line": 323,
+        "end": 338,
+        "direct_calls": [
+          "SAFE_AREA_PRESETS.get",
+          "dict",
+          "float",
+          "isinstance",
+          "max",
+          "min",
+          "raw.get",
+          "round"
+        ]
+      },
+      "safe_area_phrase": {
+        "line": 341,
+        "end": 358,
+        "direct_calls": [
+          "str",
+          "str(text_color or '').lower"
+        ]
+      },
+      "resolve_asset_role": {
+        "line": 423,
+        "end": 443,
+        "direct_calls": [
+          "'|'.join",
+          "ValueError",
+          "str",
+          "str(declared or '').strip",
+          "str(declared or '').strip().lower"
+        ]
+      },
+      "_expand_layer": {
+        "line": 559,
+        "end": 577,
+        "direct_calls": [
+          "_as_list",
+          "out.append",
+          "str",
+          "str(item).strip",
+          "text.lower"
+        ]
+      },
+      "enhance_asset_card": {
+        "line": 580,
+        "end": 596,
+        "direct_calls": [
+          "_expand_layer",
+          "card.get",
+          "dict",
+          "list"
+        ]
+      },
+      "_dedup": {
+        "line": 599,
+        "end": 619,
+        "direct_calls": [
+          "key.startswith",
+          "out.append",
+          "seen.add",
+          "set",
+          "str",
+          "str(raw).strip",
+          "str(raw).strip().strip",
+          "str(raw).strip().strip(',.').strip",
+          "text.lower"
+        ]
+      },
+      "_as_list": {
+        "line": 622,
+        "end": 627,
+        "direct_calls": [
+          "isinstance",
+          "list"
+        ]
+      },
+      "validate_asset_card": {
+        "line": 630,
+        "end": 657,
+        "direct_calls": [
+          "' '.join",
+          "'|'.join",
+          "_as_list",
+          "any",
+          "card.get",
+          "isinstance",
+          "issues.append",
+          "sorted",
+          "str",
+          "str(card.get('asset_role') or '').strip",
+          "str(card.get('asset_role') or '').strip().lower"
+        ]
+      },
+      "resolve_asset_card": {
+        "line": 667,
+        "end": 742,
+        "direct_calls": [
+          "ENERGY_PHRASES.get",
+          "LIGHT_PHRASES.get",
+          "_as_list",
+          "card.get",
+          "dict",
+          "ink_gate_active",
+          "isinstance",
+          "list",
+          "page.get",
+          "photo_gate_active",
+          "str",
+          "str(card.get('lighting_source') or '').strip",
+          "str(card.get('lighting_source') or '').strip().lower",
+          "str(page.get('energy') or 'low').strip",
+          "str(page.get('energy') or 'low').strip().lower",
+          "str(page.get('light_direction') or 'left').strip",
+          "str(page.get('light_direction') or 'left').strip().lower",
+          "str(s).strip"
+        ]
+      },
+      "build_asset_prompt": {
+        "line": 748,
+        "end": 932,
+        "direct_calls": [
+          "', '.join",
+          "ASSET_CONTRAST_GUARD.get",
+          "ROLE_DISCIPLINE.get",
+          "TypeError",
+          "ValueError",
+          "_as_list",
+          "_dedup",
+          "any",
+          "bool",
+          "card.get",
+          "dict",
+          "ink_gate_active",
+          "isinstance",
+          "layers.get",
+          "light_decision.get",
+          "list",
+          "negatives.extend",
+          "normalize_safe_area",
+          "page.get",
+          "photo_gate_active",
+          "resolve_asset_card",
+          "resolve_asset_card(card, eff).get",
+          "resolved.get",
+          "safe_area_phrase",
+          "segments.append",
+          "segments.extend",
+          "separator.join",
+          "str",
+          "str(asset_function or page.get('asset_function') or card.get('asset_function') or 'frame').lower",
+          "str(asset_function or page.get('asset_function') or function_hint).lower",
+          "str(card.get('medium') or card.get('render_mode') or '').strip",
+          "str(card.get('medium') or card.get('render_mode') or '').strip().lower",
+          "str(energy or page.get('energy') or 'low').lower",
+          "str(light_direction or page.get('light_direction') or 'left').lower",
+          "str(negative_space or page.get('negative_space_anchor') or 'left').lower",
+          "subject_implies_people",
+          "term.lower",
+          "term.lower().startswith",
+          "validate_asset_card"
+        ]
+      },
+      "asset_fingerprint": {
+        "line": 935,
+        "end": 955,
+        "direct_calls": [
+          "card.get",
+          "identity",
+          "isinstance",
+          "page.get"
+        ]
+      },
+      "qc_profile": {
+        "line": 996,
+        "end": 1001,
+        "direct_calls": [
+          "str",
+          "str(speed or '').strip",
+          "str(speed or '').strip().lower"
+        ]
+      },
+      "qc_policy": {
+        "line": 1004,
+        "end": 1018,
+        "direct_calls": [
+          "sorted"
+        ]
+      },
+      "qc_retry_decision": {
+        "line": 1028,
+        "end": 1106,
+        "direct_calls": [
+          "', '.join",
+          "ValueError",
+          "bool",
+          "c.get",
+          "int",
+          "isinstance",
+          "max",
+          "min",
+          "qc.get",
+          "sorted",
+          "str",
+          "str(asset_function or '').strip",
+          "str(asset_function or '').strip().lower",
+          "str(asset_role or '').strip",
+          "str(asset_role or '').strip().lower",
+          "str(phase or 'draft').strip",
+          "str(phase or 'draft').strip().lower"
+        ]
+      },
+      "_hard_seam_check": {
+        "line": 1110,
+        "end": 1136,
+        "direct_calls": [
+          "(alpha >= 250).all",
+          "arr.mean",
+          "band.std",
+          "bool",
+          "float",
+          "int",
+          "max",
+          "np.abs",
+          "np.diff",
+          "np.where"
+        ]
+      },
+      "_decode_hold_room": {
+        "line": 1143,
+        "end": 1152,
+        "direct_calls": [
+          "decoded.values",
+          "getattr",
+          "len",
+          "sum"
+        ]
+      },
+      "_settle": {
+        "line": 1155,
+        "end": 1158,
+        "direct_calls": [
+          "native.close"
+        ]
+      },
+      "_native_safe_area_texture": {
+        "line": 1161,
+        "end": 1185,
+        "direct_calls": [
+          "(std > QC_TEXTURE_STD).mean",
+          "arr[:bh * QC_BLOCK, :bw * QC_BLOCK].reshape",
+          "blocks.std",
+          "float",
+          "int",
+          "max",
+          "min",
+          "np.asarray",
+          "opened.crop",
+          "opened.crop((x0, y0, min(x1, w), min(y1, h))).convert"
+        ]
+      },
+      "_balance_check": {
+        "line": 1188,
+        "end": 1241,
+        "direct_calls": [
+          "abs",
+          "arr.mean",
+          "arr[:, :w // 2].mean",
+          "arr[:, w // 2:].mean",
+          "arr[:h // 2, :].mean",
+          "arr[h // 2:, :].mean",
+          "float",
+          "luminance",
+          "str"
+        ]
+      },
+      "image_qc": {
+        "line": 1244,
+        "end": 1463,
+        "direct_calls": [
+          "(blk_std < QC_FLAT_STD).mean",
+          "(safe_std > QC_TEXTURE_STD).mean",
+          "Image.alpha_composite",
+          "Image.alpha_composite(bg, rgba).convert",
+          "Image.new",
+          "Image.open",
+          "ImageColor.getrgb",
+          "Path",
+          "_add",
+          "_balance_check",
+          "_decode_hold_room",
+          "_hard_seam_check",
+          "_native_safe_area_texture",
+          "_settle",
+          "abs",
+          "blk.mean",
+          "blk.std",
+          "bool",
+          "checks.append",
+          "crop.reshape",
+          "crop[sy0 * bhs:sy1 * bhs, sx0 * bws:sx1 * bws].mean",
+          "float",
+          "grey.reduce",
+          "hard_seam_result",
+          "int",
+          "io.BytesIO",
+          "math.isfinite",
+          "max",
+          "min",
+          "native.convert",
+          "native.convert('RGBA').getchannel",
+          "native.convert('RGBA').getchannel('A').getextrema",
+          "native.load",
+          "normalize_safe_area",
+          "np.abs",
+          "np.asarray",
+          "np.kron",
+          "np.minimum",
+          "np.ones",
+          "p.read_bytes",
+          "rgba.getchannel",
+          "rgba.getchannel('A').getextrema",
+          "rgba.reduce",
+          "str",
+          "str(expected_ratio).split",
+          "subj.mean",
+          "subj[-bhs:, :].mean",
+          "subj[:, -bws:].mean",
+          "subj[:, :bws].mean",
+          "subj[:bhs, :].mean",
+          "subj[sy0 * bhs:sy1 * bhs, sx0 * bws:sx1 * bws].mean",
+          "sum"
+        ]
+      },
+      "now": {
+        "line": 1484,
+        "end": 1485,
+        "direct_calls": [
+          "datetime.now",
+          "datetime.now(timezone.utc).isoformat"
+        ]
+      },
+      "digest": {
+        "line": 1488,
+        "end": 1491,
+        "direct_calls": [
+          "identity"
+        ]
+      },
+      "asset_entries": {
+        "line": 1494,
+        "end": 1500,
+        "direct_calls": [
+          "ValueError",
+          "any",
+          "e.get",
+          "isinstance",
+          "len",
+          "manifest.get",
+          "set"
+        ]
+      },
+      "asset_root": {
+        "line": 1503,
+        "end": 1509,
+        "direct_calls": [
+          "(parent / root).resolve",
+          "_Path",
+          "_Path(manifest_path).expanduser",
+          "_Path(manifest_path).expanduser().resolve",
+          "_Path(value).expanduser",
+          "manifest.get",
+          "root.is_absolute",
+          "root.resolve"
+        ]
+      },
+      "resolve_asset": {
+        "line": 1512,
+        "end": 1538,
+        "direct_calls": [
+          "(_Path(manifest_path).expanduser().resolve().parent / p).resolve",
+          "(entry.get('origin') or {}).get",
+          "ValueError",
+          "_Path",
+          "_Path(manifest_path).expanduser",
+          "_Path(manifest_path).expanduser().resolve",
+          "_Path(raw).expanduser",
+          "asset_root",
+          "candidate.is_file",
+          "candidate.with_suffix",
+          "candidate.with_suffix(ext).is_file",
+          "confined",
+          "entry.get",
+          "filename.is_absolute",
+          "len",
+          "p.is_absolute",
+          "p.resolve",
+          "path.resolve",
+          "resolved.is_relative_to",
+          "root.resolve",
+          "str"
+        ]
+      },
+      "image_elements": {
+        "line": 1541,
+        "end": 1552,
+        "direct_calls": [
+          "ValueError",
+          "e.get",
+          "isinstance",
+          "slide.get",
+          "spec.get",
+          "str"
+        ]
+      },
+      "prepare_manifest": {
+        "line": 1555,
+        "end": 1585,
+        "direct_calls": [
+          "_Path",
+          "_Path(assets_dir).expanduser",
+          "_Path(assets_dir).expanduser().resolve",
+          "_Path(brief_path).expanduser",
+          "_Path(brief_path).expanduser().resolve",
+          "_Path(plan_path).resolve",
+          "_plan_wf.get",
+          "asset_entries",
+          "bundle.get",
+          "file_digest",
+          "isinstance",
+          "now",
+          "resolve_asset",
+          "str"
+        ]
+      },
+      "verify_sources": {
+        "line": 1588,
+        "end": 1600,
+        "direct_calls": [
+          "file_digest",
+          "manifest.get",
+          "problems.append",
+          "str",
+          "str(wf.get('schema', '')).startswith",
+          "wf.get"
+        ]
+      },
+      "_inspected_bytes_current": {
+        "line": 1603,
+        "end": 1608,
+        "direct_calls": [
+          "inspected.get",
+          "isinstance",
+          "witness",
+          "witness_same"
+        ]
+      },
+      "verify_chain": {
+        "line": 1611,
+        "end": 1710,
+        "direct_calls": [
+          "(digests or {}).get",
+          "(image_bytes or {}).get",
+          "(inspected.get('policy') or {}).get",
+          "(inspected.get('witness') or {}).get",
+          "(results.get(aid, {}).get('qc') or {}).get",
+          "_Path",
+          "_Path(manifest_path).expanduser",
+          "_Path(manifest_path).expanduser().resolve",
+          "_Path(qc_path).expanduser",
+          "_Path(qc_path).expanduser().resolve",
+          "_Path(str(e.get('src', ''))).resolve",
+          "_inspected_bytes_current",
+          "actual.is_file",
+          "actual.read_bytes",
+          "any",
+          "asset_entries",
+          "dict.fromkeys",
+          "digest",
+          "digest_bytes",
+          "e.get",
+          "entries.items",
+          "entries[aid].get",
+          "entry.get",
+          "float",
+          "image_elements",
+          "inspected.get",
+          "isinstance",
+          "issues.append",
+          "issues.extend",
+          "json_read_cached",
+          "len",
+          "list",
+          "map",
+          "min",
+          "min if e.get('fit') == 'contain' else max",
+          "origin.get",
+          "path.with_name",
+          "qc.get",
+          "report.update",
+          "report['verified_images'].append",
+          "resolve_asset",
+          "results.get",
+          "results.get(aid, {}).get",
+          "str",
+          "verify_sources"
+        ]
+      },
+      "blocked_result": {
+        "line": 1713,
+        "end": 1728,
+        "direct_calls": [
+          "isinstance",
+          "len",
+          "spec.get",
+          "str",
+          "str(i).strip",
+          "workflow.get"
+        ]
+      },
+      "asset_card": {
+        "line": 1738,
+        "end": 1806,
+        "direct_calls": [
+          "(deck.get('theme') or {}).get",
+          "_NEGATIVE_SPACE_ANCHOR.get",
+          "brief.get",
+          "color_cue.append",
+          "deck.get",
+          "derived.get",
+          "enhance_asset_card",
+          "grammar_phrase",
+          "hex_to_color_name",
+          "list",
+          "normalize_safe_area",
+          "page.get",
+          "raw.get",
+          "resolve_asset_card",
+          "resolve_asset_role",
+          "seed.get",
+          "str",
+          "str(asset_id).upper",
+          "str(asset_id).upper().replace",
+          "str(derived.get('name') or '').strip",
+          "str(derived.get('name') or '').strip().lower",
+          "str(raw.get('negative_space_anchor') or _NEGATIVE_SPACE_ANCHOR.get(function, 'left')).lower",
+          "visual_world.lower"
+        ]
+      },
+      "_media_of": {
+        "line": 1809,
+        "end": 1817,
+        "direct_calls": [
+          "ValueError",
+          "isinstance",
+          "judgment.get",
+          "page.get"
+        ]
+      },
+      "_page_background_color": {
+        "line": 1820,
+        "end": 1830,
+        "direct_calls": [
+          "((plan_deck.get('theme') or {}).get('colors_seed') or {}).get",
+          "(page or {}).get",
+          "(plan_deck.get('theme') or {}).get",
+          "bg.startswith",
+          "len",
+          "plan_deck.get",
+          "str",
+          "str((page or {}).get('background') or '').strip"
+        ]
+      },
+      "build_manifest": {
+        "line": 1833,
+        "end": 1946,
+        "direct_calls": [
+          "(base / op).resolve",
+          "(bundle.get('workflow') or {}).get",
+          "(plan_deck.get('world') or {}).get",
+          "ValueError",
+          "_Path",
+          "_Path((bundle.get('workflow') or {}).get('brief_path') or '.').resolve",
+          "_Path(cache_path).expanduser",
+          "_Path(origin['path']).expanduser",
+          "_media_of",
+          "_media_of(page).get",
+          "_page_background_color",
+          "asset_card",
+          "asset_fingerprint",
+          "assets.append",
+          "brief.get",
+          "build_asset_prompt",
+          "bundle.get",
+          "by_fingerprint.get",
+          "cache_file.parent.mkdir",
+          "cache_file.read_text",
+          "cached.get",
+          "card.get",
+          "dict",
+          "digest",
+          "existing['slide_ids'].append",
+          "fingerprint.removeprefix",
+          "hint.get",
+          "isinstance",
+          "json.loads",
+          "json_write",
+          "len",
+          "loaded.get",
+          "max",
+          "normalize_safe_area",
+          "op.is_absolute",
+          "op.resolve",
+          "origin.get",
+          "page.get",
+          "plan_deck.get",
+          "prompt_cache.get",
+          "qc_policy",
+          "raw.get",
+          "set",
+          "skipped_pages.append",
+          "str",
+          "str(raw.get('asset_role') or '').strip",
+          "str(raw.get('asset_role') or '').strip().lower"
+        ]
+      },
+      "qc_report": {
+        "line": 1952,
+        "end": 2089,
+        "direct_calls": [
+          "(entry.get('meta') or {}).get",
+          "(entry.get('page') or {}).get",
+          "(prev_results or {}).get",
+          "(r.get('policy') or {}).get",
+          "_Path",
+          "_Path(manifest_path).expanduser",
+          "_Path(manifest_path).expanduser().resolve",
+          "_bytes",
+          "actions.get",
+          "actions.items",
+          "actions.setdefault",
+          "actions.setdefault(decision['action'], []).append",
+          "all",
+          "asset_entries",
+          "bool",
+          "candidate.is_file",
+          "candidate.read_bytes",
+          "candidate.stat",
+          "carried.get",
+          "carried_witness.get",
+          "dict",
+          "digest",
+          "digest_bytes",
+          "engine_fingerprint",
+          "entry.get",
+          "image_qc",
+          "int",
+          "json_read_cached",
+          "json_write",
+          "len",
+          "manifest_file.with_name",
+          "now",
+          "origin.get",
+          "pending.append",
+          "prev_path.exists",
+          "prev_report.get",
+          "previous.get",
+          "profile.get",
+          "qc.get",
+          "qc_profile",
+          "qc_retry_decision",
+          "r.get",
+          "resolve_asset",
+          "results.append",
+          "str",
+          "str(phase).strip",
+          "str(phase).strip().lower",
+          "text_is_dark",
+          "verify_sources",
+          "witness_same",
+          "workflow_issues.append"
+        ]
+      },
+      "_add": {
+        "line": 1332,
+        "end": 1338,
+        "direct_calls": [
+          "checks.append"
+        ]
+      },
+      "hard_seam_result": {
+        "line": 1340,
+        "end": 1364,
+        "direct_calls": [
+          "_hard_seam_check",
+          "native.convert",
+          "native.convert('RGBA').getchannel",
+          "native.convert('RGBA').getchannel('A').getextrema",
+          "np.asarray"
+        ]
+      },
+      "confined": {
+        "line": 1526,
+        "end": 1530,
+        "direct_calls": [
+          "ValueError",
+          "path.resolve",
+          "resolved.is_relative_to",
+          "root.resolve"
+        ]
+      },
+      "_bytes": {
+        "line": 1997,
+        "end": 1998,
+        "direct_calls": [
+          "candidate.is_file",
+          "candidate.read_bytes"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "_PHOTO_STYLE_EXCLUDE",
+      "NEGATIVE_SPACE_PHRASES",
+      "SUBJECT_TEXT_RELATION_PHRASES",
+      "SAFE_AREA_PRESETS",
+      "LIGHT_PHRASES",
+      "ENERGY_PHRASES",
+      "ASSET_FUNCTION_PHRASES",
+      "DEFAULT_ASSET_ROLE",
+      "ASSET_TYPE_SUFFIX",
+      "ASSET_CONTRAST_GUARD",
+      "CARD_SEGMENTS",
+      "REQUIRED_SEGMENTS",
+      "QC_BLOCK",
+      "QC_FLAT_STD",
+      "QC_TEXTURE_STD",
+      "QC_MIN_NEGATIVE_RATIO",
+      "QC_BRIGHT_DARK",
+      "QC_BRIGHT_LIGHT",
+      "QC_BALANCE_GAP",
+      "QC_SUBJECT_MARGIN",
+      "QC_TEXT_RANGE",
+      "QC_TONE_MATCH_GAP",
+      "QC_TONE_CATASTROPHE_GAP",
+      "ASSET_QC_MAX_RETRIES",
+      "ASSET_QC_BLOCKING_CHECKS",
+      "ASSET_QC_ADVISORY_CHECKS",
+      "QC_FAST_MAX_SIDE",
+      "ASSET_QC_CONTEXT_FUNCTIONS",
+      "ASSET_QC_PHASES",
+      "QC_DECODE_HOLD_MAX_PX",
+      "QC_DECODE_HOLD_MAX_IMAGES",
+      "ACCEPTED",
+      "ASSET_DECISIONS",
+      "QC_REPORT_SCHEMA",
+      "_NEGATIVE_SPACE_ANCHOR"
+    ]
+  },
+  "scripts/bench.py": {
+    "lines": 277,
+    "imports": [
+      "__future__",
+      "argparse",
+      "csv",
+      "intelligence",
+      "json",
+      "pathlib",
+      "random",
+      "re",
+      "shutil",
+      "sys"
+    ],
+    "local_dependencies": [
+      "intelligence"
+    ],
+    "functions": {
+      "_actual": {
+        "line": 35,
+        "end": 46,
+        "direct_calls": [
+          "bool",
+          "case.get",
+          "intel.derive_world",
+          "intel.page_judgment",
+          "intel.understand",
+          "judged['media'].get",
+          "u.get"
+        ]
+      },
+      "_checks": {
+        "line": 49,
+        "end": 65,
+        "direct_calls": [
+          "bool",
+          "expect.items",
+          "isinstance",
+          "rows.append",
+          "str"
+        ]
+      },
+      "run": {
+        "line": 68,
+        "end": 79,
+        "direct_calls": [
+          "Path",
+          "Path(cases_path).read_text",
+          "_actual",
+          "_checks",
+          "_metrics",
+          "all",
+          "case.get",
+          "json.loads",
+          "results.append"
+        ]
+      },
+      "_metrics": {
+        "line": 82,
+        "end": 95,
+        "direct_calls": [
+          "len",
+          "max",
+          "round",
+          "sum"
+        ]
+      },
+      "ablate": {
+        "line": 98,
+        "end": 115,
+        "direct_calls": [
+          "getattr",
+          "isinstance",
+          "re.compile",
+          "run",
+          "setattr"
+        ]
+      },
+      "regression": {
+        "line": 118,
+        "end": 127,
+        "direct_calls": [
+          "len",
+          "max",
+          "round",
+          "sorted"
+        ]
+      },
+      "blind_pack": {
+        "line": 136,
+        "end": 161,
+        "direct_calls": [
+          "','.join",
+          "'\\n'.join",
+          "Path",
+          "enumerate",
+          "json.dumps",
+          "key_path.write_text",
+          "len",
+          "list",
+          "out_dir.mkdir",
+          "random.Random",
+          "range",
+          "rng.shuffle",
+          "rows.append",
+          "sheet.write_text",
+          "shutil.copyfile",
+          "shutil.copytree",
+          "src.is_dir",
+          "str"
+        ]
+      },
+      "_icc_2_1": {
+        "line": 164,
+        "end": 180,
+        "direct_calls": [
+          "len",
+          "range",
+          "sum"
+        ]
+      },
+      "blind_score": {
+        "line": 183,
+        "end": 213,
+        "direct_calls": [
+          "Path",
+          "Path(key_path).read_text",
+          "Path(sp).read_text",
+          "Path(sp).read_text(encoding='utf-8').splitlines",
+          "_icc_2_1",
+          "all",
+          "by_reviewer.setdefault",
+          "by_reviewer.values",
+          "csv.DictReader",
+          "float",
+          "json.loads",
+          "key.get",
+          "len",
+          "round",
+          "row.get",
+          "set",
+          "sorted",
+          "sum"
+        ]
+      },
+      "_print": {
+        "line": 216,
+        "end": 233,
+        "direct_calls": [
+          "print"
+        ]
+      },
+      "main": {
+        "line": 236,
+        "end": 273,
+        "direct_calls": [
+          "', '.join",
+          "Path",
+          "Path(args.baseline).read_text",
+          "Path(args.out).write_text",
+          "_print",
+          "a['changed_to'].items",
+          "ablate",
+          "argparse.ArgumentParser",
+          "blind_pack",
+          "blind_score",
+          "json.dumps",
+          "json.loads",
+          "len",
+          "list",
+          "parser.add_argument",
+          "parser.parse_args",
+          "print",
+          "regression",
+          "result['ablations'].items",
+          "run",
+          "str"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "ROOT",
+      "DEFAULT_CASES",
+      "BRIEF",
+      "MISJUDGE_FIELDS",
+      "ABLATABLE",
+      "BLIND_DIMS",
+      "BLIND_DIMS_CN"
+    ]
+  },
+  "scripts/compiler.py": {
+    "lines": 1859,
+    "imports": [
+      "PIL",
+      "__future__",
+      "io",
+      "math",
+      "pathlib",
+      "pptx",
+      "primitives",
+      "re",
+      "shutil",
+      "sys",
+      "time",
+      "zipfile"
+    ],
+    "local_dependencies": [
+      "primitives"
+    ],
+    "functions": {
+      "normalize_fill": {
+        "line": 40,
+        "end": 73,
+        "direct_calls": [
+          "ValueError",
+          "float",
+          "isinstance",
+          "len",
+          "str",
+          "str(value['type']).lower",
+          "value.get"
+        ]
+      },
+      "_gradient_stops": {
+        "line": 76,
+        "end": 94,
+        "direct_calls": [
+          "ValueError",
+          "ctx.colors.get",
+          "ctx.paint",
+          "float",
+          "isinstance",
+          "item.get",
+          "len",
+          "normalized.append"
+        ]
+      },
+      "apply_fill": {
+        "line": 97,
+        "end": 116,
+        "direct_calls": [
+          "ValueError",
+          "_gradient_stops",
+          "ctx.paint",
+          "fill.background",
+          "float",
+          "getattr",
+          "gradient_fill",
+          "normalize_fill",
+          "solid_fill",
+          "spec.get"
+        ]
+      },
+      "_validate_text_contract": {
+        "line": 122,
+        "end": 138,
+        "direct_calls": [
+          "ValueError",
+          "element.get"
+        ]
+      },
+      "add_text": {
+        "line": 141,
+        "end": 195,
+        "direct_calls": [
+          "Emu",
+          "_validate_text_contract",
+          "align_of",
+          "anchor_of",
+          "apply_fill",
+          "bool",
+          "ctx.bounds",
+          "ctx.families",
+          "ctx.paint",
+          "ctx.text_color",
+          "element.get",
+          "emu",
+          "enumerate",
+          "float",
+          "insert_script_gaps",
+          "p.add_run",
+          "pt",
+          "px_to_pt",
+          "set_run_font",
+          "slide.shapes.add_textbox",
+          "split_runs",
+          "str",
+          "str(element.get('text', '')).split",
+          "tf.add_paragraph",
+          "tf.clear"
+        ]
+      },
+      "shape_text": {
+        "line": 201,
+        "end": 222,
+        "direct_calls": [
+          "Emu",
+          "align_of",
+          "anchor_of",
+          "bool",
+          "ctx.families",
+          "ctx.text_color",
+          "element.get",
+          "emu",
+          "float",
+          "is_cjk",
+          "pt",
+          "px_to_pt",
+          "set_run_font",
+          "str"
+        ]
+      },
+      "add_shape": {
+        "line": 225,
+        "end": 285,
+        "direct_calls": [
+          "Emu",
+          "OxmlElement",
+          "apply_fill",
+          "c.line._get_or_add_ln",
+          "c.line._get_or_add_ln().append",
+          "c.line.fill.background",
+          "ctx.bounds",
+          "ctx.paint",
+          "ctx.warn",
+          "element.get",
+          "element['stroke'].get",
+          "emu",
+          "end.set",
+          "float",
+          "isinstance",
+          "s.fill.background",
+          "s.line.fill.background",
+          "shape_text",
+          "slide.shapes.add_connector",
+          "slide.shapes.add_shape",
+          "solid_fill",
+          "str",
+          "stroke_color",
+          "stroke_raw.get"
+        ]
+      },
+      "_resolve_src": {
+        "line": 291,
+        "end": 313,
+        "direct_calls": [
+          "(root / src).resolve",
+          "(roots[0] / src).resolve",
+          "Path",
+          "Path(str(element['src'])).expanduser",
+          "Path.cwd",
+          "cand.exists",
+          "roots.append",
+          "src.is_absolute",
+          "src.resolve",
+          "str"
+        ]
+      },
+      "_needs_alpha": {
+        "line": 332,
+        "end": 333,
+        "direct_calls": []
+      },
+      "_fit_image_bytes": {
+        "line": 336,
+        "end": 398,
+        "direct_calls": [
+          "Image.alpha_composite",
+          "Image.alpha_composite(background, rgba).convert",
+          "Image.new",
+          "Image.open",
+          "_as_bytes",
+          "_encode_png",
+          "_needs_alpha",
+          "abs",
+          "any",
+          "decode_cache.get",
+          "img.crop",
+          "int",
+          "io.BytesIO",
+          "lambda c: tuple(c) if c and any(c) else None",
+          "max",
+          "opened.convert",
+          "opened.draft",
+          "round",
+          "tuple"
+        ]
+      },
+      "_encode_png": {
+        "line": 401,
+        "end": 428,
+        "direct_calls": [
+          "Image.new",
+          "_resize_quality",
+          "buf.getvalue",
+          "canvas.paste",
+          "img.crop",
+          "img.save",
+          "int",
+          "io.BytesIO",
+          "max",
+          "min",
+          "round"
+        ]
+      },
+      "_resize_quality": {
+        "line": 431,
+        "end": 438,
+        "direct_calls": [
+          "img.resize"
+        ]
+      },
+      "_as_bytes": {
+        "line": 441,
+        "end": 453,
+        "direct_calls": [
+          "Path",
+          "Path(value).read_bytes",
+          "bytes",
+          "hasattr",
+          "isinstance",
+          "value.read",
+          "value.seek",
+          "value.tell"
+        ]
+      },
+      "_content_protection_overlay": {
+        "line": 456,
+        "end": 463,
+        "direct_calls": [
+          "cp.get",
+          "element.get",
+          "isinstance"
+        ]
+      },
+      "add_image": {
+        "line": 466,
+        "end": 552,
+        "direct_calls": [
+          "Emu",
+          "_content_protection_overlay",
+          "_fit_image_bytes",
+          "_resolve_src",
+          "apply_fill",
+          "cache.get",
+          "ctx.bounds",
+          "ctx.color",
+          "ctx.timings.get",
+          "ctx.warn",
+          "element.get",
+          "emu",
+          "float",
+          "getattr",
+          "image_snapshots.get",
+          "io.BytesIO",
+          "isinstance",
+          "round",
+          "shp.line.fill.background",
+          "slide.shapes.add_picture",
+          "slide.shapes.add_shape",
+          "src.exists",
+          "src.read_bytes",
+          "str",
+          "stream.seek",
+          "time.perf_counter",
+          "tuple"
+        ]
+      },
+      "_textbox": {
+        "line": 577,
+        "end": 592,
+        "direct_calls": [
+          "Emu",
+          "anchor_of",
+          "ctx.families",
+          "emu",
+          "px_to_pt",
+          "set_para_font",
+          "slide.shapes.add_textbox",
+          "str",
+          "text.strip"
+        ]
+      },
+      "chart_colors": {
+        "line": 595,
+        "end": 613,
+        "direct_calls": [
+          "ctx.chart_primary_color",
+          "ctx.chart_role",
+          "ctx.color",
+          "ctx.text_color",
+          "ctx.theme.get",
+          "element.get"
+        ]
+      },
+      "_paint_negative_points": {
+        "line": 616,
+        "end": 638,
+        "direct_calls": [
+          "any",
+          "ctx.chart_role",
+          "element.get",
+          "enumerate",
+          "pt.format.fill.solid",
+          "tuple"
+        ]
+      },
+      "_set_donut_hole_size": {
+        "line": 646,
+        "end": 664,
+        "direct_calls": [
+          "el.append",
+          "el.find",
+          "el.findall",
+          "el.makeelement",
+          "el.remove",
+          "fang.addnext",
+          "int",
+          "qn",
+          "str"
+        ]
+      },
+      "_display": {
+        "line": 667,
+        "end": 674,
+        "direct_calls": [
+          "element.get",
+          "row.get",
+          "str"
+        ]
+      },
+      "_unit_number_format": {
+        "line": 681,
+        "end": 685,
+        "direct_calls": [
+          "isinstance",
+          "unit.strip",
+          "unit.strip().replace"
+        ]
+      },
+      "_label": {
+        "line": 688,
+        "end": 699,
+        "direct_calls": [
+          "anchor_of",
+          "ctx.families",
+          "element.get",
+          "float",
+          "px_to_pt",
+          "set_para_font",
+          "str",
+          "text.strip"
+        ]
+      },
+      "_native_chart_text": {
+        "line": 705,
+        "end": 779,
+        "direct_calls": [
+          "OxmlElement",
+          "_unit_number_format",
+          "bool",
+          "chart.category_axis.format.line.fill.background",
+          "chart.value_axis.format.line.fill.background",
+          "ctx.families",
+          "ctx.text_color",
+          "ctx.warn",
+          "element.get",
+          "float",
+          "font._element.append",
+          "font._element.xpath",
+          "isinstance",
+          "len",
+          "math.isfinite",
+          "max",
+          "node.set",
+          "pt",
+          "r.get",
+          "str",
+          "style"
+        ]
+      },
+      "_add_multi_series": {
+        "line": 782,
+        "end": 865,
+        "direct_calls": [
+          "CategoryChartData",
+          "Emu",
+          "Pt",
+          "_native_chart_text",
+          "_paint_negative_points",
+          "bool",
+          "chart_colors",
+          "ctx.chart_role",
+          "ctx.families",
+          "ctx.series_palette",
+          "ctx.warn",
+          "data.add_series",
+          "element.get",
+          "emu",
+          "enumerate",
+          "float",
+          "int",
+          "isinstance",
+          "len",
+          "list",
+          "math.isfinite",
+          "max",
+          "mk.format.fill.solid",
+          "nums.append",
+          "parsed.append",
+          "s.get",
+          "series.format.fill.solid",
+          "series.format.line.fill.background",
+          "series_highlight_index",
+          "slide.shapes.add_chart",
+          "str"
+        ]
+      },
+      "add_native_chart": {
+        "line": 868,
+        "end": 993,
+        "direct_calls": [
+          "CategoryChartData",
+          "Emu",
+          "Pt",
+          "_add_multi_series",
+          "_native_chart_text",
+          "_paint_negative_points",
+          "_rows",
+          "_set_donut_hole_size",
+          "_textbox",
+          "bool",
+          "chart_colors",
+          "ctx.bounds",
+          "ctx.chart_role",
+          "ctx.color",
+          "ctx.families",
+          "ctx.series_palette",
+          "ctx.warn",
+          "data.add_series",
+          "element.get",
+          "emu",
+          "enumerate",
+          "float",
+          "highlight_index",
+          "int",
+          "isinstance",
+          "len",
+          "min",
+          "mk.format.fill.solid",
+          "point.format.fill.solid",
+          "r.get",
+          "series.format.fill.solid",
+          "series.format.line.fill.background",
+          "slide.shapes.add_chart",
+          "str",
+          "type"
+        ]
+      },
+      "add_shape_chart": {
+        "line": 999,
+        "end": 1534,
+        "direct_calls": [
+          "CHART_LIMITS.get",
+          "Emu",
+          "_display",
+          "_label",
+          "_rows",
+          "_textbox",
+          "any",
+          "b.fill.solid",
+          "b.line.fill.background",
+          "bar.line.fill.background",
+          "bool",
+          "chart_colors",
+          "ctx.auto_text_for",
+          "ctx.bounds",
+          "ctx.color",
+          "ctx.families",
+          "ctx.paint",
+          "ctx.ramp_color",
+          "ctx.series_color",
+          "ctx.warn",
+          "d.fill.solid",
+          "d.line.fill.background",
+          "dot.line.fill.background",
+          "element.get",
+          "emu",
+          "ends.append",
+          "enumerate",
+          "fill.line.fill.background",
+          "float",
+          "highlight_index",
+          "is_total.append",
+          "len",
+          "math.ceil",
+          "math.sqrt",
+          "max",
+          "min",
+          "p0.get",
+          "pt",
+          "px_to_pt",
+          "r.get",
+          "range",
+          "row.get",
+          "rule.line.fill.background",
+          "s.fill.solid",
+          "s.line.fill.background",
+          "seg_starts.append",
+          "set_para_font",
+          "slide.shapes.add_connector",
+          "slide.shapes.add_shape",
+          "slide.shapes.add_textbox",
+          "solid_fill",
+          "sorted",
+          "starts.append",
+          "str",
+          "str(r.get('desc', '') or '').strip",
+          "str(row.get('desc', '') or '').strip",
+          "sum",
+          "track.line.fill.background"
+        ]
+      },
+      "add_chart": {
+        "line": 1540,
+        "end": 1556,
+        "direct_calls": [
+          "add_kpi",
+          "add_native_chart",
+          "add_shape_chart",
+          "ctx.warn",
+          "element.get",
+          "str"
+        ]
+      },
+      "add_kpi": {
+        "line": 1559,
+        "end": 1586,
+        "direct_calls": [
+          "Emu",
+          "align_of",
+          "chart_colors",
+          "ctx.bounds",
+          "ctx.families",
+          "element.get",
+          "emu",
+          "px_to_pt",
+          "set_para_font",
+          "slide.shapes.add_textbox",
+          "str",
+          "str(element.get('label', '') or '').strip",
+          "str(element.get('value', '') or '').strip"
+        ]
+      },
+      "_normalize_embedded_ooxml": {
+        "line": 1615,
+        "end": 1641,
+        "direct_calls": [
+          "_io.BytesIO",
+          "_re.compile",
+          "_zip.ZipFile",
+          "buf.getvalue",
+          "data.decode",
+          "fixed.encode",
+          "stamp.sub",
+          "zin.infolist",
+          "zin.read",
+          "zout.writestr"
+        ]
+      },
+      "_postprocess_package": {
+        "line": 1644,
+        "end": 1697,
+        "direct_calls": [
+          "Path",
+          "_normalize_embedded_ooxml",
+          "_re.compile",
+          "_re.sub",
+          "_shutil.move",
+          "_time.perf_counter",
+          "_zip.ZipFile",
+          "data.decode",
+          "empty_run.sub",
+          "item.filename.endswith",
+          "item.filename.startswith",
+          "path.with_suffix",
+          "round",
+          "str",
+          "stripped.encode",
+          "zin.infolist",
+          "zin.read",
+          "zout.writestr"
+        ]
+      },
+      "compile_deck": {
+        "line": 1700,
+        "end": 1854,
+        "direct_calls": [
+          "DISPATCH.get",
+          "Emu",
+          "Path",
+          "Presentation",
+          "RenderContext",
+          "_ordered.sort",
+          "_postprocess_package",
+          "apply_fill",
+          "bool",
+          "canvas.get",
+          "canvas_warnings.append",
+          "ctx.colors.get",
+          "ctx.timings.get",
+          "ctx.warn",
+          "dict",
+          "e.get",
+          "element.get",
+          "emu",
+          "enumerate",
+          "float",
+          "fn",
+          "isinstance",
+          "len",
+          "list",
+          "math.isfinite",
+          "output_path.exists",
+          "output_path.parent.mkdir",
+          "output_path.stat",
+          "prs.save",
+          "prs.slides.add_slide",
+          "round",
+          "slide_spec.get",
+          "spec.get",
+          "str",
+          "str(e.get('layer', '')).lower",
+          "str(e.get('role', '')).lower",
+          "str(speed).lower",
+          "time.perf_counter"
+        ]
+      },
+      "style": {
+        "line": 716,
+        "end": 725,
+        "direct_calls": [
+          "OxmlElement",
+          "font._element.append",
+          "font._element.xpath",
+          "node.set",
+          "pt"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "SHAPE_TYPES",
+      "MEDIA_MAX_OVERSAMPLE",
+      "NATIVE_CHART_TYPES",
+      "ELEMENT_PAYLOAD_CHARTS",
+      "SHAPE_CHARTS",
+      "NUMERIC_UNIT_KINDS",
+      "COMPILER_VERSION",
+      "_HERE",
+      "DISPATCH",
+      "_FIXED_ZIP_STAMP",
+      "_EMBEDDED_OOXML"
+    ]
+  },
+  "scripts/ghost.py": {
+    "lines": 1737,
+    "imports": [
+      "PIL",
+      "__future__",
+      "io",
+      "math",
+      "pathlib",
+      "primitives",
+      "re",
+      "shutil",
+      "typing"
+    ],
+    "local_dependencies": [
+      "primitives"
+    ],
+    "functions": {
+      "font_fallbacks": {
+        "line": 36,
+        "end": 38,
+        "direct_calls": [
+          "dict"
+        ]
+      },
+      "_has_cjk": {
+        "line": 96,
+        "end": 97,
+        "direct_calls": [
+          "_is_cjk",
+          "any",
+          "str"
+        ]
+      },
+      "_font_family": {
+        "line": 100,
+        "end": 110,
+        "direct_calls": [
+          "_has_cjk",
+          "any",
+          "ctx.families",
+          "element.get",
+          "str",
+          "str(cn if _has_cjk(element.get('text', '')) else latin).lower"
+        ]
+      },
+      "_font": {
+        "line": 113,
+        "end": 142,
+        "direct_calls": [
+          "ImageFont.load_default",
+          "ImageFont.truetype",
+          "Path",
+          "Path(name).exists",
+          "_FONT_FALLBACKS.get",
+          "int",
+          "list",
+          "max",
+          "round",
+          "str"
+        ]
+      },
+      "_rgb": {
+        "line": 145,
+        "end": 156,
+        "direct_calls": [
+          "ctx.paint",
+          "int",
+          "isinstance",
+          "len",
+          "max",
+          "min",
+          "token.get",
+          "tuple"
+        ]
+      },
+      "_rgba": {
+        "line": 159,
+        "end": 163,
+        "direct_calls": [
+          "_rgb",
+          "float",
+          "int",
+          "max",
+          "min"
+        ]
+      },
+      "_rgba_color": {
+        "line": 166,
+        "end": 174,
+        "direct_calls": [
+          "color_to_hex",
+          "float",
+          "int",
+          "max",
+          "min"
+        ]
+      },
+      "_series_groups": {
+        "line": 177,
+        "end": 201,
+        "direct_calls": [
+          "e.get",
+          "float",
+          "isinstance",
+          "math.isfinite",
+          "out.append",
+          "s.get",
+          "str",
+          "vals.append"
+        ]
+      },
+      "_series_plot_box": {
+        "line": 204,
+        "end": 207,
+        "direct_calls": [
+          "int",
+          "max"
+        ]
+      },
+      "_scale_box": {
+        "line": 210,
+        "end": 212,
+        "direct_calls": [
+          "e.get",
+          "float",
+          "int",
+          "round",
+          "tuple"
+        ]
+      },
+      "_resolve_color": {
+        "line": 215,
+        "end": 218,
+        "direct_calls": [
+          "_rgb"
+        ]
+      },
+      "_draw_gradient": {
+        "line": 221,
+        "end": 267,
+        "direct_calls": [
+          "(value or {}).get",
+          "Image.new",
+          "ImageDraw.Draw",
+          "_at",
+          "_resolve_color",
+          "abs",
+          "d.line",
+          "float",
+          "img.alpha_composite",
+          "int",
+          "isinstance",
+          "len",
+          "max",
+          "next",
+          "parsed.append",
+          "parsed.sort",
+          "range",
+          "round",
+          "stop.get",
+          "tuple",
+          "value.get",
+          "zip"
+        ]
+      },
+      "_fill": {
+        "line": 270,
+        "end": 287,
+        "direct_calls": [
+          "Image.new",
+          "ImageDraw.Draw",
+          "_draw_gradient",
+          "_rgba",
+          "d.rectangle",
+          "d.rounded_rectangle",
+          "img.alpha_composite",
+          "isinstance",
+          "str",
+          "str(value.get('type', '')).lower",
+          "value.get"
+        ]
+      },
+      "_cjk_break_fix": {
+        "line": 314,
+        "end": 341,
+        "direct_calls": [
+          "_UNIT_HEAD.match",
+          "left[-1:].isdigit",
+          "left[start - 1].isdigit",
+          "len",
+          "max",
+          "seg[:at].rstrip",
+          "seg[at:].lstrip",
+          "sides"
+        ]
+      },
+      "_wrap_lines": {
+        "line": 344,
+        "end": 400,
+        "direct_calls": [
+          "_cjk_break_fix",
+          "_has_cjk",
+          "font.getlength",
+          "len",
+          "max",
+          "raw.split",
+          "result.append",
+          "seg[:lo].rstrip",
+          "str",
+          "str(text).split",
+          "visible_width"
+        ]
+      },
+      "_draw_text": {
+        "line": 403,
+        "end": 470,
+        "direct_calls": [
+          "Image.new",
+          "ImageDraw.Draw",
+          "_fill",
+          "_font",
+          "_font_family",
+          "_has_cjk",
+          "_rgba",
+          "_scale_box",
+          "_wrap_lines",
+          "bool",
+          "d.text",
+          "d.textbbox",
+          "e.get",
+          "float",
+          "font.getlength",
+          "img.alpha_composite",
+          "insert_script_gaps",
+          "int",
+          "isinstance",
+          "len",
+          "max",
+          "round",
+          "str",
+          "str(e.get('align', 'left')).lower",
+          "str(e.get('anchor', 'top')).lower",
+          "str(text_fill.get('type', '')).lower",
+          "text.split",
+          "text.upper",
+          "text_fill.get"
+        ]
+      },
+      "_draw_shape": {
+        "line": 473,
+        "end": 563,
+        "direct_calls": [
+          "Image.new",
+          "ImageDraw.Draw",
+          "_draw_text",
+          "_fill",
+          "_rgba",
+          "_scale_box",
+          "d.ellipse",
+          "d.line",
+          "d.polygon",
+          "d.rectangle",
+          "d.rounded_rectangle",
+          "dict",
+          "draw.line",
+          "draw.polygon",
+          "e.get",
+          "fill.get",
+          "float",
+          "img.alpha_composite",
+          "int",
+          "isinstance",
+          "math.hypot",
+          "max",
+          "min",
+          "round",
+          "str",
+          "str(e.get('shape', 'rect')).lower",
+          "str(fill.get('type', '')).lower",
+          "str(fill.get('type', 'solid')).lower",
+          "str(stroke.get('type', '')).lower",
+          "stroke.get"
+        ]
+      },
+      "_resolve_image": {
+        "line": 566,
+        "end": 583,
+        "direct_calls": [
+          "(r / raw).resolve",
+          "Path",
+          "Path(str(src)).expanduser",
+          "cand.exists",
+          "cand.is_file",
+          "raw.is_absolute",
+          "raw.resolve",
+          "resolved.exists",
+          "resolved.is_file",
+          "str"
+        ]
+      },
+      "_draw_image": {
+        "line": 586,
+        "end": 663,
+        "direct_calls": [
+          "(ImageOps.exif_transpose(opened) if opened.getexif() else opened).convert",
+          "(e.get('asset') or {}).get",
+          "(getattr(ctx, 'image_decoded', None) or {}).get",
+          "Image.new",
+          "Image.open",
+          "ImageDraw.Draw",
+          "ImageDraw.Draw(mask).rounded_rectangle",
+          "ImageOps.exif_transpose",
+          "ImageOps.fit",
+          "Path",
+          "_fill",
+          "_resolve_image",
+          "_rgba",
+          "_scale_box",
+          "cache.get",
+          "d.line",
+          "d.rectangle",
+          "e.get",
+          "fitted.alpha_composite",
+          "fitted.putalpha",
+          "getattr",
+          "held.convert",
+          "image.thumbnail",
+          "image_bytes_map.get",
+          "img.alpha_composite",
+          "int",
+          "io.BytesIO",
+          "isinstance",
+          "max",
+          "min",
+          "opened.getexif",
+          "probe.getexif",
+          "round",
+          "str",
+          "str(e.get('fit', 'cover')).lower",
+          "str(probe.format or '').upper"
+        ]
+      },
+      "_rows": {
+        "line": 666,
+        "end": 695,
+        "direct_calls": [
+          "chart_rows",
+          "e.get",
+          "isinstance",
+          "len",
+          "out.append",
+          "s.get",
+          "str",
+          "str(s.get('name') or '').strip",
+          "zip"
+        ]
+      },
+      "_value": {
+        "line": 698,
+        "end": 706,
+        "direct_calls": [
+          "float",
+          "math.isfinite",
+          "row.get"
+        ]
+      },
+      "_draw_wrapped": {
+        "line": 732,
+        "end": 739,
+        "direct_calls": [
+          "_wrap_lines",
+          "d.text",
+          "int"
+        ]
+      },
+      "_draw_unrendered": {
+        "line": 742,
+        "end": 752,
+        "direct_calls": [
+          "_font",
+          "d.text",
+          "int",
+          "kind.upper",
+          "px_to_pt"
+        ]
+      },
+      "_draw_chart": {
+        "line": 755,
+        "end": 1272,
+        "direct_calls": [
+          "' '.join",
+          "Image.new",
+          "ImageDraw.Draw",
+          "_draw_unrendered",
+          "_draw_wrapped",
+          "_font",
+          "_font_family",
+          "_has_cjk",
+          "_py",
+          "_rgb",
+          "_rgba",
+          "_rgba_color",
+          "_rows",
+          "_scale_box",
+          "_series_groups",
+          "_series_plot_box",
+          "_value",
+          "any",
+          "bool",
+          "ctx.auto_text_for",
+          "ctx.chart_primary_color",
+          "ctx.chart_role",
+          "ctx.color",
+          "ctx.ramp_color",
+          "ctx.series_color",
+          "ctx.series_palette",
+          "ctx.theme.get",
+          "d.ellipse",
+          "d.line",
+          "d.pieslice",
+          "d.polygon",
+          "d.rectangle",
+          "d.rounded_rectangle",
+          "d.text",
+          "d.textlength",
+          "e.get",
+          "ends.append",
+          "enumerate",
+          "float",
+          "float(val).is_integer",
+          "highlight_index",
+          "img.alpha_composite",
+          "int",
+          "is_total.append",
+          "len",
+          "math.cos",
+          "math.radians",
+          "math.sin",
+          "max",
+          "min",
+          "native_font",
+          "p0.get",
+          "placeholder_frame",
+          "pts.append",
+          "px_to_pt",
+          "r.get",
+          "range",
+          "row.get",
+          "rows[i].get",
+          "series_highlight_index",
+          "set",
+          "sorted",
+          "starts.append",
+          "str",
+          "str(e.get('chart_kind') or e.get('kind') or '').lower",
+          "str(e.get('label') or '').strip",
+          "str(e.get('value') or '').strip",
+          "str(row.get('desc', '') or '').strip",
+          "sum",
+          "text.strip",
+          "tuple",
+          "zip"
+        ]
+      },
+      "_draw_background": {
+        "line": 1275,
+        "end": 1280,
+        "direct_calls": [
+          "_draw_gradient",
+          "_rgb",
+          "bg.get",
+          "img.paste",
+          "isinstance",
+          "str",
+          "str(bg.get('type', '')).lower"
+        ]
+      },
+      "ghost_page": {
+        "line": 1283,
+        "end": 1322,
+        "direct_calls": [
+          "Image.new",
+          "Path",
+          "Path(str(spec.get('_base_path') or '.')).expanduser",
+          "Path.cwd",
+          "RenderContext",
+          "_draw_background",
+          "_draw_chart",
+          "_draw_image",
+          "_draw_shape",
+          "_draw_text",
+          "canvas.get",
+          "e.get",
+          "elements.sort",
+          "float",
+          "img.convert",
+          "img.resize",
+          "int",
+          "isinstance",
+          "list",
+          "max",
+          "slide.get",
+          "spec.get",
+          "str",
+          "str(e.get('layer', '')).lower",
+          "str(e.get('role', '')).lower",
+          "str(e.get('type', 'text')).lower"
+        ]
+      },
+      "_page_shape": {
+        "line": 1325,
+        "end": 1348,
+        "direct_calls": [
+          "e.get",
+          "float",
+          "isinstance",
+          "len",
+          "max",
+          "slide.get"
+        ]
+      },
+      "_label_pages": {
+        "line": 1351,
+        "end": 1372,
+        "direct_calls": [
+          "isinstance",
+          "len",
+          "shape.get",
+          "slide.get",
+          "str"
+        ]
+      },
+      "key_selection": {
+        "line": 1375,
+        "end": 1413,
+        "direct_calls": [
+          "_label_pages",
+          "_page_shape",
+          "_pick",
+          "int",
+          "len",
+          "list",
+          "max",
+          "next",
+          "picks.append",
+          "range",
+          "sorted"
+        ]
+      },
+      "key_pages": {
+        "line": 1416,
+        "end": 1419,
+        "direct_calls": [
+          "key_selection"
+        ]
+      },
+      "key_page_roles": {
+        "line": 1422,
+        "end": 1424,
+        "direct_calls": [
+          "_label_pages",
+          "_page_shape"
+        ]
+      },
+      "_engine_stamp": {
+        "line": 1433,
+        "end": 1439,
+        "direct_calls": [
+          "engine_fingerprint"
+        ]
+      },
+      "_page_media_stamp": {
+        "line": 1442,
+        "end": 1499,
+        "direct_calls": [
+          "(root / path).resolve",
+          "Path",
+          "Path(str(src)).expanduser",
+          "Path.cwd",
+          "any",
+          "candidate.is_file",
+          "digest_bytes",
+          "digests.get",
+          "el.get",
+          "element.get",
+          "element['asset'].get",
+          "image_bytes.get",
+          "isinstance",
+          "next",
+          "path.is_absolute",
+          "path.read_bytes",
+          "path.resolve",
+          "slide.get",
+          "spec.get",
+          "stamps.append",
+          "str"
+        ]
+      },
+      "_font_stamp": {
+        "line": 1505,
+        "end": 1526,
+        "direct_calls": [
+          "'|'.join",
+          "Path",
+          "Path(name).stat",
+          "_FONT_CANDIDATES.items",
+          "parts.append",
+          "sorted"
+        ]
+      },
+      "_page_key": {
+        "line": 1529,
+        "end": 1542,
+        "direct_calls": [
+          "_engine_stamp",
+          "_font_stamp",
+          "_page_media_stamp",
+          "float",
+          "identity",
+          "int",
+          "round",
+          "spec.get"
+        ]
+      },
+      "ghost_deck": {
+        "line": 1545,
+        "end": 1636,
+        "direct_calls": [
+          "Image.open",
+          "Path",
+          "_page_key",
+          "_prune_page_cache",
+          "cache_dir.mkdir",
+          "cached_file.exists",
+          "cached_file.is_file",
+          "ghost_page",
+          "handle.convert",
+          "image.load",
+          "image.save",
+          "images_out.append",
+          "int",
+          "len",
+          "list",
+          "out.glob",
+          "out.mkdir",
+          "paths.append",
+          "range",
+          "shutil.copyfile",
+          "spec.get",
+          "stale.unlink",
+          "stats.get",
+          "stats.setdefault",
+          "stats.setdefault('rendered_pages' if drawn else 'cached_pages', []).append"
+        ]
+      },
+      "_prune_page_cache": {
+        "line": 1639,
+        "end": 1649,
+        "direct_calls": [
+          "cache_dir.glob",
+          "f.stat",
+          "sorted",
+          "stale.unlink"
+        ]
+      },
+      "_sheet_cache_key": {
+        "line": 1652,
+        "end": 1660,
+        "direct_calls": [
+          "_engine_stamp",
+          "file_digest",
+          "identity",
+          "int"
+        ]
+      },
+      "make_contact_sheet": {
+        "line": 1663,
+        "end": 1737,
+        "direct_calls": [
+          "Image.new",
+          "Image.open",
+          "ImageDraw.Draw",
+          "Path",
+          "Path(p).exists",
+          "_font",
+          "_sheet_cache_key",
+          "cached.is_file",
+          "cached.parent.mkdir",
+          "divmod",
+          "draw.text",
+          "enumerate",
+          "in_memory[i].convert",
+          "int",
+          "len",
+          "list",
+          "math.ceil",
+          "max",
+          "opened.convert",
+          "path.stem.split",
+          "sheet.paste",
+          "sheet.save",
+          "shutil.copyfile",
+          "stats.get",
+          "target.parent.mkdir"
+        ]
+      },
+      "_at": {
+        "line": 246,
+        "end": 255,
+        "direct_calls": [
+          "int",
+          "next",
+          "range",
+          "round",
+          "tuple",
+          "zip"
+        ]
+      },
+      "sides": {
+        "line": 323,
+        "end": 324,
+        "direct_calls": [
+          "seg[:at].rstrip",
+          "seg[at:].lstrip"
+        ]
+      },
+      "visible_width": {
+        "line": 347,
+        "end": 348,
+        "direct_calls": [
+          "font.getlength",
+          "len",
+          "max"
+        ]
+      },
+      "placeholder_frame": {
+        "line": 775,
+        "end": 777,
+        "direct_calls": [
+          "d.rounded_rectangle",
+          "int",
+          "max"
+        ]
+      },
+      "native_font": {
+        "line": 845,
+        "end": 847,
+        "direct_calls": [
+          "_font",
+          "_font_family",
+          "_has_cjk",
+          "float"
+        ]
+      },
+      "_pick": {
+        "line": 1392,
+        "end": 1394,
+        "direct_calls": [
+          "len",
+          "picks.append"
+        ]
+      },
+      "_py": {
+        "line": 1175,
+        "end": 1176,
+        "direct_calls": []
+      }
+    },
+    "top_level_contracts": [
+      "_FONT_CANDIDATES",
+      "_FONT_BOLD_CANDIDATES",
+      "_NO_LINE_START",
+      "_NO_LINE_END",
+      "_UNIT_HEAD",
+      "_UNIT_INNER",
+      "PREVIEW_ABSTRACT",
+      "PAGE_CACHE_DIR",
+      "PAGE_CACHE_MAX"
+    ]
+  },
+  "scripts/intelligence.py": {
+    "lines": 2772,
+    "imports": [
+      "__future__",
+      "hashlib",
+      "json",
+      "pathlib",
+      "primitives",
+      "re",
+      "types",
+      "yaml"
+    ],
+    "local_dependencies": [
+      "primitives"
+    ],
+    "functions": {
+      "load_brief": {
+        "line": 31,
+        "end": 74,
+        "direct_calls": [
+          "Path",
+          "Path(path).expanduser",
+          "ValueError",
+          "compile",
+          "dict",
+          "exec",
+          "getattr",
+          "hasattr",
+          "hashlib.sha256",
+          "hashlib.sha256(raw).hexdigest",
+          "isinstance",
+          "json.loads",
+          "p.is_file",
+          "p.read_bytes",
+          "raw.decode",
+          "str",
+          "type",
+          "types.ModuleType",
+          "yaml.safe_load"
+        ]
+      },
+      "_strip_scope_clauses": {
+        "line": 124,
+        "end": 136,
+        "direct_calls": [
+          "''.join",
+          "_SCOPE_SEGMENT.finditer",
+          "match.end",
+          "match.start",
+          "out.append",
+          "str"
+        ]
+      },
+      "_evidence_body": {
+        "line": 210,
+        "end": 212,
+        "direct_calls": [
+          "_COMPOUND_NOUNS.sub"
+        ]
+      },
+      "_scene_of": {
+        "line": 338,
+        "end": 341,
+        "direct_calls": [
+          "_hit"
+        ]
+      },
+      "_hit": {
+        "line": 344,
+        "end": 356,
+        "direct_calls": [
+          "any",
+          "re.escape",
+          "re.search",
+          "str",
+          "str(text or '').lower",
+          "str(w).strip",
+          "str(w).strip().lower"
+        ]
+      },
+      "_sentences": {
+        "line": 359,
+        "end": 360,
+        "direct_calls": [
+          "_SENTENCE_SPLIT.split",
+          "s.strip",
+          "str"
+        ]
+      },
+      "numerals": {
+        "line": 363,
+        "end": 424,
+        "direct_calls": [
+          "(m.group(2) or '').strip",
+          "_NUM.finditer",
+          "float",
+          "m.end",
+          "m.group",
+          "m.group(0).strip",
+          "m.group(1).replace",
+          "m.start",
+          "max",
+          "out.append",
+          "prev_char.isdigit",
+          "raw_text[:m.start()].rstrip",
+          "re.fullmatch",
+          "re.match",
+          "re.search",
+          "str"
+        ]
+      },
+      "evidence_numerals": {
+        "line": 427,
+        "end": 428,
+        "direct_calls": [
+          "numerals"
+        ]
+      },
+      "_is_quantile_row": {
+        "line": 439,
+        "end": 447,
+        "direct_calls": [
+          "_QUANT_RUN.search",
+          "all",
+          "body.split",
+          "len",
+          "p.strip",
+          "p[:1].isdigit"
+        ]
+      },
+      "_metric_of_clause": {
+        "line": 492,
+        "end": 503,
+        "direct_calls": [
+          "_CJK_RUN.finditer",
+          "_METRIC_SEPARATORS.split",
+          "len",
+          "m.group",
+          "out.append",
+          "re.sub"
+        ]
+      },
+      "_claim_mentions": {
+        "line": 506,
+        "end": 521,
+        "direct_calls": [
+          "any",
+          "len",
+          "range"
+        ]
+      },
+      "_clause_spans": {
+        "line": 527,
+        "end": 533,
+        "direct_calls": [
+          "_CLAUSE_SPLIT.finditer",
+          "len",
+          "m.end",
+          "m.start",
+          "spans.append"
+        ]
+      },
+      "_year_by_clause": {
+        "line": 536,
+        "end": 547,
+        "direct_calls": [
+          "_YEAR_TOKEN.search",
+          "_clause_spans",
+          "enumerate",
+          "m.group"
+        ]
+      },
+      "_ordinal_year": {
+        "line": 550,
+        "end": 565,
+        "direct_calls": [
+          "_ORDINAL_INDEX.items",
+          "_year_by_clause",
+          "_year_by_clause(text).values",
+          "len",
+          "max",
+          "years.append"
+        ]
+      },
+      "_arrival_value": {
+        "line": 568,
+        "end": 580,
+        "direct_calls": [
+          "(n or {}).get",
+          "_ARRIVAL_CUE.search",
+          "body.find",
+          "bool",
+          "max",
+          "str"
+        ]
+      },
+      "claim_units_conflict": {
+        "line": 583,
+        "end": 591,
+        "direct_calls": [
+          "evidence_numerals",
+          "len",
+          "n.get"
+        ]
+      },
+      "_metric_by_clause": {
+        "line": 594,
+        "end": 618,
+        "direct_calls": [
+          "_clause_spans",
+          "_metric_of_clause",
+          "enumerate",
+          "text[last:a].strip"
+        ]
+      },
+      "_attributed_primary": {
+        "line": 621,
+        "end": 670,
+        "direct_calls": [
+          "_ARRIVAL_CUE.search",
+          "_RANGE_NEXT.match",
+          "_claim_mentions",
+          "_clause_spans",
+          "_hit",
+          "_metric_by_clause",
+          "_ordinal_year",
+          "_year_by_clause",
+          "any",
+          "bool",
+          "enumerate",
+          "len",
+          "max",
+          "metrics.get",
+          "next",
+          "round",
+          "scored.append",
+          "t[2].get",
+          "text.find",
+          "years.get"
+        ]
+      },
+      "number_roles": {
+        "line": 673,
+        "end": 707,
+        "direct_calls": [
+          "_ARRIVAL_CUE.finditer",
+          "_PART_OF_WHOLE.search",
+          "_attributed_primary",
+          "cue.end",
+          "evidence_numerals",
+          "iter",
+          "list",
+          "next",
+          "re.split",
+          "reversed",
+          "str",
+          "subset.group"
+        ]
+      },
+      "explicit_relations": {
+        "line": 721,
+        "end": 740,
+        "direct_calls": [
+          "_RELATION_CLAUSE.fullmatch",
+          "_REPORTING_CLAUSE.fullmatch",
+          "_SOURCE_TAIL.sub",
+          "any",
+          "evidence_numerals",
+          "fact.setdefault",
+          "fact['object'].strip",
+          "fact['subject'].endswith",
+          "found.append",
+          "len",
+          "match.groupdict",
+          "re.search",
+          "re.split",
+          "re.sub",
+          "re.sub('^\\\\s*(?:[0-9]+[、.)）]\\\\s*)?', '', raw).strip"
+        ]
+      },
+      "understand": {
+        "line": 743,
+        "end": 873,
+        "direct_calls": [
+          "(prefix + cleaned_content).strip",
+          "EVIDENCE_MODES.index",
+          "_ANNOTATION.sub",
+          "_AXIS_TIME_TOKEN.finditer",
+          "_BETWEEN_METRICS.search",
+          "_CLAUSE_SPLIT.split",
+          "_CONDITIONAL_CLAUSE.sub",
+          "_ENUM_LIST.search",
+          "_FROM_TO_QUANTITY.search",
+          "_INDIVIDUAL_PERSON.search",
+          "_MATERIAL_LEXICON.items",
+          "_MULTIPLE_OF.search",
+          "_NEGATED_COMPARISON.search",
+          "_NEGATED_EXCEED.sub",
+          "_NUM.search",
+          "_PART_OF_WHOLE.search",
+          "_PHASE_MARKERS.search",
+          "_QUANTIFIED_ARROW.search",
+          "_SOURCE_TAIL.sub",
+          "_TAXONOMY_CUE.search",
+          "_TWO_ENDS_JOINED.search",
+          "_evidence_body",
+          "_hit",
+          "_is_quantile_row",
+          "_scene_of",
+          "_strip_scope_clauses",
+          "_strip_scope_clauses(annotated).strip",
+          "abs",
+          "annotated.endswith",
+          "bool",
+          "enumerate",
+          "explicit_relations",
+          "float",
+          "len",
+          "m.group",
+          "m.group(1).replace",
+          "max",
+          "min",
+          "modes.get",
+          "n.get",
+          "numerals",
+          "round",
+          "set",
+          "str",
+          "sum",
+          "text.endswith"
+        ]
+      },
+      "_fired": {
+        "line": 892,
+        "end": 894,
+        "direct_calls": [
+          "next"
+        ]
+      },
+      "_topic_shaped": {
+        "line": 897,
+        "end": 899,
+        "direct_calls": [
+          "bool",
+          "title.endswith"
+        ]
+      },
+      "_title_thesis": {
+        "line": 926,
+        "end": 931,
+        "direct_calls": [
+          "_CONTRAST_ASSERTION.search",
+          "_FROM_TO_QUANTITY.search",
+          "_hit",
+          "_topic_shaped",
+          "bool"
+        ]
+      },
+      "_title_assertive": {
+        "line": 934,
+        "end": 941,
+        "direct_calls": [
+          "any",
+          "bool",
+          "evidence_numerals"
+        ]
+      },
+      "_is_data_listing": {
+        "line": 944,
+        "end": 978,
+        "direct_calls": [
+          "_ARRIVAL_CUE.findall",
+          "_CONDITION_RESULT.search",
+          "_FROM_TO_QUANTITY.search",
+          "_QUANTIFIED_ARROW.search",
+          "_hit",
+          "evidence_numerals",
+          "len",
+          "n.get",
+          "set"
+        ]
+      },
+      "extract_claim": {
+        "line": 981,
+        "end": 1112,
+        "direct_calls": [
+          "' ＋ '.join",
+          "'/'.join",
+          "_CONTRAST_ASSERTION.search",
+          "_LIST_PREFIX.sub",
+          "_LIST_PREFIX.sub('', _SOURCE_TAIL.sub('', sent)).strip",
+          "_META_LINE.search",
+          "_SCOPE_HEAD_RE.match",
+          "_SOURCE_TAIL.sub",
+          "_fired",
+          "_hit",
+          "_is_data_listing",
+          "_metric_of_clause",
+          "_sentences",
+          "_title_assertive",
+          "_title_thesis",
+          "_topic_shaped",
+          "bits.append",
+          "bool",
+          "cands.append",
+          "enumerate",
+          "evidence_numerals",
+          "item.get",
+          "len",
+          "round",
+          "set",
+          "str",
+          "str(item.get('content') or '').strip",
+          "str(item.get('insight') or '').strip",
+          "str(item.get('title') or '').strip",
+          "title.endswith"
+        ]
+      },
+      "_cjk_bigrams": {
+        "line": 1130,
+        "end": 1132,
+        "direct_calls": [
+          "re.findall",
+          "str",
+          "zip"
+        ]
+      },
+      "_delete_candidates": {
+        "line": 1135,
+        "end": 1159,
+        "direct_calls": [
+          "_cjk_bigrams",
+          "_sentences",
+          "any",
+          "int",
+          "len",
+          "max",
+          "numerals",
+          "re.findall",
+          "scored.append",
+          "scored.sort",
+          "str",
+          "u.get"
+        ]
+      },
+      "information_weight": {
+        "line": 1162,
+        "end": 1235,
+        "direct_calls": [
+          "'、'.join",
+          "_AXIS_TIME_TOKEN.finditer",
+          "_arrival_value",
+          "_delete_candidates",
+          "_hit",
+          "any",
+          "claim.get",
+          "counts.get",
+          "counts.items",
+          "float",
+          "kill.append",
+          "m.group",
+          "m.group(1).replace",
+          "maxi.append",
+          "n.get",
+          "number_roles",
+          "round",
+          "str",
+          "u.get",
+          "weak.append"
+        ]
+      },
+      "visual_role": {
+        "line": 1241,
+        "end": 1306,
+        "direct_calls": [
+          "','.join",
+          "_hit",
+          "bool",
+          "claim.get",
+          "int",
+          "str",
+          "str(tension or '').strip",
+          "u.get"
+        ]
+      },
+      "_metric_attribution": {
+        "line": 1312,
+        "end": 1328,
+        "direct_calls": [
+          "_clause_spans",
+          "_metric_of_clause",
+          "any",
+          "len",
+          "max",
+          "next",
+          "pairs.append",
+          "text.find"
+        ]
+      },
+      "_canonical_metrics": {
+        "line": 1331,
+        "end": 1342,
+        "direct_calls": [
+          "dict.fromkeys",
+          "min",
+          "out.append"
+        ]
+      },
+      "_metric_concentration": {
+        "line": 1345,
+        "end": 1355,
+        "direct_calls": [
+          "_canonical_metrics",
+          "_metric_attribution",
+          "canon.get",
+          "dict",
+          "dict.fromkeys",
+          "len",
+          "max",
+          "named.count",
+          "set",
+          "zip"
+        ]
+      },
+      "_numbers_are_support": {
+        "line": 1358,
+        "end": 1374,
+        "direct_calls": [
+          "_metric_concentration",
+          "evidence_numerals",
+          "len",
+          "n.get",
+          "str",
+          "str(n.get('unit') or '').strip"
+        ]
+      },
+      "focus_of": {
+        "line": 1377,
+        "end": 1466,
+        "direct_calls": [
+          "(claim.get('text') or '').strip",
+          "_hit",
+          "_numbers_are_support",
+          "bool",
+          "claim.get",
+          "int",
+          "len",
+          "media.get",
+          "n.get",
+          "next",
+          "number_roles",
+          "u.get"
+        ]
+      },
+      "_composition_scores": {
+        "line": 1489,
+        "end": 1535,
+        "direct_calls": [
+          "_GRAMMAR_PREFERENCE.get",
+          "claim.get",
+          "float",
+          "int",
+          "media.get",
+          "s.get",
+          "str",
+          "str(grammar or '').strip",
+          "u.get"
+        ]
+      },
+      "_composition_choice": {
+        "line": 1538,
+        "end": 1544,
+        "direct_calls": [
+          "_composition_rejections",
+          "_composition_scores",
+          "enumerate",
+          "max"
+        ]
+      },
+      "_composition_rejections": {
+        "line": 1547,
+        "end": 1570,
+        "direct_calls": [
+          "out.append",
+          "scores.items",
+          "sorted"
+        ]
+      },
+      "_composition_why": {
+        "line": 1573,
+        "end": 1594,
+        "direct_calls": [
+          "int",
+          "media.get",
+          "u.get"
+        ]
+      },
+      "composition_of": {
+        "line": 1597,
+        "end": 1624,
+        "direct_calls": [
+          "_COMPOSITION_TIEBREAK.index",
+          "_composition_choice",
+          "_composition_scores",
+          "_composition_why",
+          "_hit",
+          "claim.get",
+          "int",
+          "len",
+          "max",
+          "str",
+          "u.get"
+        ]
+      },
+      "spatial_of": {
+        "line": 1630,
+        "end": 1655,
+        "direct_calls": [
+          "(u or {}).get",
+          "comp.get"
+        ]
+      },
+      "tension_of": {
+        "line": 1658,
+        "end": 1669,
+        "direct_calls": [
+          "brief.get",
+          "item.get",
+          "str",
+          "str(brief.get('tension') or '').strip",
+          "str(item.get('tension') or '').strip"
+        ]
+      },
+      "_weight_label": {
+        "line": 1672,
+        "end": 1677,
+        "direct_calls": [
+          "re.split",
+          "str",
+          "text.split",
+          "text.startswith"
+        ]
+      },
+      "suggest_break": {
+        "line": 1705,
+        "end": 1736,
+        "direct_calls": [
+          "abs",
+          "enumerate",
+          "left[-1:].isdigit",
+          "len",
+          "max",
+          "next",
+          "range",
+          "right.lstrip",
+          "str",
+          "str(sentence or '').strip",
+          "unit_head"
+        ]
+      },
+      "measure_of": {
+        "line": 1739,
+        "end": 1748,
+        "direct_calls": []
+      },
+      "typography_of": {
+        "line": 1755,
+        "end": 1807,
+        "direct_calls": [
+          "(u or {}).get",
+          "_hit",
+          "_weight_label",
+          "claim.get",
+          "focus.get",
+          "int",
+          "measure_of",
+          "number_roles",
+          "str",
+          "suggest_break",
+          "weight.get"
+        ]
+      },
+      "_media_hint": {
+        "line": 1813,
+        "end": 1819,
+        "direct_calls": []
+      },
+      "media_necessity": {
+        "line": 1822,
+        "end": 1861,
+        "direct_calls": [
+          "_media_hint",
+          "bool",
+          "reasons.get",
+          "str",
+          "u.get"
+        ]
+      },
+      "production_spec": {
+        "line": 1867,
+        "end": 1899,
+        "direct_calls": [
+          "(weight or {}).get",
+          "comp.get",
+          "must.append",
+          "u.get",
+          "{'big_whitespace': 'sparse', 'editorial': 'balanced', 'data_field': 'dense', 'image_narrative': 'sparse', 'linear_structure': 'balanced', 'asymmetric_tension': 'balanced'}.get"
+        ]
+      },
+      "register_of": {
+        "line": 1910,
+        "end": 1918,
+        "direct_calls": [
+          "_hit"
+        ]
+      },
+      "derive_world": {
+        "line": 1946,
+        "end": 2047,
+        "direct_calls": [
+          "' '.join",
+          "EVIDENCE_MODES.index",
+          "_ACCENT.get",
+          "_hit",
+          "blend",
+          "brief.get",
+          "declared.lower",
+          "freq.get",
+          "hits.get",
+          "len",
+          "list",
+          "max",
+          "register_of",
+          "str",
+          "str(brief.get('background_scene') or '').lower",
+          "str(brief.get('visual_world') or '').strip",
+          "sum",
+          "u.get",
+          "{'comparison': 'shared baseline, two-tone delta, direct labels', 'series': 'hairline axis, one highlighted point, direct labels', 'number': 'single large figure with an explicit baseline', 'structure': 'layer map with hairline connectors', 'sequence': 'single axis, spacing carries rhythm', 'proposition': 'no chart: type carries the page'}.get"
+        ]
+      },
+      "_intent_value": {
+        "line": 2063,
+        "end": 2064,
+        "direct_calls": [
+          "bool",
+          "isinstance",
+          "value.strip"
+        ]
+      },
+      "section_label": {
+        "line": 2117,
+        "end": 2176,
+        "direct_calls": [
+          "(claim or {}).get",
+          "(item or {}).get",
+          "_BOUNDARY_SPLIT.split",
+          "_NUM_MODIFIER.sub",
+          "_NUM_MODIFIER.sub('', head, count=1).strip",
+          "_label_of",
+          "core.strip",
+          "len",
+          "part.strip",
+          "re.match",
+          "re.split",
+          "re.split('[，。；：！？\\\\n]', text, maxsplit=1)[0].strip",
+          "re.sub",
+          "str",
+          "str((claim or {}).get('text') or (item or {}).get('title') or '').strip",
+          "str((item or {}).get('eyebrow') or '').strip",
+          "text.startswith"
+        ]
+      },
+      "_apply_declared_spot": {
+        "line": 2179,
+        "end": 2191,
+        "direct_calls": [
+          "comp.get",
+          "declared.get",
+          "isinstance",
+          "r.get",
+          "str",
+          "str(declared.get('composition') or '').strip",
+          "str(declared.get('focus') or '').strip"
+        ]
+      },
+      "_is_meta_line": {
+        "line": 2198,
+        "end": 2209,
+        "direct_calls": [
+          "_CLAUSE_MARK.search",
+          "_DATE_TOKEN.search",
+          "_META_LINE.search",
+          "_hit",
+          "bool",
+          "content.strip",
+          "len"
+        ]
+      },
+      "judgment_view": {
+        "line": 2212,
+        "end": 2220,
+        "direct_calls": [
+          "_is_meta_line",
+          "item.get",
+          "str"
+        ]
+      },
+      "_declared_intent": {
+        "line": 2226,
+        "end": 2239,
+        "direct_calls": [
+          "'/'.join",
+          "item.get",
+          "str",
+          "str(item.get('evidence') or '').strip",
+          "str(item.get('evidence') or '').strip().lower",
+          "str(item.get('role') or '').strip",
+          "str(item.get('role') or '').strip().lower",
+          "warnings.append"
+        ]
+      },
+      "_closing_ask": {
+        "line": 2266,
+        "end": 2285,
+        "direct_calls": [
+          "_hit",
+          "next",
+          "number_roles",
+          "u.get",
+          "why.format"
+        ]
+      },
+      "page_judgment": {
+        "line": 2288,
+        "end": 2378,
+        "direct_calls": [
+          "_apply_declared_spot",
+          "_closing_ask",
+          "_declared_intent",
+          "_hit",
+          "any",
+          "bool",
+          "brief.get",
+          "claim.get",
+          "claim_units_conflict",
+          "composition_of",
+          "extract_claim",
+          "f'{title} {content}'.strip",
+          "focus_of",
+          "information_weight",
+          "int",
+          "item.get",
+          "judgment_view",
+          "len",
+          "media_necessity",
+          "n.get",
+          "number_roles",
+          "open_q.append",
+          "production_spec",
+          "role.setdefault",
+          "spatial_of",
+          "str",
+          "str(item.get('asset') or '').lower",
+          "str(item.get('audience') or brief.get('audience') or '').strip",
+          "str(item.get('content') or '').strip",
+          "str(item.get('decision') or brief.get('decision') or '').strip",
+          "str(item.get('tension') or brief.get('tension') or '').strip",
+          "str(item.get('title') or '').strip",
+          "str(view.get('content') or '').strip",
+          "tension_of",
+          "typography_of",
+          "u.get",
+          "understand",
+          "view.get",
+          "visual_role",
+          "warnings.append",
+          "weight.get",
+          "world.get"
+        ]
+      },
+      "_coherence_pass": {
+        "line": 2381,
+        "end": 2422,
+        "direct_calls": [
+          "enumerate",
+          "len",
+          "notes.append",
+          "p['judgment']['media'].get",
+          "pages[i]['judgment']['focus'].get",
+          "pages[j]['judgment']['focus'].get"
+        ]
+      },
+      "think": {
+        "line": 2433,
+        "end": 2530,
+        "direct_calls": [
+          "'/'.join",
+          "'；'.join",
+          "QUALITY_ALIASES.get",
+          "TypeError",
+          "_coherence_pass",
+          "_intent_value",
+          "_theme_seed",
+          "any",
+          "bool",
+          "brief.get",
+          "declared.get",
+          "derive_world",
+          "enumerate",
+          "f\"{it.get('title') or ''} {it.get('content') or ''}\".strip",
+          "f\"{v.get('title') or ''} {v.get('content') or ''}\".strip",
+          "isinstance",
+          "it.get",
+          "judgment_view",
+          "len",
+          "occasion.lower",
+          "page_judgment",
+          "pages.append",
+          "parts.append",
+          "section_label",
+          "str",
+          "str(brief.get('audience') or '').strip",
+          "str(brief.get('decision') or '').strip",
+          "str(brief.get('design_direction') or '').strip",
+          "str(brief.get('tension') or '').strip",
+          "str(declared.get('asset') or '').lower",
+          "str(quality_input or '').strip",
+          "str(quality_input or '').strip().lower",
+          "str(quality_input).strip",
+          "str(quality_input).strip().lower",
+          "understand",
+          "v.get",
+          "warnings.append"
+        ]
+      },
+      "_muted_of": {
+        "line": 2533,
+        "end": 2540,
+        "direct_calls": [
+          "blend",
+          "is_light",
+          "world.get"
+        ]
+      },
+      "normalize_brand_colors": {
+        "line": 2552,
+        "end": 2566,
+        "direct_calls": [
+          "_BRAND_SLOT_ALIAS.get",
+          "brand.items",
+          "isinstance",
+          "len",
+          "list",
+          "str",
+          "str(k).strip",
+          "str(k).strip().lower",
+          "v.strip",
+          "v.strip().startswith",
+          "zip"
+        ]
+      },
+      "_theme_seed": {
+        "line": 2569,
+        "end": 2578,
+        "direct_calls": [
+          "_muted_of",
+          "normalize_brand_colors",
+          "seed.update",
+          "sorted"
+        ]
+      },
+      "theme_tokens": {
+        "line": 2584,
+        "end": 2611,
+        "direct_calls": [
+          "_blend_toward",
+          "blend",
+          "contrast",
+          "is_light",
+          "seed.get"
+        ]
+      },
+      "_fmt_items": {
+        "line": 2617,
+        "end": 2621,
+        "direct_calls": [
+          "' / '.join",
+          "len",
+          "str"
+        ]
+      },
+      "_weight_brief": {
+        "line": 2624,
+        "end": 2626,
+        "direct_calls": [
+          "_fmt_items",
+          "_weight_label"
+        ]
+      },
+      "build_skeleton": {
+        "line": 2629,
+        "end": 2772,
+        "direct_calls": [
+          "' → '.join",
+          "', '.join",
+          "'\\n'.join",
+          "'；'.join",
+          "(bundle.get('workflow') or {}).get",
+          "(deck.get('theme') or {}).get",
+          "(j.get('understanding') or {}).get",
+          "(p.get('judgment') or {}).get",
+          "(p.get('judgment') or {}).get('media', {}).get",
+          "(pg.get('declarations') or {}).get",
+          "L.append",
+          "L.index",
+          "_fmt_items",
+          "_weight_brief",
+          "adj.get",
+          "any",
+          "bundle.get",
+          "claim.get",
+          "coherence.get",
+          "comp.get",
+          "deck.get",
+          "enumerate",
+          "facts.append",
+          "focus.get",
+          "j.get",
+          "json.dumps",
+          "len",
+          "line.index",
+          "line.lstrip",
+          "line.lstrip().startswith",
+          "line[line.index('#') + 1:].lstrip",
+          "lines.append",
+          "lines.extend",
+          "list",
+          "map",
+          "media.get",
+          "p.get",
+          "part.replace",
+          "pg.get",
+          "pg['declarations'].items",
+          "prod.get",
+          "reasons.items",
+          "rhythm.get",
+          "role.get",
+          "sc.get",
+          "spatial.get",
+          "t.get",
+          "text.splitlines",
+          "theme_tokens",
+          "typ.get",
+          "weight.get",
+          "world.get"
+        ]
+      },
+      "_label_of": {
+        "line": 2138,
+        "end": 2164,
+        "direct_calls": [
+          "_BOUNDARY_SPLIT.split",
+          "core.strip",
+          "len",
+          "part.strip",
+          "re.match",
+          "re.sub"
+        ]
+      },
+      "_blend_toward": {
+        "line": 2595,
+        "end": 2599,
+        "direct_calls": [
+          "blend"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "EVIDENCE_MODES",
+      "_CONDITION_RESULT",
+      "_NUM",
+      "_SENTENCE_SPLIT",
+      "_NEGATED_EXCEED",
+      "_SOURCE_TAIL",
+      "_ANNOTATION",
+      "_SCOPE_HEADS",
+      "_SCOPE_HEAD_RE",
+      "_SCOPE_SEGMENT",
+      "_AXIS_TIME_TOKEN",
+      "_CONDITIONAL_CLAUSE",
+      "_MULTIPLE_OF",
+      "_NEGATED_COMPARISON",
+      "_TWO_ENDS_JOINED",
+      "_THRESHOLD_WORDS",
+      "_COMPARISON_WORDS",
+      "_SERIES_WORDS",
+      "_SEQUENCE_WORDS",
+      "_PHASE_MARKERS",
+      "_SEQUENCE_STRONG",
+      "SEQUENCE_MARKERS",
+      "_QUANTIFIED_ARROW",
+      "_ENDPOINT_UNIT",
+      "_FROM_TO_QUANTITY",
+      "_BETWEEN_METRICS",
+      "_PART_OF_WHOLE",
+      "_STRUCTURE_WORDS",
+      "_COMPOUND_NOUNS",
+      "_CONCLUSION_WORDS",
+      "_SCENE_WORDS",
+      "_TOPIC_MARKERS",
+      "_TOPIC_TAILS",
+      "_CHANGE_WORDS",
+      "_ASK_WORDS",
+      "_HUMAN_WORDS",
+      "_PHYSICAL_SUBJECTS",
+      "_REGISTER_WORDS",
+      "_WITNESS_WORDS",
+      "_TAXONOMY_CUE",
+      "_ENUM_LIST",
+      "_INDIVIDUAL_PERSON",
+      "_QUANT_RUN",
+      "_ARRIVAL_CUE",
+      "_CLAUSE_SPLIT",
+      "_METRIC_STOPWORDS",
+      "_CJK_RUN",
+      "_METRIC_SEPARATORS",
+      "_WEAK_METRIC_SLICE",
+      "_RANGE_NEXT",
+      "_ORDINAL_INDEX",
+      "_YEAR_TOKEN",
+      "_DIGIT_TAIL",
+      "_RELATION_CLAUSE",
+      "_REPORTING_CLAUSE",
+      "_META_LINE",
+      "_CREDENTIAL_WORDS",
+      "_LIST_PREFIX",
+      "_TITLE_ASSERTION",
+      "_CONTRAST_ASSERTION",
+      "_HEDGES",
+      "_FILLERS",
+      "_DENSE_CHARS",
+      "_DENSE_NUMERALS",
+      "_COMPOSITION_TIEBREAK",
+      "_GRAMMAR_PREFERENCE",
+      "_MEASURE_MAX_CJK",
+      "_MEASURE_MIN_CJK",
+      "_LEAD_MAX_CJK",
+      "_BREAK_RULES",
+      "_NO_LINE_START_CJK",
+      "_NO_LINE_END_CJK",
+      "BASE_DISCIPLINE",
+      "_STAGE_SCENE",
+      "_PAPER_ANCHOR",
+      "_PAPER_TINT",
+      "_DARK_PAPER_ANCHOR",
+      "_DARK_PAPER_TINT",
+      "_ACCENT",
+      "_NEUTRAL_ACCENT",
+      "_TYPE_VOICE",
+      "_FONTS",
+      "_PAGE_DECLARATIONS",
+      "_ROLE_LABEL_CN",
+      "_LABEL_HEAD_PREFIX",
+      "_LABEL_BOUNDARY",
+      "_GAP_WORDS",
+      "_LABEL_TAIL",
+      "_NON_CJK",
+      "_NUM_MODIFIER",
+      "_BOUNDARY_SPLIT",
+      "_LABEL_HEAD_STOP",
+      "_LABEL_TAIL_STOP",
+      "_MEASURE_CORES",
+      "_CLAUSE_MARK",
+      "_DATE_TOKEN",
+      "_DECLARABLE_ROLES",
+      "_DECISION_CLASSES",
+      "_CLOSING_FOCUS",
+      "ADVANCED_TRIGGERS",
+      "QUALITY_ALIASES",
+      "_BRAND_SLOT_ALIAS"
+    ]
+  },
+  "scripts/primitives.py": {
+    "lines": 1551,
+    "imports": [
+      "__future__",
+      "hashlib",
+      "json",
+      "math",
+      "os",
+      "pathlib",
+      "pptx",
+      "re",
+      "sys",
+      "tempfile"
+    ],
+    "local_dependencies": [],
+    "functions": {
+      "json_write": {
+        "line": 22,
+        "end": 53,
+        "direct_calls": [
+          "Path",
+          "Path(path).expanduser",
+          "Path(path).expanduser().resolve",
+          "Path(tmp).unlink",
+          "_stamp_after_write",
+          "handle.fileno",
+          "handle.flush",
+          "handle.write",
+          "json.dumps",
+          "os.fdopen",
+          "os.fsync",
+          "os.replace",
+          "str",
+          "target.parent.mkdir",
+          "target.stat",
+          "tempfile.mkstemp"
+        ]
+      },
+      "_stamp_after_write": {
+        "line": 56,
+        "end": 70,
+        "direct_calls": [
+          "os.utime",
+          "target.stat"
+        ]
+      },
+      "file_digest": {
+        "line": 80,
+        "end": 103,
+        "direct_calls": [
+          "_file_state",
+          "cached.get",
+          "f.read",
+          "h.hexdigest",
+          "h.update",
+          "hashlib.sha256",
+          "iter",
+          "target.open"
+        ]
+      },
+      "_file_state": {
+        "line": 106,
+        "end": 126,
+        "direct_calls": [
+          "Path",
+          "Path(path).expanduser",
+          "Path(path).expanduser().resolve",
+          "_FILE_KEY_CACHE.clear",
+          "_FILE_KEY_CACHE.get",
+          "len",
+          "str",
+          "target.stat"
+        ]
+      },
+      "identity": {
+        "line": 146,
+        "end": 162,
+        "direct_calls": [
+          "hashlib.sha256",
+          "hashlib.sha256(raw.encode('utf-8')).hexdigest",
+          "int",
+          "json.dumps",
+          "raw.encode",
+          "repr"
+        ]
+      },
+      "digest_bytes": {
+        "line": 165,
+        "end": 167,
+        "direct_calls": [
+          "bytes",
+          "hashlib.sha256",
+          "hashlib.sha256(bytes(blob)).hexdigest"
+        ]
+      },
+      "witness": {
+        "line": 170,
+        "end": 179,
+        "direct_calls": [
+          "Path",
+          "Path(path).stat"
+        ]
+      },
+      "witness_same": {
+        "line": 182,
+        "end": 196,
+        "direct_calls": [
+          "a.get",
+          "b.get",
+          "bool",
+          "isinstance"
+        ]
+      },
+      "engine_fingerprint": {
+        "line": 212,
+        "end": 229,
+        "direct_calls": [
+          "ENGINE_SCOPES.get",
+          "KeyError",
+          "Path",
+          "Path(__file__).resolve",
+          "_ENGINE_CACHE.get",
+          "file_digest",
+          "identity",
+          "sorted"
+        ]
+      },
+      "_rgb_new": {
+        "line": 261,
+        "end": 267,
+        "direct_calls": [
+          "RGB",
+          "_PPTX['RGBColor']",
+          "int",
+          "sys.modules['pptx.dml.color'].RGBColor"
+        ]
+      },
+      "_p": {
+        "line": 270,
+        "end": 282,
+        "direct_calls": []
+      },
+      "chart_rows": {
+        "line": 339,
+        "end": 374,
+        "direct_calls": [
+          "(element or {}).get",
+          "enumerate",
+          "float",
+          "float(num).is_integer",
+          "int",
+          "isinstance",
+          "it.get",
+          "math.isfinite",
+          "rows.append",
+          "str"
+        ]
+      },
+      "highlight_index": {
+        "line": 376,
+        "end": 396,
+        "direct_calls": [
+          "element.get",
+          "enumerate",
+          "int",
+          "isinstance",
+          "row.get",
+          "str",
+          "str(raw).strip",
+          "str(row.get('label', '')).strip"
+        ]
+      },
+      "series_highlight_index": {
+        "line": 399,
+        "end": 402,
+        "direct_calls": [
+          "highlight_index"
+        ]
+      },
+      "align_of": {
+        "line": 418,
+        "end": 423,
+        "direct_calls": [
+          "_ALIGN_FALLBACK.get",
+          "_p",
+          "getattr"
+        ]
+      },
+      "anchor_of": {
+        "line": 426,
+        "end": 431,
+        "direct_calls": [
+          "_ANCHOR_FALLBACK.get",
+          "_p",
+          "getattr"
+        ]
+      },
+      "color_to_hex": {
+        "line": 439,
+        "end": 459,
+        "direct_calls": [
+          "''.join",
+          "all",
+          "isinstance",
+          "len",
+          "str",
+          "str(value).lstrip",
+          "str(value).lstrip('#').upper",
+          "value.lstrip",
+          "value.lstrip('#').upper"
+        ]
+      },
+      "fallback_ink": {
+        "line": 462,
+        "end": 464,
+        "direct_calls": [
+          "_rgb_new"
+        ]
+      },
+      "emu": {
+        "line": 467,
+        "end": 468,
+        "direct_calls": [
+          "float",
+          "int",
+          "round"
+        ]
+      },
+      "text_is_dark": {
+        "line": 477,
+        "end": 499,
+        "direct_calls": [
+          "is_light",
+          "len",
+          "low.startswith",
+          "raw.lower",
+          "str",
+          "str(value or '').strip"
+        ]
+      },
+      "is_light": {
+        "line": 502,
+        "end": 504,
+        "direct_calls": [
+          "luminance"
+        ]
+      },
+      "latin_word_match": {
+        "line": 507,
+        "end": 512,
+        "direct_calls": [
+          "all",
+          "ord",
+          "re.escape",
+          "re.search"
+        ]
+      },
+      "px_to_pt": {
+        "line": 521,
+        "end": 523,
+        "direct_calls": [
+          "float"
+        ]
+      },
+      "pt": {
+        "line": 526,
+        "end": 528,
+        "direct_calls": [
+          "_p",
+          "_p()['Pt']",
+          "px_to_pt"
+        ]
+      },
+      "_tuple": {
+        "line": 534,
+        "end": 538,
+        "direct_calls": [
+          "''.join",
+          "int",
+          "len",
+          "str",
+          "str(hex_color).lstrip"
+        ]
+      },
+      "_hex": {
+        "line": 541,
+        "end": 542,
+        "direct_calls": [
+          "'#{:02X}{:02X}{:02X}'.format",
+          "int",
+          "max",
+          "min",
+          "round"
+        ]
+      },
+      "_srgb_to_linear": {
+        "line": 557,
+        "end": 559,
+        "direct_calls": []
+      },
+      "_linear_to_srgb": {
+        "line": 562,
+        "end": 564,
+        "direct_calls": [
+          "max",
+          "min"
+        ]
+      },
+      "_rgb_to_oklab": {
+        "line": 567,
+        "end": 576,
+        "direct_calls": [
+          "_srgb_to_linear"
+        ]
+      },
+      "_oklab_to_rgb": {
+        "line": 579,
+        "end": 587,
+        "direct_calls": [
+          "_linear_to_srgb"
+        ]
+      },
+      "blend": {
+        "line": 590,
+        "end": 607,
+        "direct_calls": [
+          "_hex",
+          "_oklab_to_rgb",
+          "_rgb_to_oklab",
+          "_tuple",
+          "max",
+          "min",
+          "range",
+          "tuple"
+        ]
+      },
+      "luminance": {
+        "line": 612,
+        "end": 617,
+        "direct_calls": [
+          "_tuple",
+          "ch"
+        ]
+      },
+      "contrast": {
+        "line": 620,
+        "end": 623,
+        "direct_calls": [
+          "luminance",
+          "max",
+          "min"
+        ]
+      },
+      "spec_fingerprint": {
+        "line": 626,
+        "end": 639,
+        "direct_calls": [
+          "(spec or {}).get",
+          "(spec or {}).keys",
+          "identity",
+          "isinstance",
+          "len",
+          "s.get",
+          "sorted",
+          "str"
+        ]
+      },
+      "is_background_declared": {
+        "line": 652,
+        "end": 656,
+        "direct_calls": [
+          "e.get",
+          "str",
+          "str(e.get('layer', '')).lower",
+          "str(e.get('role', '')).lower"
+        ]
+      },
+      "with_alpha": {
+        "line": 659,
+        "end": 662,
+        "direct_calls": [
+          "_hex",
+          "_tuple",
+          "format",
+          "int",
+          "max",
+          "min",
+          "round"
+        ]
+      },
+      "parse_token": {
+        "line": 665,
+        "end": 691,
+        "direct_calls": [
+          "''.join",
+          "_rgb_new",
+          "int",
+          "len",
+          "str",
+          "str(value).strip",
+          "t.lower",
+          "t.startswith"
+        ]
+      },
+      "derive_tokens": {
+        "line": 694,
+        "end": 825,
+        "direct_calls": [
+          "_oklab_gap",
+          "_rgb_to_oklab",
+          "_tuple",
+          "base.get",
+          "blend",
+          "contrast",
+          "enumerate",
+          "hx",
+          "isinstance",
+          "luminance",
+          "max",
+          "min",
+          "put",
+          "sum",
+          "v.startswith",
+          "with_alpha",
+          "zip"
+        ]
+      },
+      "_append_alpha": {
+        "line": 831,
+        "end": 836,
+        "direct_calls": [
+          "_p",
+          "clr_el.append",
+          "clr_el.findall",
+          "clr_el.makeelement",
+          "clr_el.remove",
+          "int",
+          "qn",
+          "round",
+          "str"
+        ]
+      },
+      "solid_fill": {
+        "line": 839,
+        "end": 846,
+        "direct_calls": [
+          "_append_alpha",
+          "_p",
+          "_p()['qn']",
+          "fill.solid",
+          "xfill.find"
+        ]
+      },
+      "_insert_fill_in_order": {
+        "line": 849,
+        "end": 865,
+        "direct_calls": [
+          "_p",
+          "enumerate",
+          "parent.append",
+          "parent.insert",
+          "qn"
+        ]
+      },
+      "gradient_fill": {
+        "line": 868,
+        "end": 898,
+        "direct_calls": [
+          "''.join",
+          "P['nsdecls']",
+          "P['parse_xml']",
+          "P['qn']",
+          "_insert_fill_in_order",
+          "_p",
+          "fallback_ink",
+          "int",
+          "len",
+          "max",
+          "min",
+          "parse_token",
+          "parts.append",
+          "round",
+          "solid_fill",
+          "spPr.findall",
+          "spPr.remove"
+        ]
+      },
+      "stroke_color": {
+        "line": 901,
+        "end": 909,
+        "direct_calls": [
+          "_append_alpha",
+          "_p",
+          "_p()['Emu']",
+          "_p()['qn']",
+          "emu",
+          "xfill.find"
+        ]
+      },
+      "json_read_cached": {
+        "line": 922,
+        "end": 935,
+        "direct_calls": [
+          "OSError",
+          "ValueError",
+          "_file_state",
+          "cached.get",
+          "isinstance",
+          "json.loads",
+          "target.read_text"
+        ]
+      },
+      "is_cjk": {
+        "line": 941,
+        "end": 943,
+        "direct_calls": [
+          "ord"
+        ]
+      },
+      "unit_head": {
+        "line": 973,
+        "end": 975,
+        "direct_calls": [
+          "_UNIT_HEAD_RE.match",
+          "bool",
+          "str"
+        ]
+      },
+      "_is_latin_alnum": {
+        "line": 978,
+        "end": 979,
+        "direct_calls": []
+      },
+      "bind_number_units": {
+        "line": 987,
+        "end": 996,
+        "direct_calls": [
+          "_NUMBER_UNIT_SPACE.sub",
+          "match.end",
+          "match.group",
+          "str",
+          "unit_head"
+        ]
+      },
+      "insert_script_gaps": {
+        "line": 999,
+        "end": 1018,
+        "direct_calls": [
+          "''.join",
+          "_is_latin_alnum",
+          "bind_number_units",
+          "enumerate",
+          "is_cjk",
+          "len",
+          "out.append",
+          "prev.isdigit",
+          "unit_head"
+        ]
+      },
+      "split_runs": {
+        "line": 1021,
+        "end": 1034,
+        "direct_calls": [
+          "is_cjk",
+          "runs.append"
+        ]
+      },
+      "text_units": {
+        "line": 1037,
+        "end": 1056,
+        "direct_calls": [
+          "ord"
+        ]
+      },
+      "text_width": {
+        "line": 1059,
+        "end": 1066,
+        "direct_calls": [
+          "len",
+          "max",
+          "ord"
+        ]
+      },
+      "estimate_lines": {
+        "line": 1069,
+        "end": 1082,
+        "direct_calls": [
+          "math.ceil",
+          "max",
+          "text_units",
+          "text_width"
+        ]
+      },
+      "set_run_font": {
+        "line": 1085,
+        "end": 1151,
+        "direct_calls": [
+          "P['Pt']",
+          "_append_alpha",
+          "_p",
+          "bool",
+          "el.set",
+          "fallback_ink",
+          "float",
+          "int",
+          "latin_el.set",
+          "len",
+          "qn",
+          "rPr.append",
+          "rPr.find",
+          "rPr.get_or_add_latin",
+          "rPr.get_or_change_to_solidFill",
+          "rPr.get_or_change_to_solidFill().get_or_change_to_srgbClr",
+          "rPr.makeelement",
+          "rPr.set",
+          "round",
+          "run._r.get_or_add_rPr",
+          "sf.append",
+          "sf.find",
+          "sf.makeelement",
+          "str",
+          "text.upper"
+        ]
+      },
+      "set_para_font": {
+        "line": 1154,
+        "end": 1160,
+        "direct_calls": [
+          "p.add_run",
+          "set_run_font"
+        ]
+      },
+      "_media_stamp": {
+        "line": 1402,
+        "end": 1451,
+        "direct_calls": [
+          "(root / path).resolve",
+          "Path",
+          "Path(str(src)).expanduser",
+          "Path.cwd",
+          "c.exists",
+          "digest_bytes",
+          "digests.get",
+          "element.get",
+          "element['asset'].get",
+          "image_bytes.get",
+          "isinstance",
+          "len",
+          "next",
+          "path.is_absolute",
+          "path.read_bytes",
+          "path.resolve",
+          "path.stat",
+          "roots.append",
+          "slide.get",
+          "stamps.append",
+          "str"
+        ]
+      },
+      "_projection": {
+        "line": 1454,
+        "end": 1456,
+        "direct_calls": [
+          "(obj if isinstance(obj, dict) else {}).items",
+          "isinstance"
+        ]
+      },
+      "_load_meta": {
+        "line": 1459,
+        "end": 1464,
+        "direct_calls": [
+          "Path",
+          "dict",
+          "isinstance",
+          "json_read_cached"
+        ]
+      },
+      "_patch_meta": {
+        "line": 1467,
+        "end": 1473,
+        "direct_calls": [
+          "Path",
+          "_load_meta",
+          "json_write",
+          "meta.update"
+        ]
+      },
+      "spec_view": {
+        "line": 1476,
+        "end": 1497,
+        "direct_calls": [
+          "_media_stamp",
+          "_projection",
+          "_projection(slide, NON_GEOMETRIC_SLIDE_KEYS).get",
+          "dict",
+          "engine_fingerprint",
+          "identity",
+          "isinstance",
+          "slide.get",
+          "spec.get",
+          "views.append"
+        ]
+      },
+      "compile_reuse": {
+        "line": 1500,
+        "end": 1536,
+        "direct_calls": [
+          "Path",
+          "Path(pptx).exists",
+          "_load_meta",
+          "_load_meta(work).get",
+          "_report",
+          "dict",
+          "file_digest",
+          "isinstance",
+          "len",
+          "output_witness.get",
+          "rec.get",
+          "report.get",
+          "report.update",
+          "str",
+          "witness",
+          "witness_same"
+        ]
+      },
+      "record_compile": {
+        "line": 1539,
+        "end": 1551,
+        "direct_calls": [
+          "((report or {}).get('performance') or {}).get",
+          "(report or {}).get",
+          "(report or {}).items",
+          "Path",
+          "_patch_meta",
+          "file_digest",
+          "len",
+          "str",
+          "witness"
+        ]
+      },
+      "__str__": {
+        "line": 257,
+        "end": 258,
+        "direct_calls": []
+      },
+      "ch": {
+        "line": 613,
+        "end": 615,
+        "direct_calls": []
+      },
+      "hx": {
+        "line": 701,
+        "end": 703,
+        "direct_calls": [
+          "base.get",
+          "isinstance",
+          "v.startswith"
+        ]
+      },
+      "put": {
+        "line": 718,
+        "end": 721,
+        "direct_calls": [
+          "with_alpha"
+        ]
+      },
+      "_oklab_gap": {
+        "line": 798,
+        "end": 803,
+        "direct_calls": [
+          "_rgb_to_oklab",
+          "_tuple",
+          "sum",
+          "zip"
+        ]
+      },
+      "_swap": {
+        "line": 992,
+        "end": 994,
+        "direct_calls": [
+          "match.end",
+          "match.group",
+          "str",
+          "unit_head"
+        ]
+      },
+      "__init__": {
+        "line": 1175,
+        "end": 1187,
+        "direct_calls": [
+          "canvas.get",
+          "derive_tokens",
+          "dict",
+          "float",
+          "theme.get"
+        ]
+      },
+      "paint": {
+        "line": 1192,
+        "end": 1195,
+        "direct_calls": [
+          "parse_token",
+          "self.colors.get"
+        ]
+      },
+      "color": {
+        "line": 1197,
+        "end": 1198,
+        "direct_calls": [
+          "self.paint"
+        ]
+      },
+      "text_color": {
+        "line": 1200,
+        "end": 1209,
+        "direct_calls": [
+          "fallback_ink",
+          "self.color",
+          "self.theme.get"
+        ]
+      },
+      "_series_ladder": {
+        "line": 1213,
+        "end": 1244,
+        "direct_calls": [
+          "_hex",
+          "_hex_of",
+          "blend",
+          "fallback_ink",
+          "isinstance",
+          "luminance",
+          "parse_token",
+          "raw.startswith",
+          "self.color",
+          "self.colors.get"
+        ]
+      },
+      "series_color": {
+        "line": 1246,
+        "end": 1248,
+        "direct_calls": [
+          "self._series_ladder",
+          "self.color"
+        ]
+      },
+      "series_palette": {
+        "line": 1250,
+        "end": 1265,
+        "direct_calls": [
+          "int",
+          "max",
+          "out.append",
+          "range",
+          "self.color",
+          "self.series_color"
+        ]
+      },
+      "chart_role": {
+        "line": 1282,
+        "end": 1296,
+        "direct_calls": [
+          "chain.append",
+          "isinstance",
+          "list",
+          "palette.get",
+          "self._CHART_ROLE_FALLBACK.get",
+          "self.color",
+          "self.theme.get",
+          "str",
+          "str(role or '').strip",
+          "str(role or '').strip().lower"
+        ]
+      },
+      "chart_primary_color": {
+        "line": 1298,
+        "end": 1311,
+        "direct_calls": [
+          "el.get",
+          "isinstance",
+          "palette.get",
+          "self.chart_role",
+          "self.color",
+          "self.theme.get"
+        ]
+      },
+      "ramp_color": {
+        "line": 1313,
+        "end": 1314,
+        "direct_calls": [
+          "max",
+          "min",
+          "self.color"
+        ]
+      },
+      "auto_text_for": {
+        "line": 1316,
+        "end": 1347,
+        "direct_calls": [
+          "_rgb_new",
+          "candidates.append",
+          "color_to_hex",
+          "contrast",
+          "self.color",
+          "self.paint",
+          "self.text_color"
+        ]
+      },
+      "families": {
+        "line": 1350,
+        "end": 1363,
+        "direct_calls": [
+          "element.get",
+          "isinstance",
+          "self.fonts.get",
+          "str"
+        ]
+      },
+      "bounds": {
+        "line": 1366,
+        "end": 1371,
+        "direct_calls": [
+          "float"
+        ]
+      },
+      "warn": {
+        "line": 1373,
+        "end": 1379,
+        "direct_calls": [
+          "self.warnings.append"
+        ]
+      },
+      "_report": {
+        "line": 1520,
+        "end": 1527,
+        "direct_calls": [
+          "dict",
+          "report.get",
+          "report.update",
+          "str"
+        ]
+      },
+      "_hex_of": {
+        "line": 1226,
+        "end": 1231,
+        "direct_calls": [
+          "_hex",
+          "isinstance",
+          "raw.startswith",
+          "self.color",
+          "self.colors.get"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "FILE_KEY_CACHE_MAX",
+      "PX_TO_EMU",
+      "ELEMENT_TYPES",
+      "CHART_KINDS",
+      "NUMERIC_CHART_KINDS",
+      "ROWS_CHART_KINDS",
+      "ELEMENT_VALUE_KINDS",
+      "ELEMENT_PAYLOAD_KINDS",
+      "CHART_LIMITS",
+      "PREVIEW_ABSTRACT_KINDS",
+      "_ALIGN_KEYS",
+      "_ANCHOR_KEYS",
+      "_ALIGN_FALLBACK",
+      "_ANCHOR_FALLBACK",
+      "_ALIGN_ATTR",
+      "_ANCHOR_ATTR",
+      "FALLBACK_CN",
+      "FALLBACK_LATIN",
+      "LIGHT_BG_LUMINANCE",
+      "CHART_LABEL_MIN_H",
+      "CHART_LABEL_MIN_COUNT",
+      "PT_PER_PX",
+      "_OKLAB_M1",
+      "_OKLAB_M2",
+      "_OKLAB_M3",
+      "BACKGROUND_LAYERS",
+      "NO_LINE_START_CJK",
+      "NO_LINE_END_CJK",
+      "HAIR_SPACE",
+      "NO_BREAK_SPACE",
+      "UNIT_WORDS",
+      "_UNIT_HEAD_RE",
+      "_NUMBER_UNIT_SPACE",
+      "CACHE_NAME",
+      "CACHE_VIEW_VERSION",
+      "NON_GEOMETRIC_SLIDE_KEYS",
+      "NON_GEOMETRIC_THEME_KEYS"
+    ]
+  },
+  "scripts/selftest.py": {
+    "lines": 2869,
+    "imports": [
+      "PIL",
+      "__future__",
+      "assets",
+      "bench",
+      "compiler",
+      "contextlib",
+      "copy",
+      "ghost",
+      "hashlib",
+      "intelligence",
+      "io",
+      "json",
+      "os",
+      "pathlib",
+      "pptx",
+      "primitives",
+      "random",
+      "re",
+      "subprocess",
+      "sys",
+      "tempfile",
+      "unittest",
+      "vao",
+      "verify",
+      "yaml",
+      "zipfile"
+    ],
+    "local_dependencies": [
+      "assets",
+      "bench",
+      "compiler",
+      "ghost",
+      "intelligence",
+      "primitives",
+      "vao",
+      "verify"
+    ],
+    "functions": {
+      "check": {
+        "line": 29,
+        "end": 36,
+        "direct_calls": [
+          "print"
+        ]
+      },
+      "run_vao": {
+        "line": 39,
+        "end": 45,
+        "direct_calls": [
+          "str",
+          "subprocess.run"
+        ]
+      },
+      "make_build": {
+        "line": 69,
+        "end": 108,
+        "direct_calls": [
+          "build.write_text",
+          "els.append",
+          "range",
+          "slides.append",
+          "str"
+        ]
+      },
+      "test_intelligence": {
+        "line": 112,
+        "end": 759,
+        "direct_calls": [
+          "' '.join",
+          "(p.get('anchor') or {}).get",
+          "all",
+          "anchors[1].get",
+          "any",
+          "bool",
+          "case.get",
+          "check",
+          "clo['claim']['text'].startswith",
+          "compile",
+          "cov['claim']['text'].startswith",
+          "dict",
+          "enumerate",
+          "exec",
+          "four_pages['pages'][1]['judgment']['visual_role']['role'].upper",
+          "intel.build_skeleton",
+          "intel.evidence_numerals",
+          "intel.extract_claim",
+          "intel.focus_of",
+          "intel.information_weight",
+          "intel.media_necessity",
+          "intel.number_roles",
+          "intel.numerals",
+          "intel.page_judgment",
+          "intel.production_spec",
+          "intel.section_label",
+          "intel.theme_tokens",
+          "intel.think",
+          "intel.understand",
+          "isinstance",
+          "j['understanding'].get",
+          "lbl.isupper",
+          "len",
+          "p.get",
+          "p['judgment'].get",
+          "p['judgment']['rhythm'].get",
+          "p['judgment']['typography'].get",
+          "picked.values",
+          "range",
+          "s.get",
+          "scale_page.get",
+          "scale_page['lead_break'].split",
+          "scale_page['lead_break'].split('｜')[0][-1:].isdigit",
+          "scale_page['lead_break'].split('｜')[1].startswith",
+          "set",
+          "sk1.split",
+          "str",
+          "str(m).startswith",
+          "w.get",
+          "w_human['reasons'].get",
+          "w_human['source'].startswith",
+          "x.get"
+        ]
+      },
+      "test_verify": {
+        "line": 763,
+        "end": 994,
+        "direct_calls": [
+          "Presentation",
+          "_chart",
+          "_chart(s)['data'].append",
+          "_copy.deepcopy",
+          "abs",
+          "any",
+          "build.read_text",
+          "c.get",
+          "check",
+          "check_spec",
+          "compile",
+          "compile_deck",
+          "copy.deepcopy",
+          "e.get",
+          "exec",
+          "fn",
+          "json.dumps",
+          "json.loads",
+          "make_build",
+          "mutate",
+          "next",
+          "next((e for e in missing_basis['slides'][2]['elements'] if e.get('type') == 'chart')).pop",
+          "normalize_spec",
+          "s.__setitem__",
+          "s['slides'].__setitem__",
+          "s['slides'][0]['elements'].append",
+          "s['slides'][0]['elements'][0].update",
+          "s['slides'][2]['elements'].append",
+          "second.update",
+          "spec_fingerprint",
+          "str",
+          "verdict"
+        ]
+      },
+      "test_production": {
+        "line": 998,
+        "end": 1750,
+        "direct_calls": [
+          "''.join",
+          "(Path(__file__).resolve().parent / name).is_file",
+          "(compile_reuse(work, out1, view, fast_probe=False, speed='strict') or {}).get",
+          "(compile_reuse(work, out1, view, fast_probe=False, speed='strict') or {}).get('performance', {}).get",
+          "(r_probe.stdout + r_probe.stderr).strip",
+          "(tmp / 'preview' / PAGE_CACHE_DIR).glob",
+          "ENGINE_SCOPES.values",
+          "Image.new",
+          "Image.new('RGB', (100, 60), (200, 40, 40)).save",
+          "Image.new('RGB', (1024, 768), (214, 206, 192)).save",
+          "Image.new('RGB', (32, 32), (180, 40, 40)).save",
+          "Image.new('RGB', (32, 32), (40, 40, 180)).save",
+          "Image.open",
+          "Image.open(_io.BytesIO(left_png)).convert",
+          "Image.open(_io.BytesIO(left_png)).convert('RGB').getpixel",
+          "Image.open(_io.BytesIO(right_png)).convert",
+          "Image.open(_io.BytesIO(right_png)).convert('RGB').getpixel",
+          "ImageDraw.Draw",
+          "ImageDraw.Draw(canvas).ellipse",
+          "ImageDraw.Draw(old_overlay, 'RGBA').text",
+          "Path",
+          "Path(__file__).resolve",
+          "Path(call.args[0]).expanduser",
+          "Path(call.args[0]).expanduser().resolve",
+          "Path(contact).is_file",
+          "Path(contact).read_bytes",
+          "Path(p).is_file",
+          "Path(path).expanduser",
+          "Path(path).expanduser().resolve",
+          "Path(rendered[0]).read_bytes",
+          "Presentation",
+          "RenderContext",
+          "RenderContext(_minimal_theme, {'width': 1280, 'height': 720}).series_palette",
+          "RenderContext(declared_spec['theme'], declared_spec['canvas']).chart_role",
+          "RenderContext(neg_spec['theme'], neg_spec['canvas']).chart_role",
+          "_SPEC.items",
+          "_a.rstrip",
+          "_b.lstrip",
+          "_chart_ghost._rows",
+          "_chart_ghost.ghost_page",
+          "_chart_rows",
+          "_compile_deck",
+          "_compile_step",
+          "_copy.deepcopy",
+          "_draw_text",
+          "_fit_image_bytes",
+          "_fix",
+          "_font",
+          "_font_family",
+          "_g._FONT_CACHE.clear",
+          "_g._FONT_CACHE.update",
+          "_g._font",
+          "_g._font_family",
+          "_ghost._rows",
+          "_ghost.ghost_page",
+          "_has_cjk2",
+          "_io.BytesIO",
+          "_l[-1:].isdigit",
+          "_linear_cjk",
+          "_lines.index",
+          "_ln.strip",
+          "_loop_r.get",
+          "_mpath.write_text",
+          "_page_key",
+          "_parse_token",
+          "_prev[-1:].isdigit",
+          "_random.Random",
+          "_real_unrendered",
+          "_rgb_to_oklab",
+          "_rgba",
+          "_rng.choice",
+          "_rng.randint",
+          "_tuple",
+          "_unit_head.match",
+          "_vao.run_qc",
+          "_wrap",
+          "a.get",
+          "abs",
+          "actual.tobytes",
+          "all",
+          "any",
+          "asset_card",
+          "asset_fingerprint",
+          "bad.get",
+          "bool",
+          "buf.getvalue",
+          "build.read_text",
+          "build_manifest",
+          "c._chartSpace.xpath",
+          "c.get",
+          "c.kwargs.get",
+          "cache_timing.get",
+          "cached_out.resolve",
+          "cached_report.get",
+          "canvas.save",
+          "canvas2.save",
+          "card.get",
+          "check",
+          "check_spec",
+          "compile",
+          "compile_deck",
+          "compile_reuse",
+          "contrast",
+          "ctx_neg.chart_role",
+          "decision.get",
+          "decision_ok.get",
+          "dense_guard.get",
+          "dict",
+          "digest_bytes",
+          "enumerate",
+          "equivalent_image.tobytes",
+          "exec",
+          "expected.alpha_composite",
+          "expected.tobytes",
+          "fallbacks.get",
+          "fast_qc.get",
+          "file_digest",
+          "first_report.get",
+          "font.getlength",
+          "ghost_deck",
+          "ghost_mod._FONT_CACHE.clear",
+          "ghost_mod._FONT_CACHE.update",
+          "ghost_mod._FONT_FALLBACKS.clear",
+          "ghost_mod._FONT_FALLBACKS.update",
+          "ghost_mod.font_fallbacks",
+          "ghost_mod.ghost_page",
+          "ghost_page",
+          "ghost_page(neg_spec['slides'][0], neg_spec, scale=1, supersample=1).convert",
+          "half.paste",
+          "half.save",
+          "image_digest.get",
+          "image_digest.keys",
+          "image_digest_cached.get",
+          "image_qc",
+          "image_snapshot.get",
+          "image_snapshot.keys",
+          "image_snapshot_cached.get",
+          "image_snapshot_cached.keys",
+          "img.resolve",
+          "int",
+          "isinstance",
+          "json.dumps",
+          "json.loads",
+          "key_page_roles",
+          "key_pages",
+          "key_selection",
+          "label_image.tobytes",
+          "label_native.text_frame.paragraphs[0].runs[0]._r.find",
+          "labels.values",
+          "len",
+          "list",
+          "load_font.call_args.kwargs.get",
+          "make_build",
+          "make_contact_sheet",
+          "max",
+          "media_src.read_bytes",
+          "min",
+          "n.get",
+          "native_alpha.get",
+          "neg_image.getpixel",
+          "next",
+          "noleak_spec.write_text",
+          "original_read_bytes",
+          "out.append",
+          "p.read_bytes",
+          "paint.rectangle",
+          "patch.dict",
+          "patch.object",
+          "placeholder_calls.append",
+          "prepare_manifest",
+          "prepped.get",
+          "proof.getpixel",
+          "qc.get",
+          "qc_retry_decision",
+          "qn",
+          "r_probe.stdout.strip",
+          "range",
+          "record_compile",
+          "red_ctx.chart_role",
+          "reused.get",
+          "round",
+          "run._r.get_or_add_rPr",
+          "run._r.get_or_add_rPr().get",
+          "s.get",
+          "seg[:lo].rstrip",
+          "set",
+          "sh.text_frame.text.replace",
+          "sh.text_frame.text.replace('\\u2009', '').replace",
+          "sh.text_frame.text.strip",
+          "sheet_cache[0].read_bytes",
+          "sorted",
+          "spec.get",
+          "spec_view",
+          "str",
+          "str(declared).upper",
+          "str(declared).upper().endswith",
+          "str(role).zfill",
+          "str(text).split",
+          "styled_spec",
+          "subprocess.run",
+          "sum",
+          "think",
+          "tuple",
+          "type",
+          "vw",
+          "work.mkdir",
+          "zip"
+        ]
+      },
+      "test_cli": {
+        "line": 1754,
+        "end": 1978,
+        "direct_calls": [
+          "' '.join",
+          "(blocked.get('timing') or {}).get",
+          "(invalid_dir / 'asset_manifest.json').exists",
+          "(invalid_dir / 'build.py').exists",
+          "(invalid_dir / 'plan.json').exists",
+          "(preview_dir / 'ghost.meta.json').is_file",
+          "(preview_dir / 'ghost.meta.json').read_text",
+          "(tmp / 'asset_manifest.json').exists",
+          "(tmp / 'bad.repair.json').read_text",
+          "Image.open",
+          "_m.group",
+          "_m.group(1).split",
+          "_re.search",
+          "all",
+          "assets_out.is_file",
+          "auto_manifest.is_file",
+          "auto_manifest.read_text",
+          "auto_manifest.resolve",
+          "blocked.get",
+          "brief.read_bytes",
+          "brief.write_text",
+          "broken.write_text",
+          "cache_file.is_file",
+          "cache_file.read_text",
+          "cache_meta.get",
+          "check",
+          "compile",
+          "contact.write_bytes",
+          "dict",
+          "empty.write_text",
+          "exec",
+          "filled.read_text",
+          "hashlib.sha256",
+          "hashlib.sha256(brief.read_bytes()).hexdigest",
+          "image_json.get",
+          "image_json.get('workflow', {}).get",
+          "image_out.exists",
+          "invalid_brief.write_text",
+          "json.dumps",
+          "json.loads",
+          "json.loads(auto_manifest.read_text(encoding='utf-8')).get",
+          "json.loads(cache_file.read_text(encoding='utf-8')).get",
+          "json.loads(repaired.stdout).get",
+          "json.loads(restored.stdout).get",
+          "json.loads(small.stdout).get",
+          "json.loads(unused.stdout).get",
+          "len",
+          "list",
+          "make_build",
+          "media_brief.write_text",
+          "media_sk.read_text",
+          "no_manifest.write_text",
+          "noimg_json.get",
+          "noimg_json.get('workflow', {}).get",
+          "noimg_sk.read_text",
+          "out.is_file",
+          "out.stat",
+          "out.with_suffix",
+          "out.with_suffix('.manifest.json').is_file",
+          "plan.is_file",
+          "plan.read_text",
+          "plan_stdout.get",
+          "plan_stdout.get('workflow', {}).get",
+          "preview_dir.glob",
+          "release_result.get",
+          "release_timing.get",
+          "repair_timing.get",
+          "restore_timing.get",
+          "run_vao",
+          "sample.verify",
+          "set",
+          "skeleton.is_file",
+          "skeleton.read_text",
+          "small_marker.get",
+          "small_marker.get('request', {}).get",
+          "small_timing.get",
+          "sorted",
+          "stale_packet.exists",
+          "stale_packet.write_text",
+          "str",
+          "timing.get",
+          "unused_timing.get",
+          "wide.is_file",
+          "with_pic['slides'][0]['elements'].append",
+          "yaml.safe_dump"
+        ]
+      },
+      "test_delivery": {
+        "line": 1981,
+        "end": 2053,
+        "direct_calls": [
+          "Presentation",
+          "all",
+          "base.items",
+          "bool",
+          "c.get",
+          "chart.legend.font._element.xpath",
+          "check",
+          "check_spec",
+          "compile_deck",
+          "deck['slides'].append",
+          "dict",
+          "e.update",
+          "enumerate",
+          "errors",
+          "intel.page_judgment",
+          "intel.think",
+          "len",
+          "list",
+          "range",
+          "release_manifest",
+          "report.get",
+          "str",
+          "verification.get",
+          "zip"
+        ]
+      },
+      "test_plan_boundaries": {
+        "line": 2056,
+        "end": 2131,
+        "direct_calls": [
+          "Image.new",
+          "Image.new('RGB', (1024, 768), (214, 206, 192)).save",
+          "Path",
+          "assets.qc_report",
+          "brief.write_text",
+          "bytearray",
+          "check",
+          "cli.stdout.encode",
+          "compile",
+          "contextlib.redirect_stdout",
+          "dict",
+          "exec",
+          "image.read_bytes",
+          "image.resolve",
+          "image.stat",
+          "image.with_name",
+          "image.with_name('ambiguous.jpg').write_bytes",
+          "image.with_name('ambiguous.png').write_bytes",
+          "image.write_bytes",
+          "intel.build_skeleton",
+          "intel.think",
+          "io.StringIO",
+          "json.dumps",
+          "json.loads",
+          "len",
+          "manifest.read_bytes",
+          "manifest.with_suffix",
+          "manifest.with_suffix('.qc.json').exists",
+          "manifest.write_text",
+          "os.utime",
+          "patch.object",
+          "plan.read_text",
+          "qc_file.read_bytes",
+          "run_vao",
+          "save",
+          "side.exists",
+          "side.read_text",
+          "side.resolve",
+          "side.stat",
+          "side.write_text",
+          "str",
+          "vao.run_plan",
+          "vao.run_qc",
+          "work.read_text",
+          "work.write_text"
+        ]
+      },
+      "test_release_evidence": {
+        "line": 2134,
+        "end": 2225,
+        "direct_calls": [
+          "ImageChops.difference",
+          "ImageChops.difference(actual.convert('RGB'), plain.convert('RGB')).getbbox",
+          "Presentation",
+          "actual.convert",
+          "all",
+          "bool",
+          "build.write_text",
+          "check",
+          "check_spec",
+          "compile_deck",
+          "contextlib.redirect_stdout",
+          "copy.deepcopy",
+          "dict",
+          "ghost_page",
+          "io.StringIO",
+          "json.dumps",
+          "json.loads",
+          "len",
+          "make_build",
+          "mutate",
+          "output.with_suffix",
+          "output.with_suffix('.manifest.json').read_text",
+          "plain.convert",
+          "preview_issues",
+          "q.pop",
+          "q.update",
+          "q['compile'].pop",
+          "range",
+          "release_manifest",
+          "shapes[3]._element.xpath",
+          "shapes[4]._element.xpath",
+          "shapes[i]._element.xpath",
+          "str",
+          "vao.load_spec",
+          "vao.run_check"
+        ]
+      },
+      "test_boundary_typography": {
+        "line": 2228,
+        "end": 2274,
+        "direct_calls": [
+          "'\\n'.join",
+          "Presentation",
+          "bool",
+          "check",
+          "compile_deck",
+          "ghost._UNIT_HEAD.match",
+          "make_build",
+          "prim.insert_script_gaps",
+          "prim.text_units",
+          "repr",
+          "spec['slides'][0]['elements'].append",
+          "str",
+          "vao.load_spec"
+        ]
+      },
+      "test_design_judgment": {
+        "line": 2277,
+        "end": 2822,
+        "direct_calls": [
+          "' '.join",
+          "(ROOT / 'SKILL.md').read_text",
+          "_Prs",
+          "_bad_build.write_text",
+          "_bench._icc_2_1",
+          "_bench.blind_score",
+          "_bkey.write_text",
+          "_bsheet.write_text",
+          "_copy.deepcopy",
+          "_paper",
+          "_pptx_texts",
+          "_r2_focus.values",
+          "_u_build.write_text",
+          "_u_out.exists",
+          "_z.namelist",
+          "_z.read",
+          "_z.read(n).decode",
+          "_zf.ZipFile",
+          "abs",
+          "all",
+          "any",
+          "bad['visual_role'].get",
+          "bench_mod.run",
+          "bool",
+          "check",
+          "desc_build.write_text",
+          "desc_out.exists",
+          "float",
+          "intel._title_assertive",
+          "intel.build_skeleton",
+          "intel.derive_world",
+          "intel.evidence_numerals",
+          "intel.extract_claim",
+          "intel.information_weight",
+          "intel.judgment_view",
+          "intel.media_necessity",
+          "intel.number_roles",
+          "intel.page_judgment",
+          "intel.page_judgment({'id': 'h1', 'title': '华东 6 家门店走访记录'}, index=3, total=8, brief={'audience': '评审', 'decision': '批准'}, world=intel.derive_world({'audience': '评审'}, [intel.understand('x')]), warnings=[]).get",
+          "intel.section_label",
+          "intel.think",
+          "intel.understand",
+          "jd['s03'].get",
+          "jd['s03']['claim'].get",
+          "json.loads",
+          "len",
+          "meta_cover['claim'].get",
+          "n.endswith",
+          "n.startswith",
+          "next",
+          "over_build.write_text",
+          "over_out.with_suffix",
+          "over_out.with_suffix('.repair.json').read_text",
+          "re.search",
+          "re.search('<c:max val=\"(\\\\d+(?:\\\\.\\\\d+)?)\"', _chart_xml).group",
+          "rep.get",
+          "repr",
+          "run_vao",
+          "set",
+          "skeleton_text.count",
+          "sorted",
+          "str",
+          "str(meta_cover['claim'].get('text') or '').startswith"
+        ]
+      },
+      "test_docs": {
+        "line": 2825,
+        "end": 2842,
+        "direct_calls": [
+          "(ROOT / 'CHANGELOG.md').read_text",
+          "(ROOT / 'SKILL.md').read_text",
+          "(ROOT / 'pyproject.toml').read_text",
+          "(ROOT / 'references').glob",
+          "all",
+          "bool",
+          "check",
+          "len",
+          "re.search",
+          "sorted",
+          "str"
+        ]
+      },
+      "main": {
+        "line": 2845,
+        "end": 2865,
+        "direct_calls": [
+          "(root / name).mkdir",
+          "Path",
+          "_stream.reconfigure",
+          "fn",
+          "print",
+          "tempfile.TemporaryDirectory",
+          "test_docs"
+        ]
+      },
+      "mutate": {
+        "line": 777,
+        "end": 781,
+        "direct_calls": [
+          "check_spec",
+          "copy.deepcopy",
+          "fn"
+        ]
+      },
+      "_chart": {
+        "line": 843,
+        "end": 844,
+        "direct_calls": [
+          "e.get",
+          "next"
+        ]
+      },
+      "_add_second_chart": {
+        "line": 848,
+        "end": 853,
+        "direct_calls": [
+          "_chart",
+          "_copy.deepcopy",
+          "e.get",
+          "second.update"
+        ]
+      },
+      "styled_spec": {
+        "line": 1135,
+        "end": 1137,
+        "direct_calls": [
+          "dict"
+        ]
+      },
+      "_probe_unrendered": {
+        "line": 1166,
+        "end": 1168,
+        "direct_calls": [
+          "_real_unrendered",
+          "placeholder_calls.append",
+          "str"
+        ]
+      },
+      "count_image_read": {
+        "line": 1326,
+        "end": 1330,
+        "direct_calls": [
+          "Path",
+          "Path(path).expanduser",
+          "Path(path).expanduser().resolve",
+          "original_read_bytes",
+          "str"
+        ]
+      },
+      "_linear_cjk": {
+        "line": 1613,
+        "end": 1637,
+        "direct_calls": [
+          "_fix",
+          "font.getlength",
+          "len",
+          "max",
+          "out.append",
+          "seg[:lo].rstrip",
+          "str",
+          "str(text).split",
+          "vw"
+        ]
+      },
+      "errors": {
+        "line": 2024,
+        "end": 2026,
+        "direct_calls": [
+          "c.get",
+          "check_spec",
+          "dict"
+        ]
+      },
+      "save": {
+        "line": 2100,
+        "end": 2101,
+        "direct_calls": [
+          "json.dumps",
+          "manifest.write_text"
+        ]
+      },
+      "_pptx_texts": {
+        "line": 2603,
+        "end": 2605,
+        "direct_calls": [
+          "_Prs",
+          "str"
+        ]
+      },
+      "_paper": {
+        "line": 2670,
+        "end": 2673,
+        "direct_calls": [
+          "intel.think"
+        ]
+      },
+      "vw": {
+        "line": 1615,
+        "end": 1616,
+        "direct_calls": [
+          "font.getlength",
+          "len",
+          "max"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "SCRIPTS",
+      "ROOT",
+      "PASS",
+      "FAIL",
+      "BRIEF"
+    ]
+  },
+  "scripts/vao.py": {
+    "lines": 959,
+    "imports": [
+      "__future__",
+      "argparse",
+      "assets",
+      "builtins",
+      "compiler",
+      "copy",
+      "datetime",
+      "ghost",
+      "intelligence",
+      "json",
+      "pathlib",
+      "primitives",
+      "sys",
+      "time",
+      "types",
+      "verify",
+      "yaml"
+    ],
+    "local_dependencies": [
+      "assets",
+      "compiler",
+      "ghost",
+      "intelligence",
+      "primitives",
+      "verify"
+    ],
+    "functions": {
+      "_load_module": {
+        "line": 32,
+        "end": 54,
+        "direct_calls": [
+          "FileNotFoundError",
+          "Path",
+          "Path(path).expanduser",
+          "Path(path).expanduser().resolve",
+          "ValueError",
+          "compile",
+          "exc.text.rstrip",
+          "exec",
+          "source.is_file",
+          "source.read_text",
+          "str",
+          "sys.modules.setdefault",
+          "types.ModuleType"
+        ]
+      },
+      "load_spec": {
+        "line": 57,
+        "end": 98,
+        "direct_calls": [
+          "FileNotFoundError",
+          "Path",
+          "Path(path).expanduser",
+          "Path(path).expanduser().resolve",
+          "ValueError",
+          "_load_module",
+          "getattr",
+          "hasattr",
+          "isinstance",
+          "json.loads",
+          "mod.build_spec",
+          "source.is_file",
+          "source.read_text",
+          "source.suffix.lower",
+          "type",
+          "yaml.safe_load"
+        ]
+      },
+      "_json_write": {
+        "line": 101,
+        "end": 103,
+        "direct_calls": [
+          "json_write"
+        ]
+      },
+      "bind_asset_manifest": {
+        "line": 106,
+        "end": 143,
+        "direct_calls": [
+          "Path",
+          "Path(manifest_path).expanduser",
+          "Path(manifest_path).expanduser().resolve",
+          "asset_entries",
+          "asset_root",
+          "bound.append",
+          "by_id.get",
+          "copy.deepcopy",
+          "isinstance",
+          "json_read_cached",
+          "len",
+          "missing.append",
+          "missing_files.append",
+          "resolve_asset",
+          "set",
+          "sorted",
+          "src.is_file",
+          "str",
+          "value.get",
+          "value.setdefault",
+          "value.values",
+          "walk"
+        ]
+      },
+      "run_plan": {
+        "line": 149,
+        "end": 234,
+        "direct_calls": [
+          "FileExistsError",
+          "Path",
+          "Path(assets_out).expanduser",
+          "Path(assets_out).expanduser().resolve",
+          "Path(brief_path).expanduser",
+          "Path(brief_path).expanduser().resolve",
+          "Path(out or brief_path).expanduser",
+          "Path(out or brief_path).expanduser().with_name",
+          "Path(skeleton).expanduser",
+          "ValueError",
+          "_json_write",
+          "any",
+          "build_manifest",
+          "build_skeleton",
+          "bundle.get",
+          "compile",
+          "datetime.now",
+          "datetime.now(timezone.utc).isoformat",
+          "handle.write",
+          "load_brief",
+          "prepare_manifest",
+          "round",
+          "str",
+          "target.exists",
+          "target.open",
+          "target.parent.mkdir",
+          "target.read_text",
+          "target.resolve",
+          "target.with_name",
+          "think",
+          "time.perf_counter"
+        ]
+      },
+      "_compile_step": {
+        "line": 240,
+        "end": 340,
+        "direct_calls": [
+          "cache_root.mkdir",
+          "compile_deck",
+          "compile_report.get",
+          "compile_report.setdefault",
+          "compile_report.setdefault('warnings', []).append",
+          "compile_reuse",
+          "file_digest",
+          "isinstance",
+          "len",
+          "output_path.resolve",
+          "output_path.stat",
+          "output_path.with_name",
+          "print",
+          "record_compile",
+          "round",
+          "spec.get",
+          "spec_view",
+          "str",
+          "time.perf_counter",
+          "type"
+        ]
+      },
+      "_ghost": {
+        "line": 343,
+        "end": 476,
+        "direct_calls": [
+          "'、'.join",
+          "Path",
+          "Path(base_path).resolve",
+          "Path(path).is_file",
+          "all",
+          "bool",
+          "cached.get",
+          "dict",
+          "engine_fingerprint",
+          "file_digest",
+          "font_fallbacks",
+          "ghost_deck",
+          "info.get",
+          "int",
+          "isinstance",
+          "json.dumps",
+          "json.loads",
+          "key_selection",
+          "len",
+          "list",
+          "make_contact_sheet",
+          "marker.exists",
+          "marker.read_text",
+          "marker.write_text",
+          "max",
+          "page_stats.get",
+          "preview_witness",
+          "print",
+          "range",
+          "s.get",
+          "sheet_stats.get",
+          "slides[n - 1].get",
+          "sorted",
+          "spec.get",
+          "stored.get",
+          "str",
+          "str(speed).lower",
+          "target.mkdir",
+          "type",
+          "valid_preview",
+          "witness",
+          "witness_same"
+        ]
+      },
+      "repair_packet": {
+        "line": 479,
+        "end": 498,
+        "direct_calls": [
+          "result.get",
+          "str"
+        ]
+      },
+      "run_check": {
+        "line": 501,
+        "end": 759,
+        "direct_calls": [
+          "'、'.join",
+          "(item.get('qc') or {}).get",
+          "(result.get('compile') or {}).get",
+          "Path",
+          "Path(output).expanduser",
+          "Path(packet).expanduser",
+          "_compile_step",
+          "_ghost",
+          "_json_write",
+          "_print_line",
+          "any",
+          "asset_binding.get",
+          "bind_asset_manifest",
+          "blocked_result",
+          "bool",
+          "c.get",
+          "check_spec",
+          "dict",
+          "e.get",
+          "effective_rules.get",
+          "fail",
+          "fail_result",
+          "float",
+          "ghost.get",
+          "guard_report.get",
+          "int",
+          "isinstance",
+          "item.get",
+          "json.dumps",
+          "len",
+          "load_spec",
+          "manifest['validation']['issues'].append",
+          "mode_profile",
+          "normalize_spec",
+          "output_path.with_name",
+          "output_path.with_suffix",
+          "packet_path.unlink",
+          "print",
+          "qc_report",
+          "qc_result.get",
+          "release_guard_rules",
+          "release_manifest",
+          "repair_packet",
+          "result.get",
+          "result['performance'].update",
+          "round",
+          "slide.get",
+          "snapshots.values",
+          "spec.get",
+          "spec_fingerprint",
+          "str",
+          "str(mode or 'draft').strip",
+          "str(mode or 'draft').strip().lower",
+          "sum",
+          "time.perf_counter",
+          "timing.get",
+          "timing.update",
+          "type",
+          "verdict",
+          "verify_chain",
+          "workflow.get",
+          "workflow.setdefault",
+          "workflow.setdefault('issues', []).append"
+        ]
+      },
+      "_print_line": {
+        "line": 762,
+        "end": 797,
+        "direct_calls": [
+          "','.join",
+          "(result.get('fix_plan') or {}).get",
+          "Path",
+          "comp.get",
+          "g.get",
+          "ghost.get",
+          "isinstance",
+          "json.dumps",
+          "len",
+          "print",
+          "result.get",
+          "result.get('performance', {}).get",
+          "str"
+        ]
+      },
+      "_add_speed_flags": {
+        "line": 812,
+        "end": 819,
+        "direct_calls": [
+          "parser.add_argument",
+          "tuple"
+        ]
+      },
+      "build_parser": {
+        "line": 822,
+        "end": 852,
+        "direct_calls": [
+          "_add_speed_flags",
+          "argparse.ArgumentParser",
+          "c.add_argument",
+          "p.add_argument",
+          "parser.add_subparsers",
+          "q.add_argument",
+          "sub.add_parser"
+        ]
+      },
+      "run_qc": {
+        "line": 855,
+        "end": 877,
+        "direct_calls": [
+          "Path",
+          "Path(manifest_path).expanduser",
+          "Path(manifest_path).expanduser().resolve",
+          "asset_root",
+          "c.get",
+          "json.loads",
+          "mpath.read_text",
+          "qc_profile",
+          "qc_report",
+          "r['qc'].get",
+          "str"
+        ]
+      },
+      "force_utf8_stdio": {
+        "line": 880,
+        "end": 894,
+        "direct_calls": [
+          "stream.reconfigure"
+        ]
+      },
+      "main": {
+        "line": 897,
+        "end": 955,
+        "direct_calls": [
+          "','.join",
+          "'；'.join",
+          "((p.get('judgment') or {}).get('media') or {}).get",
+          "(p.get('judgment') or {}).get",
+          "Path",
+          "Path(args.plan_out).expanduser",
+          "Path(args.plan_out).expanduser().resolve",
+          "build_parser",
+          "build_parser().parse_args",
+          "bundle.get",
+          "bundle.get('workflow', {}).get",
+          "bundle['deck'].get",
+          "coherence.get",
+          "force_utf8_stdio",
+          "json.dumps",
+          "len",
+          "p.get",
+          "print",
+          "run_check",
+          "run_plan",
+          "run_qc",
+          "str",
+          "type",
+          "w.get",
+          "world.get"
+        ]
+      },
+      "walk": {
+        "line": 117,
+        "end": 136,
+        "direct_calls": [
+          "bound.append",
+          "by_id.get",
+          "isinstance",
+          "missing.append",
+          "missing_files.append",
+          "resolve_asset",
+          "src.is_file",
+          "str",
+          "value.get",
+          "value.setdefault",
+          "value.values",
+          "walk"
+        ]
+      },
+      "preview_witness": {
+        "line": 359,
+        "end": 365,
+        "direct_calls": [
+          "Path",
+          "Path(path).is_file",
+          "file_digest",
+          "witness"
+        ]
+      },
+      "fail": {
+        "line": 513,
+        "end": 529,
+        "direct_calls": [
+          "_json_write",
+          "fail_result",
+          "json.dumps",
+          "manifest['validation']['issues'].append",
+          "output_path.with_suffix",
+          "print",
+          "release_manifest",
+          "repair_packet",
+          "round",
+          "str",
+          "time.perf_counter",
+          "type"
+        ]
+      },
+      "valid_preview": {
+        "line": 384,
+        "end": 391,
+        "direct_calls": [
+          "Path",
+          "Path(path).is_file",
+          "file_digest",
+          "isinstance",
+          "stored.get",
+          "str",
+          "witness",
+          "witness_same"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "SCRIPTS",
+      "GHOST_MIN_BUDGET_S",
+      "SPEED_PROFILES",
+      "DEFAULT_SPEED",
+      "DEFAULT_DEADLINE",
+      "DEFAULT_GHOST_PAGES"
+    ]
+  },
+  "scripts/verify.py": {
+    "lines": 1056,
+    "imports": [
+      "__future__",
+      "assets",
+      "copy",
+      "datetime",
+      "math",
+      "primitives",
+      "time"
+    ],
+    "local_dependencies": [
+      "assets",
+      "primitives"
+    ],
+    "functions": {
+      "_text_box_capacity": {
+        "line": 35,
+        "end": 87,
+        "direct_calls": [
+          "all",
+          "bool",
+          "e.get",
+          "estimate_lines",
+          "float",
+          "insert_script_gaps",
+          "isinstance",
+          "len",
+          "map",
+          "max",
+          "min",
+          "str",
+          "str(e.get('text', '')).split",
+          "sum",
+          "text_width"
+        ]
+      },
+      "_element_rect": {
+        "line": 90,
+        "end": 98,
+        "direct_calls": [
+          "all",
+          "e.get",
+          "float",
+          "math.isfinite"
+        ]
+      },
+      "_is_rule_shape": {
+        "line": 101,
+        "end": 102,
+        "direct_calls": [
+          "e.get",
+          "str"
+        ]
+      },
+      "_box": {
+        "line": 105,
+        "end": 112,
+        "direct_calls": [
+          "e.get",
+          "float",
+          "str"
+        ]
+      },
+      "_intersects_zone": {
+        "line": 115,
+        "end": 122,
+        "direct_calls": [
+          "_box",
+          "float",
+          "zone.get"
+        ]
+      },
+      "_overlap_allowed": {
+        "line": 125,
+        "end": 130,
+        "direct_calls": [
+          "x.get"
+        ]
+      },
+      "_bg_qualified": {
+        "line": 133,
+        "end": 144,
+        "direct_calls": [
+          "_element_rect",
+          "is_background_declared",
+          "max"
+        ]
+      },
+      "_invalid_spec_result": {
+        "line": 150,
+        "end": 152,
+        "direct_calls": []
+      },
+      "check_spec": {
+        "line": 155,
+        "end": 243,
+        "direct_calls": [
+          "_check_collisions",
+          "_check_element",
+          "_check_metric_units",
+          "_dim",
+          "_invalid_spec_result",
+          "_positive_int",
+          "_positive_num",
+          "add",
+          "any",
+          "bg.get",
+          "bool",
+          "canvas.get",
+          "checks.append",
+          "derive_tokens",
+          "dict",
+          "e.get",
+          "eid.strip",
+          "enumerate",
+          "float",
+          "isinstance",
+          "rules.get",
+          "seen_element_ids.add",
+          "seen_slide_ids.add",
+          "set",
+          "sid.strip",
+          "slide.get",
+          "spec.get",
+          "str",
+          "str(k).strip",
+          "theme.get",
+          "warnings.append"
+        ]
+      },
+      "_dim": {
+        "line": 246,
+        "end": 253,
+        "direct_calls": [
+          "float",
+          "isinstance",
+          "math.isfinite"
+        ]
+      },
+      "_positive_int": {
+        "line": 256,
+        "end": 260,
+        "direct_calls": [
+          "int",
+          "isinstance"
+        ]
+      },
+      "_positive_num": {
+        "line": 263,
+        "end": 267,
+        "direct_calls": [
+          "float",
+          "isinstance",
+          "math.isfinite"
+        ]
+      },
+      "_unknown_color": {
+        "line": 270,
+        "end": 281,
+        "direct_calls": [
+          "all",
+          "isinstance",
+          "len",
+          "raw.lower",
+          "raw.startswith",
+          "value.strip"
+        ]
+      },
+      "_check_element": {
+        "line": 284,
+        "end": 393,
+        "direct_calls": [
+          "', '.join",
+          "_check_chart",
+          "_element_rect",
+          "_is_rule_shape",
+          "_text_box_capacity",
+          "_unknown_color",
+          "abs",
+          "add",
+          "cap.get",
+          "dict",
+          "e.get",
+          "float",
+          "isinstance",
+          "sorted",
+          "str",
+          "str(e.get('text') or '').strip",
+          "te.get",
+          "type",
+          "value.get"
+        ]
+      },
+      "_check_chart": {
+        "line": 396,
+        "end": 542,
+        "direct_calls": [
+          "'/'.join",
+          "_finite",
+          "_positive_num",
+          "add",
+          "all",
+          "any",
+          "bool",
+          "e.get",
+          "enumerate",
+          "float",
+          "int",
+          "isinstance",
+          "len",
+          "max",
+          "missing.append",
+          "nested.get",
+          "r.get",
+          "row.get",
+          "set",
+          "sorted",
+          "sr.get",
+          "str",
+          "str(c).strip",
+          "str(e.get('value') or '').strip",
+          "str(hi).strip",
+          "str(r.get('label') or '').strip",
+          "str(row.get('label', '')).strip",
+          "str(sr.get('name') or '').strip",
+          "str(x).strip",
+          "value.strip"
+        ]
+      },
+      "_finite": {
+        "line": 545,
+        "end": 549,
+        "direct_calls": [
+          "float",
+          "isinstance",
+          "math.isfinite"
+        ]
+      },
+      "_check_collisions": {
+        "line": 552,
+        "end": 593,
+        "direct_calls": [
+          "_bg_qualified",
+          "_box",
+          "_intersects_zone",
+          "_overlap_allowed",
+          "add",
+          "boxes.append",
+          "e.get",
+          "enumerate",
+          "is_background_declared",
+          "isinstance",
+          "max",
+          "min",
+          "slide.get"
+        ]
+      },
+      "_check_metric_units": {
+        "line": 596,
+        "end": 619,
+        "direct_calls": [
+          "add",
+          "e.get",
+          "isinstance",
+          "len",
+          "rec['pages'].append",
+          "rec['units'].add",
+          "seen.items",
+          "seen.setdefault",
+          "set",
+          "slide.get",
+          "sorted",
+          "str",
+          "str(e.get('metric') or e.get('series_name') or '').strip",
+          "unit.strip"
+        ]
+      },
+      "_snap_pos": {
+        "line": 633,
+        "end": 634,
+        "direct_calls": [
+          "int",
+          "round"
+        ]
+      },
+      "_snap_size": {
+        "line": 637,
+        "end": 648,
+        "direct_calls": [
+          "int",
+          "max",
+          "round"
+        ]
+      },
+      "_snap_span": {
+        "line": 651,
+        "end": 672,
+        "direct_calls": [
+          "_snap_pos",
+          "_snap_size"
+        ]
+      },
+      "_canonical_color": {
+        "line": 675,
+        "end": 684,
+        "direct_calls": [
+          "''.join",
+          "isinstance",
+          "len",
+          "raw.startswith",
+          "value.strip"
+        ]
+      },
+      "normalize_spec": {
+        "line": 687,
+        "end": 754,
+        "direct_calls": [
+          "_canonical_color",
+          "_snap_pos",
+          "_snap_span",
+          "colors_map.items",
+          "copy.deepcopy",
+          "e.get",
+          "float",
+          "isinstance",
+          "len",
+          "out.get",
+          "record",
+          "report['changes'].append",
+          "report['counts'].get",
+          "slide.get",
+          "str",
+          "theme.get",
+          "value.get"
+        ]
+      },
+      "mode_profile": {
+        "line": 800,
+        "end": 805,
+        "direct_calls": [
+          "MODES.get",
+          "str",
+          "str(mode or '').strip",
+          "str(mode or '').strip().lower"
+        ]
+      },
+      "_rule_to_code": {
+        "line": 808,
+        "end": 809,
+        "direct_calls": [
+          "_RULE_CODES.get"
+        ]
+      },
+      "build_fix_plan": {
+        "line": 812,
+        "end": 840,
+        "direct_calls": [
+          "(guard_report or {}).get",
+          "FIX_HINTS.get",
+          "_g",
+          "_rule_to_code",
+          "chk.get",
+          "cr.get",
+          "g['details'].append",
+          "g['ids'].append",
+          "groups.items",
+          "groups.setdefault",
+          "groups.values",
+          "isinstance",
+          "len",
+          "list",
+          "str"
+        ]
+      },
+      "release_guard_rules": {
+        "line": 843,
+        "end": 847,
+        "direct_calls": [
+          "dict"
+        ]
+      },
+      "verdict": {
+        "line": 850,
+        "end": 921,
+        "direct_calls": [
+          "', '.join",
+          "_rule_to_code",
+          "_time.time",
+          "bool",
+          "build_fix_plan",
+          "c.get",
+          "codes.append",
+          "cr.get",
+          "dict",
+          "facts.get",
+          "guard.get",
+          "int",
+          "isinstance",
+          "len",
+          "mode_profile",
+          "sorted",
+          "spec.get",
+          "spec_fingerprint",
+          "str",
+          "str(c.get('id')).split",
+          "str(c.get('id')).split(':')[0].split"
+        ]
+      },
+      "fail_result": {
+        "line": 924,
+        "end": 937,
+        "direct_calls": [
+          "'；'.join",
+          "FIX_HINTS.get",
+          "codes.append",
+          "len",
+          "result.get",
+          "result.setdefault",
+          "result.setdefault('fix_plan', {'policy': '', 'groups': []})['groups'].append",
+          "result.setdefault('verdict', {}).update",
+          "result.update",
+          "str"
+        ]
+      },
+      "preview_issues": {
+        "line": 940,
+        "end": 963,
+        "direct_calls": [
+          "any",
+          "ghost.get",
+          "isinstance",
+          "len",
+          "map",
+          "set"
+        ]
+      },
+      "release_manifest": {
+        "line": 966,
+        "end": 1056,
+        "direct_calls": [
+          "(ghost or {}).get",
+          "(qa_report.get('execution') or {}).get",
+          "(qa_report.get('performance') or {}).get",
+          "bool",
+          "compile_claim.get",
+          "datetime.now",
+          "datetime.now(timezone.utc).isoformat",
+          "file_digest",
+          "ghost.get",
+          "image_elements",
+          "isinstance",
+          "issues.append",
+          "issues.extend",
+          "len",
+          "notes.append",
+          "preview_issues",
+          "qa_report.get",
+          "s.get",
+          "spec.get",
+          "spec_fingerprint",
+          "str",
+          "str((qa_report.get('execution') or {}).get('mode', '')).lower",
+          "str(qa_report.get('status', '')).upper",
+          "sum",
+          "w.get",
+          "wf.get"
+        ]
+      },
+      "add": {
+        "line": 186,
+        "end": 189,
+        "direct_calls": [
+          "checks.append",
+          "warnings.append"
+        ]
+      },
+      "record": {
+        "line": 702,
+        "end": 709,
+        "direct_calls": [
+          "len",
+          "report['changes'].append",
+          "report['counts'].get"
+        ]
+      },
+      "_g": {
+        "line": 816,
+        "end": 818,
+        "direct_calls": [
+          "groups.setdefault"
+        ]
+      }
+    },
+    "top_level_contracts": [
+      "SUPPORTED_CHART_KINDS",
+      "ROW_RENDERED_KEYS",
+      "ELEMENT_METRIC_KINDS",
+      "RULE_SHAPES",
+      "_COLOR_ROLE_FIELDS",
+      "SPACING_STEP",
+      "_COLOR_FIELDS",
+      "_REPORT_ITEM_CAP",
+      "MODES",
+      "DEFAULT_MODE",
+      "_RULE_CODES",
+      "FIX_HINTS",
+      "BLOCKING_CODES"
+    ]
+  }
+}

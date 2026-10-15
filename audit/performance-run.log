@@ -1,0 +1,222 @@
+text5 round 1 before PASS
+text5 round 1 after PASS
+text5 round 2 after PASS
+text5 round 2 before PASS
+text5 round 3 before PASS
+text5 round 3 after PASS
+text5 round 4 after PASS
+text5 round 4 before PASS
+text5 round 5 before PASS
+text5 round 5 after PASS
+text15 round 1 before PASS
+text15 round 1 after PASS
+text15 round 2 after PASS
+text15 round 2 before PASS
+text15 round 3 before PASS
+text15 round 3 after PASS
+text15 round 4 after PASS
+text15 round 4 before PASS
+text15 round 5 before PASS
+text15 round 5 after PASS
+text30 round 1 before PASS
+text30 round 1 after PASS
+text30 round 2 after PASS
+text30 round 2 before PASS
+text30 round 3 before PASS
+text30 round 3 after PASS
+text30 round 4 after PASS
+text30 round 4 before PASS
+text30 round 5 before PASS
+text30 round 5 after PASS
+image15 round 1 before PASS
+image15 round 1 after PASS
+image15 round 2 after PASS
+image15 round 2 before PASS
+image15 round 3 before PASS
+image15 round 3 after PASS
+image15 round 4 after PASS
+image15 round 4 before PASS
+image15 round 5 before PASS
+image15 round 5 after PASS
+[
+  {
+    "task": "image15",
+    "phase": "cold",
+    "before": {
+      "median_ms": 951.77,
+      "plan_median_ms": 115.31,
+      "plan_plus_check_median_ms": 1066.36
+    },
+    "after": {
+      "median_ms": 962.02,
+      "plan_median_ms": 116.22,
+      "plan_plus_check_median_ms": 1078.25
+    },
+    "check_delta_percent": 1.08
+  },
+  {
+    "task": "image15",
+    "phase": "warm",
+    "before": {
+      "median_ms": 75.79,
+      "plan_median_ms": 115.31,
+      "plan_plus_check_median_ms": 188.78
+    },
+    "after": {
+      "median_ms": 79.01,
+      "plan_median_ms": 116.22,
+      "plan_plus_check_median_ms": 189.44
+    },
+    "check_delta_percent": 4.25
+  },
+  {
+    "task": "image15",
+    "phase": "iteration",
+    "before": {
+      "median_ms": 615.43,
+      "plan_median_ms": 115.31,
+      "plan_plus_check_median_ms": 733.97
+    },
+    "after": {
+      "median_ms": 641.97,
+      "plan_median_ms": 116.22,
+      "plan_plus_check_median_ms": 773.32
+    },
+    "check_delta_percent": 4.31
+  },
+  {
+    "task": "text15",
+    "phase": "cold",
+    "before": {
+      "median_ms": 747.0,
+      "plan_median_ms": 107.47,
+      "plan_plus_check_median_ms": 870.62
+    },
+    "after": {
+      "median_ms": 742.42,
+      "plan_median_ms": 108.12,
+      "plan_plus_check_median_ms": 850.54
+    },
+    "check_delta_percent": -0.61
+  },
+  {
+    "task": "text15",
+    "phase": "warm",
+    "before": {
+      "median_ms": 70.71,
+      "plan_median_ms": 107.47,
+      "plan_plus_check_median_ms": 179.4
+    },
+    "after": {
+      "median_ms": 68.68,
+      "plan_median_ms": 108.12,
+      "plan_plus_check_median_ms": 176.61
+    },
+    "check_delta_percent": -2.87
+  },
+  {
+    "task": "text15",
+    "phase": "iteration",
+    "before": {
+      "median_ms": 551.27,
+      "plan_median_ms": 107.47,
+      "plan_plus_check_median_ms": 671.55
+    },
+    "after": {
+      "median_ms": 544.36,
+      "plan_median_ms": 108.12,
+      "plan_plus_check_median_ms": 656.5
+    },
+    "check_delta_percent": -1.25
+  },
+  {
+    "task": "text30",
+    "phase": "cold",
+    "before": {
+      "median_ms": 1239.3,
+      "plan_median_ms": 136.8,
+      "plan_plus_check_median_ms": 1376.1
+    },
+    "after": {
+      "median_ms": 1261.76,
+      "plan_median_ms": 136.61,
+      "plan_plus_check_median_ms": 1402.36
+    },
+    "check_delta_percent": 1.81
+  },
+  {
+    "task": "text30",
+    "phase": "warm",
+    "before": {
+      "median_ms": 81.29,
+      "plan_median_ms": 136.8,
+      "plan_plus_check_median_ms": 217.92
+    },
+    "after": {
+      "median_ms": 79.34,
+      "plan_median_ms": 136.61,
+      "plan_plus_check_median_ms": 219.95
+    },
+    "check_delta_percent": -2.4
+  },
+  {
+    "task": "text30",
+    "phase": "iteration",
+    "before": {
+      "median_ms": 855.3,
+      "plan_median_ms": 136.8,
+      "plan_plus_check_median_ms": 992.1
+    },
+    "after": {
+      "median_ms": 835.01,
+      "plan_median_ms": 136.61,
+      "plan_plus_check_median_ms": 984.32
+    },
+    "check_delta_percent": -2.37
+  },
+  {
+    "task": "text5",
+    "phase": "cold",
+    "before": {
+      "median_ms": 435.36,
+      "plan_median_ms": 90.77,
+      "plan_plus_check_median_ms": 526.13
+    },
+    "after": {
+      "median_ms": 453.46,
+      "plan_median_ms": 91.73,
+      "plan_plus_check_median_ms": 554.26
+    },
+    "check_delta_percent": 4.16
+  },
+  {
+    "task": "text5",
+    "phase": "warm",
+    "before": {
+      "median_ms": 63.66,
+      "plan_median_ms": 90.77,
+      "plan_plus_check_median_ms": 154.43
+    },
+    "after": {
+      "median_ms": 62.7,
+      "plan_median_ms": 91.73,
+      "plan_plus_check_median_ms": 154.45
+    },
+    "check_delta_percent": -1.51
+  },
+  {
+    "task": "text5",
+    "phase": "iteration",
+    "before": {
+      "median_ms": 377.31,
+      "plan_median_ms": 90.77,
+      "plan_plus_check_median_ms": 467.38
+    },
+    "after": {
+      "median_ms": 369.93,
+      "plan_median_ms": 91.73,
+      "plan_plus_check_median_ms": 464.49
+    },
+    "check_delta_percent": -1.96
+  }
+]

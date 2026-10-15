@@ -372,6 +372,8 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     target = Path(output_dir)
     marker = target / "ghost.meta.json"
     engine = engine_fingerprint("preview")
+    from primitives import preview_font_stamp
+    fonts = preview_font_stamp(refresh=True)
     if output_sha and marker.exists():
         try:
             cached = json.loads(marker.read_text(encoding="utf-8"))
@@ -392,6 +394,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
 
         same_request = (cached.get("output_sha256") == output_sha
                         and cached.get("engine") == engine
+                        and cached.get("fonts") == fonts
                         and cached.get("renderer_speed") == str(speed)
                         and cached.get("request") == request)
         # 不匹配先退场：渲染器/选页变了时根本无需碰旧 PNG，更不必哈希。
@@ -403,7 +406,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
             info["pages_from_cache"] = int(info.get("count", len(cached_pages)) or 0)
             info["contact_sheet_cached"] = True
             return info
-    # 只有缺失/失效时才加载 PIL/ghost；暖命中不初始化整套位图渲染器。
+    # 字体身份已核对；只有缺失/失效时才实际绘图。
     from ghost import PAGE_CACHE_DIR, ghost_deck, key_selection, make_contact_sheet
     slides = spec.get("slides") or []
     roles = None
@@ -448,6 +451,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
             "evidence_scope": "direction_and_structure_not_pixel_proof"}
     info["output_sha256"] = output_sha
     info["engine"] = engine
+    info["fonts"] = fonts
     info["renderer_speed"] = str(speed)
     info["request"] = request
     # 字面回落必须随预览一起交付：本机缺 CJK 字面时页图仍会「成功」产出，

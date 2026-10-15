@@ -1,0 +1,421 @@
+[PASS] relations: previous-round-governance
+[PASS] relations: responsibility
+[PASS] relations: reporting
+[PASS] relations: renamed-subjects
+[PASS] relations: same-subject
+[PASS] relations: question
+[PASS] relations: negation
+[PASS] relations: proposal
+[PASS] relations: unresolved-objects
+[PASS] relations: numeric-evidence
+[PASS] relations: sequence
+[PASS] relations: comparison
+[PASS] relations: topic-only
+[PASS] relations: subset-control
+[PASS] relations: compound-control
+[PASS] relations: 首末位置/跨页求变不能覆盖正文关系证据
+[PASS] relations: 分工不伪装成汇报层级或时间轴
+[PASS] relations: 作者焦点与构图仍然优先
+[PASS] relations: 时间推进仍保留顺序空间职责
+[PASS] 判断链：每页都有完整判断卡
+[PASS] claim: 封面取标题结论而不是署名行
+[PASS] type: 主语只取可排版的主张，不把权重判断理由贴到页面上
+[PASS] claim: 证据页缺 content → absent，不脑补
+[PASS] claim: 作者声明的结论压过抽取
+[PASS] weight: 结论数字最大化（61%）
+[PASS] weight: 对照基数弱化（38% 小一档）
+[PASS] data: 升至/降至后的结果值为主，基期退后（不让首个数字误导读者）
+[PASS] data: 量化箭头是变化，文字阶段箭头仍是序列；复合单位不被截断
+[PASS] data: 两个不同指标是比较，不伪装成同一指标的前后趋势/差值
+[PASS] data: 作者给出的两个数图表是比较角色，不把第一数字误当趋势结果
+[PASS] data: 单位不同不共用数量轴；曲线页编号不是第四个数据点
+[PASS] data: 9/12 子集突出 9、写明 12 分母，不误读为下降或摆并列卡
+[PASS] data: 预算和月份是两种量，18个月不是金额的历史基期
+[PASS] editorial: 不可比指标不共刻度，部分/总体不画趋势，请求金额/期限分层
+[PASS] weight: 同数字重复出现进删除清单
+[PASS] claim: 两组变化并排是列举，作者写在标题位的结论仍然胜出
+[PASS] understand: 三段以上顺序词 → sequence（骨架走线性结构，而不是单数字大留白）
+[PASS] role: 开场 establish、收尾 summarize
+[PASS] role: 对比内容 → compare，且给了替代角色
+[PASS] focus: 对比页焦点是两端对比场而不是卡片墙
+[PASS] focus: 数字结论页焦点是 kpi_main 并否决环形图
+[PASS] composition: 主张页 → big_whitespace 且否决项有效（只留真实竞争）
+[PASS] composition: 数据证据页 → data_field
+[PASS] spatial: 阅读路径 + 留白职责齐备
+[PASS] media: 作者声明压过判断
+[PASS] media: 页内已有图表 → 不出图（双焦点竞争）
+[PASS] media: 说不出「没有它会下降在哪」→ 不出图
+[PASS] media: 开场有可指认实体，但未声明 → 词表提示，不自动出图
+[PASS] media: 作者声明 asset: required → 出图（来源 author）
+[PASS] claim: 话题句（如何使用…）不当结论，宁可 absent
+[PASS] claim: 断言句（降至…）被真正提炼为结论
+[PASS] media: 纯数据页不出图；现场词只提示证词，作者声明后才出证词图
+[PASS] world: 世界由内容推导（不是风格预设查表）
+[PASS] world: 同类内容允许产生不同世界（实体不同 → 材质/强调不同）
+[PASS] world: 每个判断都带理由
+[PASS] plan: 页级不重复存储（角色/证据只住判断卡，判断卡里不再回存原文与向量）
+[PASS] assets: 词表命中但未声明的页不进入图像清单（hint，问作者）
+[PASS] assets: 作者声明的出图全部进入清单，不被自动额度截断（4 张 > fast 额度 2）
+[PASS] assets: 清单不再保留预算字段（deferred/cap 已随判断删除）
+[PASS] plan: 世界只留会被消费的键（无展示用常量/重复串）
+[PASS] composition: 图像页构图即图像叙事（与焦点自洽）
+[PASS] composition: 内容形状不同 → 算子不同（序列/单数/对比）
+[PASS] composition: 没有图像时不选图像叙事（判断不自相矛盾）
+[PASS] understanding: 标题重复正文的数字只算一个证据
+[PASS] theme: 品牌色落语义槽（primary→information, accent→accent）
+[PASS] theme: 可读性兜底（墨色与纸面分得开）
+[PASS] plan: design_direction 退役并留痕
+[PASS] plan: 缺 tension 与证据页缺 content 都有警告
+[PASS] skeleton: 同 bundle 必得同文本
+[PASS] skeleton: 注释携带结论/权重/角色/构图（不再复制否决项）
+[PASS] skeleton: 不给坐标（几何留给作者）
+[PASS] skeleton: 统一字族由世界判断直接落到稿件，终稿默认全页取证
+[PASS] skeleton: 多行/超长原文逐字留在可执行骨架，原文不是视觉主语
+[PASS] skeleton: 无图不添加空资产清单命令（含图命令交由 plan 决定）
+[PASS] skeleton: 跨页锚以判断对象落进 spec（不是散文提醒），spec 不留第二个结论位
+[PASS] 眉标: 由本页结论派生（不是角色枚举），作者声明原样生效
+[PASS] 眉标: 不缝合数字两侧的汉字；派不出主题时省略，不退回角色词
+[PASS] 首末页: 陈述位按叙事位置取角色，不派发结构图、不误报告警
+[PASS] understanding: 「结构性增长」是复合名词，不产生结构/序列证据形态
+[PASS] number_roles: 焦点取主张点名的那个指标（履约成本 11.2 元，不是客单价 83 元）
+[PASS] number_roles: 区间下界不是可以立住的量（1.8 出局，取 6.4 天）
+[PASS] number_roles: 主张用序数点名某年时，焦点落在该年（第二年 → 2027 年的 12.8 亿元）
+[PASS] focus: 主张无量且证据横跨多量纲时，数字退为支撑（不拿波动下界当主语）
+[PASS] focus: 页面由同一指标占住时数字仍是主语（集中度 ≥50% 不降级）
+[PASS] typography: 保留内容相关尺度/断行，不注入固定字阶/行数/间距配额
+[PASS] skeleton: 直接调用 think 不谎称资产清单已经落盘
+[PASS] judgment: 受众/决定/阻力/排版/跨页节奏均由逐页判断串起
+[PASS] coherence: 整套回看存在（节奏序列与页数对齐）
+[PASS] coherence: 连续同构图不再改选次优项
+[PASS] coherence: 节奏仍记录停留，不捏造内容变化
+[PASS] coherence: 焦点连续同落点给出提醒（不硬改焦点）
+[PASS] world: 单页单个词不决定整套世界（deck 级证据门槛）
+[PASS] coherence: 内容强烈要求同一构图时不硬换（判断不是规则）
+[PASS] understanding: 日期碎片（2026-09）不进证据量
+[PASS] understanding: 多处日期形态（2026-09-30 / 2026/03 / 2026 年 9 月）都不算量
+[PASS] understanding: 出处标注里的数字不进证据（台账编号是档案坐标）
+[PASS] claim: 标题（作者的结论位）不被内容里的数字列举顶掉
+[PASS] claim: 只有数字列举的句子不当结论（没有主张就是 absent）
+[PASS] claim: 标题仍是话题标签时照旧从内容抽结论
+[PASS] slim: 判断卡无解释性冗余字段
+[PASS] slim: 构图否决项至多 2 条（无竞争为空，只留真实竞争）
+[PASS] focus: 年份不当第一落点（回到标题）
+[PASS] numerals: 字母紧贴的数字是编号不是证据（Q1 不计数）
+[PASS] numerals: 句首列表枚举序号（1）/1）/1. 不是证据量
+[PASS] claim: 列表项结论会剥掉序号前缀（不把「1）」当开头）
+[PASS] understanding: 箭头链是顺序的形状（盖过孤立数字）
+[PASS] claim: 同等条件下短结论赢过超长论述（长度是记忆成本）
+[PASS] weight: 删除清单进生产禁令（must_not 可执行）
+[PASS] media: asset_subject 等价 required（声明不只留在回显里）
+[PASS] plan: 作者未知构图不断规划（密度取中性）
+[PASS] world: 图表性格跟随主导证据（对比）
+[PASS] guard: 合规稿 0 error
+[PASS] guard: 合规稿零 warning（QA 不产生噪音）
+[PASS] guard: 文字溢出必拦（TEXT_OVERFLOW）
+[PASS] guard: 段距/字距真实占位，不能在编译前把会断行的标题错判 PASS
+[PASS] guard: 负边距/负行高在 guard 阶段 fail-closed，不靠编译异常止损
+[PASS] guard: 墨迹重叠必拦（OVERLAP）
+[PASS] guard: 越出画布必拦
+[PASS] guard: 退化几何必拦（元素不可见）
+[PASS] guard: 未知色名必拦（静默回落不留痕）
+[PASS] guard: 未知图表类型必拦
+[PASS] guard: 图表空载荷必拦
+[PASS] guard: 主体侵入来源区必拦（SOURCE_COLLISION）
+[PASS] guard: 空白页必拦
+[PASS] guard: 空 deck 必拦
+[PASS] guard: 数据行缺 label 必拦
+[PASS] guard: 同指标跨页单位不一致必拦
+[PASS] guard: release 档出处齐全 → 不拦
+[PASS] guard: release 档缺比较口径必拦（DATA_INTEGRITY_FAIL）
+[PASS] normalize: 几何落网格、色值规范化
+[PASS] normalize: 幂等（二次归一指纹不变）
+[PASS] normalize: 亚网格厚度原样保留（1px 发丝线不被抬成 4px）
+[PASS] normalize: 同心关系吸附后仍同心（线与骑线对象共中线）
+[PASS] normalize: 同心吸附幂等（二次归一不再漂移）
+[PASS] normalize: 零宽竖线保留 width=0，长度按中心吸附
+[PASS] normalize: 圆点与零宽竖线保持同一中线
+[PASS] guard: 单轴为零的竖线合法
+[PASS] compiler: 零宽竖线在 PPTX 中保持竖直且与圆点同心
+[PASS] guard: 零长度线仍由几何门拦截
+[PASS] normalize: 零宽竖线归一化幂等
+[PASS] normalize: 零高横线保留 height=0，长度按中心吸附
+[PASS] normalize: 圆点与零高横线保持同一中线
+[PASS] guard: 单轴为零的横线合法
+[PASS] normalize: 零高横线归一化幂等
+[PASS] normalize: 零宽非线形保持退化并交由 guard 拦截
+[PASS] verdict: 合规稿 PASS 且 release_eligible
+[PASS] verdict: BLOCK 按根因分组（修复包自足）
+[PASS] compiler: 同 spec 两次编译字节一致（确定性）
+[PASS] primitives: 主题未派生色阶时系列色由引擎推导（非 None、互不相同）
+[PASS] compiler: 该主题下多序列图表零告警编译（缺主色不等于页面编译失败）
+[PASS] compiler: 原生可编辑 PPTX（文本在对象模型里可改）
+[PASS] charts: data / 单 series / 多 series 均消费 show_values
+[PASS] charts: 作者 px 字号进入原生标签，不再被 8/9/10pt 硬编码覆盖
+[PASS] charts: 中文 a:ea 与拉丁 a:latin 字体均有明确来源
+[PASS] charts: 两种载荷数值/格式不漂移且保持原生对象
+[PASS] charts: categories/series 不再绕过全页标签容量硬门
+[PASS] charts: 作者禁用或声明隐藏重复值时不强加标签
+[PASS] ghost: 原生图表类目/数值遵循作者字号与字体角色
+[PASS] ghost: 单 series 不把序列名缝进类别标签
+[PASS] editorial: 空心形状不变卡片，内边距/文字主轴与原生 PPTX 对齐
+[PASS] editorial: 作者显式声明的中文字距进入可编辑 OOXML，而非只对拉丁文生效
+[PASS] editorial: 形状文字的粗细/行距/不换行/透明度与原生文本语义相同
+[PASS] ghost: 「不渲染」声明表与实际渲染一一对应（预览不替假图背书）
+[PASS] chart_spec: 图表分类单一来源（guard/compiler/ghost 全部派生自 CHART_SPEC）
+[PASS] chart_rows: 编译与预览共用唯一行解析（desc/无效值/display 同口径）
+[PASS] compiler: 六 token 主题也能画负值图（风险色由主题派生，不逼作者补一轮）
+[PASS] compiler: 派生风险色与纸面的对比度足够（不是看不见的一档）
+[PASS] compiler: 红强调色主题下风险色与强调色 OKLab 可分（风险 ≠ 答案）
+[PASS] compiler: 作者声明的风险色压过派生
+[PASS] ghost: 负值条在预览里有长度且用与产物相同的风险色（预览不替亏损改口径）
+[PASS] engine: 指纹 scope 引用的文件都存在（删改模块必须同步）
+[PASS] cache: 同投影 + 同产物字节 ⇒ 复用编译（不重编）
+[PASS] cache: spec 变了不命中
+[PASS] cache: 编译缓存跨 speed 复用（产物字节与档无关，不重复编译）
+[PASS] cache: strict 命中对 PPTX 只做一次内容哈希
+[PASS] assets: 只有通过必要性测试的页进清单
+[PASS] assets: 提示词确定性 + 带负向清单
+[PASS] media: 指纹预读的源图字节由编译复用（同轮仅一次文件读取）
+[PASS] media: QC 缓存 SHA → 编译读一次 → preview 复用同一图像字节
+[PASS] media: 图片变换后 fast 与 strict 产物字节一致（编码口径唯一）
+[PASS] assets: 合规画心 QC 通过（无阻断项，动作 accept）
+[PASS] assets: fast/strict 的硬缝判定一致（不因降采样制造重试）
+[PASS] assets: 坏图 release 档不自动重出（判负交 QA 收口）
+[PASS] qc: 离线环同判比例（清单 16:9 对 4:3 成图必须 retry）
+[PASS] assets: prepare 不因 brief dict 不一致抛错（文件凭证是唯一口径）
+[PASS] compiler: 同源不同裁切像素各自正确（缓存不污染）
+[PASS] ghost: 关键页取证含封面与收尾
+[PASS] ghost: 预览只画关键页（页级缓存内建）
+[PASS] ghost: 页缓存与交付预览复用同一份 PNG 编码
+[PASS] ghost: 联络表只编码一次并以字节副本缓存
+[PASS] ghost: 单次取证与两次调用结论一致（结构只扫一遍）
+[FAIL] ghost: 无字面可用时记账（预览不得静默丢掉中文字形） — {'cjk_serif': 2}
+[PASS] ghost: 字面身份进页缓存键（换字体必须重画）
+[PASS] ghost: 同一路径的图片字节变化会使页缓存失效
+[PASS] ghost: 不透明直画与半透明旧合成路径像素一致（速度不能改变设计）
+[PASS] ghost: 中文主题默认宋体不会静默画成黑体
+[PASS] ghost: Latin font/family 覆盖不改变中文主题字面
+[PASS] ghost: 纯拉丁遵循主题与显式覆盖（sans-serif 不是 serif）
+[PASS] ghost: body/display 别名与编译器一致
+[PASS] ghost: Noto CJK 常规/粗体/衬线四路径均取 SC index 2
+[PASS] ghost: 其他 TTC 不误套 Noto 索引
+[PASS] ghost: 缺字体安全回退且进程内复用
+[PASS] typography: CJK 禁则单一来源（预览与判断层共用同一份）
+[PASS] ghost: 中文禁则折行（行首无禁则标点、数字与单位同行）
+[PASS] ghost: 禁则看断口两侧的实字（空格不是邻居，数字与量词不隔空拆行）
+[PASS] ghost: 双字单位内部不断行（个月/万元/分钟/小时不读成两个词）
+[PASS] ghost: CJK 折行二分拟合与逐字贪心同断点（600 组随机对拍）
+[PASS] primitives: 纯预览进程零 pptx / lxml / compiler（导入契约成立）
+[PASS] primitives: pptx 已加载时 parse_token 产真 RGBColor（编译边界类型不变）
+[PASS] cli: 非 UTF-8 控制台/管道下 plan 不崩且产物落盘（Windows 默认代码页）
+[PASS] cli: 连 ASCII 管道也不崩（输出恒为 UTF-8）
+[PASS] cli: plan 退出码 0 且产物齐
+[PASS] cli: plan 阶段计时可分解且 brief 读入/哈希凭证一致
+[PASS] cli: plan.json 携带逐页判断卡（否决项有效、无竞争可空）
+[PASS] cli: plan.json 无旧字段残留（direction/direction_execution/media）
+[PASS] cli: 骨架写「为什么」但不再复制否决（canonical owner 收口）
+[PASS] cli: 图片被判断为必要时，同一次 plan 交付可定位的资产清单+构图骨架
+[PASS] cli: --asset-cache 读写闭环（第二次 plan 命中提示词缓存，不再 NameError）
+[PASS] cli: 无图一次 plan 没有资产清单和清单验证参数
+[PASS] cli: 不合法图片角色 fail-closed，不能留下声称已有清单的半成品 plan/骨架
+[PASS] cli: release PASS、产出预览/清单且不留多余/过期 repair 包
+[PASS] cli: 端到端计时包含预览且区分 compile/cache/QA
+[PASS] cli: 二次 release 缓存复用（未重编）
+[PASS] cli: 无图 release 不读取无关清单，也不触发额外像素验证
+[PASS] cli: 交付 PNG 被破坏不能再凭 marker 假 PASS；复用未变页图修复联络表
+[PASS] cli: 5→2 页取证不复用旧的 5 页凭证，不留过期预览图片
+[PASS] cli: 2→5 页重新扩大证据范围，逐页缓存复用而非重画/重编
+[PASS] cli: BLOCK 退出码 2 + 分组修复包
+[PASS] cli: 含图但缺清单阻断于编译之前，不输出假的合格 PPTX
+[PASS] cli: 空 slides 早失败并给修法
+[PASS] cli: 入口面恰好是 plan/check/qc（无第二执行路径）
+[PASS] cli: 已删除的 preview 子命令确实不存在
+[PASS] identity: 原生多序列编译无警告
+[PASS] identity: line-False
+[PASS] identity: line-True
+[PASS] identity: column-False
+[PASS] identity: column-True
+[PASS] identity: area-False
+[PASS] identity: area-True
+[PASS] identity: bar-False
+[PASS] identity: bar-True
+[PASS] identity: pie/False 隐藏值仍保留七个类别身份
+[PASS] identity: pie/True 隐藏值仍保留七个类别身份
+[PASS] identity: donut/False 隐藏值仍保留七个类别身份
+[PASS] identity: donut/True 隐藏值仍保留七个类别身份
+[PASS] identity: donut_composition/False 隐藏值仍保留七个类别身份
+[PASS] identity: donut_composition/True 隐藏值仍保留七个类别身份
+[PASS] identity: 拒绝缺失/歧义序列名 ('', '乙')
+[PASS] identity: 拒绝缺失/歧义序列名 ('甲', '甲')
+[PASS] identity: 单序列不强求冗余名称
+[PASS] identity: 类别名不可为空
+[PASS] payload: process_flow 边界完整/超量阻断
+[PASS] payload: timeline 边界完整/超量阻断
+[PASS] payload: steps 边界完整/超量阻断
+[PASS] payload: matrix 边界完整/超量阻断
+[PASS] payload: architecture 边界完整/超量阻断
+[PASS] payload: ranked_bar 边界完整/超量阻断
+[PASS] payload: progress_bar 边界完整/超量阻断
+[PASS] payload: stacked_bar 边界完整/超量阻断
+[PASS] payload: big_number_row 边界完整/超量阻断
+[PASS] payload: bubble 边界完整/超量阻断
+[PASS] evidence: 未打开/编辑/独立审阅不冒充验收
+[PASS] rhythm: 重复不能覆盖关系/观点/数据判断 甲组负责研发；乙组负责交付。
+[PASS] rhythm: 重复不能覆盖关系/观点/数据判断 必须先核验证据再发布。
+[PASS] rhythm: 重复不能覆盖关系/观点/数据判断 效率从 12% 提升到 18%。
+[PASS] plan: 多行/引号安全生成 title
+[PASS] plan: 多行/引号安全生成 claim
+[PASS] plan: 多行/引号安全生成 id
+[PASS] plan: 多行/引号安全生成 audience
+[PASS] plan: 多行/引号安全生成 tension
+[PASS] plan: 多行/引号安全生成 eyebrow
+[PASS] plan: deck 说明不能终止 Python 字符串
+[PASS] plan: 不执行/不覆盖任何现有作者文件
+[PASS] plan: 同输入副本不重写、不产生更多文件
+[PASS] plan: 副本也被保护，不按代码格式猜是否已填稿
+[PASS] plan: JSON 仅回摘要，完整判断仍落盘
+[PASS] qc: 同一解析器消费文件名/HEX 字色/裁切声明
+[PASS] qc: 离线与生产同判且不写报告/重试状态
+[PASS] qc: 既有素材按 origin.path 查找，不误报缺失
+[PASS] qc: 有效报告复用测量且不改写凭证
+[PASS] qc: strict 同 size/mtime 换字节不复用旧测量
+[PASS] qc: 缺素材退出码非零，不能假成功
+[PASS] qc: 多候选不能任取第一个
+[PASS] release: 非字典序叙事 ID 严档一次收口
+[PASS] release: 相同 PPTX 字节但 ID 改名不复用旧页绑定
+[PASS] release: 持久清单保留逐页证据而非只留目录
+[PASS] release: 缺 spec 戳 必须 BLOCK
+[PASS] release: 缺 PPTX 双凭证 必须 BLOCK
+[PASS] release: 缺 PPTX 摘要 必须 BLOCK
+[PASS] release: 同页 ID 的旧预览不能冒充当前产物
+[PASS] release: 缺预览必须 BLOCK
+[PASS] release: 重复页面 凭证拒收
+[PASS] release: 重复文件 凭证拒收
+[PASS] release: 错误顺序 凭证拒收
+[PASS] release: 未知范围 凭证拒收
+[PASS] release: fast 合法抽样保留接口
+[PASS] release: strict 不接受抽样
+[PASS] release: deadline 不升级为可发布
+[PASS] release: 输入异常覆盖旧 PASS 清单
+[PASS] release: 目标环境状态不被自动升级
+[PASS] identity: 重复页 ID 在编译前 BLOCK
+[PASS] identity: 重复元素 ID 在编译前 BLOCK
+[PASS] arrow: 三方向箭头是原生可编辑连接线
+[PASS] arrow: 普通线不误加箭头
+[PASS] arrow: 显式无描边保持不可见
+[PASS] arrow: ghost 方向端点 horizontal
+[PASS] arrow: ghost 方向端点 vertical
+[PASS] arrow: ghost 方向端点 diagonal
+[PASS] numerals: 点分日期（2026.10 / 2026.10.14）不是证据量
+[PASS] 判断: 封面是陈述位，日期不当焦点（焦点回到主张本人）
+[PASS] claim: 正文换了指标时不顶掉标题结论（同一度量才谈得上更强）
+[PASS] claim: 带结论措辞的正文句仍然胜出（不被指标一致性挡住）
+[PASS] data: 序列位置坐标（第 N 个月）不把同口径序列判成单位不同
+[PASS] data: 真跨量纲的页面仍然判不可比（尺子没被放松）
+[PASS] focus: 要决定的那个量赢过后面出现的终值（30 家，而不是 3 个）
+[PASS] focus: 序列同分同单位时取末值（当前状态，不是基期）
+[PASS] weight: 结论点名的坐标不进删除清单（主张与证据的必要呼应）
+[PASS] weight: 同一句话里的数字重复照旧进删除清单
+[PASS] judgment: 主张单一量时不误报口径未决（正文混量纲不算）
+[PASS] judgment: 主张自己跨量纲时照旧报口径未决（尺子没被放松）
+[PASS] judgment: 单个「先/再」不构成流程（决策页回到收束位）
+[PASS] judgment: 条件从句里的比较词不把收尾页判成两端对比
+[PASS] 眉标: 不以副词收尾的截断从句（答案不）
+[PASS] 眉标: 不以副词收尾的截断从句（同店销售额仍）
+[PASS] 眉标: 干净名词短语照旧派得出来（收尾字表不被过度收紧）
+[PASS] numerals: 公里/吨/平方米等单位进入读数（主语不丢量纲）
+[PASS] typography: 讲差的一页要求画差值或只标端点（不给两条线各配标签）
+[PASS] series: 无数字的趋势措辞不构成序列
+[PASS] series: 两个以上数据点仍是序列
+[PASS] judgment: 封面建立主张，不被判成证明页
+[PASS] judgment: 无图表的封面不派发「坐标轴与刻度」
+[PASS] judgment: 致谢/问答页没有结论时不追问补句（也不编造结论）
+[PASS] judgment: 一句话收束的致谢页让留白承担分量
+[PASS] series: 按年份排列的图表数据是时间序列，不被当成比较
+[PASS] series: 分期投入是先后承诺（sequence），不是「超过投入」式比较
+[PASS] skeleton: 通用排版纪律只在头部声明一次，逐页不重复
+[PASS] skeleton: 跨页锚的规则只在头部说明一次，逐页不重复
+[PASS] claim: 以断言谓语结尾的标题（差距明显）是结论，不追问补句
+[PASS] compare: 「对比评估」作为主题标签不触发比较
+[PASS] compare: 「N 倍」是比较断言
+[PASS] series: 不同单位的规格列举不被判为序列
+[PASS] media: 「伙伴」这类群体名词不构成证词，不强制配图
+[PASS] meta: 封面元信息行（带日期/分隔符）不把封面判成流程页
+[PASS] meta: 首页若是一句证词（无日期/分隔符）不被当成元信息丢掉
+[PASS] claim: 无正文的论断标题（不在…在…）是结论位
+[PASS] claim: 无正文的名词标签（18 个月落地节奏）不编结论
+[PASS] media: 「门店 120 家」这类计数句不是现场（数据页不配生活图）
+[PASS] media: 有证人动作（走访）的带数字现场页：词表提示证词，声明后才出图
+[PASS] part_whole: 百分比合计 100% 即部分与整体（不靠「其中」一词）
+[PASS] structure: 三项以上并列（无数值）是结构
+[PASS] shape: 口径标注里的「可比」不产生比较（标注不是内容）
+[PASS] shape: 端点变化（从 A 到 B，同单位）是变化的形状，不是「无证据」
+[PASS] shape: 同单位的并列量（规格行）不是序列（三个数字不是充分条件）
+[PASS] shape: 期间词（环比/同比）不是两端比较（变化不是并置）
+[PASS] shape: 被否定的比较仍是比较（宾语是名词，不是界限）
+[PASS] shape: 界限（「不超过 5%」）不被当成两端比较（尺子没被放松）
+[PASS] shape: 「A 对 B」两端的跨单位对照仍构成比较
+[PASS] claim: 条件结果句（只要…就能…）是结论，不是证据行
+[PASS] claim: 复合主张（并列三项 + 缺一不可）是结论，不是清单
+[PASS] scope: 取证范围行不进证据量（样本量不冒充页面的量）
+[PASS] scope: 取证范围行不夺结论位（样本行不是主张）
+[PASS] scope: 语义相同的普通句子不被误剥（「客户来源是口碑」照原样参与判断）
+[PASS] bench: 全部案例通过（4 个已登记缺口 I01/K01/N02/X02 已修复，集合为空）
+[PASS] bench: M02「一位釉工…」media_source=hint 且 suggested=witness（个体语法信号，非词表）
+[PASS] threshold: 单位互不相容的阈值列举是结构（并列条件），不是比较
+[PASS] threshold: 无阈值词的两个不同单位陈述（「开业前 60 天…缩短 4 个月」）不是结构
+[PASS] threshold: 两端同单位的「高于」仍是比较（真比较不被误伤）
+[PASS] threshold: 「是……的 1.6 倍」仍是比较
+[PASS] 眉标: 数量短语的残片（「万元」）不作眉标
+[PASS] 眉标: 派不出主题时不退回角色词（「解释」「对比」）
+[PASS] desc: big_number_row 与 timeline 的说明行进入 PPTX（不再静默丢弃）
+[PASS] desc: 说明行几何落在页内（不只是文字存在）
+[PASS] repair: 溢出修复包指到具体页面（affected_slides 含页 id，不只元素 id）
+[PASS] R1 register: 受众文本中的「媒体」不切换为深色舞台（纸色稳定）
+[PASS] R1 register: 真实的发布场景（场合写明发布会）仍切换为舞台语域
+[PASS] R3 rhythm: 证据为零的叙事页不因平局连续同构（人物故事 3 页不全相同）
+[PASS] R4 structure: 叙述中的话题清单不判为结构证据（无分类线索）
+[PASS] R4 structure: 明示分类的列举仍是结构（渠道分三类：直营、经销、电商）
+[PASS] R2 closing: 决定类型不同 → 末页焦点不同（批准/报名/评估 三类）
+[PASS] R2 closing: 带数字的末页不被决定文本覆盖
+[PASS] R2 closing: 主张已点名请求（请确认…）时焦点就是主张，不另换
+[PASS] R5 delete: 高密度页给出删除候选（delete_candidates 非空）
+[PASS] R5 delete: 候选不是硬禁令（delete 与 must_not 不被候选填充）
+[PASS] R5 delete: 携带主张数字的句子永不成为候选
+[PASS] R5 delete: 低密度页不产生候选（不为凑数删内容）
+[PASS] unit: 元素级单位落到数据标签（General"元"），不再静默丢弃
+[PASS] unit: 数值轴上限为最大值的 1.15 倍（外侧标签留白，XML 层确认；ghost 不读取该值）
+[PASS] unit gate: release 硬门拦截图表行上的未消费字段 unit
+[PASS] unit gate: 元素级 unit 的正向样例 release 仍 PASS
+[PASS] blind: ICC(2,1) 完全一致时为 1，完全随机时低于共识线
+[PASS] blind: 评审不足三位时输出 NOT_ENOUGH_REVIEWERS（不宣称共识）
+[PASS] docs: SKILL §3 保留逐页五问（受众 / 主张 / 证据 / 焦点 / 构图理由）
+[PASS] individual: 「一位釉工」为个体（不依赖职业词表）
+[PASS] individual: 「12 位企业客户」是计数，不是个体
+[PASS] individual: 新职业「一名窑工」同样为个体
+[PASS] individual: 「位/名」的非人复合词（名称/名单/位置）不误判为个体
+[PASS] individual: 个体只在证词角色下出 hint；compare 角色不把人物当证词
+[PASS] bench: 基准严重缺陷率为 0（critical 案例全部通过）
+[PASS] declare: 作者声明 role 原样生效（source=author），压过内容判断
+[PASS] declare: 非法 role/evidence 不静默生效：给出 warning 并按内容判断
+[PASS] hint: 词表命中的人物/场所不出图，并把问题交还作者（open_questions 中可见）
+[PASS] 混排: 数字与单位之间用不断行空格（细空格是断行机会）
+[PASS] 混排: 作者自己写的空格也被绑定（「186 公里」同样不许断）
+[PASS] 混排: 非单位的普通空格不受影响（不制造粘在一起的假词）
+[PASS] 混排: 间隙插入幂等（二次处理不再漂移）
+[PASS] 混排: 容量估算认识不断行空格（不被当成一个汉字）
+[PASS] 混排: 预览禁则与编译共用同一份单位表（公里）
+[PASS] 混排: 预览禁则与编译共用同一份单位表（个月）
+[PASS] 混排: 预览禁则与编译共用同一份单位表（万元）
+[PASS] 混排: 预览禁则与编译共用同一份单位表（%）
+[PASS] 混排: 预览禁则与编译共用同一份单位表（家）
+[PASS] 混排: 交付的 PPTX 里数字与单位之间是不换行空格
+[PASS] docs: 包版本与最新变更记录一致
+[PASS] docs: SKILL.md 只保留六节（身份/哲学/判断/Context/执行/QA）
+[PASS] docs: references 只保留执行/资产契约，不维护第二套判断
+[PASS] docs: 文档里没有退役模块名与旧概念
+
+415/416 passed
+VAO warning: 本机缺少预览字面 cjk；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。
+VAO warning: 本机缺少预览字面 cjk；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。
+VAO warning: 本机缺少预览字面 cjk；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。

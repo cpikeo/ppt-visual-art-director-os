@@ -1,0 +1,5 @@
+Collecting vulture
+  Downloading vulture-2.16-py3-none-any.whl.metadata (15 kB)
+Downloading vulture-2.16-py3-none-any.whl (26 kB)
+Installing collected packages: vulture
+Successfully installed vulture-2.16

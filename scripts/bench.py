@@ -270,7 +270,7 @@ def main(argv=None) -> int:
     _print(report)
     if args.out:
         Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return 0
+    return 0 if report["metrics"]["cases_passed"] == report["metrics"]["cases"] else 1
 
 
 if __name__ == "__main__":

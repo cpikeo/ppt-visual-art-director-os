@@ -42,6 +42,12 @@ jobs:
         env:
           PYTHONPATH: scripts
 
+      - name: Judgment benchmarks (failure exits nonzero)
+        run: |
+          python scripts/bench.py --baseline benchmark/baseline_9.26.json
+          python scripts/bench.py --cases benchmark/holdout.json
+          python scripts/bench.py --cases benchmark/transfer.json
+
       - name: Whitespace check
         if: matrix.os == 'ubuntu-latest'
         run: git diff --check

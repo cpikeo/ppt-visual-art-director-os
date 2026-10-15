@@ -1,0 +1,1864 @@
+{
+  "canvas": {
+    "width": 1280,
+    "height": 720
+  },
+  "theme": {
+    "colors": {
+      "background": "#F4F3EF",
+      "ink": "#142C3C",
+      "muted": "#576773",
+      "primary": "#142C3C",
+      "secondary": "#73818A",
+      "accent": "#BD442C"
+    },
+    "fonts": {
+      "cn": "Noto Sans CJK SC",
+      "latin": "Arial"
+    }
+  },
+  "slides": [
+    {
+      "id": "s01",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "架构简单，判断不能简单",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "ENGINEERING × ART DIRECTION / 2026.10",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "01",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "执行简单，\n判断不能简单。",
+          "x": 64,
+          "y": 152,
+          "width": 1088,
+          "height": 216,
+          "size": 76,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 428,
+          "width": 128,
+          "height": 0,
+          "stroke": "accent",
+          "stroke_width": 1
+        },
+        {
+          "id": "sub",
+          "type": "text",
+          "text": "删掉重复劳动，保留真实证据。",
+          "x": 64,
+          "y": 472,
+          "width": 1000,
+          "height": 56,
+          "size": 34,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "boundary",
+          "type": "text",
+          "text": "仓库审计样稿 · 可编辑对象 · 目标 PowerPoint 尚待验收",
+          "x": 64,
+          "y": 564,
+          "width": 1100,
+          "height": 40,
+          "size": 23,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：2ec0b0e 基线与本工作区改动；本文是审计展示，不是商业预测。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s02",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "测试资产链",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "01 / 关系先于图形",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "02",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：benchmark/holdout.json · H01；60% / 40% 为合成语义案例，非临床结果。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "图像是插图，\n不是事实证词。",
+          "x": 64,
+          "y": 176,
+          "width": 448,
+          "height": 152,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "caption",
+          "type": "text",
+          "text": "原始合成测试图\n用于资产绑定与裁切验证",
+          "x": 64,
+          "y": 400,
+          "width": 448,
+          "height": 100,
+          "size": 27,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "image",
+          "type": "image",
+          "asset_id": "existing-00100adb0987166a",
+          "x": 560,
+          "y": 180,
+          "width": 640,
+          "height": 360,
+          "fit": "cover"
+        }
+      ]
+    },
+    {
+      "id": "s03",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "职责并列不是时间线",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "02 / 方向只来自明确关系",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "03",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "职责并列，\n不是先后顺序。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "subject_a",
+          "type": "text",
+          "text": "青禾组",
+          "x": 64,
+          "y": 312,
+          "width": 288,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rel_a",
+          "type": "text",
+          "text": "负责",
+          "x": 420,
+          "y": 324,
+          "width": 176,
+          "height": 44,
+          "size": 26,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "object_a",
+          "type": "text",
+          "text": "质量测试",
+          "x": 736,
+          "y": 312,
+          "width": 480,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "row",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 404,
+          "width": 1152,
+          "height": 0,
+          "stroke": "primary",
+          "stroke_width": 1
+        },
+        {
+          "id": "subject_b",
+          "type": "text",
+          "text": "澄海组",
+          "x": 64,
+          "y": 440,
+          "width": 288,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rel_b",
+          "type": "text",
+          "text": "负责",
+          "x": 420,
+          "y": 452,
+          "width": 176,
+          "height": 44,
+          "size": 26,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "object_b",
+          "type": "text",
+          "text": "项目交付",
+          "x": 736,
+          "y": 440,
+          "width": 480,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "没有已知上下级，就不补汇报线；没有时间轴，就不造流程。",
+          "x": 64,
+          "y": 560,
+          "width": 1152,
+          "height": 60,
+          "size": 28,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：显式关系回归测试；此页为合成组织关系示例，不代表实际组织。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s04",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "新边界案例通过由7增至12",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "03 / 判断基准，不是视觉评分",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "04",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "五个误判被消除。\n视觉质量仍需另验。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "evidence_chart",
+          "type": "chart",
+          "chart_kind": "column",
+          "x": 64,
+          "y": 284,
+          "width": 720,
+          "height": 332,
+          "role": "focus",
+          "data": [
+            {
+              "label": "修改前",
+              "value": 7
+            },
+            {
+              "label": "修改后",
+              "value": 12
+            }
+          ],
+          "show_values": true,
+          "label_size": 28,
+          "value_size": 32,
+          "highlight": 1,
+          "metric": "固定边界案例通过数",
+          "source": "audit/holdout-before.json 与 holdout-after.json",
+          "unit": "例",
+          "period": "本次审计",
+          "basis": "同一组12个固定案例"
+        },
+        {
+          "id": "score",
+          "type": "text",
+          "text": "12/12",
+          "x": 852,
+          "y": 312,
+          "width": 364,
+          "height": 104,
+          "size": 64,
+          "color": "accent",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "qualifier",
+          "type": "text",
+          "text": "固定关系不变式\n不是独立盲评\n不是跨行业质量证明",
+          "x": 852,
+          "y": 440,
+          "width": 364,
+          "height": 152,
+          "size": 27,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：audit/holdout-{before,after}.json；案例预先写定，修复后转为回归集。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s05",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "调用链不增加模型或新模块",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "04 / 一次判断，下游复用",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "05",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "保持一条生产链。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 76,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "think",
+          "type": "text",
+          "text": "THINK",
+          "x": 64,
+          "y": 280,
+          "width": 320,
+          "height": 72,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "build",
+          "type": "text",
+          "text": "BUILD",
+          "x": 464,
+          "y": 280,
+          "width": 320,
+          "height": 72,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "verify",
+          "type": "text",
+          "text": "VERIFY",
+          "x": 864,
+          "y": 280,
+          "width": 352,
+          "height": 72,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "think_body",
+          "type": "text",
+          "text": "主张与证据\n保留未知关系",
+          "x": 64,
+          "y": 376,
+          "width": 320,
+          "height": 112,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "build_body",
+          "type": "text",
+          "text": "原生文字与图表\n作者决定几何",
+          "x": 464,
+          "y": 376,
+          "width": 320,
+          "height": 112,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "verify_body",
+          "type": "text",
+          "text": "硬门与字节凭证\n不代替视觉签署",
+          "x": 864,
+          "y": 376,
+          "width": 352,
+          "height": 112,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "close",
+          "type": "text",
+          "text": "删除不可靠的隐式缓存；复用显式快照与已验摘要。",
+          "x": 64,
+          "y": 564,
+          "width": 1152,
+          "height": 56,
+          "size": 30,
+          "color": "accent",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：scripts/vao.py · plan / check；架构与判断原则见 SKILL.md。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s06",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "数字与单位绑定不等于真实排版通过",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "05 / 中文排版必须落到成品",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "06",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "186 公里，\n不能在单位前断开。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "specimen",
+          "type": "text",
+          "text": "186 公里",
+          "x": 64,
+          "y": 316,
+          "width": 1152,
+          "height": 132,
+          "size": 96,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "不断行空格已写入原生文字；中文字体角色已绑定。",
+          "x": 64,
+          "y": 500,
+          "width": 1152,
+          "height": 52,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "limit",
+          "type": "text",
+          "text": "真实断行、字体回退与投影可读性，须在目标 PowerPoint 检查。",
+          "x": 64,
+          "y": 568,
+          "width": 1152,
+          "height": 48,
+          "size": 26,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：混排回归测试与 PPTX XML；本页 ghost 只提供结构预览。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s07",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "保留目标软件验收",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "06 / 交付不能越过证据",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "07",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "代码可以通过。\n作品必须被看见。",
+          "x": 64,
+          "y": 144,
+          "width": 1100,
+          "height": 180,
+          "size": 64,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 388,
+          "width": 128,
+          "height": 0,
+          "stroke": "accent",
+          "stroke_width": 1
+        },
+        {
+          "id": "action",
+          "type": "text",
+          "text": "下一步：打开、编辑、另存，再重开。",
+          "x": 64,
+          "y": 440,
+          "width": 1152,
+          "height": 64,
+          "size": 36,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "pending",
+          "type": "text",
+          "text": "目标 PowerPoint 未验证 · 独立视觉盲评未开展",
+          "x": 64,
+          "y": 548,
+          "width": 1152,
+          "height": 48,
+          "size": 28,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "交付边界：结构 PASS 不等于视觉终验；没有真实评审，不填写虚构评分。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s08",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "架构简单，判断不能简单",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "ENGINEERING × ART DIRECTION / 2026.10",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "01",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "架构简单，\n判断不能简单。",
+          "x": 64,
+          "y": 152,
+          "width": 1088,
+          "height": 216,
+          "size": 76,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 428,
+          "width": 128,
+          "height": 0,
+          "stroke": "accent",
+          "stroke_width": 1
+        },
+        {
+          "id": "sub",
+          "type": "text",
+          "text": "删掉重复劳动，保留真实证据。",
+          "x": 64,
+          "y": 472,
+          "width": 1000,
+          "height": 56,
+          "size": 34,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "boundary",
+          "type": "text",
+          "text": "仓库审计样稿 · 可编辑对象 · 目标 PowerPoint 尚待验收",
+          "x": 64,
+          "y": 564,
+          "width": 1100,
+          "height": 40,
+          "size": 23,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：2ec0b0e 基线与本工作区改动；本文是审计展示，不是商业预测。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s09",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "相加为100不是共同分母",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "01 / 关系先于图形",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "02",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "相加为 100，\n不等于同一个整体。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "a",
+          "type": "text",
+          "text": "60%",
+          "x": 64,
+          "y": 304,
+          "width": 448,
+          "height": 120,
+          "size": 92,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "al",
+          "type": "text",
+          "text": "缓解率",
+          "x": 64,
+          "y": 440,
+          "width": 448,
+          "height": 44,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "b",
+          "type": "text",
+          "text": "40%",
+          "x": 704,
+          "y": 304,
+          "width": 448,
+          "height": 120,
+          "size": 92,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "bl",
+          "type": "text",
+          "text": "不良反应发生率",
+          "x": 704,
+          "y": 440,
+          "width": 448,
+          "height": 44,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "sep",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 520,
+          "width": 1152,
+          "height": 0,
+          "stroke": "primary",
+          "stroke_width": 1
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "同一患者可同时满足两者。先问事件是否互斥，再决定能否画饼图。",
+          "x": 64,
+          "y": 556,
+          "width": 1152,
+          "height": 64,
+          "size": 28,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：benchmark/holdout.json · H01；60% / 40% 为合成语义案例，非临床结果。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s10",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "职责并列不是时间线",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "02 / 方向只来自明确关系",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "03",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "职责并列，\n不是先后顺序。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "subject_a",
+          "type": "text",
+          "text": "青禾组",
+          "x": 64,
+          "y": 312,
+          "width": 288,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rel_a",
+          "type": "text",
+          "text": "负责",
+          "x": 420,
+          "y": 324,
+          "width": 176,
+          "height": 44,
+          "size": 26,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "object_a",
+          "type": "text",
+          "text": "质量测试",
+          "x": 736,
+          "y": 312,
+          "width": 480,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "row",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 404,
+          "width": 1152,
+          "height": 0,
+          "stroke": "primary",
+          "stroke_width": 1
+        },
+        {
+          "id": "subject_b",
+          "type": "text",
+          "text": "澄海组",
+          "x": 64,
+          "y": 440,
+          "width": 288,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rel_b",
+          "type": "text",
+          "text": "负责",
+          "x": 420,
+          "y": 452,
+          "width": 176,
+          "height": 44,
+          "size": 26,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "object_b",
+          "type": "text",
+          "text": "项目交付",
+          "x": 736,
+          "y": 440,
+          "width": 480,
+          "height": 64,
+          "size": 40,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "没有已知上下级，就不补汇报线；没有时间轴，就不造流程。",
+          "x": 64,
+          "y": 560,
+          "width": 1152,
+          "height": 60,
+          "size": 28,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：显式关系回归测试；此页为合成组织关系示例，不代表实际组织。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s11",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "新边界案例通过由7增至12",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "03 / 判断基准，不是视觉评分",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "04",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "五个误判被消除。\n视觉质量仍需另验。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "evidence_chart",
+          "type": "chart",
+          "chart_kind": "column",
+          "x": 64,
+          "y": 284,
+          "width": 720,
+          "height": 332,
+          "role": "focus",
+          "data": [
+            {
+              "label": "修改前",
+              "value": 7
+            },
+            {
+              "label": "修改后",
+              "value": 12
+            }
+          ],
+          "show_values": true,
+          "label_size": 28,
+          "value_size": 32,
+          "highlight": 1,
+          "metric": "固定边界案例通过数",
+          "source": "audit/holdout-before.json 与 holdout-after.json",
+          "unit": "例",
+          "period": "本次审计",
+          "basis": "同一组12个固定案例"
+        },
+        {
+          "id": "score",
+          "type": "text",
+          "text": "12/12",
+          "x": 852,
+          "y": 312,
+          "width": 364,
+          "height": 104,
+          "size": 64,
+          "color": "accent",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "qualifier",
+          "type": "text",
+          "text": "固定关系不变式\n不是独立盲评\n不是跨行业质量证明",
+          "x": 852,
+          "y": 440,
+          "width": 364,
+          "height": 152,
+          "size": 27,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：audit/holdout-{before,after}.json；案例预先写定，修复后转为回归集。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s12",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "调用链不增加模型或新模块",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "04 / 一次判断，下游复用",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "05",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "保持一条生产链。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 76,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "think",
+          "type": "text",
+          "text": "THINK",
+          "x": 64,
+          "y": 280,
+          "width": 320,
+          "height": 72,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "build",
+          "type": "text",
+          "text": "BUILD",
+          "x": 464,
+          "y": 280,
+          "width": 320,
+          "height": 72,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "verify",
+          "type": "text",
+          "text": "VERIFY",
+          "x": 864,
+          "y": 280,
+          "width": 352,
+          "height": 72,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "think_body",
+          "type": "text",
+          "text": "主张与证据\n保留未知关系",
+          "x": 64,
+          "y": 376,
+          "width": 320,
+          "height": 112,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "build_body",
+          "type": "text",
+          "text": "原生文字与图表\n作者决定几何",
+          "x": 464,
+          "y": 376,
+          "width": 320,
+          "height": 112,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "verify_body",
+          "type": "text",
+          "text": "硬门与字节凭证\n不代替视觉签署",
+          "x": 864,
+          "y": 376,
+          "width": 352,
+          "height": 112,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "close",
+          "type": "text",
+          "text": "删除不可靠的隐式缓存；复用显式快照与已验摘要。",
+          "x": 64,
+          "y": 564,
+          "width": 1152,
+          "height": 56,
+          "size": 30,
+          "color": "accent",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：scripts/vao.py · plan / check；架构与判断原则见 SKILL.md。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s13",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "数字与单位绑定不等于真实排版通过",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "05 / 中文排版必须落到成品",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "06",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "186 公里，\n不能在单位前断开。",
+          "x": 64,
+          "y": 112,
+          "width": 1100,
+          "height": 132,
+          "size": 48,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "specimen",
+          "type": "text",
+          "text": "186 公里",
+          "x": 64,
+          "y": 316,
+          "width": 1152,
+          "height": 132,
+          "size": 96,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "note",
+          "type": "text",
+          "text": "不断行空格已写入原生文字；中文字体角色已绑定。",
+          "x": 64,
+          "y": 500,
+          "width": 1152,
+          "height": 52,
+          "size": 30,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "limit",
+          "type": "text",
+          "text": "真实断行、字体回退与投影可读性，须在目标 PowerPoint 检查。",
+          "x": 64,
+          "y": 568,
+          "width": 1152,
+          "height": 48,
+          "size": 26,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：混排回归测试与 PPTX XML；本页 ghost 只提供结构预览。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s14",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "保留目标软件验收",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "06 / 交付不能越过证据",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "07",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "代码可以通过。\n作品必须被看见。",
+          "x": 64,
+          "y": 144,
+          "width": 1100,
+          "height": 180,
+          "size": 64,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 388,
+          "width": 128,
+          "height": 0,
+          "stroke": "accent",
+          "stroke_width": 1
+        },
+        {
+          "id": "action",
+          "type": "text",
+          "text": "下一步：打开、编辑、另存，再重开。",
+          "x": 64,
+          "y": 440,
+          "width": 1152,
+          "height": 64,
+          "size": 36,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "pending",
+          "type": "text",
+          "text": "目标 PowerPoint 未验证 · 独立视觉盲评未开展",
+          "x": 64,
+          "y": 548,
+          "width": 1152,
+          "height": 48,
+          "size": 28,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "交付边界：结构 PASS 不等于视觉终验；没有真实评审，不填写虚构评分。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    },
+    {
+      "id": "s15",
+      "source_zone": {
+        "x": 64,
+        "y": 660,
+        "width": 1152,
+        "height": 48
+      },
+      "page_intent": {
+        "insight": "架构简单，判断不能简单",
+        "focus": "title"
+      },
+      "elements": [
+        {
+          "id": "eyebrow",
+          "type": "text",
+          "text": "ENGINEERING × ART DIRECTION / 2026.10",
+          "x": 64,
+          "y": 32,
+          "width": 960,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "eyebrow"
+        },
+        {
+          "id": "page_number",
+          "type": "text",
+          "text": "01",
+          "x": 1168,
+          "y": 32,
+          "width": 48,
+          "height": 28,
+          "size": 18,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "page_number",
+          "align": "right"
+        },
+        {
+          "id": "title",
+          "type": "text",
+          "text": "架构简单，\n判断不能简单。",
+          "x": 64,
+          "y": 152,
+          "width": 1088,
+          "height": 216,
+          "size": 76,
+          "color": "ink",
+          "line_height": 1.2,
+          "bold": true
+        },
+        {
+          "id": "rule",
+          "type": "shape",
+          "shape": "line",
+          "x": 64,
+          "y": 428,
+          "width": 128,
+          "height": 0,
+          "stroke": "accent",
+          "stroke_width": 1
+        },
+        {
+          "id": "sub",
+          "type": "text",
+          "text": "删掉重复劳动，保留真实证据。",
+          "x": 64,
+          "y": 472,
+          "width": 1000,
+          "height": 56,
+          "size": 34,
+          "color": "ink",
+          "line_height": 1.2
+        },
+        {
+          "id": "boundary",
+          "type": "text",
+          "text": "仓库审计样稿 · 可编辑对象 · 目标 PowerPoint 尚待验收",
+          "x": 64,
+          "y": 564,
+          "width": 1100,
+          "height": 40,
+          "size": 23,
+          "color": "muted",
+          "line_height": 1.2
+        },
+        {
+          "id": "source",
+          "type": "text",
+          "text": "来源：2ec0b0e 基线与本工作区改动；本文是审计展示，不是商业预测。",
+          "x": 64,
+          "y": 672,
+          "width": 1152,
+          "height": 28,
+          "size": 17,
+          "color": "muted",
+          "line_height": 1.2,
+          "role": "source"
+        }
+      ]
+    }
+  ]
+}

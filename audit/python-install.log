@@ -1,0 +1,8 @@
+Downloading cpython-3.12.15-linux-x86_64-gnu (download) (32.7MiB)
+Downloading cpython-3.10.22-linux-x86_64-gnu (download) (28.0MiB)
+ Downloaded cpython-3.12.15-linux-x86_64-gnu (download)
+ Downloaded cpython-3.10.22-linux-x86_64-gnu (download)
+Installed 2 versions in 1.31s
+ + cpython-3.10.22-linux-x86_64-gnu (python3.10)
+ + cpython-3.12.15-linux-x86_64-gnu (python3.12)
+warning: `/home/user/.local/bin` is not on your PATH. To use installed Python executables, run `export PATH="/home/user/.local/bin:$PATH"` or `uv python update-shell`.

@@ -1,0 +1,372 @@
+{
+  "schema": "vao-release-manifest-v2",
+  "source_spec_hash": "da9d1e9bf2b89140",
+  "validation": {
+    "issues": [],
+    "notes": [],
+    "page_count": 7
+  },
+  "slide_count": 7,
+  "release_eligible": true,
+  "asset_workflow": {
+    "status": "SKIPPED",
+    "issues": [],
+    "image_count": 0,
+    "reason": "no_image_elements"
+  },
+  "verification": {
+    "visual_evidence": "ghost_preview",
+    "visual_evidence_scope": "full",
+    "structural_pages": 7,
+    "ghost_pages": 7,
+    "target_powerpoint": "not_verified",
+    "native_editing": "not_verified",
+    "independent_visual_review": "not_performed"
+  },
+  "conclusions": [
+    "PASS — Structural Preview",
+    "NOT VERIFIED — Target PowerPoint"
+  ],
+  "compile_report": {
+    "passed": true,
+    "file_bytes": 57467,
+    "output_sha256": "dd7d95193e7d7ba45259ebb0ee412bb0bd7931519a272dd923377bbd7a595445",
+    "output_path": "/home/user/ppt-visual-art-director-os/acceptance/out.pptx",
+    "reused": null
+  },
+  "qa_summary": {
+    "status": "PASS",
+    "passed": true,
+    "failure_codes": [],
+    "blocking_items": 0,
+    "performance": {
+      "load_spec_ms": 3.16,
+      "module_import_ms": 4.71,
+      "spec_identity_ms": 0.37,
+      "asset_bind_ms": 0.0,
+      "qc_ms": 0.0,
+      "asset_chain_ms": 0.0,
+      "asset_count": 0,
+      "asset_retry_count": 0,
+      "normalization_ms": 0.88,
+      "guard_ms": 3.1,
+      "verdict_ms": 0.07,
+      "cache_probe_ms": 0.87,
+      "compile_ms": 221.73,
+      "attestation_ms": 0.21,
+      "cache_write_ms": 1.3,
+      "cache_reason": "miss",
+      "cache_enabled": true,
+      "speed_profile": "strict",
+      "slides": 7,
+      "compile_reused": false,
+      "normalization": {
+        "changes": [
+          {
+            "scope": "s01",
+            "id": "eyebrow",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s01",
+            "id": "page_number",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s01",
+            "id": "title",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s01",
+            "id": "rule",
+            "field": "stroke",
+            "from": "accent",
+            "to": "#BD442C",
+            "rule": "color"
+          },
+          {
+            "scope": "s01",
+            "id": "sub",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s01",
+            "id": "boundary",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s01",
+            "id": "source",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "eyebrow",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "page_number",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "title",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "a",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "al",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "b",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "bl",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "sep",
+            "field": "stroke",
+            "from": "primary",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "note",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s02",
+            "id": "source",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "eyebrow",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "page_number",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "title",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "subject_a",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "rel_a",
+            "field": "color",
+            "from": "muted",
+            "to": "#576773",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "object_a",
+            "field": "color",
+            "from": "ink",
+            "to": "#142C3C",
+            "rule": "color"
+          },
+          {
+            "scope": "s03",
+            "id": "row",
+            "field": "stroke",
+            "from": "primary",
+            "to": "#142C3C",
+            "rule": "color"
+          }
+        ],
+        "counts": {
+          "color": 60
+        },
+        "changes_total": 60,
+        "changes_omitted": 36
+      },
+      "provenance_required": true,
+      "speed": "strict",
+      "cache_probe_error": null,
+      "cache_dir": "acceptance/out_vao",
+      "ghost_ms": 199.13,
+      "render_pages": 7,
+      "render_pages_drawn": 7,
+      "render_pages_cached": 0,
+      "render_bundle_reused": false,
+      "contact_sheet_cached": false,
+      "release_manifest_ms": 0.06,
+      "asset_qc_reused": 0,
+      "image_source_snapshots": 0,
+      "image_snapshot_bytes": 0,
+      "image_decode_seed_entries": 0,
+      "qa_ms": 4.11,
+      "total_ms": 435.79
+    },
+    "execution": {
+      "entrypoint": "vao.py",
+      "mode": "release",
+      "profile": "Release · 交付",
+      "compiled": true,
+      "provenance_required": true,
+      "visual_evidence": "ghost_preview"
+    }
+  },
+  "ghost_preview": {
+    "dir": "acceptance/out_preview",
+    "contact_sheet": "acceptance/out_preview/ghost-contact-sheet.png",
+    "pages": [
+      "acceptance/out_preview/ghost-01.png",
+      "acceptance/out_preview/ghost-02.png",
+      "acceptance/out_preview/ghost-03.png",
+      "acceptance/out_preview/ghost-04.png",
+      "acceptance/out_preview/ghost-05.png",
+      "acceptance/out_preview/ghost-06.png",
+      "acceptance/out_preview/ghost-07.png"
+    ],
+    "slide_ids": [
+      "s01",
+      "s02",
+      "s03",
+      "s04",
+      "s05",
+      "s06",
+      "s07"
+    ],
+    "count": 7,
+    "scope": "full",
+    "key_pages": null,
+    "pages_rendered": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "file_witnesses": {
+      "acceptance/out_preview/ghost-01.png": {
+        "size": 31346,
+        "mtime_ns": 1792028516359871950,
+        "sha256": "a7b24a8dab4bb4cdd5c3f59957719d87f78e38f1e4e4021435687255bcf832ab"
+      },
+      "acceptance/out_preview/ghost-02.png": {
+        "size": 31194,
+        "mtime_ns": 1792028516379871950,
+        "sha256": "057d03572696f76627183158072bdf00eb66052225cbf4a4234a1bba873ba93c"
+      },
+      "acceptance/out_preview/ghost-03.png": {
+        "size": 31395,
+        "mtime_ns": 1792028516399871950,
+        "sha256": "50f664b687a93710aaf5684783a8fe85eefaecd5499be62d447b4528e7cf7d34"
+      },
+      "acceptance/out_preview/ghost-04.png": {
+        "size": 30703,
+        "mtime_ns": 1792028516415871950,
+        "sha256": "51c3556ef0f83bf1bf99915f0f6b4f455718b88e41c4008fe620aee3bd91cb9c"
+      },
+      "acceptance/out_preview/ghost-05.png": {
+        "size": 34906,
+        "mtime_ns": 1792028516431871950,
+        "sha256": "128c3ea0b73538a32afa8c0f129a6434c2de1d761725578ededb82f97bf62ae4"
+      },
+      "acceptance/out_preview/ghost-06.png": {
+        "size": 34747,
+        "mtime_ns": 1792028516451871950,
+        "sha256": "78e024106451c840e4db69925e0e3e6f106ddbe8345a2ca7706d8a73756a991c"
+      },
+      "acceptance/out_preview/ghost-07.png": {
+        "size": 32001,
+        "mtime_ns": 1792028516467871950,
+        "sha256": "fd59e5f91647f715dac28d6f0c5a0f56fcc5cdf6f300286d15eab3259e39f135"
+      },
+      "acceptance/out_preview/ghost-contact-sheet.png": {
+        "size": 241069,
+        "mtime_ns": 1792028516523871950,
+        "sha256": "7ad2decdbfdfaa1d994e4b445fc4970bd77b74337d10fb5193cec5f110476779"
+      }
+    },
+    "renderer": "PIL",
+    "output_sha256": "dd7d95193e7d7ba45259ebb0ee412bb0bd7931519a272dd923377bbd7a595445",
+    "evidence_scope": "direction_and_structure_not_pixel_proof"
+  },
+  "status": "PASS",
+  "generated_at": "2026-10-15T01:41:56+00:00"
+}

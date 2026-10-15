@@ -1,0 +1,193 @@
+{
+  "schema": "vao-judgment-bench-v1",
+  "provenance": "Audit holdout v1: expectations specified from relationship invariants before implementation changes; after exposure this is a regression set, not an external blind study.",
+  "cases": [
+    {
+      "id": "H01",
+      "category": "clinical",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "疗效与安全性分别报告",
+      "content": "缓解率 60%；不良反应发生率 40%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ],
+        "comparison": false
+      },
+      "why": "不同事件分母，和为100不代表互斥构成。"
+    },
+    {
+      "id": "H02",
+      "category": "education",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "不同班级不能拼成一个整体",
+      "content": "甲班通过率 35%，乙班通过率 65%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "why": "不同人群的两个通过率不是饼图分区。"
+    },
+    {
+      "id": "H03",
+      "category": "energy",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "供电结构",
+      "content": "其中风电占比 68%，光伏占比 32%。",
+      "expect": {
+        "evidence": [
+          "part_whole"
+        ]
+      },
+      "why": "明确其中与占比，允许作为构成候选，仍需核对分母。"
+    },
+    {
+      "id": "H04",
+      "category": "manufacturing",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "设备编号不是步骤",
+      "content": "设备 ZX-81；工位 AB-26。",
+      "expect": {
+        "evidence_not": [
+          "sequence",
+          "series"
+        ]
+      },
+      "why": "标识符中的连字符不表达先后。"
+    },
+    {
+      "id": "H05",
+      "category": "logistics",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "流程按方向执行",
+      "content": "入库 -> 质检 -> 上架",
+      "expect": {
+        "evidence": [
+          "sequence"
+        ]
+      },
+      "why": "ASCII箭头是真方向，不是禁用连字符。"
+    },
+    {
+      "id": "H06",
+      "category": "retail",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "三城各自的门店数",
+      "content": "苏州 18 家；泉州 27 家；珠海 42 家。",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "why": "同单位三个量不证明时间顺序。"
+    },
+    {
+      "id": "H07",
+      "category": "public-health",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "三个年度同一指标",
+      "content": "2023 年接种率 42%，2024 年接种率 57%，2025 年接种率 69%。",
+      "expect": {
+        "evidence": [
+          "series"
+        ]
+      },
+      "why": "有明确年度轴的同指标趋势保留。"
+    },
+    {
+      "id": "H08",
+      "category": "materials",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "热处理变化",
+      "content": "处理周期从 19 小时压到 11 小时。",
+      "expect": {
+        "evidence": [
+          "series"
+        ]
+      },
+      "why": "显式同量纲端点变化不依赖产业词表。"
+    },
+    {
+      "id": "H09",
+      "category": "governance",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "关系尚待决定",
+      "content": "建议青禾组负责测试；澄海组负责交付。",
+      "expect": {
+        "evidence_not": [
+          "structure"
+        ]
+      },
+      "why": "提议不应变成既成关系图。"
+    },
+    {
+      "id": "H10",
+      "category": "governance",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "实际汇报归属",
+      "content": "青禾组向总工汇报；澄海组向院长汇报。",
+      "expect": {
+        "evidence": [
+          "structure"
+        ]
+      },
+      "why": "两个明确汇报关系应保留方向。"
+    },
+    {
+      "id": "H11",
+      "category": "science",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "相关性不证明因果",
+      "content": "温度与故障率相关，因果方向尚未确认。",
+      "expect": {
+        "evidence_not": [
+          "sequence",
+          "structure"
+        ],
+        "media": [
+          "none"
+        ]
+      },
+      "why": "未知方向不生成因果箭头或证据图片。"
+    },
+    {
+      "id": "H12",
+      "category": "finance",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "取证日期不是流程",
+      "content": "记录日期 2026-09-18（来源：内部台账）",
+      "expect": {
+        "evidence_not": [
+          "sequence"
+        ]
+      },
+      "why": "ISO日期分隔符不是流程连接。"
+    }
+  ]
+}

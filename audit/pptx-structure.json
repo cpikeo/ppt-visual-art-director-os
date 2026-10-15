@@ -1,0 +1,28 @@
+{
+  "slides": 7,
+  "shapes": 61,
+  "text_frames": 56,
+  "charts": [
+    {
+      "name": "evidence_chart",
+      "values": [
+        [
+          7.0,
+          12.0
+        ]
+      ],
+      "categories": [
+        "修改前",
+        "修改后"
+      ]
+    }
+  ],
+  "embedded_workbooks": [
+    "ppt/embeddings/Microsoft_Excel_Sheet1.xlsx"
+  ],
+  "unique_names_per_slide": true,
+  "python_pptx_read_edit_save_reopen": "passed",
+  "target_powerpoint": "not_verified",
+  "native_editing_ui": "not_verified",
+  "visual_review": "not_performed"
+}

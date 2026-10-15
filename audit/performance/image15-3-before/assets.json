@@ -1,0 +1,119 @@
+{
+  "schema": "vao-assets-v2",
+  "visual_world": "document/paper_ink",
+  "quality_level": "fast",
+  "cap": 1,
+  "assets": [
+    {
+      "asset_id": "existing-184e3c52d9ac7eab",
+      "slide_ids": [
+        "s02"
+      ],
+      "decision": "existing",
+      "origin": {
+        "kind": "original",
+        "path": "/home/user/ppt-visual-art-director-os/audit/performance/image15-3-before/fixture.png",
+        "source": "Original synthetic audit illustration; not evidence"
+      },
+      "asset_function": "context",
+      "asset_role": "background",
+      "asset_role_source": "declared",
+      "safe_area": {
+        "x": 0.06,
+        "y": 0.08,
+        "width": 0.34,
+        "height": 0.78
+      },
+      "meta": {
+        "text_color": null
+      },
+      "retry_budget": 0,
+      "background_color": "#F4EDE7"
+    }
+  ],
+  "skipped_pages": [
+    {
+      "slide_id": "s01",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s03",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s04",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s05",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s06",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s07",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s08",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s09",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s10",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s11",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s12",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s13",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s14",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    },
+    {
+      "slide_id": "s15",
+      "decision": "skip",
+      "reason": "作者显式声明：压过一切判断。"
+    }
+  ],
+  "deduplicated": 1,
+  "prompt_cache": {
+    "hits": 0,
+    "path": null
+  },
+  "workflow": {
+    "schema": "vao-asset-chain-v2",
+    "prepared_at": "2026-10-15T01:40:49.181412+00:00",
+    "brief_path": "/home/user/ppt-visual-art-director-os/audit/performance/image15-3-before/brief.json",
+    "brief_file_sha256": "79aed31e7b6272851c9504ec9ec6346d9531947f6a1c84449a79403d24c7ed96",
+    "plan_path": "/home/user/ppt-visual-art-director-os/audit/performance/image15-3-before/plan.json",
+    "prompt_builder": "assets.build_asset_prompt"
+  }
+}
