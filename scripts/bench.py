@@ -3,7 +3,7 @@
 用法：
   python3 scripts/bench.py                       # 跑基准，打印表格
   python3 scripts/bench.py --out bench.json      # 另存结果
-  python3 scripts/bench.py --baseline benchmark/baseline_9.21.json   # 计算回归率
+  python3 scripts/bench.py --baseline <your-baseline.json>           # 可选：与外部基线对比
 
 只检查**判断字段**（页面角色、证据形态、比较、结论来源、图像决策）。构图、字阶、
 中文断行不在这里判：它们需要结构预览或目标软件，本基准不伪装成视觉验收。
@@ -18,8 +18,8 @@ from pathlib import Path
 
 import intelligence as intel
 
-ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CASES = ROOT / "benchmark" / "cases.json"
+# 测试样本随最小技能包保留一份；历史各套案例与来源记录在同一文件中。
+DEFAULT_CASES = Path(__file__).with_name("judgment_cases.json")
 BRIEF = {"audience": "内部评审会", "decision": "批准下一步预算"}
 # 判断错误的类别：用于「错误布局 / 错误图片 / 错误信息图表」的误判率。
 MISJUDGE_FIELDS = {"media", "media_source", "comparison", "evidence", "evidence_not"}
@@ -72,8 +72,9 @@ def run(cases_path: Path = DEFAULT_CASES) -> dict:
     for case in data["cases"]:
         actual = _actual(case)
         checks = _checks(case["expect"], actual)
-        results.append({"id": case["id"], "category": case["category"],
-                        "severity": case["severity"], "title": case["title"],
+        results.append({"id": case["id"], "suite": case.get("suite", "external"),
+                        "category": case["category"], "severity": case["severity"],
+                        "title": case["title"],
                         "actual": actual, "checks": checks,
                         "passed": all(c["ok"] for c in checks),
                         "why": case.get("why", "")})

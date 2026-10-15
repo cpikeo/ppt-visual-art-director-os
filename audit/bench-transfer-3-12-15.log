@@ -1,8 +1,0 @@
-PASS T01 [high    ] 质量指标                     role=persuade ev=none cmp=False claim=absent media=none
-PASS T02 [high    ] 经营指标                     role=persuade ev=none cmp=False claim=extracted media=none
-PASS T03 [high    ] 科室用时                     role=persuade ev=none cmp=False claim=absent media=none
-PASS T04 [high    ] 维护记录                     role=prove ev=number cmp=False claim=extracted media=none
-PASS T05 [high    ] 审批程序                     role=explain ev=sequence cmp=False claim=absent media=none
-PASS T06 [high    ] 三年复购率                    role=prove ev=series cmp=False claim=absent media=none
-
-案例通过 6/6 · 判断准确率 100.0% · 图像/图表/结构误判率 0.0% · 严重缺陷率 0.0%（0 个 critical 案例）

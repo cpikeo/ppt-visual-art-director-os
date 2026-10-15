@@ -1,1 +1,0 @@
-{"cases": [{"id": "fail", "category": "test", "severity": "critical", "index": 0, "total": 1, "title": "\u8bdd\u9898", "expect": {"evidence": ["impossible"]}}]}

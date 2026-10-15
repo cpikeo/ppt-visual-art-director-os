@@ -2845,12 +2845,16 @@ def test_audit_boundaries(tmp):
     import intelligence
     from unittest.mock import patch
     from primitives import file_digest, json_read_cached
-    holdout = bench.run(ROOT / "benchmark" / "holdout.json")
-    for row in (holdout["cases"]
-                + bench.run(ROOT / "benchmark" / "transfer.json")["cases"]
-                + bench.run(ROOT / "benchmark" / "semantic_transfer.json")["cases"]):
-        check("judgment regression: " + row["id"], row["passed"], str(row["checks"]))
-    acceptance = intelligence.load_brief(ROOT / "acceptance" / "brief.json")
+    corpus = json.loads((SCRIPTS / "judgment_cases.json").read_text(encoding="utf-8"))
+    groups = {name: [case for case in corpus["cases"] if case.get("suite") == name]
+              for name in ("cases", "holdout", "transfer", "semantic_transfer")}
+    check("bench: 精简后四组判断案例未丢失",
+          {name: len(items) for name, items in groups.items()} ==
+          {"cases": 26, "holdout": 12, "transfer": 6, "semantic_transfer": 13})
+    for row in bench.run()["cases"]:
+        if row["suite"] != "cases":
+            check("judgment regression: " + row["id"], row["passed"], str(row["checks"]))
+    acceptance = corpus["acceptance_brief"]
     pages = {p["id"]: p["judgment"] for p in intelligence.think(acceptance)["pages"]}
     check("plan: 泛称不是证词、并列职责不是时间轴、证据不能顶替标题",
           pages["s02"]["visual_role"]["role"] == "persuade"

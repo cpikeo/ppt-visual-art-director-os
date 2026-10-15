@@ -1,0 +1,953 @@
+{
+  "schema": "vao-judgment-regression-v2",
+  "note": "Consolidated test-only fixture: 57 cases + the seven-page planning regression brief. Original corpus and artifacts remain recoverable from Git history. Fixed tests do not establish visual quality or independent generalization.",
+  "suite_provenance": {
+    "cases": {
+      "case_count": 26,
+      "provenance": "cases.json 与 baseline_9.26.json 为本仓库重建件：上游仓库从未提交 benchmark/ 目录，这两份由 /tmp/e2e/make_cases.py（argv[1]=仓库根）生成，基准取自 ca05d7a 的实时运行结果。",
+      "source_schema": "vao-judgment-bench-v1"
+    },
+    "holdout": {
+      "case_count": 12,
+      "provenance": "Audit holdout v1: expectations specified from relationship invariants before implementation changes; after exposure this is a regression set, not an external blind study.",
+      "source_schema": "vao-judgment-bench-v1"
+    },
+    "transfer": {
+      "case_count": 6,
+      "provenance": "Second transfer batch frozen after root-cause fixes; evaluated without subsequent case-specific tuning. Not an external independent review.",
+      "source_schema": "vao-judgment-bench-v1"
+    },
+    "semantic_transfer": {
+      "case_count": 13,
+      "provenance": "Predetermined 2026-10-15 semantic transfer and counter-cases. Not independent blind data; cases become regression after exposure. Expectations follow SKILL.md evidence/claim principles; no visual quality implication. J11/J12 are exposed-format regression/counter-cases, not holdout. J13 is an exposed generic-person/witness regression, not blind.",
+      "source_schema": "vao-judgment-bench-v1"
+    }
+  },
+  "acceptance_brief": {
+    "audience": "仓库维护者与设计作者",
+    "decision": "审查本地修改后安排目标 PowerPoint 验收",
+    "tension": "不能把自动测试通过误当作品视觉完成",
+    "slides": [
+      {
+        "id": "s01",
+        "title": "架构简单，判断不能简单",
+        "content": "架构简单，\n判断不能简单。\n删掉重复劳动，保留真实证据。\n仓库审计样稿 · 可编辑对象 · 目标 PowerPoint 尚待验收",
+        "asset": "none"
+      },
+      {
+        "id": "s02",
+        "title": "相加为100不是共同分母",
+        "content": "相加为 100，\n不等于同一个整体。\n60%\n缓解率\n40%\n不良反应发生率\n同一患者可同时满足两者。先问事件是否互斥，再决定能否画饼图。",
+        "asset": "none"
+      },
+      {
+        "id": "s03",
+        "title": "职责并列不是时间线",
+        "content": "职责并列，\n不是先后顺序。\n青禾组\n负责\n质量测试\n澄海组\n负责\n项目交付\n没有已知上下级，就不补汇报线；没有时间轴，就不造流程。",
+        "asset": "none"
+      },
+      {
+        "id": "s04",
+        "title": "新边界案例通过由7增至12",
+        "content": "五个误判被消除。\n视觉质量仍需另验。\n12/12\n固定关系不变式\n不是独立盲评\n不是跨行业质量证明",
+        "asset": "none"
+      },
+      {
+        "id": "s05",
+        "title": "调用链不增加模型或新模块",
+        "content": "保持一条生产链。\nTHINK\nBUILD\nVERIFY\n主张与证据\n保留未知关系\n原生文字与图表\n作者决定几何\n硬门与字节凭证\n不代替视觉签署\n删除不可靠的隐式缓存；复用显式快照与已验摘要。",
+        "asset": "none"
+      },
+      {
+        "id": "s06",
+        "title": "数字与单位绑定不等于真实排版通过",
+        "content": "186 公里，\n不能在单位前断开。\n186 公里\n不断行空格已写入原生文字；中文字体角色已绑定。\n真实断行、字体回退与投影可读性，须在目标 PowerPoint 检查。",
+        "asset": "none"
+      },
+      {
+        "id": "s07",
+        "title": "保留目标软件验收",
+        "content": "代码可以通过。\n作品必须被看见。\n下一步：打开、编辑、另存，再重开。\n目标 PowerPoint 未验证 · 独立视觉盲评未开展",
+        "asset": "none"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "R01",
+      "category": "role",
+      "severity": "critical",
+      "index": 0,
+      "total": 6,
+      "title": "发布周期可以再压缩一半",
+      "content": "2026 Q4 发布流程评审",
+      "expect": {
+        "role": "establish",
+        "evidence_not": [
+          "sequence"
+        ]
+      },
+      "why": "封面元信息行（日期/评审名）是档案坐标，不参与角色判断：封面建立主张，不能因为一行流程名就被判成流程页。",
+      "suite": "cases"
+    },
+    {
+      "id": "R02",
+      "category": "role",
+      "severity": "normal",
+      "index": 0,
+      "total": 6,
+      "title": "对比评估",
+      "content": "2026 年度合作回顾",
+      "expect": {
+        "comparison": false,
+        "role": "establish"
+      },
+      "why": "「对比」是页面主题标签，不是两端证据：没有两个可比量时不构成比较。",
+      "suite": "cases"
+    },
+    {
+      "id": "R03",
+      "category": "semantics",
+      "severity": "critical",
+      "index": 2,
+      "total": 8,
+      "title": "扩张的答案不在开店速度，在单店质量",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "对比式断言（「不在 A，在 B」）是作者写下的结论位——判 absent 会逼作者在一句已经成立的结论后面再补一句。",
+      "suite": "cases"
+    },
+    {
+      "id": "R04",
+      "category": "role",
+      "severity": "normal",
+      "index": 4,
+      "total": 5,
+      "title": "谢谢，欢迎质询",
+      "content": "联系人：内容增长负责人",
+      "expect": {
+        "claim": "frame"
+      },
+      "why": "凭证型末页不承载新结论：它的证据在别的页上，不追问补句、也不编造结论。",
+      "suite": "cases"
+    },
+    {
+      "id": "R05",
+      "category": "semantics",
+      "severity": "high",
+      "index": 3,
+      "total": 8,
+      "title": "华东区数据",
+      "content": "结论：增速收窄的根因是店长成熟度。单店月均营收降至 37.5 万元。",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "带结论措辞的正文句胜过话题标签标题：标题只是字段名时，正文的结论就是这一页的主张。",
+      "suite": "cases"
+    },
+    {
+      "id": "D01",
+      "category": "data",
+      "severity": "critical",
+      "index": 5,
+      "total": 8,
+      "title": "自有流量占比三年翻了一倍",
+      "content": "2023 年 38%，2024 年 47%，2025 年 61%（来源：内容台账）",
+      "expect": {
+        "evidence": "series",
+        "comparison": false
+      },
+      "why": "按年份排列的同一指标是时间序列，不是两端对比：判成 comparison 会让页面只剩两端，中间的路径消失。",
+      "suite": "cases"
+    },
+    {
+      "id": "D05",
+      "category": "media",
+      "severity": "critical",
+      "index": 4,
+      "total": 8,
+      "title": "门店规模稳定，单店客单价 86 元",
+      "content": "门店 120 家，营收 3.2 亿元（来源：经营系统）",
+      "expect": {
+        "media": "none"
+      },
+      "why": "场所词在带可核对数字时是计数对象，不是现场：数据页配生活图会把可核验的东西换成不可核验的氛围。",
+      "suite": "cases"
+    },
+    {
+      "id": "D06",
+      "category": "data",
+      "severity": "normal",
+      "index": 2,
+      "total": 8,
+      "title": "自有内容正在接管增长，预算应该跟上",
+      "content": "2027 内容战略提案",
+      "expect": {
+        "evidence_not": [
+          "series"
+        ]
+      },
+      "why": "趋势措辞不等于序列：序列至少两个数据点。「接管增长」是主张，不是一条曲线。",
+      "suite": "cases"
+    },
+    {
+      "id": "D07",
+      "category": "data",
+      "severity": "critical",
+      "index": 6,
+      "total": 8,
+      "title": "老客贡献是基本盘",
+      "content": "其中 68% 来自老客户，32% 来自新客",
+      "expect": {
+        "evidence": "part_whole"
+      },
+      "why": "两个百分比合计 100% 即部分与整体——靠算术成立，不靠「其中」一词。",
+      "suite": "cases"
+    },
+    {
+      "id": "D02",
+      "category": "data",
+      "severity": "high",
+      "index": 4,
+      "total": 8,
+      "title": "同一件事的三种口径",
+      "content": "规格：3 次烧成、1280℃、1450℃、1320℃（来源：工艺卡）",
+      "expect": {
+        "evidence_not": [
+          "series"
+        ]
+      },
+      "why": "同单位的并列规格行是枚举，不是一条路径：三个以上数字不是序列的充分条件，序列需要时间或到达语义。",
+      "suite": "cases"
+    },
+    {
+      "id": "D03",
+      "category": "data",
+      "severity": "high",
+      "index": 3,
+      "total": 8,
+      "title": "冷链自营后毛利结构改变",
+      "content": "毛利率从 58% 提升到 67%（来源：财务月报 2025Q2）",
+      "expect": {
+        "evidence": "series"
+      },
+      "why": "「从 A 到 B」的同单位端点变化是变化的形状：不认它，主张里的两个量会在判断里消失（页面对应的证据形态被判成 none）。",
+      "suite": "cases"
+    },
+    {
+      "id": "S01",
+      "category": "semantics",
+      "severity": "normal",
+      "index": 4,
+      "total": 8,
+      "title": "渠道分三类：直营、经销、电商",
+      "expect": {
+        "evidence": "structure"
+      },
+      "why": "明示分类动词（分三类）的列举是结构证据：关系本身就是这一页的视觉对象。",
+      "suite": "cases"
+    },
+    {
+      "id": "S03",
+      "category": "semantics",
+      "severity": "critical",
+      "index": 3,
+      "total": 8,
+      "title": "三个市场的进入成本与回本周期差距明显",
+      "content": "越南 1.8 万美元、泰国 2.4 万美元、印尼 3.1 万美元（来源：测算）",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "以断言谓语收尾的标题是结论句：判成话题标签会让整页焦点落到证据表上。",
+      "suite": "cases"
+    },
+    {
+      "id": "S04",
+      "category": "semantics",
+      "severity": "high",
+      "index": 5,
+      "total": 8,
+      "title": "回本周期缩短，但店长培养周期在变长",
+      "content": "回本 19 个月降至 11 个月；培养 5.2 个月拉长到 8.7 个月（来源：内部系统）",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "标题写出的是判断（缩短/变长），不是字段名：它就是这一页要被记住的那句话。",
+      "suite": "cases"
+    },
+    {
+      "id": "S05",
+      "category": "semantics",
+      "severity": "high",
+      "index": 2,
+      "total": 8,
+      "title": "增长不是靠补贴，是靠复购",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "无正文的对比式断言标题仍成立：封面与收尾的证据在别的页上，不需要在这一页补数据才配拥有结论。",
+      "suite": "cases"
+    },
+    {
+      "id": "S06",
+      "category": "semantics",
+      "severity": "normal",
+      "index": 5,
+      "total": 8,
+      "title": "组织承接能力是扩张的上限",
+      "content": "职责分四层：区域、城市、门店、班组",
+      "expect": {
+        "evidence": "structure"
+      },
+      "why": "三项以上并列且无数值时是结构：层级只按内容明确给出的归属表达。",
+      "suite": "cases"
+    },
+    {
+      "id": "M01",
+      "category": "media",
+      "severity": "high",
+      "index": 3,
+      "total": 8,
+      "title": "选择越南，需要先补齐两个渠道伙伴",
+      "expect": {
+        "media": "none"
+      },
+      "why": "群体/角色名词（伙伴、团队、客户）不是可指认的证词主体：判它出图会把决策页变成氛围页。",
+      "suite": "cases"
+    },
+    {
+      "id": "M02",
+      "category": "media",
+      "severity": "critical",
+      "index": 4,
+      "total": 8,
+      "title": "一位釉工用了三十年时间调配这一抹青",
+      "expect": {
+        "media": "none",
+        "media_source": "hint",
+        "media_suggested": "witness"
+      },
+      "why": "具体个体由语法信号（一/某/这 + 位/名 + 名词）判定：词表漏检职业时，系统仍要把「这里有一个人」交还作者确认，而不是默默不出图。",
+      "suite": "cases"
+    },
+    {
+      "id": "A01",
+      "category": "declaration",
+      "severity": "normal",
+      "index": 3,
+      "total": 8,
+      "title": "净利率 18.4%",
+      "role": "persuade",
+      "expect": {
+        "role": "persuade"
+      },
+      "why": "作者声明的角色原样生效：声明的价值在于压过推导，而不是被推导说服。",
+      "suite": "cases"
+    },
+    {
+      "id": "A02",
+      "category": "declaration",
+      "severity": "normal",
+      "index": 4,
+      "total": 8,
+      "title": "扩张的节奏由组织承接能力决定",
+      "evidence": "proposition",
+      "expect": {
+        "evidence": "proposition"
+      },
+      "why": "作者声明的证据形态原样生效：判断可以有分歧，声明必须被尊重。",
+      "suite": "cases"
+    },
+    {
+      "id": "A03",
+      "category": "declaration",
+      "severity": "normal",
+      "index": 2,
+      "total": 8,
+      "title": "门店里的一天",
+      "asset": "required",
+      "expect": {
+        "media": "required",
+        "media_source": "author"
+      },
+      "why": "作者声明出图即出图：图像是否成立是语义判断，作者有权决定。",
+      "suite": "cases"
+    },
+    {
+      "id": "A04",
+      "category": "declaration",
+      "severity": "normal",
+      "index": 5,
+      "total": 8,
+      "title": "华东 6 家门店走访记录",
+      "asset": "none",
+      "expect": {
+        "media": "none",
+        "media_source": "author"
+      },
+      "why": "显式不声明出图时，词表命中也不出图：声明压过词表提示。",
+      "suite": "cases"
+    },
+    {
+      "id": "I01",
+      "category": "hard",
+      "severity": "high",
+      "index": 4,
+      "total": 8,
+      "title": "配送门槛",
+      "content": "只要门店密度达到每 10 万人 1.2 家，配送成本就能压到 8 元以内（来源：模型）",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "条件结果句（只要…就能…）是这一页的结论：多量纲列举判定把它当成证据行，结论被判 absent。已知缺口。",
+      "suite": "cases"
+    },
+    {
+      "id": "K01",
+      "category": "hard",
+      "severity": "high",
+      "index": 3,
+      "total": 8,
+      "title": "降价、扩店、换帅三件事缺一不可",
+      "expect": {
+        "claim": "extracted"
+      },
+      "why": "复合主张（并列三项 + 「缺一不可」）是结论，不是清单：并列项本身不是谓词，结论措辞不在句尾。已知缺口。",
+      "suite": "cases"
+    },
+    {
+      "id": "N02",
+      "category": "hard",
+      "severity": "high",
+      "index": 5,
+      "total": 8,
+      "title": "尚未超过对手",
+      "content": "对手门店数 420 家；我们 180 家（来源：行业年报）",
+      "expect": {
+        "comparison": true
+      },
+      "why": "否定的比较仍然是比较：页面讲的就是这个落差，判成非比较会让两端不同屏。已知缺口（否定词被先行剥离）。",
+      "suite": "cases"
+    },
+    {
+      "id": "X02",
+      "category": "hard",
+      "severity": "high",
+      "index": 3,
+      "total": 8,
+      "title": "营收 1.2 亿元对 1,800 万元",
+      "content": "2025 年两个口径（来源：财报）",
+      "expect": {
+        "comparison": true
+      },
+      "why": "两端同一量纲、单位写法不同（亿元/万元）仍是可比的两端——共享轴、统一单位即可，不该因为单位字符串不同而丢掉比较。已知缺口。",
+      "suite": "cases"
+    },
+    {
+      "id": "H01",
+      "category": "clinical",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "疗效与安全性分别报告",
+      "content": "缓解率 60%；不良反应发生率 40%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ],
+        "comparison": false
+      },
+      "why": "不同事件分母，和为100不代表互斥构成。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H02",
+      "category": "education",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "不同班级不能拼成一个整体",
+      "content": "甲班通过率 35%，乙班通过率 65%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "why": "不同人群的两个通过率不是饼图分区。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H03",
+      "category": "energy",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "供电结构",
+      "content": "其中风电占比 68%，光伏占比 32%。",
+      "expect": {
+        "evidence": [
+          "part_whole"
+        ]
+      },
+      "why": "明确其中与占比，允许作为构成候选，仍需核对分母。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H04",
+      "category": "manufacturing",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "设备编号不是步骤",
+      "content": "设备 ZX-81；工位 AB-26。",
+      "expect": {
+        "evidence_not": [
+          "sequence",
+          "series"
+        ]
+      },
+      "why": "标识符中的连字符不表达先后。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H05",
+      "category": "logistics",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "流程按方向执行",
+      "content": "入库 -> 质检 -> 上架",
+      "expect": {
+        "evidence": [
+          "sequence"
+        ]
+      },
+      "why": "ASCII箭头是真方向，不是禁用连字符。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H06",
+      "category": "retail",
+      "severity": "critical",
+      "index": 2,
+      "total": 7,
+      "title": "三城各自的门店数",
+      "content": "苏州 18 家；泉州 27 家；珠海 42 家。",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "why": "同单位三个量不证明时间顺序。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H07",
+      "category": "public-health",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "三个年度同一指标",
+      "content": "2023 年接种率 42%，2024 年接种率 57%，2025 年接种率 69%。",
+      "expect": {
+        "evidence": [
+          "series"
+        ]
+      },
+      "why": "有明确年度轴的同指标趋势保留。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H08",
+      "category": "materials",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "热处理变化",
+      "content": "处理周期从 19 小时压到 11 小时。",
+      "expect": {
+        "evidence": [
+          "series"
+        ]
+      },
+      "why": "显式同量纲端点变化不依赖产业词表。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H09",
+      "category": "governance",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "关系尚待决定",
+      "content": "建议青禾组负责测试；澄海组负责交付。",
+      "expect": {
+        "evidence_not": [
+          "structure"
+        ]
+      },
+      "why": "提议不应变成既成关系图。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H10",
+      "category": "governance",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "实际汇报归属",
+      "content": "青禾组向总工汇报；澄海组向院长汇报。",
+      "expect": {
+        "evidence": [
+          "structure"
+        ]
+      },
+      "why": "两个明确汇报关系应保留方向。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H11",
+      "category": "science",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "相关性不证明因果",
+      "content": "温度与故障率相关，因果方向尚未确认。",
+      "expect": {
+        "evidence_not": [
+          "sequence",
+          "structure"
+        ],
+        "media": [
+          "none"
+        ]
+      },
+      "why": "未知方向不生成因果箭头或证据图片。",
+      "suite": "holdout"
+    },
+    {
+      "id": "H12",
+      "category": "finance",
+      "severity": "high",
+      "index": 2,
+      "total": 7,
+      "title": "取证日期不是流程",
+      "content": "记录日期 2026-09-18（来源：内部台账）",
+      "expect": {
+        "evidence_not": [
+          "sequence"
+        ]
+      },
+      "why": "ISO日期分隔符不是流程连接。",
+      "suite": "holdout"
+    },
+    {
+      "id": "T01",
+      "category": "manufacturing",
+      "title": "质量指标",
+      "content": "装配线合格率 52%，返工率 48%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high",
+      "suite": "transfer"
+    },
+    {
+      "id": "T02",
+      "category": "services",
+      "title": "经营指标",
+      "content": "研发占比25%，客户满意度75%。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high",
+      "suite": "transfer"
+    },
+    {
+      "id": "T03",
+      "category": "healthcare",
+      "title": "科室用时",
+      "content": "三科室用时分别为9分钟、14分钟和22分钟。",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high",
+      "suite": "transfer"
+    },
+    {
+      "id": "T04",
+      "category": "operations",
+      "title": "维护记录",
+      "content": "设备AX-97正在维护。",
+      "expect": {
+        "evidence_not": [
+          "sequence"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high",
+      "suite": "transfer"
+    },
+    {
+      "id": "T05",
+      "category": "public-service",
+      "title": "审批程序",
+      "content": "受理 -> 复核 -> 归档",
+      "expect": {
+        "evidence": [
+          "sequence"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high",
+      "suite": "transfer"
+    },
+    {
+      "id": "T06",
+      "category": "retail",
+      "title": "三年复购率",
+      "content": "2023年复购率32%，2024年复购率43%，2025年复购率59%。",
+      "expect": {
+        "evidence": [
+          "series"
+        ]
+      },
+      "index": 2,
+      "total": 7,
+      "severity": "high",
+      "suite": "transfer"
+    },
+    {
+      "id": "J01",
+      "category": "governance",
+      "severity": "critical",
+      "index": 2,
+      "total": 5,
+      "title": "职责并列不是时间线",
+      "content": "甲组负责审查；乙组负责归档。两组并列，不代表先后顺序；没有时间轴，也不造流程。",
+      "expect": {
+        "evidence_not": [
+          "sequence"
+        ],
+        "claim_text": [
+          "职责并列不是时间线"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J02",
+      "category": "clinical",
+      "severity": "critical",
+      "index": 2,
+      "total": 5,
+      "title": "数字与单位绑定不等于真实排版通过",
+      "content": "186 公里需要原生文字绑定；实际断行仍待目标软件验证。",
+      "expect": {
+        "claim_text": [
+          "数字与单位绑定不等于真实排版通过"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J03",
+      "category": "energy",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "相加为百不证明共同分母",
+      "content": "A设施可用率 60%；B设施故障率 40%。两者不是互斥类别。",
+      "expect": {
+        "evidence_not": [
+          "part_whole"
+        ],
+        "comparison": false
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J04",
+      "category": "education",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "教研组与教务组不是先后步骤",
+      "content": "教研组负责教学设计，教务组负责课表。并非先做教研再做教务。",
+      "expect": {
+        "evidence_not": [
+          "sequence"
+        ],
+        "claim_text": [
+          "教研组与教务组不是先后步骤"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J05",
+      "category": "manufacturing",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "维护周期由19个月缩至11个月",
+      "content": "同一设备从19个月降至11个月，测量口径一致。",
+      "expect": {
+        "evidence": [
+          "series"
+        ],
+        "claim_text": [
+          "维护周期由19个月缩至11个月"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J06",
+      "category": "retail",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "流程真实存在时按方向讲述",
+      "content": "收货 -> 质检 -> 入库；三项为连续步骤。",
+      "expect": {
+        "evidence": [
+          "sequence"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J07",
+      "category": "finance",
+      "severity": "critical",
+      "index": 2,
+      "total": 5,
+      "title": "尚未获批，不应写成已执行",
+      "content": "若批准试点，则下月启动。当前尚未签约。",
+      "expect": {
+        "claim_text": [
+          "尚未获批，不应写成已执行"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J08",
+      "category": "public_service",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "误差不超过5%不是两端对比",
+      "content": "每台设备的最大误差不得超过5%；这是阈值，不存在第二组数值。",
+      "expect": {
+        "comparison": false,
+        "claim_text": [
+          "误差不超过5%不是两端对比"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J09",
+      "category": "logistics",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "季度履约改善仍待归因",
+      "content": "每周抽检；抽检记录尚不能证明改善源于复核机制。",
+      "expect": {
+        "claim_text": [
+          "季度履约改善仍待归因"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J10",
+      "category": "archival",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "资料归档不是项目落地",
+      "content": "归档前须复核版本；文档已完成移交。",
+      "expect": {
+        "claim_text": [
+          "资料归档不是项目落地"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J11",
+      "category": "governance",
+      "severity": "critical",
+      "index": 2,
+      "total": 5,
+      "title": "职责分别落到两个团队",
+      "content": "甲组\n负责\n质量测试\n乙组\n负责\n项目交付",
+      "expect": {
+        "evidence": [
+          "structure"
+        ],
+        "role": [
+          "explain"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J12",
+      "category": "governance",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "未决归属不补连线",
+      "content": "甲组\n负责\n质量测试\n乙组是否负责项目交付尚未确认",
+      "expect": {
+        "evidence_not": [
+          "structure"
+        ]
+      },
+      "suite": "semantic_transfer"
+    },
+    {
+      "id": "J13",
+      "category": "clinical",
+      "severity": "high",
+      "index": 2,
+      "total": 5,
+      "title": "相加为百不等于共同分母",
+      "content": "缓解率60%；不良反应40%。同一患者可同时满足两者。",
+      "expect": {
+        "role": [
+          "persuade"
+        ],
+        "media": [
+          "none"
+        ],
+        "evidence_not": [
+          "part_whole"
+        ]
+      },
+      "suite": "semantic_transfer"
+    }
+  ]
+}
