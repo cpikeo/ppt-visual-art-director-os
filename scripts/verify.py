@@ -15,23 +15,16 @@ from __future__ import annotations
 import math
 
 from primitives import (CHART_KINDS, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
-                        DEFAULT_HEIGHT, DEFAULT_WIDTH, ELEMENT_TYPES,
+                        CHART_LIMITS, ELEMENT_VALUE_KINDS, NUMERIC_CHART_KINDS,
+                        ROWS_CHART_KINDS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ELEMENT_TYPES,
                         is_background_declared, spec_fingerprint)
 
-NUMERIC_CHART_KINDS = {
-    "bar", "horizontal_bar", "column", "comparison_bar", "stacked_bar",
-    "line", "trend", "single_trend_line", "area", "donut", "donut_composition",
-    "pie", "waterfall", "ranked_bar", "progress_bar", "bubble", "sparkline",
-}
+# 图表分类全部派生自 primitives.CHART_SPEC（单一权威）；本层只保留 Guard 的
+# 呈现名，不再各写一份集合——分类漂移由 selftest 的 chart_spec 断言拦截。
 SUPPORTED_CHART_KINDS = CHART_KINDS
-ROWS_CHART_KINDS = ("bar", "horizontal_bar", "column", "comparison_bar", "stacked_bar",
-                    "line", "trend", "single_trend_line", "area", "donut",
-                    "donut_composition", "pie", "waterfall", "ranked_bar",
-                    "progress_bar", "bubble", "sparkline", "process_flow", "timeline",
-                    "steps", "big_number_row")
-# 行级渲染键（compiler._rows 与各图形分支实际读取的键）；其余键即未消费字段。
+# 行级渲染键（primitives.chart_rows 与各图形分支实际读取的键）；其余键即未消费字段。
 ROW_RENDERED_KEYS = frozenset({"label", "value", "display", "desc", "subtotal", "is_total", "total", "max"})
-ELEMENT_METRIC_KINDS = ("kpi", "executive_kpi", "big_number")
+ELEMENT_METRIC_KINDS = ELEMENT_VALUE_KINDS
 RULE_SHAPES = frozenset({"line", "arrow"})
 _COLOR_ROLE_FIELDS = ("color", "fill", "stroke", "border_color", "track_color",
                       "label_color", "background")
@@ -449,13 +442,11 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
     n_cat = len(categories) if isinstance(categories, list) else 0
     n_series = len(series) if multi else 0
     # 这些形状图的实现只消费前 N 项；超量须拆页，不允许静默丢掉尾部证据。
-    limits = {"process_flow": 7, "timeline": 7, "steps": 6, "matrix": 12,
-              "architecture": 3, "ranked_bar": 8, "progress_bar": 6,
-              "stacked_bar": 8, "big_number_row": 5, "bubble": 12}
+    # 上限只在 primitives.CHART_SPEC 定义一次，编译/预览的截断与此同源。
     payload = e.get("points") if kind == "matrix" else e.get("layers") if kind == "architecture" else data
-    if kind in limits and isinstance(payload, list) and len(payload) > limits[kind]:
+    if kind in CHART_LIMITS and isinstance(payload, list) and len(payload) > CHART_LIMITS[kind]:
         add("chart_payload", eid, "error",
-            f"{kind} 有 {len(payload)} 项，当前实现最多完整呈现 {limits[kind]} 项；拆图/拆页，不得截掉尾项")
+            f"{kind} 有 {len(payload)} 项，当前实现最多完整呈现 {CHART_LIMITS[kind]} 项；拆图/拆页，不得截掉尾项")
     if multi:
         if any(c is None or not str(c).strip() for c in categories):
             add("data_integrity", eid, "error", "categories 中的类别名不得为空")

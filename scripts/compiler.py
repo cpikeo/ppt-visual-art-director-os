@@ -15,7 +15,8 @@ from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_TICK_LABEL_POSI
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
     RenderContext, emu, pt, px_to_pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
-    CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT,
+    CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS, CHART_SPEC,
+    ELEMENT_PAYLOAD_KINDS, NUMERIC_CHART_KINDS, chart_rows,
     highlight_index, series_highlight_index,
     split_runs, is_cjk,
     insert_script_gaps,
@@ -566,17 +567,11 @@ NATIVE_CHART_TYPES = {
     "donut_composition": XL_CHART_TYPE.DOUGHNUT,
     "pie": XL_CHART_TYPE.PIE,
 }
-# 载荷是元素级（不是 data 行）的形状图：判「有没有东西可画」要看 points / layers
-ELEMENT_PAYLOAD_CHARTS = {"matrix", "architecture"}
-
-SHAPE_CHARTS = {
-    "process_flow", "timeline", "steps", "matrix",
-    "waterfall", "architecture", "bubble",
-    # 编辑级图表：轨道 + 细线 + 直接标注，避免通用图表外观
-    "ranked_bar", "progress_bar", "stacked_bar", "big_number_row",
-    # 迷你趋势：去轴的折线 + 端点，用于 small multiples（一页对比多组趋势）
-    "sparkline",
-}
+# 图表路由全部派生自 primitives.CHART_SPEC（单一权威）；本层只绑定 pptx 枚举
+# 与绘制实现。载荷是元素级（points / layers）的形状图判「有没有东西可画」要看
+# points / layers，不能用「必须有 data 行」的通用门拦（会让这两类永远画不出）。
+ELEMENT_PAYLOAD_CHARTS = ELEMENT_PAYLOAD_KINDS
+SHAPE_CHARTS = {k for k, v in CHART_SPEC.items() if v["renderer"] == "shape"}
 
 
 def _textbox(slide, name, x, y, w, h, text, size, color, ctx, element,
@@ -643,38 +638,9 @@ def _paint_negative_points(series, ctx: RenderContext, element: dict) -> None:
         pass
 
 
-def _rows(element: dict) -> list[dict]:
-    """统一解析 data；保留无效值状态，禁止把坏数据静默当作 0。"""
-    data = element.get("data", []) or []
-    rows = []
-    for i, it in enumerate(data):
-        if isinstance(it, dict) and "label" in it:
-            raw = it.get("value")
-            missing = raw is None
-            invalid = False
-            try:
-                if isinstance(raw, bool):
-                    raise ValueError
-                num = float(raw) if raw is not None else 0.0
-                invalid = not math.isfinite(num)
-            except (TypeError, ValueError, OverflowError):
-                num, invalid = 0.0, not missing
-            if invalid:
-                num = 0.0
-            display = it.get("display")
-            if display is None:
-                display = raw if isinstance(raw, str) else (
-                    int(num) if float(num).is_integer() else num)
-            # desc 是说明行：归一化必须保留，否则下游分支只能读到 None（此前 steps 的
-            # desc 分支因此一直是死代码，big_number_row / timeline 也从未显示说明）。
-            rows.append({"label": str(it["label"]), "value": num,
-                         "display": display, "desc": it.get("desc"), "_index": i,
-                         "missing": missing, "invalid": invalid})
-        elif (isinstance(it, (int, float)) and not isinstance(it, bool)
-              and math.isfinite(float(it))):
-            rows.append({"label": str(i), "value": float(it), "display": it,
-                         "_index": i, "missing": False, "invalid": False})
-    return rows
+# data 行解析的唯一实现在 primitives.chart_rows（编译与预览共用同一口径：
+# 无效值状态、display 派生、desc 保留都在那一处）；本层只保留历史名。
+_rows = chart_rows
 
 
 def _set_donut_hole_size(plot, pct: int) -> None:
@@ -708,10 +674,8 @@ def _display(row, element, fallback=""):
     return fallback if fallback != "" else str(row.get("value", ""))
 
 
-NUMERIC_UNIT_KINDS = frozenset({"bar", "horizontal_bar", "column", "comparison_bar", "stacked_bar",
-                                "line", "trend", "single_trend_line", "area", "donut",
-                                "donut_composition", "pie", "waterfall", "ranked_bar",
-                                "progress_bar", "bubble", "sparkline"})
+# 数值图集合与 Guard 同源（primitives.CHART_SPEC 的 numeric 维），本层只留呈现名。
+NUMERIC_UNIT_KINDS = NUMERIC_CHART_KINDS
 
 
 def _unit_number_format(unit) -> str | None:
@@ -1037,6 +1001,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     cn, latin = ctx.families(element)
     primary, secondary, ink, muted = chart_colors(element, ctx)
     rows = _rows(element)
+    limit = CHART_LIMITS.get(kind)  # 截断上限与 Guard 同源（CHART_SPEC），不再各写字面量
     eid = str(element.get("id", kind))
     # 元素级载荷的 kind（matrix→points / architecture→layers）不走数据行：
     # 用「必须有 data 行」的通用门拦它们，会让这两种 kind 永远画不出来——
@@ -1049,10 +1014,10 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         ctx.warn(f"chart '{element.get('id')}': {len(invalid)} 个数据值无法解析为有限数字，已按 0 计算；请修正原始数据")
 
     if kind == "process_flow":
-        n = min(len(rows), 7)
+        n = min(len(rows), limit)
         node_w = w / max(n, 1) * 0.72
         gap = w / max(n, 1) * 0.28
-        for i, row in enumerate(rows[:7]):
+        for i, row in enumerate(rows[:limit]):
             nx = x + i * (node_w + gap)
             s = slide.shapes.add_shape(
                 MSO_SHAPE.ROUNDED_RECTANGLE, Emu(emu(nx)), Emu(emu(y + h * 0.30)),
@@ -1076,7 +1041,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         return
 
     if kind == "timeline":
-        n = min(len(rows), 7)
+        n = min(len(rows), limit)
         axis_y = y + h * 0.52
         ax = slide.shapes.add_connector(
             MSO_CONNECTOR.STRAIGHT, Emu(emu(x)), Emu(emu(axis_y)),
@@ -1084,7 +1049,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         ax.name = f"{eid}__axis"
         ax.line.color.rgb = muted
         ax.line.width = Emu(emu(1))
-        for i, row in enumerate(rows[:7]):
+        for i, row in enumerate(rows[:limit]):
             cx = x + w * (i + 0.5) / n
             d = slide.shapes.add_shape(
                 MSO_SHAPE.OVAL, Emu(emu(cx - 7)), Emu(emu(axis_y - 7)),
@@ -1116,9 +1081,9 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         return
 
     if kind == "steps":
-        n = min(len(rows), 6)
+        n = min(len(rows), limit)
         col_w = w / max(n, 1)
-        for i, row in enumerate(rows[:6]):
+        for i, row in enumerate(rows[:limit]):
             cx = x + i * col_w
             nb = slide.shapes.add_textbox(
                 Emu(emu(cx)), Emu(emu(y)), Emu(emu(col_w * 0.9)), Emu(emu(44)))
@@ -1168,7 +1133,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         vy.name = f"{eid}__y"
         vy.line.color.rgb = muted
         vy.line.width = Emu(emu(1))
-        for i, p0 in enumerate(pts[:12]):
+        for i, p0 in enumerate(pts[:limit]):
             nx = ox + float(p0["x"]) * pw
             ny = oy - float(p0["y"]) * ph
             d = slide.shapes.add_shape(
@@ -1264,11 +1229,11 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
 
     if kind == "architecture":
         layers = element.get("layers") or []
-        if not (1 <= len(layers) <= 3):
+        if not (1 <= len(layers) <= limit):
             ctx.warn(f"chart '{element.get('id')}': architecture 缺少 layers，已跳过（不生成占位层名）")
             return
         lh = h / len(layers) * 0.6
-        for i, lt in enumerate(layers[:3]):
+        for i, lt in enumerate(layers[:limit]):
             ly = y + i * h / len(layers) + h / len(layers) * 0.2
             s = slide.shapes.add_shape(
                 MSO_SHAPE.ROUNDED_RECTANGLE, Emu(emu(x + w * 0.12)), Emu(emu(ly)),
@@ -1284,7 +1249,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     if kind == "ranked_bar":
         # 编辑级排行条：细线轨道 + 圆头条 + 直接数值标注
         data = sorted(rows, key=lambda r: r["value"], reverse=True)
-        n = min(len(data), 8)
+        n = min(len(data), limit)
         data = data[:n]
         label_w = w * float(element.get("label_ratio", 0.24))
         bar_x = x + label_w + float(element.get("label_gap", 24))
@@ -1366,7 +1331,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
 
     if kind == "progress_bar":
         # 进度条：轨道 + 填充 + 百分比直接标注
-        n = min(len(rows), 6)
+        n = min(len(rows), limit)
         data = rows[:n]
         row_h = h / max(n, 1)
         bar_h = max(6, min(float(element.get("bar_height", 10)), row_h * 0.22))
@@ -1414,7 +1379,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         bar_h = max(18, min(float(element.get("bar_height", 46)), h * 0.34))
         bar_y = y + (h - bar_h) / 2 - (h * 0.10 if element.get("legend") is not False else 0)
         cursor = x
-        for i, r in enumerate(rows[:8]):
+        for i, r in enumerate(rows[:limit]):
             seg = w * max(r["value"], 0) / total
             if seg <= 0:
                 continue
@@ -1438,7 +1403,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             item_w = 16 + 150
             # 图例与分段位置对应：每项居中于其分段下方（均布会让标签与色块错位）
             seg_starts, cur = [], x
-            for r in rows[:8]:
+            for r in rows[:limit]:
                 seg_starts.append((cur, w * max(r["value"], 0) / total))
                 cur += w * max(r["value"], 0) / total
             xs = [s_ + sw_ / 2 - item_w / 2 for s_, sw_ in seg_starts]
@@ -1446,7 +1411,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                     xs[i] + item_w > xs[i + 1] for i in range(len(xs) - 1))):
                 xs = None  # 分段过窄放不下时回落均布
             lx = x
-            for i, r in enumerate(rows[:8]):
+            for i, r in enumerate(rows[:limit]):
                 cur_x = xs[i] if xs else lx
                 dot = slide.shapes.add_shape(
                     MSO_SHAPE.OVAL, Emu(emu(cur_x)), Emu(emu(ly + 4)), Emu(emu(10)), Emu(emu(10)))
@@ -1461,8 +1426,8 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
 
     if kind == "big_number_row":
         # 指标行：大数字 + 说明 + 细线分隔
-        n = min(len(rows) or len(element.get("items", [])), 5)
-        items = rows[:5] or (element.get("items") or [])[:5]
+        n = min(len(rows) or len(element.get("items", [])), limit)
+        items = rows[:limit] or (element.get("items") or [])[:limit]
         col_w = w / max(n, 1)
         for i, r in enumerate(items[:n]):
             cx = x + i * col_w
@@ -1500,7 +1465,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         cols = math.ceil(math.sqrt(max(len(rows), 1)))
         cw = w / cols
         chh = h / math.ceil(len(rows) / cols)
-        for i, r in enumerate(rows[:12]):
+        for i, r in enumerate(rows[:limit]):
             rad = 18 + 34 * (vals[i] - lo) / span
             cx = x + cw * (i % cols + 0.5)
             cy = y + chh * (i // cols + 0.5)

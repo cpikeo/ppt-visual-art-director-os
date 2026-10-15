@@ -22,7 +22,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
                         highlight_index, series_highlight_index, color_to_hex,
-                        CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT)
+                        CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS,
+                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -290,8 +291,10 @@ def _fill(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
 # PowerPoint 与 Word 对东亚文本默认执行这些规则；预览不执行，就会把
 # 「11.2 元」断成两行、把「，」甩到行首——结构证据因此与真实渲染说的是两件事。
 # 这里只做**局部回退**：二分给出「最长可容纳前缀」后按禁则回退，不重新定义断点。
-_NO_LINE_START = "，。、；：？！）〉》」』】〕｝·…—～”’"
-_NO_LINE_END = "（《「『【〔｛“‘"
+# 禁则字符串的唯一来源在 primitives（与 intelligence 的断行建议共用一份）；
+# 本层只留历史名，逐字再抄一份迟早与判断层分叉。
+_NO_LINE_START = NO_LINE_START_CJK
+_NO_LINE_END = NO_LINE_END_CJK
 # 单位词表的唯一来源在 primitives（编译器写不断行空格、预览判禁则共用一份）：
 # 曾经各写一份，两边的单位集合一旦漂移，「预览说不断、产物断了」就没人发现。
 from primitives import UNIT_WORDS as _UNIT_WORDS  # noqa: E402  (同目录平铺模块)
@@ -675,8 +678,9 @@ def _rows(e: dict) -> list[dict]:
     """
     rows = e.get("data")
     if isinstance(rows, list) and rows:
-        return [r if isinstance(r, dict) else {"label": str(i + 1), "value": r}
-                for i, r in enumerate(rows)]
+        # 单序列与 compiler 共用 primitives.chart_rows（无效值/display/desc 同口径）；
+        # 多序列展开是预览独有的呈现适配，保留在下面。
+        return chart_rows(e)
     cats, series = e.get("categories"), e.get("series")
     if (isinstance(cats, list) and cats and isinstance(series, list) and series
             and isinstance(series[0], dict)):
@@ -719,9 +723,9 @@ def _value(row: dict, default=0.0) -> float:
 # 提升进同形渲染需要一次单独决定（那意味着多维护一份同形几何）。
 # 留在这边的都是**结构图**：它们的价值在空间关系（层级、象限、路线），粗近似
 # 只会让作者按一个不存在的间距做判断——所以如实写「不渲染」，而不是画一个大概。
-PREVIEW_ABSTRACT = frozenset({
-    "process_flow", "architecture", "bubble",
-})
+# 名单派生自 primitives.CHART_SPEC 的 preview 维（单一权威），本层只留呈现名；
+# 「声明与实际一一对应」由 selftest 的探针断言锁定（占位分支 == 本表）。
+PREVIEW_ABSTRACT = frozenset(k for k, v in CHART_SPEC.items() if v["preview"] == "abstract")
 
 
 
@@ -806,7 +810,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         prim = ctx.chart_primary_color(e) or ctx.color("primary")
         sec = ctx.color(ctx.theme.get("chart_secondary", "secondary")) or prim
         lf = _font(px_to_pt(11 * scale), cjk=True)
-        for p0 in pts[:12]:
+        for p0 in pts[:CHART_LIMITS["matrix"]]:
             nx = ox + float(p0.get("x", 0.5)) * pw
             ny = oy - float(p0.get("y", 0.5)) * ph
             col = (_rgba_color(prim, 0.95) if p0.get("highlight")
@@ -1090,7 +1094,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.line((left, zero_y, right, zero_y), fill=muted, width=max(1, int(scale)))
     elif kind == "big_number_row":
         # 与 compiler 同形：值一行 + 标签一行 + 列间发丝竖线（不是柱子！）
-        n = min(len(rows), 5)
+        n = min(len(rows), CHART_LIMITS["big_number_row"])
         col_w = w / max(n, 1)
         # 数值行可含中文单位（「15 万元」）：必须走 CJK 字体，否则预览出现豆腐块。
         vfont = _font(px_to_pt(float(e.get("value_size", 52)) * scale), bold=True, cjk=True)
@@ -1115,7 +1119,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                        desc[:24], font=dfont, fill=_rgba(ctx, "muted", 0.9), anchor="lm")
     elif kind == "steps":
         # 与 compiler 同形：序号 + 标题 + 说明 + 列间连接线
-        n = min(len(rows), 6)
+        n = min(len(rows), CHART_LIMITS["steps"])
         col_w = w / max(n, 1)
         nfont = _font(px_to_pt(float(e.get("num_size", 30)) * scale), bold=True)
         tfont = _font(px_to_pt(float(e.get("title_size", 18)) * scale), cjk=True, bold=True)
@@ -1136,7 +1140,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                        fill=muted, width=max(1, int(scale)))
     elif kind == "timeline":
         # 与 compiler 同形：一条轴 + 节点圆点 + 居中标签（末节点为强调色）
-        n = min(len(rows), 7)
+        n = min(len(rows), CHART_LIMITS["timeline"])
         axis_y = y + h * 0.52
         d.line((left, int(axis_y), right, int(axis_y)), fill=muted, width=max(1, int(scale)))
         lfont = _font(px_to_pt(float(e.get("label_size", 13)) * scale), cjk=True)
@@ -1192,7 +1196,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 d.line((int(x0), yy, int(x1), yy), fill=muted, width=max(1, int(scale)))
     elif kind in {"progress_bar", "ranked_bar"}:
         # 与 compiler 同形：标签列 + 轨道 + 圆头填充 + 直接数值（ranked 按值降序）
-        data = rows[: (8 if kind == "ranked_bar" else 6)]
+        data = rows[:CHART_LIMITS[kind]]
         if kind == "ranked_bar":
             data = sorted(data, key=lambda r: _value(r), reverse=True)
         label_w = w * float(e.get("label_ratio", 0.24))
@@ -1232,7 +1236,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                    fill=ink, anchor="rm")
     elif kind == "stacked_bar":
         # 与 compiler 同形：一条整宽堆叠条 + 段内百分比 + 直接图例
-        vals = [max(_value(r), 0.0) for r in rows[:8]]
+        vals = [max(_value(r), 0.0) for r in rows[:CHART_LIMITS["stacked_bar"]]]
         total = sum(vals) or 1.0
         bar_h = max(10, min(float(e.get("bar_height", 46)), h * 0.34))
         bar_y = y + (h - bar_h) / 2 - h * 0.10
@@ -1258,7 +1262,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                        anchor="mm")
             cursor += seg
         lfont = _font(px_to_pt(10 * scale), cjk=True)
-        for i, row in enumerate(rows[:8]):
+        for i, row in enumerate(rows[:CHART_LIMITS["stacked_bar"]]):
             lx = x + i * (w / max(len(vals), 1))
             d.text((int(lx), int(bar_y + bar_h + 10 * scale)), str(row.get("label", ""))[:12],
                    font=lfont, fill=_rgba(ctx, "muted", 0.9), anchor="la")
@@ -1441,6 +1445,9 @@ def _page_media_stamp(slide: dict, spec: dict) -> list:
     QA 传入本轮已读过的 snapshots 时只在内存里哈希，不重读图片；独立 preview
     则对未快照的文件走统一 file_digest。相同源图跨页只算一次。
     """
+    elements = slide.get("elements") or []
+    if not any(isinstance(el, dict) and el.get("type") == "image" for el in elements):
+        return []  # 无图页：不建缓存簿、不探文件系统（页键里 media=[] 与旧口径一致）
     from primitives import digest_bytes
     cache = spec.get("_preview_media_digest_cache")
     if not isinstance(cache, dict):

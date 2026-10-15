@@ -21,6 +21,10 @@ import json
 import re
 from pathlib import Path
 
+# 断行禁则与单位词与编译/预览共用 primitives 的单一来源（见 NO_LINE_START_CJK /
+# UNIT_WORDS）：判断层再抄一份，断行建议就会与产物、预览各断各的。
+from primitives import NO_LINE_END_CJK, NO_LINE_START_CJK, unit_head
+
 # ─────────────────────────────────────────────────────────────────────
 # 1 · Brief 加载（唯一加载器：yml / json / 定义 BRIEF|NEED 的模块）
 # ─────────────────────────────────────────────────────────────────────
@@ -1692,11 +1696,10 @@ _BREAK_RULES = (
     (("年", "季度", "月", "日", "天", "小时", "倍"), "after"),      # 时间数量短语之后
     (("的",), "after"),                                           # 定语之后（悬挂）
 )
-_NO_LINE_START_CJK = "，。、；：？！）〉》」』】〕｝·…—～”’"
-_NO_LINE_END_CJK = "（《「『【〔｛“‘"
-_UNIT_AFTER_DIGIT = re.compile(
-    r"^\s*(亿元|万元|万户|万单|万人|万家|万次|个月|分钟|小时|美元|元|家|人|个|台|"
-    r"名|位|件|次|天|月|年|%|％|pp|倍)")
+# 禁则与「数字后接单位」判据都取自 primitives 单一来源，不再各维护一份词表：
+# 单位集合以 UNIT_WORDS 为准（编译写不断行空格、预览判禁则、此处判断行建议）。
+_NO_LINE_START_CJK = NO_LINE_START_CJK
+_NO_LINE_END_CJK = NO_LINE_END_CJK
 
 
 def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
@@ -1725,8 +1728,8 @@ def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
                 continue                       # 行首禁则：标点不能领行
             if left[-1:] in _NO_LINE_END_CJK:
                 continue                       # 行尾禁则：开引号不能收尾
-            if left[-1:].isdigit() and _UNIT_AFTER_DIGIT.match(right):
-                continue                       # 数字与单位不拆行
+            if left[-1:].isdigit() and unit_head(right.lstrip()):
+                continue                       # 数字与单位不拆行（单位表与编译/预览同源）
             score = (strength, abs(len(left) - len(right)))
             if best_score is None or score < best_score:
                 best, best_score = f"{left}｜{right}", score

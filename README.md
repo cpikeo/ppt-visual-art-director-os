@@ -30,8 +30,9 @@ scripts/
   assets.py           资产必要性 → 提示词 → 清单 → 像素 QC → 链核验
   verify.py           硬错误 Guard → PASS / BLOCK → 发布清单
   compiler.py         确定性 PPTX 编译（含编译缓存）
-  primitives.py       最小原语（身份 / 字节 / 几何 / 颜色 / 文本测量）
+  primitives.py       最小原语（身份 / 字节 / 几何 / 颜色 / 文本测量 / 图表单一规范 CHART_SPEC）
   ghost.py            PIL 结构预览（关键页取证）
+  bench.py            判断基准与盲评通道（不进生产入口）
   selftest.py         核心自检
 references/           contract.md（字段与失败码）、assets.md（资产链）
 ```

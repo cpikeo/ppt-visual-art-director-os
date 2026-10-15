@@ -1183,6 +1183,28 @@ def test_production(tmp: Path):
           abstracted == set(_ghost.PREVIEW_ABSTRACT) <= set(CHART_KINDS),
           f"声明={sorted(_ghost.PREVIEW_ABSTRACT)} 实际占位={sorted(abstracted)}")
 
+    # 图表单一规范：五维事实只在 primitives.CHART_SPEC 定义一次，三层集合全部派生。
+    # 任一层再各写一份（guard 的 limits、compiler 的路由集、ghost 的占位表），
+    # 就会重现「放行但截尾 / 预览与产物不一致」；这里逐维对拍派生关系。
+    from primitives import (CHART_LIMITS as _LIMITS, CHART_SPEC as _SPEC,
+                            NUMERIC_CHART_KINDS as _NUM, ROWS_CHART_KINDS as _ROWSK,
+                            chart_rows as _chart_rows)
+    import verify as _verify_mod, compiler as _compiler_mod
+    check("chart_spec: 图表分类单一来源（guard/compiler/ghost 全部派生自 CHART_SPEC）",
+          set(_compiler_mod.NATIVE_CHART_TYPES) == {k for k, v in _SPEC.items() if v["renderer"] == "native"}
+          and _compiler_mod.SHAPE_CHARTS == {k for k, v in _SPEC.items() if v["renderer"] == "shape"}
+          and _compiler_mod.ELEMENT_PAYLOAD_CHARTS == {k for k, v in _SPEC.items() if v["payload"] in ("points", "layers")}
+          and _compiler_mod.NUMERIC_UNIT_KINDS == _NUM == _verify_mod.NUMERIC_CHART_KINDS
+          and set(_verify_mod.ROWS_CHART_KINDS) == set(_ROWSK)
+          and _verify_mod.CHART_LIMITS == _LIMITS == {k: v["limit"] for k, v in _SPEC.items() if v["limit"] is not None}
+          and set(_ghost.PREVIEW_ABSTRACT) == {k for k, v in _SPEC.items() if v["preview"] == "abstract"},
+          f"spec={len(_SPEC)} kinds")
+    check("chart_rows: 编译与预览共用唯一行解析（desc/无效值/display 同口径）",
+          _compiler_mod._rows is _chart_rows
+          and _chart_rows({"data": [{"label": "A", "value": "3", "desc": "注"},
+                                    {"label": "B", "value": None}]})[0]["desc"] == "注"
+          and _ghost._rows({"data": [{"label": "A", "value": 3}]}) == _chart_rows({"data": [{"label": "A", "value": 3}]}))
+
     # 风险色（negative）由主题推导：含负值的图表不再因「主题未声明风险色」被硬门挡住，
     # 作者显式声明的风险色仍然压过推导。
     neg_spec = {'canvas': {'width': 480, 'height': 260},
@@ -1247,6 +1269,11 @@ def test_production(tmp: Path):
     check("cache: spec 变了不命中",
           compile_reuse(work, out1, spec_view(changed, base_path=tmp),
                         fast_probe=True, speed="fast") is None)
+    # 编译产物与 speed 无关（字节一致已由 media 组锁定）：缓存不再按档分区，
+    # strict 终稿后切 fast 迭代（或反向）直接复用，不整稿重编。
+    check("cache: 编译缓存跨 speed 复用（产物字节与档无关，不重复编译）",
+          compile_reuse(work, out1, view, fast_probe=False, speed="strict") is not None
+          and (compile_reuse(work, out1, view, fast_probe=False, speed="strict") or {}).get("performance", {}).get("speed") == "strict")
 
     # strict 探测已算出当前产物 SHA；attestation 复用，不重复触发摘要/状态探测。
     from vao import _compile_step
@@ -1574,6 +1601,14 @@ def test_production(tmp: Path):
     from ghost import (_wrap_lines as _wrap, _has_cjk as _has_cjk2,
                        _cjk_break_fix as _fix, _NO_LINE_START as _nls,
                        _UNIT_HEAD as _unit_head, _UNIT_INNER as _unit_inner)
+    # 禁则单一来源：预览折行与判断层断行建议共用 primitives 的同一份字符串，
+    # 任一层再抄一份就会出现「建议不断、预览断了」的分叉。
+    from primitives import NO_LINE_END_CJK as _PLE, NO_LINE_START_CJK as _PLS
+    import intelligence as _intel_mod
+    check("typography: CJK 禁则单一来源（预览与判断层共用同一份）",
+          _nls == _PLS and _intel_mod._NO_LINE_START_CJK == _PLS
+          and _intel_mod._NO_LINE_END_CJK == _PLE,
+          "ghost/intelligence 必须取自 primitives.NO_LINE_*_CJK")
 
     def _linear_cjk(text, font, width, tracking=0.0):
         limit = max(1, width)

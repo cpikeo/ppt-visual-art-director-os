@@ -287,15 +287,91 @@ PX_TO_EMU = 9525
 # spec 档禁加载编译层，集合不能住在编译层——未知 type 会在编译期被静默跳过，
 # 必须在治理层前置拦截）。
 ELEMENT_TYPES = frozenset({"text", "shape", "image", "chart", "native_chart"})
-# 图表 kind 的 schema 白名单与 Guard/compiler 共用；Guard 另维护容量上限，
-# compiler 维护 native/shape 的实现映射，但未知 kind 不允许各层各自放行。
-CHART_KINDS = frozenset({
-    "kpi", "executive_kpi", "big_number", "big_number_row",
-    "bar", "horizontal_bar", "column", "comparison_bar", "line", "trend",
-    "single_trend_line", "area", "donut", "donut_composition", "pie",
-    "waterfall", "ranked_bar", "progress_bar", "stacked_bar", "bubble",
-    "process_flow", "timeline", "steps", "matrix", "architecture", "sparkline",
-})
+# 图表单一规范（全库唯一权威）：每个 kind 只在这里定义一次五维事实——
+#   renderer  编译路由：native（原生图表）/ shape（可编辑形状图）/ kpi（元素级大数字）
+#   payload   载荷形态：rows（data 行，可多序列）/ points / layers / value（元素级）
+#   numeric   是否数值图（出处硬门、单位与有限值校验的适用面）
+#   limit     截断型硬限额（实现只能完整呈现前 N 项）；None = 不截断
+#   preview   ghost 口径：mirrored（同形绘制）/ abstract（只留占位实话，不画假图）
+# 此前这五维分别抄在 verify（3 个集合 + limits 字典）、compiler（3 个集合 + 8 处
+# 截断字面量）、ghost（占位表 + 6 处截断字面量）与 contract.md（两段枚举）里，
+# 任一处漏改就出现「guard 放行但编译截尾 / 预览与产物不一致」。现在各层只派生、
+# 不再各写一份；增删 kind 只改这一张表（selftest 的 chart_spec 断言锁定派生关系）。
+CHART_SPEC: dict[str, dict] = {
+    "kpi":               {"renderer": "kpi",    "payload": "value",  "numeric": False, "limit": None, "preview": "mirrored"},
+    "executive_kpi":     {"renderer": "kpi",    "payload": "value",  "numeric": False, "limit": None, "preview": "mirrored"},
+    "big_number":        {"renderer": "kpi",    "payload": "value",  "numeric": False, "limit": None, "preview": "mirrored"},
+    "big_number_row":    {"renderer": "shape",  "payload": "rows",   "numeric": False, "limit": 5,    "preview": "mirrored"},
+    "bar":               {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "horizontal_bar":    {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "column":            {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "comparison_bar":    {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "line":              {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "trend":             {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "single_trend_line": {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "area":              {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "donut":             {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "donut_composition": {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "pie":               {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "waterfall":         {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "ranked_bar":        {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": 8,    "preview": "mirrored"},
+    "progress_bar":      {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": 6,    "preview": "mirrored"},
+    "stacked_bar":       {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": 8,    "preview": "mirrored"},
+    "bubble":            {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": 12,   "preview": "abstract"},
+    "process_flow":      {"renderer": "shape",  "payload": "rows",   "numeric": False, "limit": 7,    "preview": "abstract"},
+    "timeline":          {"renderer": "shape",  "payload": "rows",   "numeric": False, "limit": 7,    "preview": "mirrored"},
+    "steps":             {"renderer": "shape",  "payload": "rows",   "numeric": False, "limit": 6,    "preview": "mirrored"},
+    "matrix":            {"renderer": "shape",  "payload": "points", "numeric": False, "limit": 12,   "preview": "mirrored"},
+    "architecture":      {"renderer": "shape",  "payload": "layers", "numeric": False, "limit": 3,    "preview": "abstract"},
+    "sparkline":         {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+}
+CHART_KINDS = frozenset(CHART_SPEC)
+NUMERIC_CHART_KINDS = frozenset(k for k, v in CHART_SPEC.items() if v["numeric"])
+ROWS_CHART_KINDS = tuple(k for k, v in CHART_SPEC.items() if v["payload"] == "rows")
+ELEMENT_VALUE_KINDS = tuple(k for k, v in CHART_SPEC.items() if v["payload"] == "value")
+ELEMENT_PAYLOAD_KINDS = frozenset(k for k, v in CHART_SPEC.items()
+                                  if v["payload"] in ("points", "layers"))
+CHART_LIMITS = {k: v["limit"] for k, v in CHART_SPEC.items() if v["limit"] is not None}
+PREVIEW_ABSTRACT_KINDS = frozenset(k for k, v in CHART_SPEC.items()
+                                   if v["preview"] == "abstract")
+
+
+def chart_rows(element: dict) -> list[dict]:
+    """图表 data 行的唯一规范化（compiler 与 ghost 共用，口径不再分叉）。
+
+    保留无效值状态（missing / invalid），禁止把坏数据静默当作 0；
+    `desc` 说明行必须保留——丢弃它会让下游的说明分支成为死代码。
+    多序列（categories + series）的展开是预览的呈现适配，不在此处：
+    原生路径按序列消费，预览按「类别 × 序列」压平（见 ghost._rows）。
+    """
+    data = (element or {}).get("data", []) or []
+    rows = []
+    for i, it in enumerate(data):
+        if isinstance(it, dict) and "label" in it:
+            raw = it.get("value")
+            missing = raw is None
+            invalid = False
+            try:
+                if isinstance(raw, bool):
+                    raise ValueError
+                num = float(raw) if raw is not None else 0.0
+                invalid = not math.isfinite(num)
+            except (TypeError, ValueError, OverflowError):
+                num, invalid = 0.0, not missing
+            if invalid:
+                num = 0.0
+            display = it.get("display")
+            if display is None:
+                display = raw if isinstance(raw, str) else (
+                    int(num) if float(num).is_integer() else num)
+            rows.append({"label": str(it["label"]), "value": num,
+                         "display": display, "desc": it.get("desc"), "_index": i,
+                         "missing": missing, "invalid": invalid})
+        elif (isinstance(it, (int, float)) and not isinstance(it, bool)
+              and math.isfinite(float(it))):
+            rows.append({"label": str(i), "value": float(it), "display": it,
+                         "_index": i, "missing": False, "invalid": False})
+    return rows
 
 def highlight_index(element, rows, default: int = -1) -> int:
     """强调项解析：整数索引，或直接写类别名。
@@ -867,6 +943,12 @@ def is_cjk(ch: str) -> bool:
     return (0x3000 <= o <= 0x9FFF) or (0xFF00 <= o <= 0xFFEF) or (0x3040 <= o <= 0x30FF)
 
 
+# CJK 断行禁则（全库唯一来源）：行首禁则（标点不能领行）与行尾禁则（开括号/
+# 引号不能收尾）。此前 ghost 与 intelligence 各抄一份逐字相同的字符串，改一处
+# 漏一处就会让「预览的断行」与「判断的断行建议」分叉；现在两层都从这里取。
+NO_LINE_START_CJK = "，。、；：？！）〉》」』】〕｝·…—～”’"
+NO_LINE_END_CJK = "（《「『【〔｛“‘"
+
 # 中西混排间隙：CJK 与拉丁/数字紧贴是中文排版的廉价感来源。在脚本切换处
 # 插入 U+2009 THIN SPACE（≈1/5 em），作为渲染层的排版打磨——不改变作者的
 # spec 文本（Guard 仍按原文本测行长），只改变最终落到页面上的视觉效果。
@@ -1416,33 +1498,42 @@ def spec_view(spec, base_path=None, spec_path=None, image_bytes=None, digests=No
 
 
 def compile_reuse(work, pptx, view, *, fast_probe=False, speed=None):
-    """语义投影一致 + 产物字节戳一致 ⇒ 复用编译报告；否则 None。"""
+    """语义投影一致 + 产物字节戳一致 ⇒ 复用编译报告；否则 None。
+
+    `speed` 不参与缓存身份：编译器从不按 speed 分支（图片管线两档同口径），
+    fast/strict 产物逐字节一致已由 selftest 锁定（含需要 cover 重编码的图）。
+    此前按 speed 分区让「strict 终稿后切 fast 迭代」必然整稿重编（实测多付
+    一次完整编译），买到的只是把同一个字节再算一遍。`speed` 参数保留只为
+    调用兼容与报告口径回填——复用报告的 speed 改写为本轮请求值，缓存里
+    记录的编译档仍留在 compile_speed 遥测中可查。
+    """
     rec = _load_meta(work).get("compile") or {}
     if not isinstance(rec, dict) or not isinstance(rec.get("report"), dict):
         return None
     if rec.get("semantic_view") != view or not rec.get("report"):
         return None
-    if speed is not None:
-        recorded = str(((rec.get("report") or {}).get("performance") or {}).get("speed")
-                       or "strict")
-        if recorded != str(speed):
-            return None
     output_witness = rec.get("output_witness") or {}
     stored_sha = str(output_witness.get("sha256") or "")
     if len(stored_sha) < 64 or not Path(pptx).exists():
         return None
+
+    def _report(sha):
+        report = dict(rec["report"])
+        report.update(reused=True, output_sha256=sha)
+        if speed is not None:
+            perf = dict(report.get("performance") or {})
+            perf["speed"] = str(speed)
+            report["performance"] = perf
+        return report
+
     if fast_probe:
         if not witness_same(output_witness, witness(pptx)):
             return None
-        report = dict(rec["report"])
-        report.update(reused=True, output_sha256=stored_sha)
-        return report
+        return _report(stored_sha)
     current_sha = file_digest(pptx)
     if current_sha != stored_sha:
         return None
-    report = dict(rec["report"])
-    report.update(reused=True, output_sha256=current_sha)
-    return report
+    return _report(current_sha)
 
 
 def record_compile(work, pptx, view, report):

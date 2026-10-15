@@ -69,11 +69,10 @@ ghost 文本框、形状内文字及本轮覆盖的原生图表标签复用同�
 `text_padding` 字段。`fill: {type: none}` / 省略 `fill` = 真空心，不能让预览画成实心卡片。
 PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过载先删句改写，不压行距。
 
-`chart_kind` 支持项（括号为历史建议数量；仅下述截断型硬限额由 Guard 执行）：bar/horizontal_bar/comparison_bar(8) · column(8) ·
-line/trend/single_trend_line(8) · area(8) · donut/pie(8) · stacked_bar(8) · ranked_bar(8) ·
-waterfall(12) · matrix(12) · bubble(12) · sparkline(12) · process_flow(7) · timeline(7) ·
-steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/executive_kpi/big_number
-（数字展示读元素级 `value`）。数值图表齐 `source / unit / period / basis`（release 硬门）；
+`chart_kind` 的合法值、编译路由（原生/形状/大数字）、载荷形态、数值属性、截断上限
+与预览口径只在 `primitives.CHART_SPEC` 定义一次（五维一表），Guard、编译器与预览
+全部派生自它；本文不再抄录枚举与数值表——双写迟早漂移成「放行但截尾」。
+`kpi/executive_kpi/big_number` 读元素级 `value`（数字展示）。数值图表齐 `source / unit / period / basis`（release 硬门）；
 同 `metric` 跨页必须同单位。原生数值图表的 `show_values`、`number_format`、
 `label_collision_policy` 不因 `data` 或 `categories + series` 载荷改变；多序列的
 容量计数为类别数 × 序列数。`label_size` 控制原生轴标签、`value_size` 控制数值标签，
@@ -84,8 +83,8 @@ steps(6) · progress_bar(6) · big_number_row(5) · architecture(3) · kpi/execu
 在目标 PowerPoint 检查长标签折行和遮挡。**载荷两式**：数值图表用 `categories + series[].values`；
 复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）
 其中 matrix 用 `points`、architecture 用 `layers`，其余用 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
-截断型硬限额：process_flow/timeline 7、steps/progress_bar 6、ranked_bar/stacked_bar 8、
-big_number_row 5、matrix/bubble 12、architecture 3；超过时在编译前 BLOCK，不能静默丢尾项。
+带截断上限的 kind（见 `CHART_SPEC` 的 `limit`）超过上限时在编译前 BLOCK，不能静默丢尾项；
+编译器与预览的截断与该表同源，不存在第二份数值。
 
 **跨页锚的眉标**：`anchor.eyebrow` 由本页结论派生短标（3–6 字，写「这一段在论证里的
 位置」，不写页面类型），作者可在 brief 里逐页声明 `eyebrow` 原样压过派生。
