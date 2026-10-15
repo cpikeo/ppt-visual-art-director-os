@@ -1,0 +1,84 @@
+{
+  "freeze": {
+    "sha256_of_payload": "827e9e01291fbaa5d502d58f0287f446cfd53c1eed2bddda12ed4830cacad528",
+    "frozen_at": "2026-10-15",
+    "note": "holdout-5：is_other_end 位置判后终验；期望先于运行冻结。"
+  },
+  "cases": [
+    {
+      "id": "S01",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "客诉处理时长 4.2 小时低于承诺 8 小时",
+      "content": "同一工单口径。（来源：客服台账）",
+      "expect": {
+        "comparison": true,
+        "primary_contains": [
+          "4.2"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary"
+      ],
+      "why": "比较另一端的判据是位置：「承诺 8 小时」是宾语侧，主语是我们的 4.2 小时。"
+    },
+    {
+      "id": "S02",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "交付周期 6.8 天高于承诺 5 天",
+      "content": "样本 30 单。（来源：交付看板）",
+      "expect": {
+        "comparison": true,
+        "primary_contains": [
+          "6.8"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary"
+      ],
+      "why": "同上：另一端 5 天退参照位；样本行不夺主语。"
+    },
+    {
+      "id": "S03",
+      "group": "numeric",
+      "severity": "major",
+      "title": "留资转化已经连续三个季度下滑",
+      "content": "2024Q4 12%；2025Q1 10.6%；2025Q2 9.8%。（来源：CRM）",
+      "expect": {
+        "evidence": "series",
+        "claim_contains": [
+          "下滑"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "claim"
+      ],
+      "why": "季度轴三取值是序列；断言谓语标题居主张位。"
+    },
+    {
+      "id": "S04",
+      "group": "shape",
+      "severity": "major",
+      "title": "三类补贴里只有运费险是硬支出",
+      "content": "运费险 620 万元；运费补贴 380 万元；新客券 240 万元。（来源：费用表）",
+      "expect": {
+        "claim_contains": [
+          "运费险"
+        ],
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "observe": [
+        "claim",
+        "evidence"
+      ],
+      "why": "三项并列费用是枚举不是序列；结论措辞（只有）标题居主张位。"
+    }
+  ]
+}

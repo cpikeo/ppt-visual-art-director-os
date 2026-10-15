@@ -77,8 +77,10 @@ python scripts/selftest.py          # 同时检查负例退出码、缓存、素
 python scripts/selftest.py   # 退出码即门槛；数量以实际输出为准
 ```
 
-本工作树按用户要求移除了历史 `acceptance/`、`review/`、`audit/` 和 `benchmark/` 目录；
-因此当前仓库**不包含可供观摩的样稿、真实渲染或旧审计日志**。旧数据在 Git 历史中（本轮未提交/推送）。
+本工作树按用户要求移除了 `acceptance/`、`review/`、`audit/`、`benchmark/` 目录，
+以及 `交付报告.md`、`泛化评测报告.md` 等报告工件；因此当前仓库**不包含样稿、
+真实渲染、验收单或评测报告**。早期目录可在 Git 历史中找回；后期未进 Git 的工件
+（成品样品、评测存档等）删除后不可恢复，本版不得据其宣称视觉验收结果。
 `plan` 只输出设计判断与**空元素骨架**，作者须完成 BUILD；不得以本地自测通过宣称自主落版或目标 PowerPoint 视觉终验。
 
 CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 / 3.13 自检、合并后的 57 例判断回归及 spec 档冒烟。

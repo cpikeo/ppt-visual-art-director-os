@@ -1,0 +1,263 @@
+{
+  "freeze": {
+    "sha256_of_payload": "4bfe2a4da722983802448f005a865d70d8ccc1eea254f1ebf0bbf2fc85bebc9a",
+    "frozen_at": "2026-10-15",
+    "note": "holdout-3：F1–F6 修复后复验迁移性；期望先于运行冻结，禁止对着结果改期望。"
+  },
+  "cases": [
+    {
+      "id": "R01",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "采后损耗是温室草莓的最大损耗项",
+      "content": "采后损耗占 47%，其中运输 21%、分拣 14%、仓储 12%；田间损耗占 23%。（来源：损耗审计）",
+      "expect": {
+        "part_whole": true,
+        "claim_contains": [
+          "采后"
+        ],
+        "primary_contains": [
+          "47"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary",
+        "focus"
+      ],
+      "why": "份额措辞是部分-总体：主体对齐第一大部分（47% 的采后损耗），子项 21/14/12 不各自立规则。"
+    },
+    {
+      "id": "R02",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "退货率 5.8%低于去年同期 6.4%",
+      "content": "同一口径。（来源：售后报表）",
+      "expect": {
+        "comparison": true,
+        "primary_contains": [
+          "5.8"
+        ],
+        "claim_contains": [
+          "退货率"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary",
+        "focus"
+      ],
+      "why": "单句两端比较：主语是我们一侧的 5.8%，不是比较另一端 6.4%（逐数字归因）。"
+    },
+    {
+      "id": "R03",
+      "group": "numeric",
+      "severity": "major",
+      "title": "能耗拆项里只有燃气在涨",
+      "content": "电力 1,240 度（−80 度）；燃气 320 立方（+40 立方）；柴油 55 升（持平）。（来源：能源台账）",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence",
+          "comparison"
+        ],
+        "claim_contains": [
+          "燃气"
+        ]
+      },
+      "observe": [
+        "evidence"
+      ],
+      "why": "拆项并列（含正负注记）不是序列；变动动词与同单位都不是序列的充分条件。"
+    },
+    {
+      "id": "R04",
+      "group": "claim",
+      "severity": "critical",
+      "title": "把冷链干线并进现有班列",
+      "content": "",
+      "expect": {
+        "claim": "extracted",
+        "claim_contains": [
+          "冷链"
+        ],
+        "media": "none"
+      },
+      "observe": [
+        "claim",
+        "focus"
+      ],
+      "why": "处置式行动主张（把 + 对象 + 处置）：无内容也是主张页，不出图、不脑补数据。"
+    },
+    {
+      "id": "R05",
+      "group": "claim",
+      "severity": "critical",
+      "title": "势头不错",
+      "content": "月活 42 万，新增 3.1 万，流失 2.4 万。（来源：产品月报）",
+      "expect": {
+        "claim_soft": [
+          "势头"
+        ]
+      },
+      "observe": [
+        "claim",
+        "claim_text"
+      ],
+      "why": "作者主张原话保留：模糊标题在主张位时不被证据行替换；absent/frame 亦可。"
+    },
+    {
+      "id": "R06",
+      "group": "claim",
+      "severity": "major",
+      "title": "新品的爬坡",
+      "content": "第 1 个月 12%；第 3 个月 31%；第 6 个月 58%。（来源：上市复盘）",
+      "expect": {
+        "claim": "absent",
+        "evidence": "series"
+      },
+      "observe": [
+        "claim",
+        "evidence"
+      ],
+      "why": "名词化话题（X 的 Y）不立主张；序列数据点不升格为结论（不偷换）→ 未决。"
+    },
+    {
+      "id": "R07",
+      "group": "claim",
+      "severity": "critical",
+      "title": "先上华南仓，华东同步扩容",
+      "content": "华南仓投资 1,200 万元；华东扩容 600 万元。（来源：投资计划）",
+      "expect": {
+        "claim": "extracted",
+        "claim_contains": [
+          "华南仓"
+        ]
+      },
+      "observe": [
+        "claim",
+        "claim_text"
+      ],
+      "why": "指令/提案标题是作者主张：正文是证据陈述（投资行）时标题原话立主张。"
+    },
+    {
+      "id": "R08",
+      "group": "causal",
+      "severity": "critical",
+      "title": "复购的增量主要来自会员体系",
+      "content": "会员复购 2,180 单，同比 +34%；非会员复购 410 单，同比 +1%。（来源：订单中台）",
+      "expect": {
+        "claim": "extracted",
+        "claim_contains": [
+          "会员"
+        ],
+        "comparison": false
+      },
+      "observe": [
+        "claim",
+        "evidence"
+      ],
+      "why": "归因句式（…来自 Y）是因果主张；同比增长不是两端比较。句首来源状语（来自一线的声音）不在此类。"
+    },
+    {
+      "id": "R09",
+      "group": "claim",
+      "severity": "major",
+      "title": "请批准把客服排班改为两班制",
+      "content": "夜班响应可压到 30 分钟内；人力成本 +8%。（来源：客服中心）",
+      "expect": {
+        "claim": "extracted",
+        "claim_contains": [
+          "两班"
+        ]
+      },
+      "observe": [
+        "claim"
+      ],
+      "why": "要决定的句子本身就是结论（请求句不因证据缺席判 absent）。"
+    },
+    {
+      "id": "R10",
+      "group": "vague",
+      "severity": "critical",
+      "title": "这个月有点反常",
+      "content": "退货率 5.8%低于去年同期 6.4%。（来源：售后报表）",
+      "expect": {
+        "claim_soft": [
+          "反常",
+          "退货"
+        ],
+        "comparison": true,
+        "primary_contains": [
+          "5.8"
+        ]
+      },
+      "observe": [
+        "claim",
+        "claim_text",
+        "primary"
+      ],
+      "why": "模糊标题＋真比较：主张须保留作者措辞（反常）或可核对口径（退货率）；主语是我们一侧。"
+    },
+    {
+      "id": "R11",
+      "group": "shape",
+      "severity": "major",
+      "title": "设备说明",
+      "content": "精度 ±0.2 毫米；节拍 4 秒；良率 99.1%。（来源：设备手册）",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "observe": [
+        "evidence"
+      ],
+      "why": "规格行不是序列/流程：三个不同量纲的参数并列是枚举。"
+    },
+    {
+      "id": "R12",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "设备改造完成过半",
+      "content": "60 台设备里 38 台完成改造，其余 22 台排在下季度。（来源：技改清单）",
+      "expect": {
+        "part_whole": true,
+        "primary_contains": [
+          "38"
+        ],
+        "claim_contains": [
+          "改造"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary",
+        "focus"
+      ],
+      "why": "子集/总体：主语是子集 38 台不是分母 60 台；「其余」是剩余不是另一条份额。"
+    },
+    {
+      "id": "R13",
+      "group": "numeric",
+      "severity": "major",
+      "title": "开业周期从 45 天压到 28 天",
+      "content": "同一口径 12 家门店。（来源：开店台账）",
+      "expect": {
+        "evidence": "series",
+        "primary_contains": [
+          "28"
+        ],
+        "claim_contains": [
+          "开业周期"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary"
+      ],
+      "why": "端点变化是序列形状，主语是终值 28 天不是基期 45 天。"
+    }
+  ]
+}

@@ -185,6 +185,9 @@ _SERIES_WORDS = ("趋势", "增长", "下降", "同比", "环比", "逐年", "�
                  "涨", "跌", "下滑", "回升", "掉到", "掉至", "跌到", "跌至",
                  "升至", "升到", "降至", "降到", "增至", "增到", "减至", "回落至",
                  "trend", "growth", "grew", "rose", "fell", "yoy", "qoq")
+# 期间坐标词：同比/环比/逐年自带时间轴，是序列的合法坐标
+# （序列词 ∧（同单位 ∨ 期间坐标）——变动动词「涨/跌」单独不是序列，F3 实测）。
+_TEMPORAL_SERIES_CUE = ("同比", "环比", "逐年", "yoy", "qoq")
 _SEQUENCE_WORDS = ("步骤", "流程", "阶段", "路径", "迭代", "先", "然后", "接着", "最后",
                    "roadmap", "phase", "step", "milestone", "里程碑")
 # 强顺序标记：本身就是「这是一条流程」的名词。弱标记（先/然后/接着/最后）是连接
@@ -225,7 +228,13 @@ _BETWEEN_METRICS = re.compile(r"(?<!占)(?<!同)(?<!环)(?<!可)比(?![例率值
 # 『12 家试点门店中，9 家续约』是总体与子集，不是 12→9 的下降。
 _PART_OF_WHOLE = re.compile(
     r"(?P<total>\d+(?:[.,]\d+)?\s*(?P<unit>家|人|个|台|名|位|件|%|％))"
-    r"[^。；;!?！？]{0,30}?中[，,\s]*(?P<part>\d+(?:[.,]\d+)?\s*(?P=unit))")
+    r"[^。；;!?！？]{0,30}?(?:中|里|内)[，,\s]*(?P<part>\d+(?:[.,]\d+)?\s*(?P=unit))")
+# 「占……的 N%」是**份额陈述**（F1 实测）：「隐裂损失 428 万度，占季度发电量损失的
+# 51%；遮挡 196 万度，占 23%；其余为逆变器与线损」是构成分解，但 pct_whole 的
+# 加总≈100 判据看不见它（51+23=74，余量在「其余」里）。形状判据：两处以上
+# 「占…的 N%」加余量词（其余/剩余）＝作者已经把整体拆给我们看了。
+_SHARE_OF_TOTAL = re.compile(r"占[^。；%]{0,24}?\d+(?:[.,]\d+)?\s*[%％]")
+_REMAINDER_CUE = re.compile(r"其余|剩余|余下|其中")
 _STRUCTURE_WORDS = ("体系", "架构", "框架", "模型", "组织", "结构", "模块", "层级",
                     "平台", "中台", "framework", "architecture", "system")
 # 「结构性增长 / 结构化数据」里的「结构」是形容词，「结构性增长」是一个东西的
@@ -272,7 +281,10 @@ _SCENE_WORDS = ("现场", "记录", "回访", "走访", "探访", "实录", "课
 _TOPIC_MARKERS = ("如何", "怎样", "有哪些", "为什么", "是什么", "怎么", "介绍", "概览",
                   "背景", "how to", "overview", "introduction")
 _TOPIC_TAILS = ("记录", "流程", "结构", "说明", "概览", "介绍", "方案", "清单", "框架",
-                "体系", "回顾", "背景", "进展", "情况", "梳理", "节奏", "趋势", "现状", "数据", "分析", "画像", "对比", "时间表", "路线图")
+                "体系", "回顾", "背景", "进展", "情况", "梳理", "节奏", "趋势", "现状", "数据", "分析", "画像", "对比", "对照", "时间表", "路线图")
+# 名词化话题（「X 的 Y」无谓语、无分句标点）：「原材料成本上行的传导」「增长的质量」
+# 是话题短语不是主张——它没有对内容下判断，不得占结论位（scope 反例实测）。
+_NOMINALIZED_TOPIC = re.compile(r"^[^，。；：;:!?！？\n]{1,26}的[^，。；：;:!?！？\n]{1,14}$")
 # 要决定的一句话：出现它时，这一页的职责是把决定收成可执行的一句。
 # 断言信号：一句真正的主张在**说变化或比较**（降至/超过/持平/翻倍…），
 # 而不是在说相关性（「如何使用…」）。它比长度更接近「结论」的定义。
@@ -558,7 +570,9 @@ _ARRIVAL_CUE = re.compile(
     r"\b(?:to|now|currently)\b)\s*", re.I)
 
 
-_CLAUSE_SPLIT = re.compile(r"[，,。；;：:！!？?\n]")
+# 分句标点。千分位逗号（2,800）不是分句——数字内部的逗号两侧都是数字；
+# 以前它把「单位成本从 2」和「800 元降至 1,800 元」切成两个从句，数字归因随之断裂。
+_CLAUSE_SPLIT = re.compile(r"(?<!\d)[,，]|[,，](?!\d)|[。；;：:！!？?\n]")
 # 指标名归属时要剔掉的「非指标」词：连词、代词、时态与量词外壳。
 # 只做减法——不认识的词一律保留（宁可多留一个候选，也不误删真指标）。
 _METRIC_STOPWORDS = frozenset({
@@ -603,8 +617,30 @@ def _metric_of_clause(clause: str) -> list[str]:
     """从句里取可能的指标名（连续 CJK 片段按虚词再切，去掉连词与动词外壳）。"""
     out = []
     for m in _CJK_RUN.finditer(clause):
-        for tok in _METRIC_SEPARATORS.split(m.group(0)):
+        run = m.group(0)
+        parts, last = [], 0
+        for sep in _METRIC_SEPARATORS.finditer(run):
+            parts.append((last, sep.start()))
+            last = sep.end()
+        parts.append((last, len(run)))
+        for a, b in parts:
+            tok = run[a:b]
             if tok in _METRIC_STOPWORDS or len(tok) < 2:
+                continue
+            # 单位漏网不是指标名：「19.4 元降至 2025Q4」的 CJK 游程「元降至」切出的
+            # 「元降」以数字后的单位字起头——指标名不从量词上起头（F2 归因实测）。
+            # 只杀「数字 + 单位字开头」的游程；「8.4% 高于行业均值」里指标跟在百分号
+            # 后但起头是普通词，必须保留。被杀的游程尾部可能带着真标签（「元高于上周」
+            # 的「上周」是比较基准名）——对整个游程尾部剥单位字与动词壳后抢救，
+            # 不得整段吞掉；虚词分隔符（含「上」）会把「上周」切碎，逐段救不回来。
+            unit_head = "元%％万亿倍℃吨升米克角钱"
+            prev = clause[:m.start() + a].rstrip()[-1:]
+            if prev and prev.isdigit() and tok[:1] in unit_head:
+                salvage = run[a:].lstrip(unit_head)
+                salvage = re.sub(r"^(?:高于|低于|超过|升至|降至|增至|降到|涨到|掉到|达到)", "", salvage)
+                core_s = re.sub(r"(降至|升至|增到|减到|达到|超过|低于|高于|为|约|达|从)$", "", salvage)
+                if len(core_s) >= 2 and core_s not in _METRIC_STOPWORDS:
+                    out.append(core_s)
                 continue
             # 「降至 / 升至 / 达到」这类动词壳不是指标名；剥掉常见后缀再判一次。
             core = re.sub(r"(降至|升至|增到|减到|达到|超过|低于|高于|为|约|达|从)$", "", tok)
@@ -755,6 +791,7 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     spans = _clause_spans(text)
     years = _year_by_clause(text)
     metrics = _metric_by_clause(text)
+    own_metric = {id(n): m for n, m in _metric_attribution(text, nums)}
     year = _ordinal_year(text, claim)
     cond_spans = [m.span() for m in _CONDITIONAL_CLAUSE.finditer(text)]
     # 「A 超过/低于 B」型主张：B 是**比较的另一端**，不是这一页的主语
@@ -779,7 +816,11 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         tail = text[pos + len(n["raw"]):pos + len(n["raw"]) + 6]
         is_range_bound = bool(_RANGE_NEXT.match(tail))
         score = 0.0
-        named = [m for m in metrics.get(idx, ()) if _claim_mentions(claim, m)]
+        # 逐数字归因（F2 实测）：「客诉率 8.4% 高于行业均值 5.9%」里主张把两个度量
+        # 都点了名，从句级归属把「客诉率」同时绑给两个数，主语漂到比较的另一端。
+        # 数字只继承**自己**的度量（_metric_attribution 最近归属，逐数字重算）。
+        own = own_metric.get(id(n))
+        named = [own] if own and _claim_mentions(claim, own) else []
         if named:
             score += 3.0
         # 主张在要一个决定时，**被申请的那个量**才是主语：决策页写「批准本轮
@@ -795,8 +836,14 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         # 条件从句里的数是护栏（「若 6 月前获批」），不是页面在展示的量；
         # 被申请的量不受此限（「若批准，30 家先行」的 30 家就是请求本身）。
         is_guardrail = (not requested) and any(a <= pos < b for a, b in cond_spans)
-        is_other_end = bool(other_end) and any(_claim_mentions(other_end, m) for m in named) \
-            and not any(_claim_mentions(subject_end, m) for m in metrics.get(idx, ()))
+        # 「A 高于 B」的 B 侧数字是比较的另一端：位置是真凭据——数字落在主张的
+        # 宾语侧串里（「高于上周 37 元」的 37 元）就出局；主张没写数字时退回
+        # 度量归属判（「行业均值 5.9%」）。Q05 实测：度量归属会因单位粘连丢标签，
+        # 位置判不受影响。
+        is_other_end = bool(other_end) and (
+            n["raw"] in other_end
+            or (any(_claim_mentions(other_end, m) for m in named)
+                and not any(_claim_mentions(subject_end, m) for m in named)))
         is_denominator = total_sig is not None and (
             round(n["value"], 6), n.get("unit") or "") == total_sig
         scored.append((score, not is_range_bound and not is_guardrail
@@ -960,9 +1007,14 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 算术相加不能证明共同分母或互斥；必须有作者的分解语义。
     pct_clauses = [c for c in _CLAUSE_SPLIT.split(body) if re.search(r"\d\s*[%％]", c)]
     pct_whole = (len(pct) >= 2 and all(0 <= p <= 100 for p in pct)
-                 and abs(sum(pct) - 100) < 0.5
-                 and (_hit(body, ("其中", "构成", "分配", "份额"))
-                      or (pct_clauses and all("占比" in c for c in pct_clauses))))
+                 and ((abs(sum(pct) - 100) < 0.5
+                       and (_hit(body, ("其中", "构成", "分配", "份额"))
+                            or (pct_clauses and all("占比" in c for c in pct_clauses))))
+                      # 份额陈述＋分解语义：加总不必是 100（余量写在「其余」里，
+                      # 子项写在「其中」里——嵌套子项还会把简单加总打翻：47%＝21+14+12），
+                      # 但作者的分解动作必须看得见（占×2 + 其余/其中/剩余）。
+                      or (len(_SHARE_OF_TOTAL.findall(body)) >= 2
+                          and bool(_REMAINDER_CUE.search(body)))))
     is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole
     # 阈值列举：多个子句各带一个数、且单位互不相容（「连续两月低于 15 万元；退货率高于 8%；
     # 流失超过 2 人」）是并列条件，没有两端可比的量。「高于/低于/超过」在这里只是阈值词，
@@ -998,10 +1050,16 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 单独出现在封面或收尾的措辞里（「接管增长」「内容增长负责人」）不是证据。
     # 「三个以上同单位数字」不是序列的充分条件：规格行/并列量同样满足它，
     # 但没有时间与到达语义——那种形状是枚举，不是路径（_is_quantile_row）。
+    # 变动动词与同单位也都不是序列的充分条件（F3 实测）：拆项成本行「采购 31 元
+    # （−1.2 元）；物流 24 元（+2.8 元）」全同单位、带「涨」字，仍是并列拆项。
+    # 序列的坐标只有一种——**时间**（同比/环比/逐年这类期间词，或年份/期间轴）。
     quantile_row = _is_quantile_row(body)
-    if (distinct >= 2 and _hit(evidence_body, _SERIES_WORDS)) \
-            or (distinct >= 2 and same_unit and (years >= 2 or len(axis_tokens) >= 2
-                or len(_PERIOD_LABEL.findall(body)) >= 2) and not quantile_row) \
+    time_axis = (years >= 2 or len(axis_tokens) >= 2
+                 or len(_PERIOD_LABEL.findall(body)) >= 2
+                 or bool(_hit(evidence_body, _TEMPORAL_SERIES_CUE)))
+    words_series = _hit(evidence_body, _SERIES_WORDS) and time_axis
+    if (distinct >= 2 and words_series) \
+            or (distinct >= 2 and same_unit and time_axis and not quantile_row) \
             or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
@@ -1117,7 +1175,17 @@ def _title_thesis(title: str) -> bool:
     「从 A 增至 B」的变化句是。作者写下的这句话就是结论位，不是我们替他编的。"""
     return bool(title) and not _topic_shaped(title) and (
         _hit(title, _TITLE_ASSERTION) or bool(_CONTRAST_ASSERTION.search(title))
-        or bool(_FROM_TO_QUANTITY.search(title)))
+        or bool(_FROM_TO_QUANTITY.search(title)) or bool(_DISPOSAL_CLAIM.search(title))
+        or bool(_ATTRIBUTION_CLAIM.search(title)))
+
+
+# 处置式句法（「把/将 + 对象 + 处置」）：中文里最典型的行动主张句形——
+# 作者在决定对某个对象做什么（「把资源从买量转向内容资产」）。这是句法构造，
+# 不是题材词表；名词标签（「华东区数据」）不会以把/将起头。
+_DISPOSAL_CLAIM = re.compile(r"^\s*(?:把|将)")
+# 归因句法（「X 的增量几乎全部来自 Y」）：量的变化被归给一个来源，是因果主张。
+# 句首的「来自 Y 的 X」是来源状语不是归因（「来自一线的声音」），故主语须在前。
+_ATTRIBUTION_CLAIM = re.compile(r".{1,12}(?:来自|源于)")
 
 
 def _title_assertive(title: str) -> bool:
@@ -1128,7 +1196,8 @@ def _title_assertive(title: str) -> bool:
     标题才占结论位，其余退回从内容里抽。
     """
     return (bool(evidence_numerals(title)) or _hit(title, _TITLE_ASSERTION + _CHANGE_WORDS)
-            or bool(_CONTRAST_ASSERTION.search(title)))
+            or bool(_CONTRAST_ASSERTION.search(title)) or bool(_DISPOSAL_CLAIM.search(title))
+            or bool(_ATTRIBUTION_CLAIM.search(title)))
 
 
 def _is_data_listing(sent: str) -> bool:
@@ -1211,6 +1280,13 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
     # 焦点、排版与信息权重随之一起走偏。带结论/决定措辞的正文句不受此限——那才是
     # 契约里说的「内容里更强的结论句」。
     title_metrics = set(_metric_of_clause(title)) if (title and _title_assertive(title)) else set()
+    # 正文有没有「主张形状」的句子（结论/决定/对比/条件结果）。没有时，标题就是
+    # 这一页主张位的唯一作者声音（裁定 2026-10-15：作者主张原话保留，不被证据行
+    # 替换、也不因措辞软而降为缺席——软主张的未决处理归主张质检层）。
+    content_claim_shaped = any(
+        _hit(s, _CONCLUSION_WORDS) or _CONTRAST_ASSERTION.search(s)
+        or _hit(s, _ASK_WORDS) or _hit(s, _COMPARISON_WORDS) or _CONDITION_RESULT.search(s)
+        for s in _sentences(content))
     for rank, (sent, bonus) in enumerate(cands):
         if not sent:
             continue
@@ -1225,6 +1301,12 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
             # 抢走结论。正文明确的更强请求仍可竞争，而非无条件锁死标题。
             score += 0.6
             bits.append("作者标题为断言")
+        if is_title and content and not _topic_shaped(title) \
+                and not _NOMINALIZED_TOPIC.match(title) and not content_claim_shaped:
+            # 标题在主张位、正文全是证据陈述：标题原话即主张（「先做中央商务区，
+            # 两家运营商同步进场」）。名词化话题（「X 的 Y」）不在此列。
+            score += 0.6
+            bits.append("正文无更强主张形状，标题居主张位")
         if is_title and not content:
             bits.append("无内容支撑")
         if is_title and title.endswith(_TOPIC_TAILS):
@@ -1246,12 +1328,25 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
             bits.append(f"要决定「{_fired(sent, _ASK_WORDS)}」")
         snums = evidence_numerals(sent)
         listing = bool(snums) and _is_data_listing(sent)
+        # 主张所有权（裁定 2026-10-15）：作者主张 / 证据陈述 / 未决问题三态。
+        # 标题在主张位（作者写下论断）时，正文的「标签＋数字」是**证据陈述**——
+        # 不凭数字与短句把结论位抢走（「满意度 86 分，投诉 12 起」不是结论）；
+        # 结论/决定/对比/条件结果这类**主张形状**的正文句仍可竞争（+2.0 各自计分）。
+        # 标题是话题标签或空时，正文数字才升格（证据标签页）。
+        seat_free = (not title) or _topic_shaped(title)
+        claim_shaped = bool(_hit(sent, _CONCLUSION_WORDS) or _CONTRAST_ASSERTION.search(sent)
+                            or _hit(sent, _ASK_WORDS) or _hit(sent, _COMPARISON_WORDS)
+                            or _CONDITION_RESULT.search(sent))
+        content_may_lift = is_title or seat_free or claim_shaped
         if snums:
             # 没有内容时，光是数字说不上是结论（「18 个月落地节奏」是话题不是主张）：
             # 证据缺席的页面只能靠结论措辞立住，或者老实标 absent。
             # 数字**并排列举**同样不是结论：它回答「有多少」，不回答「所以呢」。
             if listing:
                 bits.append("数字列举（不是结论）「"
+                            + "/".join(n["raw"] for n in snums[:3]) + "」")
+            elif not content_may_lift:
+                bits.append("证据陈述（标题在主张位，数字不抢结论）「"
                             + "/".join(n["raw"] for n in snums[:3]) + "」")
             else:
                 score += 1.6 if content else 0.0
@@ -1262,7 +1357,8 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
         if len(sent) <= 42:
             # 标题（rank 0 且有标题时）不吃短句分：短标题是话题标签，
             # 只能靠结论措辞/数字立住，否则与 43–64 字标题一样止于 1.2 → absent。
-            if rank > 0 or not title:
+            # 标题在主张位时正文也不吃：短句＋数字是证据行的惯用形，不是结论。
+            if (rank > 0 or not title) and content_may_lift:
                 score += 0.4
                 bits.append("短句可复述")
         elif len(sent) > 64:

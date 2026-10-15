@@ -1,0 +1,138 @@
+{
+  "freeze": {
+    "sha256_of_payload": "3e39f091f1882e10d5ffcf9483c11f1ceb31218184fba718ed6e9ae2bcfdb502",
+    "frozen_at": "2026-10-15",
+    "note": "holdout-4：F7/F8 形状补全后复验迁移性；期望先于运行冻结。"
+  },
+  "cases": [
+    {
+      "id": "Q01",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "空调是园区耗电的第一大项",
+      "content": "耗电量里空调占 44%，其中峰时 26%、谷时 18%；照明占 21%。（来源：能耗审计）",
+      "expect": {
+        "part_whole": true,
+        "primary_contains": [
+          "44"
+        ],
+        "claim_contains": [
+          "空调"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary"
+      ],
+      "why": "嵌套份额（占 44% ＝ 峰时 26 + 谷时 18）不靠加总判共同分母；分解语义（占×2＋其中）成立。"
+    },
+    {
+      "id": "Q02",
+      "group": "numeric",
+      "severity": "critical",
+      "title": "换型完成过半",
+      "content": "8 台设备内 5 台完成换型，其余 3 台排下月。（来源：技改周报）",
+      "expect": {
+        "part_whole": true,
+        "primary_contains": [
+          "5"
+        ]
+      },
+      "observe": [
+        "evidence",
+        "primary"
+      ],
+      "why": "子集框的方位词是「中/里/内」一族：「8 台设备内 5 台」与「中」同构。"
+    },
+    {
+      "id": "Q03",
+      "group": "numeric",
+      "severity": "major",
+      "title": "一次解决率 62%，回访满意度 91%",
+      "content": "同一客服月报口径。（来源：客服月报）",
+      "expect": {
+        "part_whole": false,
+        "comparison": false
+      },
+      "observe": [
+        "evidence"
+      ],
+      "why": "两个独立指标（比率）不是部分-总体也不是两端比较；守 T02 边界于新内容。"
+    },
+    {
+      "id": "Q04",
+      "group": "causal",
+      "severity": "major",
+      "title": "毛利的改善主要靠采购议价",
+      "content": "采购议价贡献 2.4 个百分点，产品提价贡献 0.8 个百分点。（来源：利润桥）",
+      "expect": {
+        "claim_contains": [
+          "采购"
+        ]
+      },
+      "observe": [
+        "claim",
+        "evidence"
+      ],
+      "why": "断言谓语（改善）标题居主张位；贡献并列是证据陈述不抢主张。"
+    },
+    {
+      "id": "Q05",
+      "group": "vague",
+      "severity": "critical",
+      "title": "今天的数据有点怪",
+      "content": "客单价 41 元高于上周 37 元。（来源：POS 日报）",
+      "expect": {
+        "claim_soft": [
+          "怪",
+          "客单价"
+        ],
+        "comparison": true,
+        "primary_contains": [
+          "41"
+        ]
+      },
+      "observe": [
+        "claim",
+        "claim_text",
+        "primary"
+      ],
+      "why": "模糊标题＋真比较：主张保留作者措辞或可核对口径；主语是我们一侧的 41 元。"
+    },
+    {
+      "id": "Q06",
+      "group": "shape",
+      "severity": "major",
+      "title": "包装规格说明",
+      "content": "箱规 12 瓶/箱；毛重 8.4 千克；托盘 48 箱。（来源：包装规范）",
+      "expect": {
+        "evidence_not": [
+          "series",
+          "sequence"
+        ]
+      },
+      "observe": [
+        "evidence"
+      ],
+      "why": "规格行是枚举不是序列/流程（话题标签页不脑补主张）。"
+    },
+    {
+      "id": "Q07",
+      "group": "claim",
+      "severity": "critical",
+      "title": "二季度先压库存，再谈扩仓",
+      "content": "库存周转 42 天，目标 30 天。（来源：运营计划）",
+      "expect": {
+        "claim": "extracted",
+        "claim_contains": [
+          "库存"
+        ]
+      },
+      "observe": [
+        "claim",
+        "claim_text"
+      ],
+      "why": "指令标题居主张位；目标值行是证据陈述。"
+    }
+  ]
+}

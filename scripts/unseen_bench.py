@@ -194,13 +194,14 @@ def run(cases_path: Path = CASES) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=None)
+    ap.add_argument("--cases", default=None, help="评测集路径（默认 generalization_cases.json）")
     args = ap.parse_args()
     for _stream in (sys.stdout, sys.stderr):
         try:
             _stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError, OSError):
             pass
-    report = run()
+    report = run(Path(args.cases) if args.cases else CASES)
     buckets: dict[str, int] = {}
     fails = []
     for r in report["cases"]:
