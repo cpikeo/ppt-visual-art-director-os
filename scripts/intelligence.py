@@ -136,6 +136,20 @@ def _strip_scope_clauses(text: str) -> str:
     return "".join(out)
 # 「第 3 个月 / 第 6 个月」是序列位置，不是可比量（见 same_unit 的说明）。
 _AXIS_TIME_TOKEN = re.compile(r"第\s*(\d+(?:[.,]\d+)?)\s*(个月|月|年|天|周|季度|季|日)")
+# 紧贴数字的拉丁单位（标准测量记法）：220V/2,100W/3.2kg/48dB/12ms……它们与代号
+# 共享同一个字面形状（字母紧贴数字），但语义相反——一个是量，一个是命名。
+# **大小写敏感**：g 是克、G 是代际（5G），K 不收（10K 薪资/开尔文两可），nm/μm
+# 不收（28nm 制程名）——拿不准的一律按代号剔除，宁可少一个量，不造一个错量。
+_LATIN_UNIT_SUFFIX = frozenset({
+    "V", "W", "A", "kV", "kW", "mA", "kVA", "kWh", "Wh", "kJ", "N", "Pa", "bar",
+    "kg", "g", "mg", "t", "L", "ml", "m", "cm", "mm", "km", "h", "min", "s",
+    "ms", "dB", "Hz", "kHz", "MHz", "GHz", "px", "pt", "rpm", "kcal",
+})
+# 周期坐标标签（2025Q1 / Q3）：与「第 3 个月」同族——它说明数据点在时间轴上的
+# **位置**，不是与数值并置比较的另一个量。判序列时它扮演「年份」的角色：
+# 「Q1 87.2%，Q2 85.1%…」是最常见的季度写法，缺了它这类同单位时序会掉成
+# 「无证据」（实测：准点率连续四季下滑被判 none，构图退到并置）。
+_PERIOD_LABEL = re.compile(r"(?:[12]\d{3}\s*)?Q[1-4]|[12]\d{3}\s*年\s*第\s*[一二三四1-4]\s*季度?")
 # 条件从句里的比较词是**边界条件**，不是本页要展示的比较：决策页写
 # 「若 2027Q1 周期仍高于 7 个月，暂停后续批次」时，「高于」描述的是一个阀门，
 # 不是两端证据。剥掉条件从句再判比较，页面的焦点/构图/未决项才不会被一句
@@ -168,6 +182,11 @@ _SEQUENCE_WORDS = ("步骤", "流程", "阶段", "路径", "迭代", "先", "然
 # 副词，单独出现不足以证明形状——「先把 A 压回去，再谈 B」是优先级排序。
 _PHASE_MARKERS = re.compile(r"[一二三四五六七八九十\d]期|第[一二三四五六七八九十\d]+(?:期|阶段|批)"
                             r"|分[一二三四五六七八九十\d]+(?:期|批|阶段)")
+# 「分三期」自己就把承诺拆成了先后；「三期临床」「一期工程」这类单个复合名
+# 不是分期结构——旧实现一个裸「X期」就给 sequence 0.9，压过同页真实的证据
+# 形态（实测：三期临床页被判成流程，画出一条并不存在的时间轴）。与顺序词同一条
+# 判据：弱标记要两个以上，强分解形（分X期）一个就够。
+_PHASE_SPLIT = re.compile(r"分[一二三四五六七八九十\d]+(?:期|批|阶段)")
 _SEQUENCE_STRONG = ("步骤", "流程", "阶段", "迭代", "roadmap", "phase", "step",
                     "milestone", "里程碑")
 # 顺序的**形状**标记：箭头链本身就是序列，不需要作者写「步骤」两个字。
@@ -218,6 +237,13 @@ _NEGATED_FORM = re.compile(
     r"(?:不是|并非|不等于|不代表|没有|无需|不造|不要|不按)"
     r"[^。；;，,\n]{0,8}?(?:时间序列|时间线|时间轴|先后顺序|流程|步骤|阶段|"
     r"路径|迭代|里程碑|对比|比较)")
+# 「处于/正在 X 阶段」是状态、「来自/源于 X 流程」是归因：句子里出现流程名不等于
+# 这一页的形状是流程（实测：合规页的「征求意见阶段」、口岸时效页的「差异主要来自
+# 口岸流程」都被判 sequence，构图落到一条并不存在的时间轴）。与否定剥离同一条
+# 原则：名词出现 ≠ 形状成立；真流程另有箭头链、分期形与多标记兜底。
+_STATUS_OR_CREDIT = re.compile(
+    r"(?:处于|正在|来自|源于|归[因咎]于|在于)[^。；;，,\n]{0,10}?"
+    r"(?:阶段|流程|步骤|迭代|里程碑)")
 
 
 def _affirmed_relations(text: str) -> str:
@@ -230,7 +256,7 @@ _CONCLUSION_WORDS = ("结论", "所以", "因此", "必须", "唯一", "只有",
 # 这是**意义**判据（有没有现场），不是风格判据（像不像照片）。
 _SCENE_WORDS = ("现场", "记录", "回访", "走访", "探访", "实录", "课堂", "门店", "车间",
                 "工地", "田间", "实验室", "展厅", "产线", "工厂", "仓库", "医院", "学校",
-                "车间", "山村", "厨房", "田", "菜场", "港口", "车站",
+                "山村", "厨房", "田", "菜场", "港口", "车站",
                 "on-site", "field visit", "visit", "scene", "classroom", "store", "shop",
                 "factory", "farm", "lab", "studio")
 # 追问句/概览句是**话题**，不是结论：它们可以进标题，但不能冒充这一页的主张。
@@ -327,7 +353,7 @@ _REGISTER_WORDS = {
                  "评审", "委员会", "bank", "board", "investor", "audit", "review"),
     "stage": ("发布会", "客户", "用户", "消费者", "公众", "媒体", "大会", "演讲", "路演",
               "keynote", "launch", "public", "campaign", "roadshow"),
-    "working": ("团队", "内部", "周会", "复盘", "培训", "协作", "同事", "内部",
+    "working": ("团队", "内部", "周会", "复盘", "培训", "协作", "同事",
                 "internal", "team", "workshop"),
 }
 
@@ -355,17 +381,36 @@ def _scene_of(body: str, distinct: int) -> bool:
     return distinct == 0 or _hit(body, _WITNESS_WORDS)
 
 
+# 词级准备缓存（见 _hit）：键是调用方传入的词，值是（归一词, 拉丁整词正则|None）。
+_TERM_PREP: dict = {}
+
+
 def _hit(text: str, words) -> bool:
-    """CJK 用子串；拉丁整词（避免 history→story 误判）。"""
+    """CJK 用子串；拉丁整词（避免 history→story 误判）。
+
+    词表判定的每词准备（CJK/拉丁分类 + 拉丁整词正则）只做一次、按词缓存：
+    旧实现每次调用都对每个词重跑 `any(...)` 分类与 `re.escape`+编译，
+    占 plan 判断耗时的七成（实测 profile）。缓存只去掉重复准备，命中语义不变。
+    """
     low = str(text or "").lower()
     for w in words:
-        w = str(w).strip().lower()
-        if not w:
+        prep = _TERM_PREP.get(w)
+        if prep is None:
+            norm = str(w).strip().lower()
+            if not norm:
+                _TERM_PREP[w] = prep = ("", None)
+            elif any("\u4e00" <= ch <= "\u9fff" for ch in norm):
+                _TERM_PREP[w] = prep = (norm, None)
+            else:
+                _TERM_PREP[w] = prep = (
+                    norm, re.compile(rf"(?<![a-z0-9]){re.escape(norm)}(?![a-z0-9])"))
+        norm, pat = prep
+        if not norm:
             continue
-        if any("\u4e00" <= ch <= "\u9fff" for ch in w):
-            if w in low:
+        if pat is None:
+            if norm in low:
                 return True
-        elif re.search(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", low):
+        elif pat.search(low):
             return True
     return False
 
@@ -374,22 +419,51 @@ def _sentences(text: str) -> list[str]:
     return [s.strip(" \t·—,，、") for s in _SENTENCE_SPLIT.split(str(text or "")) if s.strip()]
 
 
+# 纯函数记忆化：同一页的主张锚定、权重与删除清单会反复解析同一段文本。
+# 缓存只去掉重复解析，返回值仍是独立副本，不改变任何判断结果。
+_NUMERALS_CACHE: dict[str, list] = {}
+
+
 def numerals(text: str) -> list[dict]:
     """文本里的数字及其单位（结论的候选承载体）。
 
     年份（1900–2100 的四位无单位数字）单独标记：它是时间坐标，不是证据量——
-    把「2026」当作本页最大的数字是典型的误判。字母紧贴的数字（Q1/V2）是编号
-    不是量，也不进证据。**日期与编号的碎片同样不进证据**：「2026-09」里的
-    「-09」、「2026/03」里的「03」、「2026 年 9 月」里的「9」都是时间坐标的
-    零件，把它们当成第二个数据点会让证据形态、密度与权重同时失真
-    （实测：一张排期页的权重卡出现过「次 -09」）。
+    把「2026」当作本页最大的数字是典型的误判。字母紧贴的数字（Q1/V2/3C/28nm）
+    是编号不是量，不进证据（前后两侧都拦）；但紧贴的**可测量单位**（220V/3.2kg/
+    48dB）是标准测量记法，收编为该单位的量。**日期与编号的碎片同样不进证据**：
+    「2026-09」里的「-09」、「2026/03」里的「03」、「2026 年 9 月」里的「9」
+    都是时间坐标的零件，把它们当成第二个数据点会让证据形态、密度与权重同时失真
+    （实测：一张排期页的权重卡出现过「次 -09」）。括号标注（口径/来源/样本）里的
+    数字是档案坐标——主张侧若不剥离，「（口径：…90 天内门店）」的 90 天会以
+    「第二个量」的身份制造单位冲突告警（实测）。
     """
+    cache_key = str(text or "")
+    cached = _NUMERALS_CACHE.get(cache_key)
+    if cached is not None:
+        return [dict(n) for n in cached]
+    # 标注是档案坐标：与 understand 的正文剥离同一条原则，主张/权重路径共用。
+    raw_text = _ANNOTATION.sub("", _SOURCE_TAIL.sub("", cache_key))
     out = []
-    raw_text = str(text or "")
     for m in _NUM.finditer(raw_text):
         raw = m.group(0).strip()
         value = float(m.group(1).replace(",", ""))
         unit = (m.group(2) or "").strip()
+        # 字母紧贴（数字侧）：「3C 类」「28nm 产品」「5G 套餐」的数字是型号/代号的
+        # 零件，不是量。docstring 承诺过这件事，旧实现只拦了前贴（Q1/V2），于是
+        # 「3C」的 3 以无单位量身份进入单位集合，把阈值列举、单位一致性与证据
+        # 形态一起带偏（实测：退货率对比页被判 structure）。但紧贴不等于代号：
+        # 「220V/2,100W/3.2kg/48dB」是标准测量记法，数字与单位天生连写——
+        # 一刀切会把规格页的证据清空（实测：五个规格页零证据、无主张）。判别式
+        # 是**后缀是否为可测量单位**：收编为该单位的量；不是单位就是代号，剔除。
+        # nm/μm 不收编：制程节点名（28nm 产品）在商业稿件里几乎总是分段名。
+        suffix_m = re.match(r"[A-Za-z]{1,3}", raw_text[m.end(1):])
+        if suffix_m:
+            suffix = suffix_m.group(0)
+            if suffix in _LATIN_UNIT_SUFFIX:
+                raw = (m.group(0) + suffix).strip()
+                unit = suffix
+            else:
+                continue
         # 『曲线1/方案2/第3页』是对象编号，不是可比较的数据点。判断证据数量
         # 不得把标签末尾的索引偷换成不同单位的实测值。
         prefix = raw_text[max(0, m.start() - 4):m.start()]
@@ -433,9 +507,17 @@ def numerals(text: str) -> list[dict]:
             if "." not in m.group(1):
                 continue
         # 「2026」「2026 年」都是时间坐标；「3 年」才是时长（值不在年份区间）。
+        # 裸「N 月」（N≤12 整数）同理是日历坐标（「1 月 120 万」的 1 月是月份，
+        # 不是量），时长一律写「N 个月」；不剥离会让时间标签以第二证据量的身份
+        # 混进单位集合（实测：双月营收行被判双量纲）。
         year = unit in ("", "年") and 1900 <= value <= 2100 and "." not in m.group(1)
+        if not year and unit == "月" and float(value).is_integer() and 1 <= value <= 12:
+            year = True
         out.append({"raw": raw, "value": value, "unit": unit, "year": year})
-    return out
+    if len(_NUMERALS_CACHE) > 512:
+        _NUMERALS_CACHE.clear()
+    _NUMERALS_CACHE[cache_key] = out
+    return [dict(n) for n in out]
 
 
 def evidence_numerals(text: str) -> list[dict]:
@@ -487,22 +569,27 @@ _METRIC_SEPARATORS = re.compile(r"[的与和或是在由从对把被之并而就
 # 太通用的 2 字片段（「成本」「数据」…）不足以证明主张点名了这个指标。
 _WEAK_METRIC_SLICE = frozenset({
     "成本", "数据", "时间", "比例", "金额", "数量", "情况", "内容", "方式", "结果",
-    "问题", "比率", "水平", "规模", "增长", "下降", "提升", "下降", "变化", "区间",
+    "问题", "比率", "水平", "规模", "增长", "下降", "提升", "变化", "区间",
     "部分", "整体", "合计", "平均", "同比", "环比", "口径", "来源", "期间", "单位",
 })
 # 区间下界：「1.8 至 6.4 天」里的 1.8 是波动的下沿，不是这一页要立住的量。
 _RANGE_NEXT = re.compile(r"^\s*(?:至|到|~|～|—|–|-)\s*[-+]?\d")
+# 时间坐标点：取值前面的「2026 年 / Q3 / 3 月 / 第 3 个月」——序列的位置，不是题材词。
+_TIME_POINT = re.compile(r"(20\d{2}\s*年?|Q[1-4q]|第\s*[0-9一二三四五六七八九十]+\s*个?(?:月|季度|周)"
+                         r"|[0-9一二三四五六七八九十]{1,2}\s*月|上半年|下半年)")
+# 序列的形态信号（能产形，不是词表）：「逐月/逐季」与「连续 N 个季度」都是开放形式。
+_SERIES_MORPH = re.compile(r"逐(?:日|周|月|季|年)|连续\s*[0-9一二三四五六七八九十两]+\s*个?"
+                           r"(?:日|周|月|季度|年)")
+# 比较谓语：主张「A 超过/低于 B」「A 而非 B」按谓语切成主语侧与宾语侧，
+# 宾语侧是比较的另一端/被否定侧。
+_CLAIM_END_VERB = re.compile(r"超过|超越|高于|低于|优于|落后于|领先于|而不是|而非")
 # 序数→序列下标：主张说「第二年」，证据按年份分句时，焦点属于那一年。
-_ORDINAL_INDEX = {"第一": 0, "第二年": 1, "第二年": 1, "第三年": 2, "首年": 0, "次年": 1,
+_ORDINAL_INDEX = {"第一": 0, "首年": 0, "次年": 1,
                   "末年": -1, "第一年": 0, "第二年": 1, "第三年": 2, "第四年": 3,
                   "首个": 0, "第二个": 1, "第三个": 2, "最后一个": -1}
 _YEAR_TOKEN = re.compile(r"(20\d{2})\s*年?")
-_DIGIT_TAIL = re.compile(r"[0-9][0-9.,]*\s*$")
 
 
-# 纯函数记忆化：同一页的从句切分 / 指标名 / 数字角色在一轮判断里会被
-# number_roles → focus_of / information_weight / typography 反复问到。
-# 它们都是输入的纯函数，缓存不改变任何判断结果，只去掉重复解析。
 def _metric_of_clause(clause: str) -> list[str]:
     """从句里取可能的指标名（连续 CJK 片段按虚词再切，去掉连词与动词外壳）。"""
     out = []
@@ -535,9 +622,6 @@ def _claim_mentions(claim: str, metric: str) -> bool:
     return False
 
 
-# 纯函数记忆化：同一页的从句切分 / 指标名 / 数字角色在一轮判断里会被
-# number_roles → focus_of / information_weight / typography 反复问到。
-# 它们都是输入的纯函数，缓存不改变任何判断结果，只去掉重复解析。
 def _clause_spans(text: str) -> list[tuple[int, int]]:
     spans, start = [], 0
     for m in _CLAUSE_SPLIT.finditer(text):
@@ -640,12 +724,30 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
       2. 主张里点名的指标，其数字优先（+3）；主张用序数点名某年（「第二年」）
          时，那一年从句里的数字优先（+3）；
       3. 变化终值（降至 / 升至 …）优先（+1）；
-      4. 区间下界（「1.8 至 6.4」里的 1.8）不是可以立住的量，出局。
+      4. 区间下界（「1.8 至 6.4」里的 1.8）不是可以立住的量，出局；
+      5. 条件从句里的数（「若 6 月前获批」的 6 月）是边界条件，不是已发生的量——
+         与区间下界同池出局；整句都是条件时退回全体，不判空；
+      6. 「A 超过 B」的 B 侧数字是比较的另一端（「行业均值 5.9%」），不是主语。
     """
     spans = _clause_spans(text)
     years = _year_by_clause(text)
     metrics = _metric_by_clause(text)
     year = _ordinal_year(text, claim)
+    cond_spans = [m.span() for m in _CONDITIONAL_CLAUSE.finditer(text)]
+    # 「A 超过/低于 B」型主张：B 是**比较的另一端**，不是这一页的主语
+    # （「退货率超过行业均值」的主语是我们的 8.4%，不是行业均值 5.9%）。
+    # 端点只按谓语切分，不认行业词；归属到宾语侧而未归属主语侧的数字出局。
+    end = _CLAIM_END_VERB.search(claim)
+    other_end = claim[end.end():] if end else ""
+    subject_end = claim[:end.start()] if end else claim
+    # 「12 家试点门店中，9 家续约」：总体是分母（信息权重的弱化位），子集才是
+    # 已发生的结果——总体不得作主语，否则 part_whole 页的第一落点落回分母。
+    subset = _PART_OF_WHOLE.search(text)
+    total_sig = None
+    if subset:
+        total_n = next(iter(evidence_numerals(subset.group("total"))), None)
+        if total_n:
+            total_sig = (round(total_n["value"], 6), total_n.get("unit") or "")
     cursor, scored = 0, []
     for n in nums:
         pos = text.find(n["raw"], cursor)
@@ -658,28 +760,41 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         tail = text[pos + len(n["raw"]):pos + len(n["raw"]) + 6]
         is_range_bound = bool(_RANGE_NEXT.match(tail))
         score = 0.0
-        if any(_claim_mentions(claim, m) for m in metrics.get(idx, ())):
+        named = [m for m in metrics.get(idx, ()) if _claim_mentions(claim, m)]
+        if named:
             score += 3.0
         # 主张在要一个决定时，**被申请的那个量**才是主语：决策页写「批准本轮
         # 30 家，同步把培训基地从 2 个扩到 3 个」，「3 个」带着终值信号（扩到），
         # 但它不是要批的东西。终值信号不该压过请求本身。
-        if _hit(claim, _ASK_WORDS) and _hit(clause, _ASK_WORDS):
+        requested = bool(_hit(claim, _ASK_WORDS) and _hit(clause, _ASK_WORDS))
+        if requested:
             score += 2.0
         if year and years.get(idx) == year:
             score += 3.0
         if _ARRIVAL_CUE.search(clause[:pos - a]):
             score += 1.0
-        scored.append((score, not is_range_bound, n))
+        # 条件从句里的数是护栏（「若 6 月前获批」），不是页面在展示的量；
+        # 被申请的量不受此限（「若批准，30 家先行」的 30 家就是请求本身）。
+        is_guardrail = (not requested) and any(a <= pos < b for a, b in cond_spans)
+        is_other_end = bool(other_end) and any(_claim_mentions(other_end, m) for m in named) \
+            and not any(_claim_mentions(subject_end, m) for m in metrics.get(idx, ()))
+        is_denominator = total_sig is not None and (
+            round(n["value"], 6), n.get("unit") or "") == total_sig
+        scored.append((score, not is_range_bound and not is_guardrail
+                       and not is_other_end and not is_denominator,
+                       n, tuple(metrics.get(idx, ()))))
     alive = [s for s in scored if s[1]]
     pool = alive or scored                       # 全是区间边界时退回全体（不判空）
     best = max(pool, key=lambda t: t[0])
     if best[0] <= 0:
         return None
-    # 同分且同单位的取最后一个：主张没有点名某个取值时（「增速已经连续三个季度
-    # 收窄」），这一页的答案是**当前状态**，不是序列开头那一年的基期。旧实现取
-    # 同分里的第一个，等于每次讲趋势都把三年前的旧数字推成主语。
+    # 同分且同指标、同单位的取最后一个：主张没有点名某个取值时（「增速已经连续三个季度
+    # 收窄」），这一页的答案是**当前状态**，不是序列开头那一年的基期。只凭「同单位」
+    # 不够——两个不同指标的「月」（提交月 vs 条件月）不是一条序列，末值优先会让
+    # 护栏日期顶掉已发生的事实（实测：合规页主语成了「若 6 月前获批」的 6 月）。
     tied = [t for t in pool if round(t[0], 6) == round(best[0], 6)]
-    if len(tied) >= 2 and len({t[2].get("unit") or "" for t in tied}) == 1:
+    if len(tied) >= 2 and len({t[2].get("unit") or "" for t in tied}) == 1 \
+            and len({t[3] for t in tied}) == 1:
         return tied[-1][2]
     return best[2]
 
@@ -718,6 +833,27 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
                             and n["unit"] == arrival["unit"]), None)
             if primary:
                 return nums, primary
+    # 主张点名了指标、正文没写标签、取值各自带时间坐标（「准点率连续四个季度下滑：
+    # Q1 87.2%，Q2 85.1%…」）：这一列就是该指标的序列，答案是**当前状态**（末值），
+    # 不是序列开头的基期。判据要求序列信号在主张里（下滑/收窄/增长…）且每个取值都
+    # 落在时间点上——实体并置（「早班 62 人，晚班 12 人」）没有时间坐标，仍走原回退。
+    claim_nums_ok = claim and any(_claim_mentions(str(claim), m)
+                                  for m in _metric_of_clause(str(claim)))
+    ev_nums = [n for n in nums if not n["year"]]
+    spans = _clause_spans(text)
+    cursor, timed_flags = 0, []
+    for n in ev_nums:
+        pos = text.find(n["raw"], cursor)
+        if pos < 0:
+            pos = cursor
+        cursor = pos + len(n["raw"])
+        start = next((a for a, b in spans if a <= pos < b), 0)
+        timed_flags.append(bool(_TIME_POINT.search(text[start:pos])))
+    if (claim_nums_ok and timed_flags and all(timed_flags) and len(ev_nums) >= 2
+            and len({n.get("unit") or "" for n in ev_nums}) == 1
+            and (_hit(str(claim), _CHANGE_WORDS + _SERIES_WORDS)
+                 or _SERIES_MORPH.search(str(claim)))):
+        return nums, ev_nums[-1]
     return nums, nums[0]
 
 
@@ -791,7 +927,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     nums = numerals(body)
     # 按年份排列的同一指标是时间序列，不是并置比较；分期（一期/第二阶段）是同一承诺的先后。
     years = sum(1 for n in nums if n["year"])
-    phased = bool(_PHASE_MARKERS.search(body))
+    phased = bool(_PHASE_SPLIT.search(body)) or len(_PHASE_MARKERS.findall(body)) >= 2
     ev = [n for n in nums if not n["year"]]
     # 标题重复正文的数字、同一数字写两遍：那是**同一个事实**，不是两个证据。
     # 判断证据形态与密度按去重后的数量算；「重复」这件事本身归信息权重管。
@@ -827,6 +963,9 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         or bool(_MULTIPLE_OF.search(cmp_body))
         or (distinct >= 2 and bool(_TWO_ENDS_JOINED.search(body)))
         or (distinct >= 2 and bool(_BETWEEN_METRICS.search(cmp_body)))
+        # 「与…不同」的差异句形 + 两个同单位取值 = 双端对照（「清关时效在越南与
+        # 印尼不同：1.8 天 / 6.4 天」）。形状判据，不靠行业词表。
+        or (distinct >= 2 and same_unit and bool(_TWO_END_DIFF.search(cmp_body)))
         # 被否定的比较在 body 上判（cmp_body 已经把否定剥掉了）：剥否定是为了
         # 「界限不是对比」，而宾语是名词时它本来就不是界限。
         or (distinct >= 2 and bool(_NEGATED_COMPARISON.search(body))))
@@ -847,8 +986,8 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 但没有时间与到达语义——那种形状是枚举，不是路径（_is_quantile_row）。
     quantile_row = _is_quantile_row(body)
     if (distinct >= 2 and _hit(evidence_body, _SERIES_WORDS)) \
-            or (distinct >= 2 and same_unit and (years >= 2 or len(axis_tokens) >= 2)
-                and not quantile_row) \
+            or (distinct >= 2 and same_unit and (years >= 2 or len(axis_tokens) >= 2
+                or len(_PERIOD_LABEL.findall(body)) >= 2) and not quantile_row) \
             or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
@@ -858,7 +997,8 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
             or threshold_list:
         modes["structure"] = 0.65
     # 否定某种表达形态不构成该形态的证据；与比较/显式关系共用同一口径。
-    sequence_body = affirmed
+    # 状态/归因句（「处于征求意见阶段」「差异来自口岸流程」）里的流程名不是形状。
+    sequence_body = _STATUS_OR_CREDIT.sub("", affirmed)
     seq_strong = _hit(sequence_body, _SEQUENCE_STRONG)
     seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in sequence_body)
     if seq_strong or seq_hits >= 2:
@@ -947,11 +1087,15 @@ _TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足",
                     "缺一不可", "不可或缺", "不可偏废", "同等重要", "都不能少")
 
 
+# 两端差异句形：「清关时效在越南与印尼不同」——A 与 B 的差异断言跨行业通用，
+# 是双端证据的形状信号（配合同单位取值即为比较）。排除参与/相与的粘连；「与众不同」
+# 是惯用形容语、不是两端比较，故两者之间至少隔一个字；「不同步」是协调词不是比较。
+_TWO_END_DIFF = re.compile(r"(?<![参相])与[^，。；]{1,12}?(?:不同(?!步)|差异|不一样)")
 # 对比式断言：「增长来自复购而非补贴」「不是在赌市场，是在买能力」
 # ——中文商业写作里最典型的判断句形，和「唯一/只有」同样属于断言证据。
 _CONTRAST_ASSERTION = re.compile(
     r"而非|不等于|不代表|并非|不是[^，。；]{0,12}(?:而是|是)|不在于|不在[^。；]{1,12}?[，,、]?在|不再只是|关键在于|取决于|本质上是|"
-    r"差别不在|问题不在|真正的")
+    r"差别不在|问题不在|真正的|" + _TWO_END_DIFF.pattern)
 
 
 def _title_thesis(title: str) -> bool:
@@ -1470,8 +1614,13 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
         raw = (primary or carried[0])["raw"]
         if (_hit(claim_text, _ASK_WORDS)):
             why = f"「{raw}」是请求的资源量：它和动作同屏，期限不被误称作基期。"
-        elif u.get("evidence") == "series" and len(carried) >= 2 and u.get("same_unit"):
+        elif u.get("evidence") == "series" and len(carried) >= 2 and u.get("same_unit") \
+                and _arrival_value(primary or carried[0], page_text):
             why = f"「{raw}」是变化终值：让它先被看见，再给出较小的基期参照。"
+        elif u.get("evidence") == "series" and len(carried) >= 2 and u.get("same_unit"):
+            # 理由必须与数据一致：没有终值信号（降至/升至/→）就不能把取值称作
+            # 「变化终值」——序列里主张锚定的当前值就老老实实说是当前值。
+            why = f"「{raw}」是序列的当前值：先立住现状，基期退到参照位。"
         else:
             why = f"「{raw}」承担本页证据：保持来源与口径可见，不为数字编造基期。"
         # 单一结论量或预算请求用原生文字直立；真有时间序列/作者声明图表
@@ -2108,8 +2257,6 @@ def _intent_value(value) -> bool:
 # 12 页里 7 页同为 PROVE —— 它是内部枚举，不是给观众看的内容，机械重复还会
 # 把整套读成模板。眉标该说的是「现在走到论证的哪一段」，所以由本页结论派生；
 # 作者可在 brief 里逐页声明 `eyebrow` 压过推导。
-_ROLE_LABEL_CN = {"establish": "建立", "explain": "解释", "compare": "对比",
-                  "prove": "证明", "persuade": "说服", "summarize": "收束"}
 _LABEL_HEAD_PREFIX = ("我们", "本页", "这一页", "首先", "其次", "同时", "另外",
                       "因此", "所以", "但是", "请", "建议", "也就是说", "换句话说",
                       "同期", "本期", "目前", "当前", "今年", "未来")
@@ -2129,7 +2276,6 @@ _LABEL_BOUNDARY = ("是", "在", "与", "和", "或", "由", "从", "对", "把"
 _GAP_WORDS = ("差距", "差值", "差额", "价差", "落差", "收敛", "收窄", "拉大", "缩小", "差额率")
 
 _LABEL_TAIL = "的里中上下内外前后了过等及"
-_NON_CJK = re.compile(r"[^一-鿿]")
 # 段首的「名词 + 数字 + 单位」说明语：「中国 800 元以上」「本轮 1.8 亿元里」
 _NUM_MODIFIER = re.compile(r"^[^0-9A-Za-z]{0,6}[0-9][0-9.,]*\s*[一-鿿]{0,3}")
 # 切段边界（长词优先），在此处断开而不是在断口前截断
@@ -2155,10 +2301,10 @@ _MEASURE_CORES = frozenset({"亿元", "万元", "元", "万户", "万单", "万�
 
 
 def section_label(item: dict, claim: dict, role: str) -> str:
-    """眉标：本页结论的**主题短语**（3–6 字），派不出来才退回中文角色词。
+    """眉标：本页结论的**主题短语**（3–6 字），派不出来就缺省为空。
 
     取法：先剥语气/时间前缀，再在第一个虚词或谓语之前收口（「三个市场｜里只有…」
-    → 三个市场）；收口太短就顺延到下一个边界，太长就退回角色词——宁可退回，
+    → 三个市场）；收口太短就顺延到下一个边界，太长就退回空——宁可缺省，
     也不输出半截词（此前的截断做法产出过「三个市场里只有印」）。
     """
     declared = str((item or {}).get("eyebrow") or "").strip()
