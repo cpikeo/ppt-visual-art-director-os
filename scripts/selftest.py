@@ -2622,6 +2622,69 @@ def test_design_judgment(tmp: Path):
           intel.understand("华东高端线均价 480 元高于泰国 300 元")["comparison"] is True)
     check("threshold: 「是……的 1.6 倍」仍是比较",
           intel.understand("高端线售价是泰国的 1.6 倍")["comparison"] is True)
+    # 31 · 判断修复回归（2026-10-15）：形状判据的边界与护栏，不是词表扩充——
+    # 字母紧贴编号、口径标注、条件从句、复合分期名、与…不同句形、序列当前值、
+    # 分母不作主语、日历月坐标。每条先有跨行业实证，再锁行为。
+    check("numerals: 字母紧贴的编号不进证据（3C/28nm 是命名，不是量）",
+          [n["raw"] for n in intel.evidence_numerals("3C 类占比 3.2%，28nm 良率 81%")]
+          == ["3.2%", "81%"],
+          str([n["raw"] for n in intel.evidence_numerals("3C 类占比 3.2%，28nm 良率 81%")]))
+    check("numerals: 紧贴的可测量单位是量（220V/2,100W/3.2kg/48dB 是规格值不是代号）",
+          [n["raw"] for n in intel.evidence_numerals(
+              "额定电压 220V；峰值功率 2,100W；整机重量 3.2kg；噪音 48dB")]
+          == ["220V", "2,100W", "3.2kg", "48dB"],
+          str([n["raw"] for n in intel.evidence_numerals(
+              "额定电压 220V；峰值功率 2,100W；整机重量 3.2kg；噪音 48dB")]))
+    check("numerals: 口径标注里的数字是档案坐标（不制造单位冲突、不进证据）",
+          intel.claim_units_conflict("翻台率 4.2 次/天（口径：可比门店，剔除新开业 90 天内门店）") is False
+          and [n["raw"] for n in intel.evidence_numerals(
+              "翻台率 4.2 次/天（口径：可比门店，剔除新开业 90 天内门店）")] == ["4.2 次"],
+          str([n["raw"] for n in intel.evidence_numerals(
+              "翻台率 4.2 次/天（口径：可比门店，剔除新开业 90 天内门店）")]))
+    check("numerals: 裸 N 月是日历坐标（时长写 N 个月才是量）",
+          [(n["raw"], n["year"]) for n in intel.numerals("1 月 120 万，2 月 135 万")]
+          == [("1 月", True), ("120 万", False), ("2 月", True), ("135 万", False)],
+          str([(n["raw"], n["year"]) for n in intel.numerals("1 月 120 万，2 月 135 万")]))
+    _guard = intel.number_roles("预算先按 30 万元执行；若提前到 45 万元封顶则需复审",
+                               "预算先按 30 万元执行")[1]
+    check("role: 条件从句里的护栏值不作主语（「若…则」内的数不抢现实值）",
+          _guard["raw"] == "30 万元", str(_guard))
+    check("role: 分母（总体）不作主语（「12 家中 9 家」主张落在 9 家）",
+          intel.number_roles("12 家试点门店中，9 家续约", "12 家试点门店中，9 家续约")[1]["raw"]
+          == "9 家",
+          str(intel.number_roles("12 家试点门店中，9 家续约", "12 家试点门店中，9 家续约")[1]))
+    check("role: 班次/先后两句里的首句候选不被主张端点规则抢走（早班 62 人）",
+          intel.number_roles("早班 62 人，晚班 12 人", "门店净增持续放缓")[1]["raw"] == "62 人",
+          str(intel.number_roles("早班 62 人，晚班 12 人", "门店净增持续放缓")[1]))
+    _qtxt = "2025Q1 87.2%，2025Q2 85.1%，2025Q3 82.6%，2025Q4 79.3%。"
+    _qclaim = {"text": "准点率连续四个季度下滑"}
+    _qanchor = intel.number_roles(_qtxt, _qclaim["text"])
+    _qfocus = intel.focus_of("prove", intel.understand(_qtxt, content=_qtxt),
+                            {"source": "given", "text": _qclaim["text"]},
+                            number_anchor=_qanchor, page_text=_qtxt)
+    check("role: 同指标序列取当前值（末值），理由是「序列的当前值」不是「变化终值」",
+          _qanchor[1]["raw"] == "79.3%" and "序列的当前值" in _qfocus["why"]
+          and "变化终值" not in _qfocus["why"], str(_qfocus))
+    check("shape: 复合分期名（三期临床）是命名，不是序列",
+          intel.understand("三期临床达到主要终点 应答率 63.4%，对照组 41.2%")["evidence"]
+          != "sequence")
+    check("shape: 「与…不同」的差异陈述是两端比较的形状（差异被主张）",
+          intel.understand("清关时效在越南与印尼不同 越南 1.8 天，印尼 6.4 天")["comparison"]
+          is True
+          and intel.extract_claim({"title": "清关时效在越南与印尼不同",
+                                   "content": "越南 1.8 天，印尼 6.4 天"})["source"]
+          == "extracted")
+    check("shape: 状态/归因词（提交、来自）不制造序列",
+          intel.understand("合规整改尚未获批 整改方案已于 3 月提交监管，"
+                           "目前处于征求意见阶段")["evidence"] != "sequence"
+          and intel.understand("服务营收增长主要来自家电 增速 21.4%，"
+                           "其余品类 6.8%")["evidence"] != "sequence")
+    check("claim: 逐项编号页整体是主张（「设备 ZX-81；工位 AB-26」类内容不当序列）",
+          intel.extract_claim({"title": "设备编号不是步骤",
+                               "content": "设备 ZX-81；工位 AB-26。"})["source"]
+          == "extracted"
+          and intel.understand("设备编号不是步骤 设备 ZX-81；工位 AB-26。")["evidence"]
+          != "sequence")
     # 眉标不取数量残片（「15 万元」的「万元」）；派不出主题就省略，不输出角色词
     check("眉标: 数量短语的残片（「万元」）不作眉标",
           intel.section_label({}, {"text": "单店月净利连续两月低于 15 万元"}, "compare") == "")
