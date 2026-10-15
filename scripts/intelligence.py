@@ -2709,6 +2709,8 @@ def build_skeleton(bundle: dict) -> str:
          '留白：每处空白说得出保护什么；说不出的是事故。行长建议为非实测容量。',
          '跨页锚（anchor：眉标 / 页码，≥4 页时由 plan 发）：落成 role=eyebrow / role=page_number 的元素，位置全稿一致。',
          '字段契约 → references/contract.md（一次）；判断有真实缺口才回看 SKILL.md §2–3。',
+         '落稿写法：build.py 是 Python 模块（.json 亦可）；重复信封（id/type/role/几何/字号字段）',
+         '  可用局部函数压缩，判断（构图/焦点/权重/断行/出处）仍逐页显式给值——判断进 helper 即模板化。',
          f'质量档: {deck.get("quality")} · 页数: {len(pages)}']
     L += [f'  {line}' for line in facts]
     has_media = any((p.get("judgment") or {}).get("media", {}).get("decision")
@@ -2734,6 +2736,17 @@ def build_skeleton(bundle: dict) -> str:
           f'        "fonts": {fonts!r},  # 世界排版语气；作者有依据时可覆盖',
           '    },',
           '    "slides": [']
+    # 连续若干页的同一行动行若逐字相同，只在区间头页写全，后续页收为「同 sN」引用：
+    # 信息不丢（引用可回溯头页），作者不再逐页重读/重推同一行动；原文仍逐页贴。
+    prev_action: dict = {}
+
+    def _action(cat: str, page_id: str, line: str) -> str:
+        prev = prev_action.get(cat)
+        if prev is not None and prev[1] == line:
+            return f'        #    …{cat}同 {prev[0]}'
+        prev_action[cat] = (page_id, line)
+        return line
+
     for pg in pages:
         # 骨架只写「下一步怎么落」：结论、权重、焦点+构图、排版、节奏、必落元素、未决。
         # 构图/焦点/空间的完整理由只在 plan.json 一处（SKILL §4），不在骨架重抄。
@@ -2768,8 +2781,10 @@ def build_skeleton(bundle: dict) -> str:
         L.append(f'        #    权重: 主 {_weight_brief(weight.get("maximize"))}；'
                  f'次 {_weight_brief(weight.get("weaken"))}；'
                  f'删除 {_weight_brief(weight.get("delete"))}')
-        L.append(f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）· '
-                 f'构图: {comp.get("chosen")} · 主区: {spatial.get("primary_zone")}')
+        L.append(_action(
+            "焦点/构图/主区", pg.get("id"),
+            f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）· '
+            f'构图: {comp.get("chosen")} · 主区: {spatial.get("primary_zone")}'))
         head = f'        #    排版: 主语 {typ.get("lead")} · 退后 {typ.get("support") or "无"}'
         if sc.get("body_measure_cjk"):
             head += f' · 行长≈{sc.get("body_measure_cjk")}字'
@@ -2780,11 +2795,14 @@ def build_skeleton(bundle: dict) -> str:
         L.append(head)
         if media.get("decision") not in (None, "none"):
             L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
-        L.append(f'        #    跨页节奏[{rhythm.get("move")}]：{rhythm.get("why")}')
+        L.append(_action("跨页节奏", pg.get("id"),
+                         f'        #    跨页节奏[{rhythm.get("move")}]：{rhythm.get("why")}'))
         if prod.get("must_place"):
-            L.append('        #    必落元素: ' + "；".join(
-                f'{x["role"]}({x["type"]})' for x in prod["must_place"])
-                + f' · 密度 {prod.get("density_target")}')
+            L.append(_action(
+                "必落元素/密度", pg.get("id"),
+                '        #    必落元素: ' + "；".join(
+                    f'{x["role"]}({x["type"]})' for x in prod["must_place"])
+                + f' · 密度 {prod.get("density_target")}'))
         if j.get("open_questions"):
             L.append('        #    ⚠ 未决: ' + "；".join(j["open_questions"]))
         if pg.get("declarations"):

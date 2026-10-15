@@ -504,6 +504,21 @@ def test_intelligence(tmp: Path):
           and (anchors[0] is None or "page_number" not in anchors[0])
           and all("page_intent" not in s for s in four_vars["SPEC"]["slides"]),
           str(anchors))
+    # 骨架提速：连续同动作收引用（信息不丢、可回溯）；落稿写法习语进头部
+    repeat_deck = intel.think(dict(BRIEF, slides=[
+        {"id": f"q{i}", "title": f"同类证据页{i}",
+         "content": "履约成本 11.2 元，同比升 3%（来源：台账）"}
+        for i in range(1, 7)]))
+    rep_sk = intel.build_skeleton(repeat_deck)
+    refs = re.findall(r"# …(.+?)同 (\S+)", rep_sk)
+    ref_ids = re.findall(r"# ── (\S+) ·", rep_sk)
+    check("skeleton: 连续同动作收引用（头页全行保留、引用可回溯、原文不丢）",
+          len(refs) >= 3 and all(r in ref_ids for _, r in refs)
+          and rep_sk.count("内容原文:") == 6
+          and compile(rep_sk, "repeat-skeleton.py", "exec") is not None, str(refs)[:120])
+    check("skeleton: 落稿写法（信封可压缩、判断逐页显式）写进骨架头部",
+          "落稿写法" in rep_sk.split("SPEC")[0] and "逐页显式给值" in rep_sk)
+
     # 眉标：内容派生 + 作者声明压过推导 + 不输出半截词
     eyebrow_deck = intel.think(dict(BRIEF, slides=[
         {"id": f"e{i}", "title": f"东南亚市场{i}是我们唯一的结构性增长来源",
