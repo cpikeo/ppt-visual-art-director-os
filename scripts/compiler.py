@@ -16,7 +16,7 @@ from primitives import (
     RenderContext, emu, pt, px_to_pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
     CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS, CHART_SPEC,
     ELEMENT_PAYLOAD_KINDS, NUMERIC_CHART_KINDS, chart_rows,
-    highlight_index, series_highlight_index,
+    highlight_index, resolve_chart_highlight,
     split_runs, is_cjk,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
@@ -830,12 +830,24 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
     chart.has_title = False
     _native_chart_text(chart, element, ctx, kind, n_cat * len(parsed), h)
     series_names = [name for name, _nums in parsed]
-    hl = series_highlight_index(element, series_names, -1)
+    # highlight 双命名空间消歧（primitives.resolve_chart_highlight，全库唯一口径）：
+    # 序列名 → 序列级强调；类别名 / 单序列整数 → 数据点强调（落 dPt，与 data 载荷
+    # 的逐点强调同一语义）。9.31.1 登记缺口即此处曾只认序列索引，点级强调静默不落
+    #（dPt=0）而 ghost 预览渲染了它——预览/产物分叉，按根因只修这一处。
+    hl, hp = resolve_chart_highlight(element, [str(c) for c in categories], series_names)
     end_labels = bool(element.get("end_labels", True))
     # 每序列可声明语义角色（series_roles: ["primary","negative",...]）——
     # 「这条序列是风险」是判断，不该写死成某个 hex。
     series_roles = element.get("series_roles") or []
-    palette = ctx.series_palette(len(chart.series), hl)
+    if hp >= 0 and len(parsed) == 1:
+        # 单序列（series 写法）与 data 载荷同一套颜色纪律：accent 只留给强调点，
+        # 基础色 == accent 时退到 primary 角色（见 add_native_chart 的 hl0/base）。
+        base0 = primary
+        if primary == ctx.color("accent"):
+            base0 = ctx.chart_role("primary") or ctx.color("primary") or primary
+        palette = [base0]
+    else:
+        palette = ctx.series_palette(len(chart.series), hl, skip_accent=hp >= 0)
     for i, series in enumerate(chart.series):
         role_color = (ctx.chart_role(str(series_roles[i]))
                       if i < len(series_roles) else None)
@@ -859,6 +871,34 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
             series.format.fill.fore_color.rgb = color
             series.format.line.fill.background()
             _paint_negative_points(series, ctx, element)
+    if hp >= 0:
+        # 数据点强调落 dPt：强调色只占一个位置（accent），负值染色后仍被强调覆盖
+        #——「这一个点是答案」优先于风险编码。在每条序列的该类目点上落强调。
+        accent = ctx.color("accent")
+        if accent is not None:
+            for series in chart.series:
+                try:
+                    if kind in ("line", "trend", "single_trend_line"):
+                        mk = series.points[hp].marker
+                        mk.style = XL_MARKER_STYLE.CIRCLE
+                        mk.size = 7
+                        mk.format.fill.solid()
+                        mk.format.fill.fore_color.rgb = accent
+                        try:
+                            mk.format.line.color.rgb = accent
+                        except Exception:
+                            pass
+                    else:
+                        point = series.points[hp]
+                        point.format.fill.solid()
+                        point.format.fill.fore_color.rgb = accent
+                        try:
+                            point.format.line.color.rgb = accent
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    ctx.warn(f"chart '{eid}': 强调点第 {hp} 项未能写入序列 "
+                             f"'{getattr(series, 'name', '')}'（{type(exc).__name__}: {exc}）")
     try:
         chart.plots[0].gap_width = int(element.get("gap_width", 55))
     except Exception:
@@ -1669,31 +1709,37 @@ def _postprocess_package(output_path, *, media_stored: bool = True) -> dict:
                             r"(?:(?!</a:r>).)*?</a:r>", _re.S)
     t0 = _time.perf_counter()
     media_passthrough = 0
-    with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w") as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            compression = _zip.ZIP_DEFLATED
-            if item.filename.endswith(_EMBEDDED_OOXML):
-                data = _normalize_embedded_ooxml(data)
-            if media_stored and not item.filename.endswith((".xml", ".rels")) \
-                    and not item.filename.endswith(_EMBEDDED_OOXML):
-                # 媒体/字体：直存。字节完全相同，只是不再做无收益的二次压缩。
-                compression = _zip.ZIP_STORED
-                media_passthrough += 1
-            if item.filename.endswith(".xml") and item.filename.startswith("ppt/"):
-                text = data.decode("utf-8")
-                stripped = text
-                if item.filename.startswith("ppt/theme/"):
-                    stripped = _re.sub(r"<a:outerShdw\b.*?</a:outerShdw>", "", stripped,
-                                       flags=_re.S)
-                if "<a:r>" in stripped:
-                    stripped = empty_run.sub("", stripped)
-                if stripped != text:
-                    data = stripped.encode("utf-8")
-            item.date_time = _FIXED_ZIP_STAMP
-            item.compress_type = compression
-            zout.writestr(item, data)
-    _shutil.move(str(tmp), str(path))
+    try:
+        with _zip.ZipFile(path) as zin, _zip.ZipFile(tmp, "w") as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                compression = _zip.ZIP_DEFLATED
+                if item.filename.endswith(_EMBEDDED_OOXML):
+                    data = _normalize_embedded_ooxml(data)
+                if media_stored and not item.filename.endswith((".xml", ".rels")) \
+                        and not item.filename.endswith(_EMBEDDED_OOXML):
+                    # 媒体/字体：直存。字节完全相同，只是不再做无收益的二次压缩。
+                    compression = _zip.ZIP_STORED
+                    media_passthrough += 1
+                if item.filename.endswith(".xml") and item.filename.startswith("ppt/"):
+                    text = data.decode("utf-8")
+                    stripped = text
+                    if item.filename.startswith("ppt/theme/"):
+                        stripped = _re.sub(r"<a:outerShdw\b.*?</a:outerShdw>", "", stripped,
+                                           flags=_re.S)
+                    if "<a:r>" in stripped:
+                        stripped = empty_run.sub("", stripped)
+                    if stripped != text:
+                        data = stripped.encode("utf-8")
+                item.date_time = _FIXED_ZIP_STAMP
+                item.compress_type = compression
+                zout.writestr(item, data)
+        _shutil.move(str(tmp), str(path))
+    finally:
+        # 半截包必须清掉：写盘中断（磁盘满 / 条目损坏）时 tmp 里是一份不完整
+        # 的 PPTX，留在交付物旁边既占空间又可能被当成产物（实测：损坏条目会让
+        # 循环中途抛错，tmp 残留 4KB）。成功路径 tmp 已被 move 走，这里是无操作。
+        tmp.unlink(missing_ok=True)
     return {"package_ms": round((_time.perf_counter() - t0) * 1000, 2),
             "media_entries_stored": media_passthrough}
 

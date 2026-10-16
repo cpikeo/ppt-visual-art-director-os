@@ -7,7 +7,7 @@
 QA 只回答硬约束与凭证是否通过（PASS / BLOCK），不签署视觉终验（SKILL §6）。
 
 - **拦（error → BLOCK）**：编译失败 · 内容缺失 · 空 deck/空页 · 溢出（框装不下 / 超 max_lines / 禁换行超宽）
-  · 越界与退化几何 · 重叠与来源区侵入 · 无效图表类型 / 空载荷 / 非有限值 / 行标签缺失
+  · 越界与退化几何 · 重叠与来源区侵入 · 无效图表类型 / 空载荷 / 非有限值（含 `matrix.points[].x/y`）/ 行标签缺失
   · 同指标跨页单位不一致 · release 缺来源/单位/期间/口径 · 认不出的色名 · 未消费或不可见的字段。
 - **不拦（归作者判断）**：好不好看、密度、颜色克制度、字号与留白、构图平衡、图表类型是否选得对、
   口径文字怎么写。
@@ -83,6 +83,13 @@ PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过
 在目标 PowerPoint 检查长标签折行和遮挡。**载荷两式**：数值图表用 `categories + series[].values`；
 复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）
 其中 matrix 用 `points`、architecture 用 `layers`，其余用 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
+`matrix` 的每个点是 `{x, y, label}`：`x/y` 必须为有限数字（缺失或非数值由硬门拦下，
+前端不会收到裸 `KeyError`）。
+**`highlight` 的命名空间**（`primitives.resolve_chart_highlight`，编译/预览/guard 同源）：
+写**序列名** = 整条序列强调（accent + 加粗）；写**类别名** = 该类目上的数据点强调
+（`data` 与 `categories + series` 两种载荷同义，落原生 `dPt`）；写**整数**时，多序列
+（≥2 条）按序列索引、单序列按类别索引。都不命中则不猜（guard 发 `chart_highlight`
+告警，产物与预览都不产生强调）。点级强调存在时，序列基础色不占用 accent。
 带截断上限的 kind（见 `CHART_SPEC` 的 `limit`）超过上限时在编译前 BLOCK，不能静默丢尾项；
 编译器与预览的截断与该表同源，不存在第二份数值。
 

@@ -2,6 +2,69 @@
 
 仅保留版本差异、兼容事项与关键验证边界；已提交的旧版记录可从 Git 历史恢复。
 
+## 9.33.0 — 2026-10-15 · 9.31.1 登记缺口修复：多序列点级强调落 dPt + matrix 点位硬门（本地工作区，未推送）
+
+- **根因修复（9.31.1 登记的系统发现）**：`highlight` 在 `categories + series`
+  编译路径被当序列索引吞掉，点级强调静默不落（实测 dPt=0），而 ghost 预览渲染了
+  它——预览/产物分叉。修法不新增规则，而是把消歧收进唯一真源
+  `primitives.resolve_chart_highlight`（序列名 → 序列级强调；类别名 → 每条序列在
+  该类目上的点强调；整数按序列数 ≥2 走序列索引、单序列走类别索引；均不命中则
+  不猜），compiler / ghost / guard 三处**派生自同一函数**：
+  - compiler：点级强调落 `dPt`（line 走 marker、column/bar 走 point fill），
+    并与单序列路径同一套颜色纪律（基础色 == accent 时退位、点强调优先于 negative
+    染色）；`series_palette(..., skip_accent=True)` 保证点级强调存在时序列基础色
+    不占用 accent。
+  - ghost：多序列 column/bar 不再一律涂墨色（此前图例是彩的、柱子是灰的），
+    折线点级强调在对应类目点落 accent 圆点——预览与产物对同一个 highlight 给
+    同一个强调；同一轮把多序列展开顺序改为**类别优先**（与产物分组柱同序），
+    旧实现按序列优先展开，把「同一类别的两条并排」画成相隔很远的两组。
+  - guard：`chart_highlight` 校验随载荷形态选命名空间（multi 用 categories+series
+    名，data 用行标签），写错名字/越界只警告不猜。
+- **硬门补口**：`matrix` 的 `points[].x/y` 纳入「非有限值」硬门。此前缺 x/y 的
+  matrix 可过 release 硬门，随后在编译器抛裸 `KeyError`（COMPILE_FAIL 的报错看不出
+  哪里写错，作者只能读栈）；现在 guard 给出可修诊断，编译器同时保留按元素跳过 +
+  明确告警的兜底。回归夹具同步补 `x/y`，并新增「缺 x/y 必须阻断」负例。
+- **更多同轮审计修复**（各配回归锁定）：
+  - `_postprocess_package` 写盘中断会在交付物旁留下半截 `.tmp`（实测损坏条目中途
+    抛错 → 残留 4KB），改为异常路径清理；
+  - `primitives.split_runs("")` 此前抛 `IndexError`（公开原语靠调用方守卫才不炸），
+    改为返回空列表；
+  - ghost 补画**环心 KPI**（`center_value / center_label`）：产物里它们是两个可编辑
+    文本框，预览此前把孔留空，作者看不到自己写的读数是否存在、会不会挤出孔径；
+  - `claim` 为 absent 时的告警改为按真实根因分两种（内容缺失 / 有内容但不成主张）：
+    实测预算构成页标题是话题标签、正文完整，却被报「content 缺失」，会诱使作者去
+    补一份本来就在的内容；
+  - 编译缓存写盘失败改为**出声**（`_patch_meta`/`record_compile` 返回是否落盘，
+    vao 在 timing 记 `cache_write_error` 并打一行 warning）：此前缓存故障与冷启动
+    长得一模一样，每轮白重编却无人知晓。
+- **验证（本地）**：selftest 493/493（新增 18 条：highlight 六形态 dPt、accent 预留、
+  预览强调位移、写错名字两边都不强调、消歧单一真源、多序列展开顺序、环心 KPI、
+  matrix 缺 x/y、后处理临时文件、split_runs 空串、absent 归因、缓存写盘出声）
+  · bench 57/57 · unseen 81/81 · holdout r2/r3/r4 31/31 + 14/14 + 8/8 · spec 档红线
+  （无 pptx/lxml/compiler 导入）· `python -m compileall -q scripts` · CLI plan 冒烟。
+  端到端：6 页 deck（4 张原生图表、多序列类别强调、环心 KPI、中文排版）release
+  strict PASS（0.27s，含 QC → 绑定 → 编译 → 全页取证 → Manifest）；含图稿件的
+  release strict PASS（0.39s）；图像换字节后由资产链核验拦下（BLOCK）实测确认；
+  越界/退化几何/未知 token/来源区侵入/重叠/超载容量各负例实测 BLOCK。
+- **兼容**：`highlight` 在**单序列 data 载荷**上的语义与产物字节不变（同一索引
+  同一颜色，回归锁定）；多序列路径从「静默忽略」改为「按命名空间生效」属缺陷修复，
+  不构成契约扩张——写错名字仍不产生任何强调。`resolve_chart_highlight` 为新的唯一
+  highlight 入口（`primitives`，docstring 即契约）；它吸收了旧 `series_highlight_index`
+  （只认序列名/索引、已被全库迁移，零消费者后按纪律删除）——同一件事两个入口，
+  迟早在某一层分叉成两套语义。若有外部脚本直接 import 该旧名，改调
+  `resolve_chart_highlight`（返回 `(series_index, point_index)`）。
+- **性能（同机 A/B · CPU time 口径）**：6 页样稿（4 张原生图表 + 3 类图像路径）
+  交替对照 HEAD 与工作树各 12 次 ×3 轮：compile best-min 46.36→46.70ms、
+  preview best-min 35.27→35.64ms（≤1%，落在本沙箱噪声内）；release strict 端到端
+  0.27–0.39s，产物字节与修复前**逐字节相同**（sha256 未变）——本轮改动对既有稿件
+  是字节中性的，只改变「写了强调但此前不落」的那些页面。测试成本 +0.5s
+  （11.0s→11.5s，新增 17 条断言）。不宣称提速。
+- **边界（未验证项）**：目标 PowerPoint 打开/编辑/另存仍为 `not_verified`；
+  ghost 预览是方向证据，不证明 Office 端字体、断行与 dPt 的最终渲染；本轮未在
+  无中文字体的机器上复跑预览（字体回落台账逻辑未改）；未在 Windows/其他 Python
+  版本上运行（本机为 Linux + CPython 3.13，CI 矩阵属未验证）；性能数字受沙箱
+  噪声限制，仅作「无显著回归」的证据。
+
 ## 9.32.0 — 2026-10-15 · 泛化发现 F1–F6 根因修复 + 主张所有权裁定（本地工作区，未推送）
 
 - **根因修复三项**（冻结期望零改动，哈希 `d5a8722b…c1de5` 校验通过）：F1 份额

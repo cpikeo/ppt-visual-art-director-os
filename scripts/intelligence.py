@@ -2602,10 +2602,19 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
         claim = {"text": None, "source": "frame",
                  "why": "凭证型首末页（封面 / 致谢 / 问答）：职责是立住或回收整套主张，不承载新结论，不补句。"}
     if claim["source"] == "absent":
-        warnings.append({"rule": "unresolved_content", "scope": item.get("id"),
-                         "msg": "这一页没有可复述的结论（content 缺失）："
-                                "标题不是证据，不得脑补数据/案例——补真实内容，"
-                                "或把它降级为章节页，或删掉"})
+        # 归因必须指向真实缺口：内容缺失与「有内容但不构成主张」是两种不同的修法
+        #（前者补内容，后者改标题或改写正文），报错说错根因会让作者去补一份本来
+        # 就在的内容。实测：预算构成页（标题为话题标签「本轮预算的用途与回收路径」、
+        # 正文是完整的金额清单）被判 absent 并被告知「content 缺失」。
+        if raw_content:
+            msg = ("这一页有内容但没有可复述的结论：标题只到话题标签（不立主张），"
+                   "正文也没有结论措辞／要决定／比较或条件结果——"
+                   "把标题写成结论，或说清这页要读者记住哪一句；"
+                   "写不出就降级为章节页")
+        else:
+            msg = ("这一页没有内容（content 缺失）：标题不是证据，不得脑补数据/案例——"
+                   "补真实内容，或把它降级为章节页，或删掉")
+        warnings.append({"rule": "unresolved_content", "scope": item.get("id"), "msg": msg})
     audience = str(item.get("audience") or brief.get("audience") or "").strip()
     decision = str(item.get("decision") or brief.get("decision") or "").strip()
     page_tension = str(item.get("tension") or brief.get("tension") or "").strip()

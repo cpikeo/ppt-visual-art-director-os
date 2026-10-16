@@ -445,10 +445,45 @@ def highlight_index(element, rows, default: int = -1) -> int:
         return default
 
 
-def series_highlight_index(element, names, default: int = -1) -> int:
-    """多序列图表的 highlight：整数索引，或写序列名——与 highlight_index 同一语义，
-    序列名就是 label 列表，直接复用（写名字被静默忽略的坑只修一次）。"""
-    return highlight_index(element, [{"label": n} for n in (names or [])], default)
+def resolve_chart_highlight(element, categories=None, series_names=None) -> tuple[int, int]:
+    """categories + series 载荷上 highlight 的双命名空间消歧（全库唯一口径）。
+
+    返回 (series_index, point_index)，未命中一侧为 -1（不会两侧同时命中）。一个
+    字段同时被序列名与类别名认领，不给消歧就必然出现「写了强调却静默不落」或
+    预览/产物各说各话（9.31.1 登记缺口的根因）。命名先于数字：
+
+    1. 命中**序列名** → 序列级强调（该序列走 accent + 加粗）；
+    2. 命中**类别名** → 数据点强调（该类目在每条序列上的点落 accent，与单序列
+       data 路径的逐点强调同一语义）；
+    3. 整数：多序列（≥2 条）指序列索引，单序列（含单条 series 的写法）指数据点
+       索引（与 `highlight_index` 在 data 载荷上的既有契约一致）；
+    4. 都不命中（名字写错、索引越界、非数字）→ (-1, -1)，由调用方按「不静默」
+       原则处置（guard 发 chart_highlight 告警，不替作者猜强调对象）。
+
+    这是全库唯一的 highlight 入口：旧的 `series_highlight_index`（只认序列名/索引）
+    已被它吸收并删除——同一件事两个入口，迟早在某一层分叉成两套语义。
+    """
+    if not isinstance(element, dict):
+        return -1, -1
+    raw = element.get("highlight")
+    if raw is None:
+        return -1, -1
+    text = str(raw).strip()
+    names = [str(n).strip() for n in (series_names or [])]
+    cats = [str(c).strip() for c in (categories or [])]
+    for i, name in enumerate(names):
+        if name and name == text:
+            return i, -1
+    for i, cat in enumerate(cats):
+        if cat and cat == text:
+            return -1, i
+    try:
+        idx = int(raw)
+    except (TypeError, ValueError):
+        return -1, -1
+    if len(names) >= 2:
+        return (idx, -1) if 0 <= idx < len(names) else (-1, -1)
+    return (-1, idx) if 0 <= idx < len(cats) else (-1, -1)
 
 
 DEFAULT_WIDTH, DEFAULT_HEIGHT = 1280, 720
@@ -1067,7 +1102,14 @@ def insert_script_gaps(text: str) -> str:
 
 
 def split_runs(text: str):
-    """按 CJK / 拉丁切分，保证中英文混排各自使用正确字体。"""
+    """按 CJK / 拉丁切分，保证中英文混排各自使用正确字体。
+
+    空串返回空列表：此前 `text[0]` 直接抛 IndexError，而它是公开原语，
+    调用方（编译器的段落循环）靠 `if not line: continue` 恰好避开——把「没崩」
+    建立在调用方的守卫上，等于给下一个调用方埋雷。
+    """
+    if not text:
+        return []
     runs = []
     cur = text[0]
     cur_cjk = is_cjk(cur)
@@ -1295,7 +1337,7 @@ class RenderContext:
         """按顺序取系列色（循环使用）；主题未派生色阶时按明度阶梯机械补档。"""
         return self.color(f"series{(index % 6) + 1}") or self._series_ladder(index)
 
-    def series_palette(self, count: int, highlight: int = -1) -> list:
+    def series_palette(self, count: int, highlight: int = -1, *, skip_accent: bool = False) -> list:
         """一次算完一组序列色：高亮位用 accent，其余按明度阶梯顺次取。
 
         accent 同时是「第 1 档系列色」和「高亮色」。高亮存在时若不跳过第 1 档，
@@ -1304,8 +1346,12 @@ class RenderContext:
         第 1 序列同样撞色）。accent 的强调语义也一并被稀释。
         非高亮序列从第 2 档起，任何组合下都不与高亮撞色。
         任何一档都保证拿到颜色（见 `_series_ladder`）。
+
+        skip_accent=True：accent 预留给**数据点级**强调（resolve_chart_highlight
+        的 point 一侧），序列全体从第 2 档起取色——「强调色只占一个位置」，
+        与单序列 data 路径的基础色退位是同一条纪律。
         """
-        step = 1 if highlight >= 0 else 0
+        step = 1 if (highlight >= 0 or skip_accent) else 0
         out = []
         for i in range(max(0, int(count))):
             color = self.color("accent") if i == highlight else self.series_color(i + step)
@@ -1512,13 +1558,19 @@ def _load_meta(work):
         return {}
 
 
-def _patch_meta(work, **fields):
+def _patch_meta(work, **fields) -> bool:
+    """把字段并进缓存元数据；返回是否真的写下去了。
+
+    写不进缓存（磁盘满 / 目录不可写 / 同名文件占位）不影响本轮产物，但会让每轮都
+    **静默重编**——调用方据此出一行诊断，否则「缓存坏了」与「冷启动」长得一模一样。
+    """
     try:
         meta = _load_meta(work)
         meta.update(fields)
         json_write(Path(work) / CACHE_NAME, meta, indent=1, trailing_newline=False, fsync=True)
+        return True
     except (OSError, TypeError, ValueError):
-        pass
+        return False
 
 
 def spec_view(spec, base_path=None, spec_path=None, image_bytes=None, digests=None):
@@ -1584,12 +1636,13 @@ def compile_reuse(work, pptx, view, *, fast_probe=False, speed=None):
     return _report(current_sha)
 
 
-def record_compile(work, pptx, view, report):
+def record_compile(work, pptx, view, report) -> bool:
+    """记录本轮编译凭证；返回是否写盘成功（False = 下轮无法复用，调用方应出声）。"""
     output_sha = str((report or {}).get("output_sha256") or "")
     if len(output_sha) != 64:
         output_sha = file_digest(pptx) or ""
     file_witness = witness(pptx)
-    _patch_meta(work, compile={
+    recorded = _patch_meta(work, compile={
         "semantic_view": view,
         "compile_speed": str(((report or {}).get("performance") or {}).get("speed") or "strict"),
         "output_witness": {**file_witness, "sha256": output_sha},
@@ -1597,3 +1650,4 @@ def record_compile(work, pptx, view, report):
         "report": {k: v for k, v in (report or {}).items()
                    if k not in ("guard", "output_sha256")},
     })
+    return recorded

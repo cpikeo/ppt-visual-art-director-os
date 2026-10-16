@@ -315,6 +315,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
     attestation_ms = (time.perf_counter() - t_attest) * 1000
 
     cache_write_ms = 0.0
+    cache_write_error = None
     if compile_report.get("output_sha256") and compile_report.get("output_exists") \
             and cache_reason in ("miss", "probe_failed"):
         t_write = time.perf_counter()
@@ -322,9 +323,16 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
             view = view if cache_reason == "miss" and view is not None else spec_view(
                 spec, base_path=output_path.parent, spec_path=spec_path,
                 image_bytes=image_bytes, digests=digests)
-            record_compile(cache_root, output_path, view, compile_report)
-        except Exception:
-            pass
+            if not record_compile(cache_root, output_path, view, compile_report):
+                cache_write_error = "缓存元数据写盘失败（目录不可写 / 同名文件占位）"
+        except Exception as exc:
+            cache_write_error = f"{type(exc).__name__}: {exc}"
+        if cache_write_error:
+            # 写不进缓存不影响这一轮的产物，但会**静默**让每轮都重编——本库在
+            # 预览缓存那边明确把这种「静默失效」当成坑（ghost.cache_write_failed）。
+            # 留一行诊断，作者才看得出是缓存故障而不是冷启动。
+            print(f"VAO warning: 编译缓存未能记录（本轮产物有效，下轮将重编）：{cache_write_error}",
+                  file=sys.stderr)
         cache_write_ms = (time.perf_counter() - t_write) * 1000
 
     timing = {
@@ -334,6 +342,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
         "cache_write_ms": round(cache_write_ms, 2),
         "cache_reason": cache_reason,
         "cache_probe_error": probe_error,
+        "cache_write_error": cache_write_error,
         "cache_enabled": True,
         "cache_dir": str(cache_root),
     }

@@ -21,7 +21,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
-                        highlight_index, series_highlight_index, color_to_hex,
+                        highlight_index, resolve_chart_highlight, color_to_hex,
                         CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS,
                         CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows)
 
@@ -630,8 +630,11 @@ def _rows(e: dict) -> list[dict]:
     反过来同样坏：compiler 的多序列路径（`series` + `categories`，走
     `NATIVE_CHART_TYPES`）画得出来，预览若只认 `data` 就会把一张正确的图显示成
     空框——**冤枉对的**。实测 `comparison_bar` + 双序列的产物里 `<c:ser>=2`、
-    数据点齐全，而预览只画了一个叉。多序列在这里按「类别 × 序列」展开成一维条，
-    与产物的分组柱语义一致；预览是方向证据，不承担像素级复刻。
+    数据点齐全，而预览只画了一个叉。多序列在这里展开成一维条；展开顺序必须是
+    **类别优先**（每个类别下依次是该类别各序列的条），这才与产物的分组柱同序——
+    旧实现按序列优先展开（甲的全部类别、再乙的全部类别），预览把「同一类别的两条
+    并排」画成「相隔很远的两组」，作者按它判断分组关系会读到不存在的结构。
+    预览是方向证据，不承担像素级复刻，但**顺序属于结构**。
     """
     rows = e.get("data")
     if isinstance(rows, list) and rows:
@@ -642,12 +645,18 @@ def _rows(e: dict) -> list[dict]:
     if (isinstance(cats, list) and cats and isinstance(series, list) and series
             and isinstance(series[0], dict)):
         out: list[dict] = []
-        for s in series:
-            if not isinstance(s, dict) or not isinstance(s.get("values"), list):
-                continue
-            name = str(s.get("name") or "").strip()
-            for cat, val in zip(cats, s["values"]):
-                out.append({"label": f"{cat} · {name}" if name and len(series) > 1 else str(cat), "value": val})
+        names = [str(s.get("name") or "").strip() if isinstance(s, dict) else ""
+                 for s in series]
+        for ci, cat in enumerate(cats):
+            for si, s in enumerate(series):
+                if not isinstance(s, dict) or not isinstance(s.get("values"), list):
+                    continue
+                if ci >= len(s["values"]):
+                    continue
+                name = names[si]
+                out.append({"label": (f"{cat} · {name}" if name and len(series) > 1
+                                      else str(cat)),
+                            "value": s["values"][ci]})
         return out
     return []
 
@@ -815,9 +824,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         bottom -= int(category_font.size * 1.6)
     if len(groups) > 1:
         # 结构预览也保留序列身份；原生图例实际位置/换行由 Office 决定。
+        # 图例配色与图形共用同一次消歧：图例用一套色、线条用另一套，比没有图例更坏
+        #（读者会照图例去认线条，认到的是错的）。点级强调存在时两边一起跳过 accent。
         names = [name for name, _ in groups]
         font = native_font(e.get("label_size", 40 / 3), " ".join(names))
-        palette = ctx.series_palette(len(groups), series_highlight_index(e, names, -1))
+        _gsi, _gpi = resolve_chart_highlight(e, e.get("categories") or [], names)
+        palette = ctx.series_palette(len(groups), _gsi, skip_accent=_gpi >= 0)
         roles = e.get("series_roles") or []
         lx, ly = left, top
         for i, name in enumerate(names):
@@ -835,9 +847,11 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 颜色也按产物同一条链取：series_roles 声明的用角色色，否则用系列色阶；
         # 高亮的那条（highlight = 序列索引/名字）走 accent + 加粗 + 末点圆点。
         names = [n for n, _v in groups]
-        hl = series_highlight_index(e, names, -1)
+        # 与 compiler 同一口径：序列名 → 整条序列强调；类别名 → 每条序列在该
+        # 类别上的点强调（落 accent 圆点，同产物的 dPt marker）。
+        hl, hp = resolve_chart_highlight(e, e.get("categories") or [], names)
         roles = e.get("series_roles") or []
-        palette = ctx.series_palette(len(groups), hl)
+        palette = ctx.series_palette(len(groups), hl, skip_accent=hp >= 0)
         pl, pt, pr, pb = _series_plot_box(left, top, right, bottom, scale)
         lo2 = min([0.0] + [v for _n, vs in groups for v in vs])
         hi2 = max([1.0] + [v for _n, vs in groups for v in vs])
@@ -869,6 +883,11 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             ex, ey = pts[-1]
             rr = max(2, int((4 if gi == hl else 3) * scale))
             d.ellipse((ex - rr, ey - rr, ex + rr, ey + rr), fill=col)
+            if hp >= 0 and 0 <= hp < len(pts):
+                # 点级强调：产物在该序列该类目点上落 accent 标记（dPt），预览同形。
+                mx, my = pts[hp]
+                mr = max(2, int(7 * scale / 2))
+                d.ellipse((mx - mr, my - mr, mx + mr, my + mr), fill=accent)
         categories = e.get("categories") or []
         for i, category in enumerate(categories):
             px = pl + (pr - pl) * (i / max(1, len(categories) - 1))
@@ -950,6 +969,24 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         cx, cy = (left + right) // 2, (top + bottom) // 2
         bg = _rgb(ctx, "background", (255, 255, 255))
         d.ellipse((cx - hole // 2, cy - hole // 2, cx + hole // 2, cy + hole // 2), fill=(*bg, 255))
+        # 环心 KPI 与 compiler 同形同几何（inner = min(w,h)*0.46、值行居于孔心、
+        # 标签行在其下方）：产物里它是两个可编辑文本框，预览此前把孔留空——作者
+        # 无法判断环心数字是否会挤到孔外，也看不到自己写的读数是否存在。
+        if kind in ("donut", "donut_composition"):
+            center_value = e.get("center_value")
+            center_label = e.get("center_label")
+            if center_value is not None or center_label:
+                inner = min(w, h) * 0.46
+                if center_value is not None:
+                    vfont = _font(px_to_pt(float(e.get("center_value_size", 30)) * scale),
+                                  bold=True, cjk=_has_cjk(str(center_value)))
+                    d.text((cx, cy - inner * 0.02), str(center_value), font=vfont,
+                           fill=ink, anchor="mm")
+                if center_label:
+                    lfont = _font(px_to_pt(float(e.get("center_label_size", 12)) * scale),
+                                  cjk=_has_cjk(str(center_label)))
+                    d.text((cx, cy + inner * 0.36), str(center_label),
+                           font=lfont, fill=muted, anchor="mm")
     elif kind in {"bar", "horizontal_bar", "comparison_bar"}:
         # OOXML 里 barChart 的 barDir="bar" 是横向条：预览必须与产物同向，
         # 否则「方向证据」给的是错的（曾经把横向条画成竖柱）。
@@ -976,10 +1013,14 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # <c:ser> 有自己的色（series_roles → series_palette），预览全涂墨色等于把
         # 「山外 vs 同业」读成一堆同色条，作者看到的证据与产物不是同一件事。
         n_groups = max(1, len(groups))
-        per_group = max(1, (len(rows) + n_groups - 1) // n_groups)
         roles = e.get("series_roles") or []
-        gpalette = ctx.series_palette(n_groups,
-                                      series_highlight_index(e, [n for n, _v in groups], -1))
+        # 行序 = 类别优先（见 _rows）：第 i 条属于类别 i // n_groups、序列 i % n_groups。
+        # highlight 与 compiler 同一口径（primitives.resolve_chart_highlight）：
+        # 序列名 → 整序列强调；类别名/单序列整数 → 该类别上的数据点强调。
+        # 预览此前只认序列名，类别名强调在预览与产物都静默消失（9.31.1 登记缺口）。
+        si, pi = resolve_chart_highlight(e, e.get("categories") or [],
+                                         [n for n, _v in groups])
+        gpalette = ctx.series_palette(n_groups, si, skip_accent=pi >= 0)
         # 负值在产物里被染成 negative 角色色（compiler._paint_negative_points），
         # 预览必须说同一件事：同一张柱图里「亏损」与「中性」不能长得一样，
         # 否则作者按预览判断「风险色有没有出现」，看到的证据是错的。
@@ -991,10 +1032,14 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             bw2 = int(val / span_ext * track)
             d.text((left, by + bh / 2), str(rows[i].get("label", ""))[:24],
                    font=cfont, fill=_rgba(ctx, "muted", 0.9), anchor="lm")
-            if val < 0 and neg_role is not None:
+            gi, ci = i % n_groups, i // n_groups
+            if pi >= 0 and ci == pi:
+                # 数据点强调优先于风险染色（「这一个点是答案」> 「这一段是亏损」），
+                # 与 compiler 的落色顺序一致（base → negative → point accent）。
+                col = accent
+            elif val < 0 and neg_role is not None:
                 col = _rgba_color(neg_role, 0.95)
             elif n_groups > 1:
-                gi = min(i // per_group, n_groups - 1)
                 role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
                 col = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
@@ -1022,6 +1067,14 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         neg_role = None
         if e.get("negative_role") is not False and any(v < 0 for v in values):
             neg_role = ctx.chart_role("negative")
+        # 多序列竖柱：产物里每条 <c:ser> 有自己的色（series_roles → series_palette），
+        # 预览曾一律涂墨色——图例是彩的、柱子是灰的，作者按预览读不出序列身份。
+        # 与 bar 分支同口径：resolve 消歧 + 点级强调 + accent 预留。
+        n_groups = max(1, len(groups))
+        roles = e.get("series_roles") or []
+        si, pi = resolve_chart_highlight(e, e.get("categories") or [],
+                                         [n for n, _v in groups])
+        gpalette = ctx.series_palette(n_groups, si, skip_accent=pi >= 0)
         # 零基线：负值柱子向下生长，正负共用一把尺（同 bar 分支的理由）。
         track = max(1, bottom - top)
         pos_extent = max([0.0] + [v for v in values if v > 0])
@@ -1032,8 +1085,14 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         for i, val in enumerate(values):
             bx = left + i * (bw + gap)
             by = zero_y - int(val / span_ext * track)
-            if val < 0 and neg_role is not None:
+            gi, ci = i % n_groups, i // n_groups
+            if pi >= 0 and ci == pi:
+                fill = accent          # 数据点强调优先（同 bar 与 compiler 的落色顺序）
+            elif val < 0 and neg_role is not None:
                 fill = _rgba_color(neg_role, 0.95)
+            elif n_groups > 1:
+                role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
+                fill = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
                 fill = accent if i == hl else ink
             y0, y1 = sorted((zero_y, by))

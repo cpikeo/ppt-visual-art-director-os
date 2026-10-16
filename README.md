@@ -84,7 +84,8 @@ python scripts/selftest.py   # 退出码即门槛；数量以实际输出为准
 `plan` 只输出设计判断与**空元素骨架**，作者须完成 BUILD；不得以本地自测通过宣称自主落版或目标 PowerPoint 视觉终验。
 
 CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 / 3.13 自检、合并后的 57 例判断回归及 spec 档冒烟。
-本轮修改尚未推送，**不能把本地通过当作远端 CI 全绿**。
+工作树中若有未推送的改动（见 [CHANGELOG](CHANGELOG.md) 最新条目），**只能按本地结果报告，不能把本地通过当作远端 CI 全绿**；
+本地亦只验证了当前解释器与平台（`python3 --version` 可查），其余矩阵组合属未验证。
 
 ## 版本与历史
 

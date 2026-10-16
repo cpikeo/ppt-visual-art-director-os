@@ -571,6 +571,22 @@ def test_intelligence(tmp: Path):
     check("understanding: 「结构性增长」是复合名词，不产生结构/序列证据形态",
           intel.understand("东南亚是我们未来五年唯一还能拿到结构性增长的战场")["evidence"]
           in ("none", "proposition"))
+    # 缺口的归因必须指向真实根因：内容缺失 vs 有内容但不成主张，两种修法不同
+    #（实测：预算构成页标题是话题标签、正文完整，却被报「content 缺失」）。
+    # 首末页是陈述位（没有 content 也按作者写下的话成立），所以缺口样本放在中段页。
+    _filler = {"id": "z2", "title": "第二页结论已经写好", "content": "证据 5%"}
+    def _unresolved_msg(slide):
+        deck = intel.think({"slides": [{"id": "z1", "title": "开场结论句", "content": "证据 3%"},
+                                       slide, _filler]})
+        return next((w["msg"] for w in deck["warnings"]
+                     if w.get("rule") == "unresolved_content"), "")
+    _msg_topic = _unresolved_msg({"id": "t", "title": "本轮预算的用途与回收路径",
+                                  "content": "新增预算 1.8 亿元：选址模型建设 3200 万元。"})
+    _msg_empty = _unresolved_msg({"id": "e", "title": "预算用途", "content": ""})
+    check("claim: absent 的告警归因分两种根因（内容缺失 / 有内容不成主张）",
+          "没有可复述的结论" in _msg_topic and "content 缺失" not in _msg_topic
+          and "content 缺失" in _msg_empty and "没有可复述的结论" not in _msg_empty,
+          f"topic={_msg_topic[:40]} empty={_msg_empty[:40]}")
 
     # 焦点数字＝主张所指的那个量（不是第一个、也不是最大的那个）
     unit_econ = ("印尼雅加达自营仓：单均履约成本从 2024Q1 的 19.4 元降至 2025Q4 的 "
@@ -1106,6 +1122,108 @@ def test_production(tmp: Path):
           and any(c.args[0] == 28 and c.kwargs.get("family") == "_serif" for c in fonts.call_args_list))
     check("ghost: 单 series 不把序列名缝进类别标签",
           [r["label"] for r in _chart_ghost._rows(forms[1])] == ["研发","交付"])
+
+    # ── 9.31.1 登记缺口的回归：categories+series 路径上的 highlight 必须落 dPt ──
+    # 缺口的形态是「写了强调、产物里什么都没有」（dPt=0 静默吞掉），而 ghost 预览
+    # 渲染了它——预览/产物分叉是最坏的一种不一致。三种载荷形态一起锁：
+    # data（既有路径不得回退）／单条 series（点级）／多序列（点级 + 序列级）。
+    import zipfile as _zip
+    def _dpt_count(pptx_path):
+        with _zip.ZipFile(pptx_path) as z:
+            charts = [n for n in z.namelist() if n.startswith("ppt/charts/chart")]
+            xml = z.read(charts[0]).decode("utf-8")
+        return xml.count("<c:dPt>"), xml
+
+    hl_theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+                           "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"}}
+    hl_base = {"id": "hl", "type": "chart", "x": 40, "y": 40, "width": 800, "height": 500,
+               "chart_kind": "column", "categories": ["A", "B", "C", "D"], "role": "focus"}
+    hl_cases = [
+        ("data/点级（既有路径）", dict(hl_base, data=[{"label": c, "value": v} for c, v in
+                                                  zip("ABCD", (10, 14, 18, 22))]),
+         "C", 1),
+        ("单条 series/类别名", dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]}]),
+         "C", 1),
+        ("单条 series/整数", dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]}]),
+         2, 1),
+        ("多序列/类别名", dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]},
+                                              {"name": "对照", "values": [5, 9, 13, 20]}]),
+         "C", 2),
+        ("多序列/序列名（不落 dPt，走序列级）",
+         dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]},
+                               {"name": "对照", "values": [5, 9, 13, 20]}]), "对照", 0),
+        ("写错名字：不猜强调对象",
+         dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]}]), "查无此类", 0),
+    ]
+    for tag, el, hl, expect in hl_cases:
+        deck = {"canvas": {"width": 1280, "height": 720}, "theme": hl_theme,
+                "slides": [{"id": "hl", "elements": [dict(el, highlight=hl)]}]}
+        out = tmp / f"highlight-{abs(hash(tag))}.pptx"
+        report = compile_deck(deck, out)
+        count, xml = _dpt_count(out)
+        check(f"highlight: {tag} → dPt={expect}",
+              report["passed"] and count == expect
+              and (expect == 0 or 'val="AA0000"' in xml),
+              f"dPt={count} warnings={report['warnings'][:1]}")
+    # accent 预留：点级强调时，任何序列基础色都不得占用 accent（强调只占一个位置）
+    for tag, el, hl in (("单条", dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]}]),
+                         "C"),
+                        ("多序列", dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]},
+                                                        {"name": "对照", "values": [5, 9, 13, 20]}]), "C")):
+        deck = {"canvas": {"width": 1280, "height": 720}, "theme": hl_theme,
+                "slides": [{"id": "hl", "elements": [dict(el, highlight=hl)]}]}
+        out = tmp / f"highlight-accent-{abs(hash(tag))}.pptx"
+        compile_deck(deck, out)
+        _, xml = _dpt_count(out)
+        series_colors = set(re.findall(r'<c:ser>.*?<a:srgbClr val="([0-9A-F]{6})"', xml, re.S))
+        check(f"highlight: {tag} 序列基础色不占用 accent（强调只占一个位置）",
+              series_colors and "AA0000" not in series_colors, str(series_colors))
+    # 预览/产物一致：同一次解析决定两边强调；改强调目标只改预览的落色位置，
+    # 写错名字时两边都不产生强调（不替作者猜）。
+    def _hl_image(el):
+        deck = {"canvas": {"width": 1280, "height": 720}, "theme": hl_theme,
+                "slides": [{"id": "hl", "elements": [el]}]}
+        return _chart_ghost.ghost_page(deck["slides"][0], deck, scale=1, supersample=1).convert("RGB")
+    _probe = dict(hl_base, series=[{"name": "本期", "values": [10, 14, 18, 22]}])
+    img_c = _hl_image(dict(_probe, highlight="C"))
+    img_b = _hl_image(dict(_probe, highlight="B"))
+    img_none = _hl_image(dict(_probe))
+    img_bogus = _hl_image(dict(_probe, highlight="查无此类"))
+    check("highlight: 预览强调位置随解析结果移动（不是画一个凑数的点）",
+          img_c.tobytes() != img_b.tobytes() and img_c.tobytes() != img_none.tobytes())
+    check("highlight: 写错名字时预览与产物都不产生强调",
+          img_bogus.tobytes() == img_none.tobytes())
+    # 展开顺序属于结构：产物是「类别优先」分组柱，预览必须同序（旧实现按序列优先，
+    # 把同一类别的两条并排画成相隔很远的两组，作者会读到不存在的分组关系）。
+    multi_rows = _chart_ghost._rows(dict(hl_base, series=[
+        {"name": "甲", "values": [10, 14, 18, 22]},
+        {"name": "乙", "values": [5, 9, 13, 20]}]))
+    check("ghost: 多序列展开按类别优先（与产物分组柱同序）",
+          [r["label"] for r in multi_rows][:4] == ["A · 甲", "A · 乙", "B · 甲", "B · 乙"]
+          and [r["value"] for r in multi_rows][:4] == [10, 5, 14, 9],
+          str([r["label"] for r in multi_rows]))
+    # 环心 KPI：产物里是两个可编辑文本框，预览此前把孔留空——作者看不到自己写的
+    # 读数是否存在、是否挤到孔外。像素级断言（孔心区域必须有墨迹）。
+    donut = {"id": "d", "type": "chart", "x": 40, "y": 40, "width": 600, "height": 480,
+             "chart_kind": "donut", "center_value": "1.8 亿元", "center_label": "总预算",
+             "data": [{"label": "门店投入", "value": 14000}, {"label": "选址模型", "value": 3200},
+                      {"label": "运营储备", "value": 800}]}
+    donut_deck = {"canvas": {"width": 1280, "height": 720}, "theme": hl_theme,
+                  "slides": [{"id": "d", "elements": [donut]}]}
+    donut_img = _chart_ghost.ghost_page(donut_deck["slides"][0], donut_deck,
+                                        scale=1, supersample=1).convert("L")
+    import numpy as _np
+    hole_patch = _np.asarray(donut_img)[255:305, 250:430]
+    check("ghost: 环心 KPI 与产物同形（孔内有读数，不再留空）", int(hole_patch.min()) < 120,
+          f"孔心最暗像素={int(hole_patch.min())}")
+    from primitives import resolve_chart_highlight
+    check("highlight: 消歧单一真源（命名先于数字；整数按序列数/类别数分派）",
+          resolve_chart_highlight({"highlight": "C"}, ["A", "B", "C"], ["本期"]) == (-1, 2)
+          and resolve_chart_highlight({"highlight": "本期"}, ["A"], ["本期", "对照"]) == (0, -1)
+          and resolve_chart_highlight({"highlight": 2}, ["A", "B", "C"], ["本期"]) == (-1, 2)
+          and resolve_chart_highlight({"highlight": 1}, ["A", "B"], ["甲", "乙"]) == (1, -1)
+          and resolve_chart_highlight({"highlight": 9}, ["A"], ["甲"]) == (-1, -1)
+          and resolve_chart_highlight({}, ["A"], None) == (-1, -1))
 
     from ghost import ghost_page
     native = {'canvas': {'width': 500, 'height': 220},
@@ -2064,12 +2182,19 @@ def test_delivery(tmp):
             ("progress_bar","data",6), ("stacked_bar","data",8), ("big_number_row","data",5), ("bubble","data",12)):
         e = {k:v for k,v in base.items() if k not in ("series", "categories")}
         e["chart_kind"] = kind
-        # 数据行只带渲染器消费的键；x/y 只属于 matrix.points（未消费字段门会拦截数据行上的 x/y）
-        items = [f"层{i}" if field == "layers" else {"label": f"节点{i}", "value": i+1} for i in range(limit+1)]
+        # 数据行只带渲染器消费的键；x/y 只属于 matrix.points（未消费字段门会拦截数据行上的 x/y）。
+        # matrix 的点必须是 points[{x,y,label}]：缺 x/y 时编译器只会抛裸 KeyError，
+        # 所以 guard 的「非有限值」硬门也管它（下方另有专门负例）。
+        items = ([{"label": f"节点{i}", "x": (i % 5) / 4, "y": (i % 7) / 6} for i in range(limit+1)]
+                 if field == "points" else
+                 [f"层{i}" if field == "layers" else {"label": f"节点{i}", "value": i+1} for i in range(limit+1)])
         e[field] = items[:limit]
         fits = not errors(e)
         e[field] = items
         check("payload: " + kind + " 边界完整/超量阻断", fits and bool(errors(e)))
+    matrix_bad = {k: v for k, v in base.items() if k not in ("series", "categories")}
+    matrix_bad.update(chart_kind="matrix", points=[{"label": "缺纵轴", "x": 0.2}])
+    check("payload: matrix 缺 x/y 硬门阻断（裸 KeyError 不是可修的诊断）", bool(errors(matrix_bad)))
     from verify import release_manifest
     verification = release_manifest(deck, {})["verification"]
     check("evidence: 未打开/编辑/独立审阅不冒充验收",
@@ -2945,6 +3070,56 @@ def test_audit_boundaries(tmp):
         f"import sys; sys.path.insert(0, {str(SCRIPTS)!r}); import compiler; assert 'xlsxwriter' not in sys.modules"],
         capture_output=True, encoding="utf-8")
     check("import: 无原生图表任务不预载工作簿写入器", probe.returncode == 0, probe.stderr[-300:])
+    # 公开原语不得靠调用方的守卫才不炸：split_runs("") 曾抛 IndexError，
+    # 编译器只是恰好用 `if not line: continue` 避开了它。
+    from primitives import split_runs
+    check("primitives: split_runs 空串返回空列表（不在公开原语里埋 IndexError）",
+          split_runs("") == [] and split_runs("中A") == [("中", True), ("A", False)])
+    # 包级后处理写盘中断：不许在交付物旁边留下半截 .tmp（实测损坏条目会中途抛错）。
+    import io as _io, zipfile as _zip
+    from compiler import _postprocess_package, compile_deck as _compile_deck
+    _healthy = tmp / "postprocess-healthy.pptx"
+    _compile_deck({"canvas": {"width": 320, "height": 180},
+                   "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+                   "slides": [{"id": "s1", "elements": [
+                       {"type": "text", "id": "t", "x": 10, "y": 10, "width": 200,
+                        "height": 40, "size": 18, "text": "hello", "color": "ink"}]}]},
+                  _healthy)
+    _raw = bytearray(_healthy.read_bytes())
+    with _zip.ZipFile(_io.BytesIO(bytes(_raw))) as _z:
+        _info = [i for i in _z.infolist() if i.filename.startswith("ppt/theme/")][0]
+        _off = _info.header_offset + 30 + len(_info.filename) + len(_info.extra)
+    _raw[_off + 5] ^= 0xFF                      # 打坏一个条目的压缩流
+    _broken = tmp / "postprocess-broken.pptx"
+    _broken.write_bytes(bytes(_raw))
+    try:
+        _postprocess_package(_broken)
+    except Exception:
+        pass
+    check("compiler: 后处理中断不留半截包（临时文件泄漏）",
+          not _broken.with_suffix(_broken.suffix + ".tmp").exists())
+    # 缓存写盘失败必须可见（否则「缓存坏了」与「冷启动」长得一样，每轮白重编）。
+    _cache_probe = tmp / "cacheprobe"
+    _cache_probe.mkdir(parents=True, exist_ok=True)
+    (tmp / "cacheprobe_vao").write_text("block", encoding="utf-8")   # 同名文件占位
+    import io as _io2, contextlib as _cl, json as _json2
+    _spec_f = tmp / "cacheprobe.py"
+    _spec_f.write_text("SPEC = " + _json2.dumps(
+        {"canvas": {"width": 320, "height": 180},
+         "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+         "slides": [{"id": "s1", "elements": [
+             {"type": "text", "id": "t", "x": 10, "y": 10, "width": 200, "height": 40,
+              "size": 18, "text": "x", "color": "ink"}]}]}), encoding="utf-8")
+    from vao import run_check as _run_check
+    _err = _io2.StringIO()
+    with _cl.redirect_stderr(_err), _cl.redirect_stdout(_io2.StringIO()):
+        # 输出名决定缓存目录名（output.stem + "_vao"）；占位文件必须正对那一个。
+        _res, _ = _run_check(str(_spec_f), str(tmp / "cacheprobe.pptx"),
+                             mode="draft", json_output=True, deadline=5)
+    check("cache: 缓存写盘失败出声（不把缓存故障伪装成冷启动）",
+          bool((_res.get("performance") or {}).get("cache_write_error"))
+          and "warning" in _err.getvalue(),
+          str((_res.get("performance") or {}).get("cache_write_error"))[:80])
     # 基准 CLI 是质量门，不能打印 FAIL 后仍退 0。
     bad_cases = tmp / "bad-cases.json"
     bad_cases.write_text(json.dumps({"cases": [{"id": "fail", "category": "test",

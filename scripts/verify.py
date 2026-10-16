@@ -17,7 +17,7 @@ import math
 from primitives import (CHART_KINDS, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
                         CHART_LIMITS, ELEMENT_VALUE_KINDS, NUMERIC_CHART_KINDS,
                         ROWS_CHART_KINDS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ELEMENT_TYPES,
-                        is_background_declared, spec_fingerprint)
+                        is_background_declared, spec_fingerprint, resolve_chart_highlight)
 
 # 图表分类全部派生自 primitives.CHART_SPEC（单一权威）；本层只保留 Guard 的
 # 呈现名，不再各写一份集合——分类漂移由 selftest 的 chart_spec 断言拦截。
@@ -408,6 +408,13 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
         points = e.get("points")
         if not (isinstance(points, list) and points):
             add("chart_payload", eid, "error", "matrix 缺少 points[{x,y,label}]；无点不绘图")
+        else:
+            # 契约硬门「非有限值」同样管 matrix 的 x/y：缺 x/y 时编译器只会抛裸
+            # KeyError（COMPILE_FAIL 报错看不出哪里写错），guard 给出可修的诊断。
+            for pi, p0 in enumerate(points):
+                if not isinstance(p0, dict) or not _finite(p0.get("x")) or not _finite(p0.get("y")):
+                    add("chart_payload", eid, "error",
+                        f"matrix 点 [{pi}] 的 x/y 必须是有限数字（points[{{x,y,label}}]）")
     elif kind == "architecture":
         layers = e.get("layers")
         clean = [str(x).strip() for x in layers[:3]] if isinstance(layers, list) else []
@@ -503,19 +510,24 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
             add("data_integrity", eid, "error", "构成图的有效数值总和必须大于 0")
 
     if "highlight" in e:
-        names = ([str(sr.get("name", "")) for sr in (series or []) if isinstance(sr, dict)]
-                 if multi else [str(r.get("label", "")) for r in data if isinstance(r, dict)])
+        # 与 compiler/ghost 同一口径（primitives.resolve_chart_highlight）：序列名 →
+        # 序列级；类别名 → 点级；整数按序列数/类别数分派。校验必须跟着实现走，
+        # 否则「写错的强调」要么被静默吞掉、要么被误报。
+        # 命名空间随载荷形态走：multi 用 categories + series 名；data 载荷的行标签
+        # 就是唯一命名空间（与 resolve_chart_highlight 的整数分派一致）。
+        names = ([str(sr.get("name", "")) for sr in series if isinstance(sr, dict)]
+                 if multi else [])
+        if multi:
+            cats = [str(c) for c in categories] if isinstance(categories, list) else []
+        else:
+            cats = [str(r.get("label", "")) for r in data if isinstance(r, dict)]
         hi = e.get("highlight")
-        try:
-            idx = int(hi)
-            upper = n_series if multi else (len(data) if isinstance(data, list) else 0)
-            if idx < 0 or idx >= upper:
-                add("chart_highlight", eid, "warn",
-                    f"highlight={hi} 超出数据范围 0–{max(upper - 1, 0)}")
-        except (TypeError, ValueError):
-            if str(hi).strip() not in names:
-                add("chart_highlight", eid, "warn",
-                    f"highlight={hi!r} 既不是索引也不匹配任何类别名/序列名，会被忽略")
+        si, pi = resolve_chart_highlight(e, cats, names)
+        if si < 0 and pi < 0:
+            upper = max(len(cats), len(names))
+            shown = f"0–{upper - 1}" if upper else "数据范围"
+            add("chart_highlight", eid, "warn",
+                f"highlight={hi!r} 既不是索引也不匹配任何类别名/序列名（可用范围 {shown}），会被忽略")
 
     # 标签空间：标签是独立可见对象，空间不足不允许渲染器硬塞（不缩字号）
     n = n_cat * n_series if multi else (len(data) if isinstance(data, list) else 0)
@@ -789,7 +801,8 @@ FIX_HINTS = {
     "CHART_LABEL_COLLISION": "用 label_collision_policy:hide_redundant|move_outside|fail 处置，不缩字号。",
     "TEXT_OVERFLOW": "框高 ≥ 字号×行高×行数；减行数/减字数/加框高，三选一。",
     "DATA_INTEGRITY_FAIL": "每行 label + 有限 value；数值图齐 source/unit/period/basis；同指标同单位。",
-    "CHART_TYPE_FAIL": "图表类型在白名单内且数据形态匹配（占比≠趋势）；载荷不可为空。",
+    "CHART_TYPE_FAIL": "图表类型在白名单内且数据形态匹配（占比≠趋势）；载荷不可为空、字段类型合法"
+                       "（matrix 的点须为有限 x/y）。",
     "COMPILE_FAIL": "按编译 warnings 修 schema，不绕过硬门。",
     "GUARD_FAIL": "按下述明细逐条修：schema / 越界 / 退化几何 / 未知类型优先。",
     "ASSET_WORKFLOW_FAIL": "按 asset_workflow.issues 修：出图 / 登记 / 重新核验。",
