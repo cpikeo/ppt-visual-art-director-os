@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import math
 
-from primitives import (CHART_KINDS, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
+from primitives import (CHAR_SPACING_MAX_PT,
+                        CHART_KINDS, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
                         CHART_LIMITS, ELEMENT_VALUE_KINDS, NUMERIC_CHART_KINDS,
                         ROWS_CHART_KINDS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ELEMENT_TYPES,
+                        SLIDE_MAX_PX, SLIDE_MIN_PX, emu,
                         is_background_declared, spec_fingerprint, resolve_chart_highlight)
 
 # 图表分类全部派生自 primitives.CHART_SPEC（单一权威）；本层只保留 Guard 的
@@ -87,10 +89,23 @@ def _text_box_capacity(e: dict) -> dict | None:
             "over_width": not wrap and width_need > usable_w + 2, "width_need": width_need}
 
 
+def _coord(value):
+    """坐标读数：bool 不是坐标。
+
+    与 `_finite` / `_positive_num` / `_alpha_ok` / `_dim` 同口径——那几处早已把
+    bool 当 schema 错误（`float(True) == 1.0` 是静默的 1 px，不是作者意图）。
+    这里此前漏了同一道门：`x: True` → 1 px 能一路通过 guard、编译与发布，
+    而 canvas.width: True 会被 `_positive_num` 拒——同一份稿件两套标准。
+    """
+    if isinstance(value, bool):
+        raise ValueError("bool 不是坐标")
+    return float(value)
+
+
 def _element_rect(e: dict):
     try:
-        x, y = float(e.get("x", 0)), float(e.get("y", 0))
-        w, h = float(e.get("width", 0)), float(e.get("height", 0))
+        x, y = _coord(e.get("x", 0)), _coord(e.get("y", 0))
+        w, h = _coord(e.get("width", 0)), _coord(e.get("height", 0))
     except (TypeError, ValueError):
         return None
     if not all(math.isfinite(v) for v in (x, y, w, h)):
@@ -103,9 +118,9 @@ def _is_rule_shape(e: dict) -> bool:
 
 
 def _box(e: dict, text_ink_ratio: float = 1.0, text_ink_v: float = 1.0):
-    """元素的有效墨迹盒：文本框不等于墨迹（按系数收窄）。"""
-    x, y, w, h = float(e.get("x", 0)), float(e.get("y", 0)), \
-        float(e.get("width", 0)), float(e.get("height", 0))
+    """元素的有效墨迹盒：文本框不等于墨迹（按系数收窄）。bool 同 `_coord` 拒绝。"""
+    x, y, w, h = _coord(e.get("x", 0)), _coord(e.get("y", 0)), \
+        _coord(e.get("width", 0)), _coord(e.get("height", 0))
     if str(e.get("type")) == "text":
         w *= text_ink_ratio
         h *= text_ink_v
@@ -194,6 +209,12 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     for key in ("width", "height"):
         if key in canvas and not _positive_num(canvas[key]):
             add("canvas_schema", "canvas", "error", f"canvas.{key} 必须是正的有限数字")
+        elif key in canvas and not (SLIDE_MIN_PX <= float(canvas[key]) <= SLIDE_MAX_PX):
+            # 编译期由 python-pptx 抛裸范围错误（实测 canvas 5377 → “value must be in
+            # range(914400, 51206400)”）；阻断口径一致，但诊断必须是可修的。
+            add("canvas_schema", "canvas", "error",
+                f"canvas.{key}={float(canvas[key]):g}px 超出 PowerPoint 可表达的 1–56 英寸"
+                f"（{SLIDE_MIN_PX:g}–{SLIDE_MAX_PX:g}px，96dpi）；整稿等比缩放后再交付")
     if "grid_columns" in canvas and not _positive_int(canvas.get("grid_columns")):
         add("canvas_schema", "canvas", "error", "canvas.grid_columns 必须是正整数")
     if "grid_unit" in canvas and not _positive_num(canvas.get("grid_unit")):
@@ -366,6 +387,23 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
             add("element_schema", eid, "error",
                 f"{key} 须为 0–1 的有限数，收到 {val!r}"
                 "（负值会写出非法 a:alpha，>1 会被静默丢弃）")
+    # 字距同理：char_spacing 以 pt 声明（contract §排版），写入 `a:rPr/@spc`
+    # 的 1/100 pt 值。@spc 是 ST_TextPoint（±4000pt），越界是非法 OOXML。
+    # 正常字距在 ±20pt 之内，这条线只拦「数量级写错」的输入。
+    spacing_pt = e.get("char_spacing")
+    if spacing_pt is not None and not isinstance(spacing_pt, bool):
+        try:
+            spacing_val = float(spacing_pt)
+        except (TypeError, ValueError):
+            add("element_schema", eid, "error",
+                f"char_spacing 须为有限数字（pt），收到 {spacing_pt!r}")
+        else:
+            if math.isfinite(spacing_val) and abs(spacing_val) > CHAR_SPACING_MAX_PT:
+                add("element_schema", eid, "error",
+                    f"char_spacing={spacing_val:g}pt 超出 DrawingML 可表达范围 "
+                    f"±{CHAR_SPACING_MAX_PT:g}pt（a:rPr/@spc 是 ST_TextPoint，"
+                    "越界会写出非法 OOXML）；字距用 ±1–5pt 就够，请改回合理值")
+
     if isinstance(fill, dict):
         fop = fill.get("opacity")
         if fop is not None and not _alpha_ok(fop):
@@ -400,13 +438,19 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
                 "geometry 非数值/非有限（x/y/width/height 必须是数字）")
         else:
             fx, fy, fw, fh = rect
+            # 退化判据按**落盘量度**：EMU 是最小可表达单位，`emu(1e-9) == 0`——写进
+            # pptx 与 width=0 完全相同，但 px 层 `> 0` 会让它溜过旧判据。实测
+            # `width: 5e-5` 的文本框落在产物里是 0 EMU 宽，却一路 release PASS。
+            qw, qh = emu(fw), emu(fh)
             if _is_rule_shape(e):
-                if fw <= 0 and fh <= 0:      # 一维对象：线允许 height=0
+                if qw <= 0 and qh <= 0:      # 一维对象：线允许 height=0
                     add("element_schema", eid, "error",
-                        "geometry 退化（线的 width 与 height 同时为 0 → 零长度不可见）")
-            elif fw <= 0 or fh <= 0:
+                        "geometry 退化（线的 width 与 height 同时为 0 → 零长度不可见）"
+                        f"；落盘 {qw}×{qh} EMU")
+            elif qw <= 0 or qh <= 0:
                 add("element_schema", eid, "error",
-                    f"geometry 退化（width={fw:g}, height={fh:g} ≤ 0 → 元素不可见）")
+                    f"geometry 退化（width={fw:g}, height={fh:g} → 落盘 {qw}×{qh} EMU，"
+                    "小于 1 EMU 的元素在产物里不可见）")
             if rect:
                 bleed_x = abs(fw - cw) < 1 and abs(fx) <= 1
                 bleed_y = abs(fh - ch) < 1 and abs(fy) <= 1
@@ -542,6 +586,12 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
     if "unit" in e and kind not in NUMERIC_CHART_KINDS:
         add("chart_field_unconsumed", eid, "warn",
             f"{kind} 不渲染元素级 unit；单位需写进数据 display 或删除，避免作者以为已显示")
+    # 同类「写了不生效」：目标线只由 ranked_bar 画。作者在别的 kind 上写 target，
+    # 会以为画上了参考线——实测 progress_bar + target 产物里一根线都没有。
+    if kind != "ranked_bar" and (e.get("target") is not None or e.get("target_label")):
+        add("chart_field_unconsumed", eid, "warn",
+            f"{kind} 不渲染 target/target_label（只有 ranked_bar 会画目标线）；"
+            "要么换用 ranked_bar，要么把目标写进数据 display 或正文，避免误以为已呈现")
 
     series = e.get("series")
     multi = isinstance(series, list) and bool(series) and isinstance(series[0], dict)
@@ -610,6 +660,14 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                         f"{kind} 不接受负值；请改用可表达正负关系的图表")
             if kind == "progress_bar" and not _positive_num(e.get("max", 100)):
                 add("data_integrity", eid, "error", "progress_bar 的 max 必须是正数")
+            # 目标线（`target`/`target_label`）只有 ranked_bar 渲染：竖直参考线表达
+            # 「门槛/要到哪」。它是被消费的字段，非数字会让线**静默消失**——声明了
+            # 就必须画得出来；其余 kind 不消费它，写在那里等于没写，得留痕。
+            if kind == "ranked_bar" and e.get("target") is not None \
+                    and not _finite(e.get("target")):
+                add("data_integrity", eid, "error",
+                    f"ranked_bar 的 target={e.get('target')!r} 不是有限数字；"
+                    "目标线是「门槛/要到哪」的参考线，非数字会静默消失——请写成数值或删掉")
     if not multi and kind in ("donut", "donut_composition", "pie") and isinstance(data, list):
         total = 0.0
         for row in data:
@@ -641,6 +699,17 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
     # 标签空间：标签是独立可见对象，空间不足不允许渲染器硬塞（不缩字号）
     n = n_cat * n_series if multi else (len(data) if isinstance(data, list) else 0)
     show_values = e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
+    # 单位可见性：不是阻断项（作者的构图决定），但必须留痕。release 出处硬门要求
+    # 数值图表声明 unit，而数值标签关闭时这一声明不会出现在图上——此前编译器把
+    # 它升级成编译失败，于是「门要 unit」与「编译器拒绝不可见的 unit」互相打架，
+    # 作者只有强制打开数值标签一条路，且修复包只报 COMPILE_FAIL 说不出冲突。
+    # 现在：guard 出可执行告警（进发布清单 notes），作者自行选择标签或来源行承载单位。
+    if (kind in NUMERIC_CHART_KINDS and isinstance(e.get("unit"), str)
+            and e["unit"].strip() and not show_values):
+        add("chart_unit_invisible", eid, "warn",
+            f"{kind} 声明了 unit=「{e['unit'].strip()}」但数值标签关闭："
+            "单位不会出现在图上；要显示请 show_values: true，"
+            "否则请确认来源/正文行已写明单位")
     try:
         height = float(e.get("height", 0))
         if show_values and n >= CHART_LABEL_MIN_COUNT and height < CHART_LABEL_MIN_H:
@@ -1141,9 +1210,13 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
             issues.append("strict 发布必须逐页取证，不能使用抽样预览")
         if not compile_claim.get("passed"):
             issues.append("qa_report 声称 PASS 但 compile.passed 不为 true")
-    # 可读域越界是非阻断证据：只进发布清单的 notes，不进对话、不改判定。
+    # 非阻断告警是证据：只进发布清单的 notes，不进对话、不改判定。
+    # 标签按领域标注——行长（可读域）与单位可见性不是一回事，统一写 [可读域] 会把
+    # 「unit 声明了却没显示」说成排版问题，作者按提示找不到真正该动的地方。
     for w in (qa_report.get("guard_warnings") or [])[:8]:
-        notes.append(f"[可读域] {w.get('msg')}")
+        label = {"text_measure": "可读域",
+                 "chart_unit_invisible": "单位可见性"}.get(str(w.get("rule")), "非阻断")
+        notes.append(f"[{label}] {w.get('msg')}")
     wf = workflow if isinstance(workflow, dict) else (qa_report.get("asset_workflow") or {})
     image_count = wf.get("image_count")
     if image_count is None:

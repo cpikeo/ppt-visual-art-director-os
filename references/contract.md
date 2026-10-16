@@ -94,6 +94,10 @@ PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过
 其中 matrix 用 `points`、architecture 用 `layers`，其余用 `data: [{label, value, desc?}]`——写错载荷编译期即拒（「没有可渲染的数据行」）。
 `matrix` 的每个点是 `{x, y, label}`：`x/y` 必须为有限数字（缺失或非数值由硬门拦下，
 前端不会收到裸 `KeyError`）。
+**目标线**（只由 `ranked_bar` 渲染）：`target` 为有限数字 + 可选 `target_label` 字符串，
+在排行榜上画一条竖直参考线（门槛／「要到哪」），数值超出数据范围时按端点夹紧；
+写非数字由硬门拒绝（声明了却画不出来 = 静默丢失）。其他 kind 不消费这两个字段，
+写在那里只会得到一条 `chart_field_unconsumed` 告警。
 **`highlight` 的命名空间**（`primitives.resolve_chart_highlight`，编译/预览/guard 同源）：
 写**序列名** = 整条序列强调（accent + 加粗）；写**类别名** = 该类目上的数据点强调
 （`data` 与 `categories + series` 两种载荷同义，落原生 `dPt`）；写**整数**时，多序列

@@ -873,12 +873,24 @@ ASSET_QC_ADVISORY_CHECKS = frozenset({"brightness_balance", "negative_space_rati
 # 于是判据的物理口径不变，只是不再对 4K 原图逐像素扫。
 QC_FAST_MAX_SIDE = 1024
 
+# 单张资产的解码上限（像素）。这不是判据，是资源边界：`fast` 只缩小统计工作域，
+# 原图仍要被完整解码一次（安全区纹理与下游编译器都用原生像素）。实测本机 QC 峰值
+# 约 23–26MB/百万像素（亮度域 + RGB/RGBA + float32 统计，含解释器基线 ~25MB）：
+# 4MP→142MB、9MP→243MB、16MP→417MB；一张 12000×12000（144MP）在 2GB 容器里
+# 把整轮 check 打到 OOM 被 SIGKILL——作者拿到的是「进程没了」，不是可修的诊断。
+# 线画在 100MP：8K 帧 33MP、5000 万像素相机 50MP、中画幅 100MP 都能过，
+# 再大就让作者先降采样。Pillow 自己的炸弹线是 178.9MP，中间那段（89.5–178.9M）
+# 只警告不拦。注意这是**策略线**而非机器推导值：内存受限的 runner 需自行调低
+# （单源常量，随 `qc_profile` 进 QC 档案，可审计）。
+QC_MAX_PIXELS = 100_000_000
+
 
 def qc_profile(speed: str = "strict") -> dict:
     """QC 像素预算的唯一出口：谁改档位，报告里的 qc_scale 一起改。"""
     fast = str(speed or "").strip().lower() == "fast"
     return {"speed": "fast" if fast else "strict",
             "max_side": QC_FAST_MAX_SIDE if fast else None,
+            "max_pixels": QC_MAX_PIXELS,
             "block_px": QC_BLOCK}
 
 
@@ -1147,6 +1159,16 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     try:
         blob = image_bytes if image_bytes is not None else p.read_bytes()
         opened = Image.open(io.BytesIO(blob))
+        # 资源边界先于解码：PIL 的 size 只读头部，判完再花内存。
+        # 必须排在 EXIF 转置之前——exif_transpose 会真的解码一次。
+        declared_w, declared_h = opened.size
+        if declared_w * declared_h > QC_MAX_PIXELS:
+            opened.close()
+            return {"file": str(p), "status": "error", "checks": [],
+                    "issue": f"图片 {declared_w}×{declared_h} = "
+                             f"{declared_w * declared_h:,} 像素，超过单张解码预算 "
+                             f"{QC_MAX_PIXELS:,} 像素（整条流水线共用同一份原生像素）；"
+                             "先降采样到预算内再登记，不要靠调大预算换内存"}
         # EXIF Orientation：产物与预览都按「显示方向」落像素（编译器把转置烘焙进
         # PNG，ghost 尊重 EXIF），QC 必须量同一坐标系——否则安全区纹理、主体位置、
         # 上报的 dimensions/ratio 全部基于旋转前的存储方向，门判的是错的像素。
@@ -1567,7 +1589,15 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
             if not sha or recorded != sha:
                 issues.append(f"{aid}: 图片缺失、损坏或在 QC 后被替换；重新 check")
             if (inspected.get("policy") or {}).get("action") not in ACCEPTED:
-                issues.append(f"{aid}: 无接受该图片的 QC 结果")
+                # 资产读不出来（损坏 / 截断 / 超过解码预算）时，原因只写在 QC 报告的
+                # results[].qc.issue 里，而这里只报「无接受结果」——作者得再开一个
+                # 文件才知道到底哪里坏了。把 QoS 的原始判词带上来。
+                qc_state = inspected.get("qc") if isinstance(inspected.get("qc"), dict) else {}
+                detail = str(qc_state.get("issue") or "").strip()
+                if str(qc_state.get("status")) == "error" and detail:
+                    issues.append(f"{aid}: 图片不可用（{detail}）")
+                else:
+                    issues.append(f"{aid}: 无接受该图片的 QC 结果")
             if entry["decision"] == "generate":
                 if not entry.get("prompt") or not entry.get("negative"):
                     issues.append(f"{aid}: 缺少生成提示词/负向提示词")
@@ -1738,6 +1768,24 @@ def _page_background_color(page: dict, plan_deck: dict) -> str:
     return (((plan_deck.get("theme") or {}).get("colors_seed")) or {}).get("foundation", "#FFFFFF")
 
 
+def prompt_cache_key(fingerprint: str, card: dict, page: dict | None = None) -> str:
+    """提示词缓存键 = 资产身份 + 提示词输入。
+
+    身份（`asset_fingerprint`）**刻意**不含 safe_area / text_color / ratio——作者校准
+    压字区不该让已出图改名（CASE_004）。但 `build_asset_prompt` 恰恰读这些字段：
+    用身份键直接查提示词缓存时，作者把压字区从左侧改到右侧、再跑一次 plan，会拿回
+    旧提示词，而清单里的 `safe_area` 已经是新值——清单描述与提示词互相矛盾，出图
+    仍按旧指令留白。缓存属于实现细节，可以也应该知道「提示词读过什么」。
+    """
+    from primitives import identity
+    page = page if isinstance(page, dict) else {}
+    payload = {k: page.get(k) for k in ("negative_space_anchor", "safe_area", "text_color",
+                                        "light_direction", "energy", "asset_function",
+                                        "ratio")}
+    payload["resolved"] = card.get("resolved")
+    return f"{fingerprint}|{identity(payload, schema='vao-asset-prompt-input-v1', short=10)}"
+
+
 def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     """brief + 判断面 → 去重的批量资产清单（规划身份 = 指纹）。"""
     pages = bundle.get("pages") or []
@@ -1826,7 +1874,9 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
                                   "fingerprint": fingerprint})
             continue
         asset_id = f"asset-{fingerprint.removeprefix('asset-')}"
-        cached = prompt_cache.get(fingerprint)
+        # 键覆盖提示词的**全部输入**（见 prompt_cache_key）：只按身份查会复用过期提示词。
+        cache_key = prompt_cache_key(fingerprint, card, page_contract)
+        cached = prompt_cache.get(cache_key)
         if isinstance(cached, dict) and cached.get("prompt") and cached.get("negative"):
             result = cached
             cache_hits += 1
@@ -1835,7 +1885,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
                 card, page_contract,
                 ratio=str(raw.get("asset_ratio") or brief.get("asset_ratio") or "16:9"),
                 asset_function=page_contract["asset_function"])
-            prompt_cache[fingerprint] = result
+            prompt_cache[cache_key] = result
         entry = {
             "asset_id": asset_id,
             "slide_ids": [sid],

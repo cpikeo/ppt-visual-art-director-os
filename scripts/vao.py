@@ -364,7 +364,8 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
 
 
 def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
-           decoded=None, *, speed="strict", limit=24, output_sha=None) -> dict:
+           decoded=None, *, speed="strict", limit=24, output_sha=None,
+           image_roots=None) -> dict:
     """关键页取证（PIL 结构预览；页级缓存内建于 ghost 模块）。
 
     只有产物/渲染器/选页/预览文件见证都一致，才复用整份证据。
@@ -447,6 +448,10 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     preview_spec["_image_decoded"] = decoded if decoded is not None else {}
     if base_path:
         preview_spec["_base_path"] = str(Path(base_path).resolve())
+    # 相对图片路径的解析根必须与编译侧同序（[输出目录, 稿件目录]），否则同名
+    # 相对路径在两个目录各有一张图时，预览画的是另一张——预览≠产物。
+    if image_roots:
+        preview_spec["_image_roots"] = [str(Path(p).resolve()) for p in image_roots if p]
     rendered: list = []
     page_stats: dict = {}
     paths = ghost_deck(preview_spec, output_dir, pages=wanted,
@@ -763,14 +768,18 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             elif workflow.get("status") == "BLOCKED":
                 render_skip_reason = "asset_blocked"
             else:
-                left = None if not deadline else (deadline - (time.perf_counter() - started))
+                # 只有 None 才是「不限时」：0 与负值是「没有预算了」。用 `not deadline`
+                # 判断会把显式声明的 0 秒预算静默升格成不限时——release 于是照常
+                # 渲染预览并给出 PASS，而同一语义的 -5 却正确 BLOCK（实测复现）。
+                left = None if deadline is None else (deadline - (time.perf_counter() - started))
                 if left is None or left >= GHOST_MIN_BUDGET_S:
                     render_skip_reason = None
                     t_ghost = time.perf_counter()
                     ghost = _ghost(normalized, preview_dir, base_path=build.parent,
                                    image_bytes=snapshots, decoded=decoded,
                                    speed=speed, limit=ghost_pages,
-                                   output_sha=(result.get("compile") or {}).get("output_sha256"))
+                                   output_sha=(result.get("compile") or {}).get("output_sha256"),
+                                   image_roots=[output_path.resolve().parent, build.parent])
                     timing["ghost_ms"] = round((time.perf_counter() - t_ghost) * 1000, 2)
                     timing["render_pages"] = int(ghost.get("count", 0) or 0)
                     timing["render_pages_drawn"] = int(ghost.get("pages_drawn", 0) or 0)

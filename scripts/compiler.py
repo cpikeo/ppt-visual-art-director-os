@@ -655,6 +655,16 @@ def chart_colors(element: dict, ctx: RenderContext):
     return primary, secondary, ink, muted
 
 
+def _finite_target(value) -> bool:
+    """目标线读数：bool 不是数字（与 guard 的 `_finite` 同口径）。"""
+    if isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def _paint_negative_points(series, ctx: RenderContext, element: dict) -> None:
     """柱状序列里 <0 的点自动染 negative 角色色（元素可 negative_role=False 关闭）。
 
@@ -801,8 +811,12 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
         if fmt:
             labels.number_format = str(fmt)
             labels.number_format_is_linked = False
-        if element.get("unit") and not show and kind in NUMERIC_UNIT_KINDS:
-            ctx.warn(f"chart '{element.get('id')}': 声明了 unit 但 show_values 关闭，单位不可见")
+        # 数值标签关闭时不再因「声明了 unit」直接 ctx.warn（= 编译失败）：那与 release
+        # 出处硬门打架——门要求数值图表必须写 unit，编译器又拒绝 unit 在标签关闭时
+        # 不可见，作者被夹在中间，唯一出路是强制打开数值标签（设计决定被工程门替掉），
+        # 而修复包只报 COMPILE_FAIL、说不出这是两个门的冲突。可观测性归 guard
+        # （chart_unit_invisible 告警，进发布清单 notes）；编译器只负责渲染：
+        # 数值可见时单位随 _unit_number_format 落到标签上。
         labels.position = (XL_LABEL_POSITION.OUTSIDE_END if kind in
                            ("bar", "horizontal_bar", "comparison_bar", "column")
                            else XL_LABEL_POSITION.BEST_FIT)
@@ -1352,27 +1366,29 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
         # 目标线：在已知刻度（span/maxv）上画一条竖向参考线，标注目标位置。
         # 这是「证据叙事」的可视化语言——让「现在在哪」与「要到哪」可一眼对比。
         target = element.get("target")
-        if target is not None:
+        if target is not None and not _finite_target(target):
+            # 不静默改稿：声明了目标线却画不出来必须出声（guard 已在编译前拦下非数字，
+            # 这里保证直接调用 compile_deck 的路径也不吞掉证据）。
+            ctx.warn(f"chart '{eid}': target={target!r} 不是有限数字，目标线无法绘制"
+                     "——请写成数值或删掉 target")
+        elif target is not None:
+            tv = float(target)
+            tx = bar_x + span * max(0.0, min(1.0, tv / maxv))
+            tl = slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT, Emu(emu(tx)), Emu(emu(y + 4)),
+                Emu(emu(tx)), Emu(emu(y + h - 4)))
+            tl.name = f"{eid}__target"
+            tl.line.color.rgb = ctx.color("accent")
+            tl.line.width = Emu(emu(1))
             try:
-                tv = float(target)
-                tx = bar_x + span * max(0.0, min(1.0, tv / maxv))
-                tl = slide.shapes.add_connector(
-                    MSO_CONNECTOR.STRAIGHT, Emu(emu(tx)), Emu(emu(y + 4)),
-                    Emu(emu(tx)), Emu(emu(y + h - 4)))
-                tl.name = f"{eid}__target"
-                tl.line.color.rgb = ctx.color("accent")
-                tl.line.width = Emu(emu(1))
-                try:
-                    tl.line.dash_style = MSO_LINE_DASH_STYLE.DASH
-                except Exception:
-                    pass
-                tlabel = element.get("target_label")
-                if tlabel:
-                    _textbox(slide, f"{eid}__target_label", tx + 6, y - 2,
-                             value_w + 40, 20, str(tlabel), 11,
-                             ctx.color("accent"), ctx, element, align=PP_ALIGN.LEFT)
-            except (TypeError, ValueError):
+                tl.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+            except Exception:
                 pass
+            tlabel = element.get("target_label")
+            if tlabel:
+                _textbox(slide, f"{eid}__target_label", tx + 6, y - 2,
+                         value_w + 40, 20, str(tlabel), 11,
+                         ctx.color("accent"), ctx, element, align=PP_ALIGN.LEFT)
         for i, r in enumerate(data):
             cy = y + row_h * (i + 0.5)
             track = slide.shapes.add_shape(
@@ -1945,6 +1961,7 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
     t_save = time.perf_counter()
     import os
     import tempfile
+    from primitives import atomic_replace
     fd, name = tempfile.mkstemp(prefix="." + output_path.name + "-", suffix=".pptx",
                                 dir=output_path.parent)
     os.close(fd)
@@ -1954,7 +1971,8 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
         save_ms = (time.perf_counter() - t_save) * 1000
         package = _postprocess_package(staged)
         # 保存与后处理全部完成才发布；失败时旧完整产物保持原样。
-        os.replace(staged, output_path)
+        # 权限口径由 atomic_replace 统一（mkstemp 的 0600 不得成为交付物的权限）。
+        atomic_replace(staged, output_path)
     finally:
         staged.unlink(missing_ok=True)
     report = {

@@ -15,7 +15,7 @@
 
 - contain/cover 使用保持盒子比例的画布，修复小图拉伸失真；ghost contain 支持等比放大。
 - QC/compiler/ghost 统一 EXIF 显示方向，旋转图不再透传未转置字节。
-- ghost 相对路径以 `_base_path` 优先；pie 保持实心，仅 donut 族挖孔。
+- 预览相对底图改为**按编译侧同序**解析（`[输出目录, 稿件目录]`，与 `compiler._resolve_src` / `primitives._media_stamp` 一致，vao 显式传入 `_image_roots`）：同名相对路径在两处各有一张图时，预览画的必须与产物贴的是同一张（审计实测两处根序分叉）。独立调用 `ghost_deck`（不带 `_image_roots`）保持 `_base_path` 优先的旧口径；pie 保持实心，仅 donut 族挖孔。
 - 作者素材声明优先；对象不默认继承背景材质/光影。`asset_reason` / `asset_composition` 不触发配图额度；提示词缓存 v2→v3 重建，不自动删除旧图。
 
 ### 回归与 CI
@@ -26,7 +26,32 @@
 - CI 保留 Linux/Windows × Python 3.10/3.12/3.13 与 Linux 3.10 依赖下限组合；显式启用 UTF-8。
 - 修正 selftest 对资产快照键和读图路径的比较，按 resolve 后身份核对；符号链接临时目录已复现旧测试误报。
 - Linux 本地审计验证：selftest 637/637、bench 57/57；四组冻结断言分别 81/81、31/31、14/14、8/8。两页含图 strict 发布 PASS，干净样例 PPTX 与审计修复前字节一致；坏图等负例 BLOCKED exit 2。
-- 远端历史 CI #64（e734d6a）为失败，Windows Regression suite 失败；公开日志下载要求管理员权限，根因未确认。本次改动尚未推送或完成远端矩阵验收，不宣称已修复 #64。
+- 远端历史 CI #64（e734d6a）为失败，Windows Regression suite 失败；公开日志下载要求管理员权限，根因未确认——**第二轮已定位并修复，见「Windows/CI 可移植性」**。本次改动尚未推送或完成远端矩阵验收，不宣称远端已变绿。
+
+### 审计修复（同批，2026-10-16）
+
+- **产物权限**：原子发布统一走 `primitives.atomic_replace`——`mkstemp` 的 0600 不再随 `os.replace` 变成产物权限（此前 plan/manifest/QC/缓存/预览 PNG/交付 PPTX 一律 0600，共享目录与 CI 收集 Permission denied；覆盖既有 0644 还会静默收窄）。目标已存在 → 保持原权限；不存在 → umask 默认，与 `open(path,"w")` 同纪律。
+- **`--deadline 0`**：只有 `None` 才是「不限时」。此前 `not deadline` 把显式 0 秒预算静默升格为不限时，release 照常渲染预览并 PASS，而同语义的 `-5` 正确 BLOCK；现在 0 如实按「没有预算」处理（缺预览证据即 BLOCK）。
+- **unit × show_values 死锁**：release 出处硬门要求数值图表写 unit，编译器却把「unit 在数值标签关闭时不可见」判为编译失败——两个门互相打架，唯一出口是强制打开数值标签。编译器不再拦截（只负责渲染）；guard 出非阻断告警 `chart_unit_invisible`，进发布清单 notes（标签按领域标注：可读域 / 单位可见性 / 非阻断）。
+- **可修诊断**：坐标 bool（`x: True` 曾静默当 1px）与 `_positive_num`/`_finite`/`_alpha_ok` 同口径拒绝；canvas 超出 PowerPoint 可表达的 1–56 英寸（96–5376px，`SLIDE_MIN_PX`/`SLIDE_MAX_PX` 单源）给「整稿等比缩放」的可修诊断，不再透出 python-pptx 的裸 range 错误。
+- 本轮复跑（审计修复后，Linux）：selftest 654/654（新增 17 条回归断言）、bench 57/57、四组冻结断言 81/31/14/8 不变；含图样例 release PASS 且 PPTX 字节与修复前一致（sha256 9c7bf5d0…）；SIGINT 中断不产出半成品、不留临时文件。远端矩阵仍未推送验证。
+
+### 审计修复（第二轮，2026-10-16）
+
+- **单张解码预算**：新增 `assets.QC_MAX_PIXELS`（1 亿像素，随 `qc_profile` 进 QC 档案）。`fast` 档只缩小统计工作域，原图仍要完整解码一次；实测本机 QC 峰值约 23–26MB/百万像素（4MP→142MB、9MP→243MB、16MP→417MB），一张 12000×12000（144MP）的图在 2GB 容器里把整轮 check 打到 OOM 被 SIGKILL——作者拿到的是「进程没了」。现在超过预算在**解码之前**（读 IHDR 后立即判）拦成可修诊断：「先降采样到预算内再登记」。线画在 100MP（8K 帧 33MP / 5000 万像素相机 50MP / 中画幅 100MP 都过）；Pillow 自身炸弹线为 178.9MP，其下的 89.5–178.9M 只警告不拦。该值是**策略线而非机器推导值**：内存受限的 runner 需自行调低（单源常量，QC 档案可见）。
+- **资产失败原因直达修复包**：图读不出来（损坏/截断/超预算）时链路只报「无接受该图片的 QC 结果」，真正判词埋在 `results[].qc.issue`；现在把原始原因带进 `workflow_issues`（「图片不可用（…）」），作者不必再开第二个文件找根因。
+- **字距越界**：`char_spacing` 以 pt 声明并写入 `a:rPr/@spc`，而 `@spc` 是 ST_TextPoint（±4000pt，1/100pt 计）。实测 `char_spacing: 1000000` 一路 PASS 并写出 `spc="100000000"`——非法 OOXML，PowerPoint 打开会进修复流程。guard 前置拒绝（可修诊断），`set_run_font` 按同一常量 `CHAR_SPACING_MAX_PT` 夹紧兜底。
+- **目标线不再静默消失**：`target` / `target_label` 只由 `ranked_bar` 渲染，而编译器把转换异常吞掉——`target: "abc"` 的稿件 release 仍 PASS，产物里一根参考线都没有。现在非有限 `target` 由 guard 拒绝、编译器直接调用时也发声；其他 kind 上写这两个字段会得到 `chart_field_unconsumed` 告警（写了不生效必须留痕）。契约补记该字段的适用 kind。
+- **提示词缓存键覆盖全部输入**：身份指纹刻意不含 `safe_area` / `text_color` / `ratio`（校准压字区不该让已出图改名），但 `build_asset_prompt` 读它们。按身份查缓存时，作者把压字区从左侧改到右侧再跑 plan，拿回旧提示词，而清单里的 `safe_area` 已是新值——清单与出图指令互相矛盾。`prompt_cache_key` 把提示词输入混进键（资产 id 与去重语义不变）。
+- 本轮复跑（第二轮修复后，Linux）：selftest 676/676（本轮新增 22 条）、bench 57/57、四组冻结断言 81/31/14/8 不变；同一含图样例 PPTX 字节与基线 `aa47e2f` 一致（sha256 9c7bf5d0…），墙钟中位 0.42s vs 0.41s（+1.4%，噪声内）；元素保真度探针 22/22、EXIF 方向 1–8 全对、不可信资产 6 类畸形清单全部 rc=2 无 traceback。远端矩阵仍未推送验证。
+
+### Windows / CI 可移植性（第二轮，2026-10-16）
+
+- **CI #64 根因确认**（原记录「根因未确认」）：`windows-latest` 的回归套件崩在 `test_deep_release`——它用 `os.path.relpath(blind_src, Path.cwd())` 构造相对路径，而 GitHub 的 Windows runner 工作区在 `D:`、临时目录在 `C:`，两棵根之间不存在相对路径：`ValueError: path is on mount 'C:', start on mount 'D:'`。测试死在 setup 而不是断言上。改为 `_portable_relpath()`：能相对就相对，做不到退回绝对路径（该检查要验的是「blind pack 不篡改传入的来源标识」，绝对路径同样成立）。本机用 `ntpath` 复现了该 ValueError，并让 `test_deep_release` 走兜底分支跑满 41/41；把助手换回原写法可复现同一崩溃（对照实验）。
+- **Windows 没有 POSIX 权限位**：`test_atomic_publish` 原先断言 `st_mode == 0o644 / 0o664 / 0o600`；Windows 的 `stat` 只反映只读标志（`chmod` 之后一律报 `0o666`），这三条会在 Windows 腿误报。判据改成跨平台可证的形式——**覆盖前后权限不变**，数值相等只在 `os.name == "posix"` 时追加（检查数量不变，POSIX 覆盖不减）。
+- **测试侧缺 encoding**：`selftest.py` 6 处 `read_text()` 读的是管线写出的 UTF-8 中文 JSON；未指定编码时，非 UTF-8 模式的 Windows（CI 之外的本机）会解码失败。补齐 `encoding="utf-8"`。生产代码经 AST 扫描确认没有同类问题（初筛 16 处 `open()` 全是 `Image.open`/zip 成员，非文本读取）。
+- 本轮复跑（Windows 可移植性修复后，Linux）：selftest **680/680**、bench 57/57、四组冻结断言 81/31/14/8 不变、CI 的 spec 冒烟红线（禁 import pptx/lxml/compiler）本机逐字复刻通过。Windows 实机仍待 CI 矩阵验证，本地只做了条件模拟与平台文档级推论。
+
 
 ## 9.33.0 — 2026-10-15
 

@@ -19,6 +19,38 @@ import sys
 from pathlib import Path
 
 
+def atomic_replace(staged, target) -> Path:
+    """原子发布·全库唯一实现（同目录临时文件 replace + 权限口径修正）。
+
+    `tempfile.mkstemp` 以 0600 创建暂存文件，`os.replace` 会把这个权限一起带到产物上：
+    plan / manifest / QC / 缓存 / 预览 PNG / 交付 PPTX 全部变成「只有本人可读」——
+    共享目录、CI 收集产物、另一个服务账号读取时直接 Permission denied；目标文件
+    原先存在时（例如 0644）这一轮写入还会**静默收窄**它的权限（实测复现）。
+    纪律与 `open(path, "w")` 一致：目标已存在 → 保持原权限；目标不存在 → 用 umask
+    决定的常规默认（0o666 & ~umask）。chmod 失败不升级为写盘失败——权限是交付接口，
+    不是产物正确性；失败时保持暂存文件自带的权限。
+    """
+    import os
+    target = Path(target)
+    mode = None
+    try:
+        mode = target.stat().st_mode & 0o7777
+    except OSError:
+        try:
+            current = os.umask(0)
+            os.umask(current)
+            mode = 0o666 & ~current
+        except (OSError, ValueError):
+            mode = 0o644
+    os.replace(staged, target)
+    if mode is not None:
+        try:
+            os.chmod(target, mode)
+        except OSError:
+            pass
+    return target
+
+
 def json_write(path, value, *, indent: int = 2, trailing_newline: bool = True,
                fsync: bool = False) -> Path:
     """原子 JSON 写入·全库唯一实现（同目录临时文件 + replace，中断不留半个文件）。
@@ -46,7 +78,7 @@ def json_write(path, value, *, indent: int = 2, trailing_newline: bool = True,
             if fsync:
                 handle.flush()
                 os.fsync(handle.fileno())
-        os.replace(tmp, target)
+        atomic_replace(tmp, target)
     finally:
         Path(tmp).unlink(missing_ok=True)
     _stamp_after_write(target, before_ns)
@@ -393,6 +425,12 @@ def _p() -> dict:
 
 # 1280 design px -> 13.333 in (12192000 EMU)
 PX_TO_EMU = 9525
+# pptx 画布（sldSz）的合法窗口：1–56 英寸。越界时 python-pptx 直接抛
+# `ValueError: value must be in range(914400, 51206400)…`——那是一句作者读不懂的
+# 内部范围消息，而画布尺寸恰恰是「整稿缩放」级的问题。guard 用它出可修诊断，
+# 与 matrix 缺 x/y 一样遵守「硬门阻断必须是可修的诊断」。
+SLIDE_MIN_PX = 914400 / PX_TO_EMU       # 96 px  = 1 in
+SLIDE_MAX_PX = 51206400 / PX_TO_EMU     # 5376 px = 56 in
 # 元素类型单真源（compiler.DISPATCH 的键与此对齐；guard 白名单校验引用它。
 # spec 档禁加载编译层，集合不能住在编译层——未知 type 会在编译期被静默跳过，
 # 必须在治理层前置拦截）。
@@ -679,6 +717,10 @@ def latin_word_match(text: str, term: str) -> bool:
 # 需要浮点 pt 的地方（字号写入 set_para_font 等）用 px_to_pt()；
 # 需要 Pt 长度对象的地方（直接塞给 python-pptx 属性）用 pt()。
 PT_PER_PX = 0.75
+# 字距（char_spacing，单位为 pt）的可表达上限：`a:rPr/@spc` 是 ST_TextPoint，
+# 以 1/100 pt 计、值域 ±4000pt（±400000）——越界即非法 OOXML，PowerPoint 打开
+# 会进修复流程。guard 在编译前拒绝；编译器按同一常量夹紧作为兜底。
+CHAR_SPACING_MAX_PT = 4000.0
 
 
 def px_to_pt(px) -> float:
@@ -1341,7 +1383,11 @@ def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,
             rPr.get_or_change_to_solidFill().get_or_change_to_srgbClr().val = str(color)
         rPr.get_or_add_latin().typeface = latin_family
     if spacing:
-        rPr.set("spc", str(int(round(float(spacing) * 100))))
+        # 夹紧到 ST_TextPoint 的可表达区间（±4000pt）。作者侧由 guard 出可修诊断，
+        # 这里保证任何调用路径都不会写出非法 OOXML。
+        spc = int(round(float(spacing) * 100))
+        limit = int(CHAR_SPACING_MAX_PT * 100)
+        rPr.set("spc", str(max(-limit, min(limit, spc))))
     if alpha is not None and alpha < 1.0:
         sf = rPr.find(qn("a:solidFill"))
         if sf is None:

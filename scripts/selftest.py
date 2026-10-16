@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -3670,6 +3671,70 @@ def test_material_direction(tmp: Path):
           and "outdated forced" not in rebuilt["assets"][0]["prompt"])
 
 
+def _portable_relpath(target: Path, base: Path) -> str:
+    """尽量给出相对路径，做不到就退回绝对路径。
+
+    `os.path.relpath` 在 Windows **跨盘符**时无解——CI 上工作区在 `D:`、临时目录在
+    `C:`，于是 `ValueError: path is on mount 'C:', start on mount 'D:'` 直接掀掉整个
+    回归套件（本轮审计拿到的 windows-latest 失败日志即此）。需要「相对优先」的地方
+    统一走这里，别让测试在地形上崩掉而不是在断言上失败。
+    """
+    try:
+        return os.path.relpath(target, base)
+    except ValueError:                      # Windows：两个路径没有共同根
+        return str(target)
+
+
+def test_win_portability(tmp: Path):
+    """平台地形不该掀掉回归套件：Windows 跨盘符 + 无 POSIX 权限位。
+
+    背景（本轮拿到的 CI 日志）：`selftest · windows-latest · py3.12` 在
+    `test_deep_release` 里 `os.path.relpath(blind_src, Path.cwd())` 抛
+    `ValueError: path is on mount 'C:', start on mount 'D:'` —— 工作区在 D:、
+    临时目录在 C:，两棵根之间没有相对路径，测试直接崩在 setup 而不是断言上。
+    同一台机器上 POSIX 权限位也不存在（见 test_atomic_publish）。
+    两件事都在本机以**平台无关的方式**复现，不需要 Windows。
+    """
+    import ntpath
+    from unittest.mock import patch
+
+    # 1) 复现 CI 的确切条件：ntpath 在跨盘符时就是抛 ValueError（本机可验证）
+    cross_drive = False
+    try:
+        ntpath.relpath(r"C:\Users\runner\AppData\Local\Temp\blind-src", r"D:\a\repo")
+    except ValueError as exc:
+        cross_drive = isinstance(exc, ValueError)
+        message = str(exc)
+    check("win: 跨盘符 relpath 确实无解（CI 崩溃的真实条件，本机用 ntpath 复现）",
+          cross_drive and "mount" in message, message[:80])
+
+    # 2) 助手在同样条件下不抛异常，退回绝对路径；能相对时仍然是相对路径
+    work = tmp / "winrt"
+    work.mkdir()
+    relative_ok = _portable_relpath(work, Path.cwd())
+    check("win: 同盘符仍给出相对路径（不因兜底丢掉本来的覆盖）",
+          not Path(relative_ok).is_absolute() and (Path.cwd() / relative_ok).resolve() == work.resolve(),
+          relative_ok)
+
+    with patch("os.path.relpath", side_effect=ValueError(
+            "path is on mount 'C:', start on mount 'D:'")):
+        fallback = _portable_relpath(work, Path.cwd())
+    check("win: 跨盘符时退回绝对路径而不是抛错",
+          Path(fallback).is_absolute() and fallback == str(work))
+
+    # 3) blind_pack 必须接受这个绝对路径并原样记录来源标识（覆盖 CI 上会走的那条分支）
+    import bench
+    (work / "blind-src").mkdir()
+    (work / "blind-src" / "evidence.txt").write_bytes(b"evidence")
+    with patch("os.path.relpath", side_effect=ValueError("mount")):
+        source = _portable_relpath(work / "blind-src", Path.cwd())
+    pack = bench.blind_pack([source], work / "out", seed=3)
+    key = json.loads(Path(pack["key"]).read_text(encoding="utf-8"))
+    check("win: 跨盘符分支下 blind pack 仍可用且来源标识不被改写",
+          (work / "out" / "V01" / "evidence.txt").read_bytes() == b"evidence"
+          and key == {"V01": source}, str(key))
+
+
 def test_deep_release(tmp: Path):
     """本轮已复现缺陷：辅助写入、未完成发布、数据载荷与像素表达。"""
     import contextlib
@@ -3740,7 +3805,7 @@ def test_deep_release(tmp: Path):
     check("deep: 发布负例的真实健康前置条件", rc == 0 and initial["release_eligible"])
     observed = []
     def interrupted_compile(*args, **kwargs):
-        observed.append(json.loads(output.with_suffix(".manifest.json").read_text())["status"])
+        observed.append(json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))["status"])
         raise RuntimeError("injected compile interruption")
     with patch.object(vao, "_compile_step", interrupted_compile):
         _, rc = quiet(build, output, mode="release", speed="strict")
@@ -3750,7 +3815,7 @@ def test_deep_release(tmp: Path):
     with patch.object(vao, "_ghost", side_effect=KeyboardInterrupt()):
         try: quiet(build, output, mode="release", speed="strict")
         except KeyboardInterrupt: interrupted = True
-    state = json.loads(output.with_suffix(".manifest.json").read_text())
+    state = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
     check("deep: KeyboardInterrupt 后无旧发布资格", interrupted and state["status"] == "BLOCKED" and not state["release_eligible"])
 
     for command, code in (("check", "raise SystemExit(0)"), ("plan", "raise SystemExit(0)"),
@@ -3776,11 +3841,11 @@ def test_deep_release(tmp: Path):
     run = subprocess.run([sys.executable, str(Path(bench.__file__)), "blind", "pack", str(blind_output),
                           str(blind_key)], capture_output=True, text=True, encoding="utf-8")
     check("deep: blind pack 的 key 不得覆盖待评原件", run.returncode == 2 and blind_key.read_bytes() == original_key)
-    relative_source = os.path.relpath(blind_src, Path.cwd())
+    relative_source = _portable_relpath(blind_src, Path.cwd())
     healthy_pack = bench.blind_pack([relative_source], tmp / "healthy-blind", seed=1)
     check("deep: blind pack 正常目录及评分表保持可用", (tmp / "healthy-blind/V01/evidence.txt").read_bytes() == b"evidence"
           and Path(healthy_pack["sheet"]).is_file()
-          and json.loads(Path(healthy_pack["key"]).read_text()) == {"V01": relative_source})
+          and json.loads(Path(healthy_pack["key"]).read_text(encoding="utf-8")) == {"V01": relative_source})
 
     chart = {"id": "c", "type": "chart", "chart_kind": "ranked_bar", "x": 64, "y": 80,
              "width": 1000, "height": 400, "data": [{"label": "Visible", "value": 1}],
@@ -3814,13 +3879,13 @@ def test_deep_release(tmp: Path):
     healthy, _ = assets.qc_report(qc_manifest, speed="strict", phase="release")
     original_brief = brief.read_bytes(); brief.write_bytes(original_brief + b" ")
     blocked, _ = assets.qc_report(qc_manifest, speed="strict", phase="release")
-    persisted = json.loads(Path(blocked["report_path"]).read_text())
+    persisted = json.loads(Path(blocked["report_path"]).read_text(encoding="utf-8"))
     check("deep: QC 像素暖命中但需求改变时磁盘撤销旧 PASS", healthy["status"] == "PASS"
           and blocked["status"] == "BLOCKED" and persisted["status"] == "BLOCKED")
     brief.write_bytes(original_brief)
     recovered, _ = assets.qc_report(qc_manifest, speed="strict", phase="release")
     check("deep: QC 需求恢复后的状态也同步落盘", recovered["status"] == "PASS"
-          and json.loads(Path(recovered["report_path"]).read_text())["status"] == "PASS")
+          and json.loads(Path(recovered["report_path"]).read_text(encoding="utf-8"))["status"] == "PASS")
 
     alpha = tmp / "alpha.png"; image = Image.new("RGBA", (100, 100), (255, 0, 0, 0))
     image.paste((0, 255, 0, 255), (25, 25, 75, 75)); image.save(alpha)
@@ -3875,7 +3940,7 @@ def test_deep_release(tmp: Path):
     check("deep: PNG 写入中断保留原完整图且清理暂存", target.read_bytes() == previous
           and not list(target.parent.glob("." + target.name + "-*")))
     quiet(build, output, mode="release", speed="strict")
-    release = json.loads(output.with_suffix(".manifest.json").read_text())
+    release = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
     preview_claim = copy.deepcopy(release["ghost_preview"])
     preview_claim["pages"][0] = str(tmp / "absent-preview.png")
     check("deep: 有声明但无实际页图不算发布预览", bool(verify.preview_issues(preview_claim, ["one"])))
@@ -4063,6 +4128,477 @@ def test_integrity_followup(tmp: Path):
           and stale.read_text(encoding="utf-8") == "private old version")
 
 
+def test_atomic_publish(tmp: Path):
+    """原子发布的权限口径：mkstemp 的 0600 不得泄漏成产物权限。
+
+    背景（本轮审计实测复现）：mkstemp 以 0600 建暂存文件，os.replace 把权限一起带到
+    产物上，于是 out.pptx / manifest / QC / 缓存 / 预览 PNG 在共享目录、CI 收集、另一
+    服务账号读取时全部 Permission denied；覆盖已存在的 0644 文件还会静默收窄权限。
+    纪律与 open(path,"w") 一致：目标存在 → 保持原权限；不存在 → umask 默认（此处
+    断言「同 umask 下与普通 open 写出的文件同权限」，在任意 umask 下都成立）。
+    """
+    import os
+    from primitives import json_write
+    from compiler import compile_deck
+
+    probes = tmp / "publish"
+    probes.mkdir()
+
+    # 1) 新建 JSON（即 manifest/QC/缓存/plan 走的那条路）：权限与普通写入一致
+    fresh = probes / "fresh.json"
+    json_write(fresh, {"ok": True})
+    plain = probes / "plain.txt"
+    plain.write_text("x", encoding="utf-8")
+    same = (fresh.stat().st_mode & 0o777) == (plain.stat().st_mode & 0o777)
+    check("publish: 新建 JSON 权限与普通写入一致（非 mkstemp 0600）", same)
+
+    # 2) 覆盖既有文件不得收窄权限。
+    #    Windows 没有 POSIX 权限位（stat 只反映只读标志：chmod(0o644/0664/0600) 之后
+    #    一律报 0o666），所以判据写成跨平台可证的形式——「覆盖前后权限不变」，
+    #    只有在 POSIX 上才追加数值相等。CI 的 Windows 腿因此不会把 0644/0664 误判成缺陷。
+    posix = os.name == "posix"
+    os.chmod(fresh, 0o644)
+    before = fresh.stat().st_mode & 0o777
+    json_write(fresh, {"ok": True, "round": 2})
+    after = fresh.stat().st_mode & 0o777
+    check("publish: 覆盖既有文件保持原权限（POSIX 下即 0644）",
+          after == before and (not posix or after == 0o644))
+    os.chmod(fresh, 0o664)
+    before = fresh.stat().st_mode & 0o777
+    json_write(fresh, {"ok": True, "round": 3})
+    after = fresh.stat().st_mode & 0o777
+    check("publish: 覆盖既有 0664 不收窄（组可写位保持）",
+          after == before and (not posix or after == 0o664))
+
+    # 3) 真正的 PPTX 产物（compiler 的 mkstemp→save→replace 路径）
+    pptx = probes / "deck.pptx"
+    spec = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}},
+            "slides": [{"id": "s01", "elements": []}]}
+    compile_deck(spec, str(pptx), speed="fast")
+    check("publish: PPTX 产物权限与普通写入一致（非 0600）",
+          (pptx.stat().st_mode & 0o777) == (plain.stat().st_mode & 0o777))
+    os.chmod(pptx, 0o600)
+    before = pptx.stat().st_mode & 0o777
+    compile_deck(spec, str(pptx), speed="fast")
+    after = pptx.stat().st_mode & 0o777
+    check("publish: 覆盖既有 PPTX 保持原权限（POSIX 下即 0600，不越权放宽）",
+          after == before and (not posix or after == 0o600))
+
+
+def test_root_order(tmp: Path):
+    """同名相对底图在两处各有一张时，预览/编译/见证必须解析同一张。
+
+    背景（本轮审计实测复现）：编译侧按 [输出目录, 稿件目录] 解析相对 src，
+    vao 传给预览的根却是 [稿件目录, cwd]——`out/images/hero.png` 与
+    `src/images/hero.png` 不同色时，产物贴的是输出目录那张，预览画的是稿件目录
+    那张，两边都自认正确。修复：vao 把编译侧的两个根（同序）显式传给预览，
+    ghost 以 `spec["_image_roots"]` 优先，独立调用 ghost 的老行为不变。
+    """
+    import ghost as ghost_mod
+    from compiler import _resolve_src
+    from PIL import Image
+    from vao import _ghost
+
+    root = tmp / "rootorder"
+    build_dir, out_dir = root / "src", root / "out"
+    (build_dir / "images").mkdir(parents=True)
+    (out_dir / "images").mkdir(parents=True)
+    red, blue = (220, 30, 30), (30, 30, 220)
+    Image.new("RGB", (80, 80), red).save(build_dir / "images" / "hero.png")
+    Image.new("RGB", (80, 80), blue).save(out_dir / "images" / "hero.png")
+
+    element = {"type": "image", "id": "hero", "x": 0, "y": 0, "width": 1280,
+               "height": 720, "src": "images/hero.png", "role": "focus"}
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+            "slides": [{"id": "s01", "elements": [element]}]}
+
+    compiled = _resolve_src(element, str(out_dir / "deck.pptx"), str(build_dir / "build.py"))
+    check("root-order: 编译侧取输出目录那张（基准口径）",
+          Path(compiled).resolve() == (out_dir / "images" / "hero.png").resolve())
+
+    info = _ghost(spec, out_dir / "preview", base_path=build_dir,
+                  image_roots=[out_dir, build_dir], speed="strict", limit=1)
+    page = Path(info["pages"][0])
+    check("root-order: 预览产出页图", page.is_file())
+    with Image.open(page) as im:
+        pixel = im.convert("RGB").getpixel((im.width // 2, im.height // 2))
+    preview_is_blue = pixel[2] > pixel[0] and pixel[2] > 150
+    check("root-order: 预览画的是输出目录那张（与产物同源）", preview_is_blue,
+          f"中心像素={pixel}（红=稿件目录那张，说明分叉）")
+
+    # 独立调用 ghost（无 _image_roots）保持旧口径：base 优先
+    legacy = dict(spec)
+    legacy["_base_path"] = str(build_dir)
+    check("root-order: 独立 ghost 调用仍按 base 优先（兼容）",
+          ghost_mod._resolve_image("images/hero.png", ghost_mod._image_roots(legacy))
+          == (build_dir / "images" / "hero.png").resolve())
+
+
+def _header_only_png(path: Path, w: int, h: int) -> Path:
+    """合法签名 + 合法 IHDR（含 CRC）+ 空 IDAT：`Image.open` 读得到 size，
+    `load()` 必然失败。用来证明预算判断发生在**解码之前**且不花内存。"""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff))
+
+    path.write_bytes(b"\x89PNG\r\n\x1a\n"
+                     + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(b"")) + chunk(b"IEND", b""))
+    return path
+
+
+def test_prompt_cache_key(tmp: Path):
+    """提示词缓存键必须覆盖提示词的**全部输入**。
+
+    实测（本轮审计）：身份指纹刻意不含 safe_area / text_color / ratio（校准压字区
+    不该让已出图改名），但 `build_asset_prompt` 恰恰读它们。按身份查缓存时，
+    作者把压字区从左侧改到右侧、再跑一次 plan，拿回的是旧提示词，而清单里的
+    `safe_area` 已是新值——清单描述与出图指令互相矛盾，且**逐字相同**的提示词
+    让人完全看不出这一步没生效。
+    """
+    from assets import build_manifest, prompt_cache_key
+    from intelligence import load_brief, think
+
+    work = tmp / "prompt-cache"
+    work.mkdir()
+    brief_file = work / "brief.yml"
+    brief_file.write_text(
+        "goal: 二期产线改造路演材料\n"
+        "audience: 制造业客户与战略伙伴\n"
+        "decision: 批准二期产线改造预算\n"
+        "slides:\n"
+        "  - id: s01\n"
+        "    title: \"二期产线改造：11 个月收回投资\"\n"
+        "    content: \"改造预算 4,800 万元；按 2025 年实际节拍测算，月均节省 436 万元。\"\n"
+        "    asset: required\n"
+        "    asset_subject: \"a production line in a factory\"\n"
+        "    asset_role: illustration\n", encoding="utf-8")
+    brief = load_brief(str(brief_file))
+    bundle = think(brief)
+    cache = work / "asset_prompt_cache.json"
+    area = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
+
+    def plan(extra):
+        for page in bundle["pages"]:
+            page["declarations"] = dict(page.get("declarations") or {}, **extra)
+        manifest = build_manifest(brief, bundle, cache_path=cache)
+        return manifest["assets"][0], manifest["prompt_cache"]
+
+    dark, _ = plan({"safe_area": area, "text_color": "#111111", "asset_ratio": "16:9"})
+    check("prompt-cache: 压字区从深色字改浅色字 → 提示词必须重算",
+          "suitable for dark type" in dark["prompt"])
+    light, _ = plan({"safe_area": area, "text_color": "light", "asset_ratio": "16:9"})
+    check("prompt-cache: 明暗指令随 text_color 改变（不是复用旧提示词）",
+          light["prompt"] != dark["prompt"]
+          and "suitable for light type" in light["prompt"])
+    check("prompt-cache: 资产 id 不因压字区校准改名（身份仍稳定）",
+          light["asset_id"] == dark["asset_id"])
+
+    no_area, _ = plan({"safe_area": {}, "text_color": "#111111", "asset_ratio": "16:9"})
+    check("prompt-cache: 显式无安全区 → 留白指令消失（提示词随输入变化）",
+          "suitable for dark type" not in no_area["prompt"]
+          and no_area["prompt"] != dark["prompt"])
+
+    again, stats = plan({"safe_area": area, "text_color": "#111111", "asset_ratio": "16:9"})
+    check("prompt-cache: 输入完全相同时仍然命中缓存（不是每次重算）",
+          stats["hits"] == 1 and again["prompt"] == dark["prompt"])
+
+    key_a = prompt_cache_key("asset-x", {}, {"safe_area": area, "text_color": "#111111"})
+    key_b = prompt_cache_key("asset-x", {}, {"safe_area": area, "text_color": "light"})
+    check("prompt-cache: 缓存键把提示词输入混进身份（键本身可解释）",
+          key_a != key_b and key_a.startswith("asset-x|"))
+
+
+def test_chart_target(tmp: Path):
+    """目标线：声明了就必须画得出来，画不出来必须出声。
+
+    实测（本轮审计）：`target` 只有 ranked_bar 分支消费，而编译器把转换异常
+    `except (TypeError, ValueError): pass` 吞掉——`target: "abc"` 的稿件 release
+    仍 PASS，产物里一根参考线都没有，作者却以为「门槛已经标上」。
+    反向的错觉同样要拦：progress_bar 上写 target 根本不渲染，必须留痕。
+    """
+    import zipfile
+
+    from compiler import compile_deck
+    from verify import check_spec
+
+    work = tmp / "target"
+    work.mkdir()
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#777777",
+                        "primary": "#222222", "secondary": "#333333", "accent": "#AA0000"},
+             "fonts": {"cn": "Source Han Sans SC", "latin": "Arial"}}
+
+    def spec(kind, **extra):
+        element = {"type": "chart", "id": "c", "x": 100, "y": 100, "width": 900,
+                   "height": 400, "chart_kind": kind, "metric": "完成率", "unit": "%",
+                   "source": "内部", "period": "2025", "basis": "同口径",
+                   "data": [{"label": "甲线", "value": 62}, {"label": "乙线", "value": 48}]}
+        element.update(extra)
+        return {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                "slides": [{"id": "s01", "elements": [element]}]}
+
+    office = work / "ranked.pptx"
+    rep = compile_deck(spec("ranked_bar", target=50, target_label="目标 50%"),
+                       str(office), speed="strict")
+    with zipfile.ZipFile(office) as z:
+        xml = z.read("ppt/slides/slide1.xml").decode("utf-8")
+    check("target: ranked_bar 的数字目标线落进产物（线 + 标签）",
+          bool(rep.get("passed")) and 'name="c__target"' in xml
+          and 'name="c__target_label"' in xml)
+
+    bad = check_spec(spec("ranked_bar", target="abc"))
+    msgs = [c["msg"] for c in bad["checks"] if c["level"] == "error"]
+    check("target: 非数字目标被 guard 拒绝（不再静默消失）",
+          not bad["passed"] and any("target" in m for m in msgs), str(msgs[:1])[:110])
+
+    direct = compile_deck(spec("ranked_bar", target="abc"), str(work / "bad.pptx"), speed="strict")
+    check("target: 编译器兜底（直接编译也不静默改稿）",
+          not direct.get("passed")
+          and any("target" in str(w) for w in direct.get("warnings") or []))
+
+    loose = check_spec(spec("progress_bar", max=100, target=80))
+    warns = [(c["rule"], c["msg"]) for c in loose["checks"] if c["level"] == "warn"]
+    check("target: 不被消费的 kind 出告警（写了不生效必须留痕）",
+          loose["passed"] and any(r == "chart_field_unconsumed" and "target" in m
+                                  for r, m in warns),
+          str(warns[:1])[:110])
+
+
+def test_char_spacing(tmp: Path):
+    """字距越界会写出非法 OOXML：`a:rPr/@spc` 是 ST_TextPoint（±4000pt）。
+
+    实测（本轮审计）：`char_spacing: 1000000`（pt）一路 PASS 并把
+    `spc="100000000"` 写进 slide XML——超出 ECMA-376 的值域，PowerPoint 打开会进
+    修复流程。guard 前置拒绝（可修诊断），编译器按同一常量夹紧兜底。
+    """
+    import re
+    import zipfile
+
+    from compiler import compile_deck
+    from primitives import CHAR_SPACING_MAX_PT
+    from verify import check_spec
+
+    work = tmp / "spacing"
+    work.mkdir()
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                        "muted": "#777777", "primary": "#222222",
+                        "secondary": "#333333", "accent": "#AA0000"},
+             "fonts": {"cn": "Source Han Sans SC", "latin": "Georgia"}}
+
+    def spec(spacing):
+        return {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                "slides": [{"id": "s01", "elements": [
+                    {"type": "text", "id": "t", "x": 100, "y": 100, "width": 800,
+                     "height": 200, "text": "自有内容占比 61%", "size": 21,
+                     "color": "ink", "role": "title", "char_spacing": spacing}]}]}
+
+    legal = check_spec(spec(2))
+    check("spacing: 正常字距（2pt）不受影响", legal["passed"])
+
+    wild = check_spec(spec(10 ** 6))
+    msgs = [c["msg"] for c in wild["checks"] if c["level"] == "error"]
+    check("spacing: 越界字距被 guard 拒绝（可修诊断）",
+          not wild["passed"] and any("ST_TextPoint" in m for m in msgs), str(msgs[:1])[:110])
+
+    for value, expect in ((2, 200), (4000, int(CHAR_SPACING_MAX_PT * 100)),
+                          (10 ** 6, int(CHAR_SPACING_MAX_PT * 100))):
+        office = work / f"spc-{value}.pptx"
+        rep = compile_deck(spec(value), str(office), speed="strict")
+        with zipfile.ZipFile(office) as z:
+            written = re.findall(r'spc="(-?\d+)"',
+                                 z.read("ppt/slides/slide1.xml").decode("utf-8"))
+        check(f"spacing: 编译写入 spc={expect}（声明 {value}pt）",
+              bool(rep.get("passed")) and written and all(int(w) == expect for w in written),
+              f"写入 {written}")
+
+    bounded = compile_deck(spec(-10 ** 6), str(work / "spc-neg.pptx"), speed="strict")
+    with zipfile.ZipFile(work / "spc-neg.pptx") as z:
+        neg = [int(w) for w in re.findall(r'spc="(-?\d+)"',
+                                         z.read("ppt/slides/slide1.xml").decode("utf-8"))]
+    check("spacing: 负方向同样夹在可表达区间内（不写非法 OOXML）",
+          bool(bounded.get("passed")) and neg
+          and all(abs(v) <= CHAR_SPACING_MAX_PT * 100 for v in neg), f"写入 {neg}")
+
+
+def test_asset_budget(tmp: Path):
+    """不可信资产的资源边界：超预算的图必须在**解码前**被拦成可修诊断。
+
+    背景（本轮审计实测）：12000×12000（144MP）的图在 2GB 机器上把整轮 check 打到
+    OOM 被 SIGKILL——作者拿到的是「进程没了」。Pillow 自己的炸弹线是 178.9MP，
+    89.5–178.9M 那段只警告不拦；QC 的 fast 档只缩小统计工作域，原图仍要完整解码。
+    所以设一条流水线共用的解码预算（`assets.QC_MAX_PIXELS`），越线即 BLOCK。
+    """
+    import time
+
+    import numpy as np
+    from PIL import Image
+
+    import assets as assets_mod
+
+    probe = tmp / "budget"
+    probe.mkdir()
+    rng = np.random.default_rng(11)
+    small = probe / "small.png"
+    Image.fromarray((rng.normal(205, 12, (656, 640, 3)).clip(0, 255)).astype("uint8")).save(small)
+
+    plain = assets_mod.image_qc(str(small), max_side=None)
+    check("budget: 预算内的正常图不受影响",
+          plain.get("status") == "ok" and plain.get("dimensions") == [640, 656])
+
+    saved = assets_mod.QC_MAX_PIXELS
+    try:
+        assets_mod.QC_MAX_PIXELS = 100_000
+        tight = assets_mod.image_qc(str(small), max_side=None)
+        check("budget: 越线即 BLOCK，判词含像素数与预算",
+              tight.get("status") == "error" and "解码预算" in str(tight.get("issue"))
+              and "100,000" in str(tight.get("issue")))
+    finally:
+        assets_mod.QC_MAX_PIXELS = saved
+
+    # 真实预算下的一张 144MP「只有头」的图：必须由**我们的**预算判词拦下，
+    # 且在一瞬间完成——真去解码这个文件只会报 truncated。
+    huge = _header_only_png(probe / "huge.png", 12000, 12000)
+    started = time.perf_counter()
+    blocked = assets_mod.image_qc(str(huge), max_side=None)
+    elapsed = time.perf_counter() - started
+    check("budget: 144MP 在解码前被拦（不是 truncated、不是 OOM）",
+          blocked.get("status") == "error" and "解码预算" in str(blocked.get("issue"))
+          and "truncated" not in str(blocked.get("issue")) and elapsed < 1.0,
+          f"{elapsed*1000:.0f}ms · {str(blocked.get('issue'))[:70]}")
+
+    check("budget: 预算写进 QC 档案（可审计）",
+          assets_mod.qc_profile("strict")["max_pixels"] == saved
+          and assets_mod.qc_profile("fast")["max_pixels"] == saved)
+
+
+def test_asset_diagnosis(tmp: Path):
+    """资产读不出来时，QC 的原始判词必须直达修复包。
+
+    此前这种资产进 `pending_assets`，链上只报「无接受该图片的 QC 结果」；真正的原因
+    （损坏 / 截断 / 超预算）只写在 QC 报告 results[].qc.issue 里，作者得再开一个文件
+    才知道哪里坏了——与「硬门阻断必须是可修的诊断」不符。
+    """
+    import assets as assets_mod
+    from assets import qc_report, verify_chain
+
+    work = tmp / "diagnosis"
+    work.mkdir()
+    broken = work / "broken.png"
+    broken.write_bytes(b"this is not an image at all\n" * 40)      # 伪装成 png 的文本
+    manifest = work / "asset_manifest.json"
+    manifest.write_text(json.dumps({
+        "schema": "vao-assets-v2",
+        "assets": [{"asset_id": "a1", "decision": "generate",
+                    "expected_filename": "broken.png", "prompt": "p", "negative": ["n"],
+                    "slide_ids": ["s01"], "asset_role": "illustration"}]}), encoding="utf-8")
+    report, code = qc_report(str(manifest), str(work), phase="release", speed="strict")
+    check("asset-diag: 坏图 QC 判 BLOCKED 且记下原始判词",
+          code == 2 and report["status"] == "BLOCKED"
+          and report["results"][0].get("missing") is True
+          and bool(str((report["results"][0].get("qc") or {}).get("issue") or "").strip()))
+
+    spec = {"slides": [{"id": "s01", "elements": [
+        {"type": "image", "id": "hero", "asset_id": "a1", "src": str(broken),
+         "x": 640, "y": 0, "width": 640, "height": 656}]}]}
+    chain = verify_chain(spec, str(manifest), str(report["report_path"]), str(work))
+    text = " | ".join(chain["issues"])
+    check("asset-diag: 链上判词带出 QC 的原始原因（不是只有「无接受结果」）",
+          chain["status"] == "BLOCKED" and "图片不可用（" in text,
+          text[:120])
+
+
+def test_guard_diagnostics(tmp: Path):
+    """硬门阻断必须给出可修诊断：坐标的 bool、画布的物理窗口。
+
+    两处都是本轮审计实测：`x: True` 一路 PASS（float(True)=1px 静默当坐标），
+    与 canvas.width:True 被 `_positive_num` 拒是两套标准；canvas 5377px 则让
+    python-pptx 抛裸范围错误（`value must be in range(914400, 51206400)`），
+    作者读不出是画布尺寸的问题。
+    """
+    from verify import check_spec
+    from primitives import SLIDE_MAX_PX
+
+    def base(element):
+        return {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+                "slides": [{"id": "s01", "elements": [element]}]}
+
+    text = {"type": "text", "id": "t", "x": 100, "y": 200, "width": 600,
+            "height": 80, "text": "结论句", "size": 24, "color": "ink",
+            "role": "title"}
+    ok = check_spec(base(text))
+    check("guard-diag: 基准合规稿无错误", ok["passed"])
+
+    bad = check_spec(base(dict(text, x=True)))
+    msgs = [c["msg"] for c in bad["checks"] if c["level"] == "error"]
+    check("guard-diag: 坐标 bool 被拒（不再是静默 1px）",
+          not bad["passed"] and any("geometry" in m for m in msgs), str(msgs[:2]))
+
+    sub = check_spec(base(dict(text, width=5e-5)))
+    sub_msgs = [c["msg"] for c in sub["checks"] if c["level"] == "error"]
+    check("guard-diag: 亚 EMU 尺寸被判退化（落盘 0 EMU = 不可见）",
+          not sub["passed"] and any("退化" in m for m in sub_msgs), str(sub_msgs[:2]))
+
+    wide = check_spec({"canvas": {"width": SLIDE_MAX_PX + 1, "height": 720},
+                       "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+                       "slides": [{"id": "s01", "elements": [text]}]})
+    msgs2 = [c["msg"] for c in wide["checks"] if c["level"] == "error"]
+    check("guard-diag: 超 56 英寸画布给可修诊断（不是裸 ValueError）",
+          not wide["passed"] and any("1–56 英寸" in m for m in msgs2), str(msgs2[:2]))
+
+    legal = check_spec({"canvas": {"width": SLIDE_MAX_PX, "height": 720},
+                        "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
+                        "slides": [{"id": "s01", "elements": [text]}]})
+    check("guard-diag: 56 英寸边界本身合法",
+          all("英寸" not in c["msg"] for c in legal["checks"]))
+
+
+def test_unit_visibility(tmp: Path):
+    """unit × show_values：release 出处硬门要求 unit，而值标签关闭时 unit 不可见。
+
+    此前编译器把这个组合直接升格为编译失败，而 release（-5 秒 deadline 除外）
+    又强制数值图表写 unit：作者只有「打开数值标签」一条路，修复包只报
+    COMPILE_FAIL，说不出这是两个门的冲突。修复：编译器不再拦截（渲染职责），
+    guard 出可执行告警 `chart_unit_invisible`（进发布清单 notes，不阻断）。
+    """
+    from verify import check_spec
+    from compiler import compile_deck
+
+    spec = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                 "muted": "#777777", "primary": "#222222",
+                                 "secondary": "#333333", "accent": "#AA0000"}},
+            "slides": [{"id": "s01", "elements": [
+                {"type": "chart", "id": "c", "x": 140, "y": 100, "width": 1000,
+                 "height": 520, "chart_kind": "pie", "unit": "件",
+                 "source": "内部测算", "period": "2025", "basis": "同型号",
+                 "data": [{"label": "甲", "value": 30}, {"label": "乙", "value": 45},
+                          {"label": "丙", "value": 25}]}]}]}
+
+    report = check_spec(spec)
+    rules = [(c.get("rule"), c.get("level")) for c in report.get("checks", [])]
+    check("unit-visibility: guard 出可执行告警（不阻断）",
+          ("chart_unit_invisible", "warn") in rules
+          and all(level != "error" for _, level in rules))
+
+    out = tmp / "unit" / "deck.pptx"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    rep = compile_deck(spec, str(out), speed="strict")
+    check("unit-visibility: pie+unit 不再编译失败（渲染职责与设计决定分离）",
+          bool(rep.get("passed")) and out.is_file())
+
+    shown = json.loads(json.dumps(spec))
+    shown["slides"][0]["elements"][0]["show_values"] = True
+    report2 = check_spec(shown)
+    check("unit-visibility: 值可见时不再告警",
+          all(c.get("rule") != "chart_unit_invisible"
+              for c in report2.get("checks", [])))
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -4103,7 +4639,17 @@ def main():
                          ("delivery_safety", test_delivery_safety),
                          ("material_direction", test_material_direction),
                          ("deep_release", test_deep_release),
-                         ("integrity_followup", test_integrity_followup)):
+                         ("integrity_followup", test_integrity_followup),
+                         ("atomic_publish", test_atomic_publish),
+                         ("win_portability", test_win_portability),
+                         ("prompt_cache", test_prompt_cache_key),
+                         ("chart_target", test_chart_target),
+                         ("char_spacing", test_char_spacing),
+                         ("asset_budget", test_asset_budget),
+                         ("asset_diagnosis", test_asset_diagnosis),
+                         ("guard_diagnostics", test_guard_diagnostics),
+                         ("root_order", test_root_order),
+                         ("unit_visibility", test_unit_visibility)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

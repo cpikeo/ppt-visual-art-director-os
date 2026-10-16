@@ -1338,6 +1338,23 @@ def _draw_background(img: Image.Image, bg: Any, ctx: RenderContext) -> None:
         img.paste((*color, 255), (0, 0, img.width, img.height))
 
 
+def _image_roots(spec: dict) -> list:
+    """相对图片路径的解析根，顺序必须与编译器/编译缓存完全一致。
+
+    编译侧的候选根是 [`输出目录`, `稿件目录`]（`compiler._resolve_src` 与
+    `primitives._media_stamp` 同序，取第一个存在的文件）。预览若用别的顺序，
+    「同名相对路径在两个目录各有一张图」时预览画的是另一张、编译缓存记的又是
+    第三份字节——预览≠产物，而两边都自认正确（实测复现）。
+
+    vao 在预览 spec 里给出 `_image_roots`（就是编译侧那两个根）；独立调用
+    ghost_deck 的路径缺省回落到旧口径 [_base_path, cwd]，不改变既有行为。
+    """
+    given = spec.get("_image_roots")
+    if isinstance(given, (list, tuple)) and given:
+        return [Path(str(p)).expanduser() for p in given]
+    return [Path(str(spec.get("_base_path") or Path.cwd())).expanduser(), Path.cwd()]
+
+
 def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int = 1,
                image_cache: dict | None = None) -> Image.Image:
     """Render one polished direction preview; no external renderer or invented copy.
@@ -1358,10 +1375,11 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     ctx.image_decoded = spec.get("_image_decoded") or {}
     ctx.preview_image_cache = image_cache if image_cache is not None else {}
     _draw_background(img, slide.get("background"), ctx)
-    # 解析根与 _page_media_stamp 完全同序（base 优先，cwd 兜底）：stamp 已把按此序
-    # 解析到的字节写进 spec["_image_bytes"]（键含作者原样 src），绘制端若用别的
-    # 顺序解析，同名相对路径会在两个目录各有一张图时画出与缓存身份不符的另一张。
-    roots = [Path(str(spec.get("_base_path") or Path.cwd())).expanduser(), Path.cwd()]
+    # 解析根与 _page_media_stamp 完全同序，且与编译侧（compiler._resolve_src /
+    # primitives._media_stamp）同序：stamp 已把按此序解析到的字节写进
+    # spec["_image_bytes"]，绘制端若用别的顺序解析，同名相对路径会在两个目录
+    # 各有一张图时画出与产物/缓存身份不符的另一张。
+    roots = _image_roots(spec)
     elements = list(slide.get("elements") or [])
     elements.sort(key=lambda e: 0 if isinstance(e, dict) and (
         str(e.get("layer", "")).lower() in {"background", "backdrop"}
@@ -1519,7 +1537,7 @@ def _page_media_stamp(slide: dict, spec: dict) -> list:
         image_bytes = {}
         spec["_image_bytes"] = image_bytes
     digests = spec.get("_image_digests") or {}
-    roots = [Path(spec.get("_base_path") or Path.cwd()), Path.cwd()]
+    roots = _image_roots(spec)
     stamps = []
     for element in (slide.get("elements") or []):
         if not isinstance(element, dict) or element.get("type") != "image":
@@ -1582,6 +1600,7 @@ def _write_png(path, image=None, *, source=None, compress_level=1) -> None:
     """页图/缓存/联络表统一原子发布；中断不覆盖上轮完整 PNG。"""
     import os
     import tempfile
+    from primitives import atomic_replace
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix="." + target.name + "-", dir=target.parent)
@@ -1593,7 +1612,7 @@ def _write_png(path, image=None, *, source=None, compress_level=1) -> None:
                     shutil.copyfileobj(original, handle)
             else:
                 image.save(handle, "PNG", compress_level=int(compress_level))
-        os.replace(staged, target)
+        atomic_replace(staged, target)
     finally:
         staged.unlink(missing_ok=True)
 
