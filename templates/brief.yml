@@ -47,16 +47,19 @@ slides:
 # asset: required        # required|reuse|none；asset_subject 非空等价 required
 # asset_role: background # background（建立空间）| illustration（表达对象）| hybrid
 # asset_function: frame  # hero|proof|emotion|context|frame|separate
+# asset_reason: "让观众看清对象的关键结构；不是填空或替代证据"  # 可选，进入判断，不触发出图
+# asset_composition: "close view of the object at right, preserve the full mechanism"  # 素材内部构图
 # asset_subject: "a celadon tea bowl at right, empty space on the left for text"
-# medium: photography    # 逐页工艺纪律（摄影→写实；水墨→水墨）
+# medium: photography    # 按任务声明摄影/科学图解/线描等介质，不默认 3D 或细线图标
 # asset_ratio: "16:9"    # 16:9|4:3|3:2；比例不符需裁切时显式 asset_allow_crop: true
-# negative_space_anchor: left   # left|right|top|bottom|center
+# negative_space_anchor: left   # left|right|top|bottom|center|none；与素材构图一致
 # safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}   # 或 {} 表示不压字
 # text_color: dark       # dark|light（QC 按实际亮度验证）
 # material: "rice paper ground, ink wash gradient"   # 逐字生效，压过世界推导
 # lighting: "single soft north window light from the upper left"
-# texture: [paper, ink]  # 键名取自视觉世界（paper/ink/stone/metal/glass/fiber/leaf/
+# texture: [paper, ink]  # 显式多条均保留；[] 表示不加纹理。键名取自视觉世界（paper/ink/stone/metal/glass/fiber/leaf/
 #                        # water/mist/textile/clay/stage/screen）或自由文本
+# fusion_enabled: false # 可选：关背景融合；对象型插图默认不融合，确有构图需要才显式 true
 # background: "#171310"  # 可选：页级底色（#HEX）。暗色沉浸页声明深底色，
 #                        # 资产 QC 的亮度判据跟随本页声明，不与整副纸面比。
 # asset_source:          # 既有素材登记（跳过生成，仍须 QC）

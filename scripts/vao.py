@@ -20,7 +20,6 @@ import copy
 import json
 import sys
 import time
-import types
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -45,12 +44,9 @@ def _load_module(path, name: str = "vao_build"):
     except SyntaxError as exc:
         raise ValueError(f"build 文件语法错误：{source}:{exc.lineno}:{exc.offset or 0} — {exc.msg}"
                          + (f"\n  {exc.text.rstrip()}" if exc.text else "")) from None
-    mod = types.ModuleType(name)
-    mod.__file__ = str(source)
-    import builtins
-    mod.__dict__["__builtins__"] = builtins
-    exec(code, mod.__dict__)
-    sys.modules.setdefault(name, mod)
+    # Python 模块须先注册再执行，dataclass/延迟注解会查询 __module__。
+    from primitives import execute_module
+    mod = execute_module(code, source, name)
     return mod, source
 
 
@@ -173,12 +169,37 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
                           "brief_file_sha256": brief_sha256}
     has_media = any((page["judgment"]["media"]["decision"] in ("required", "reuse"))
                     for page in bundle["pages"])
+    from primitives import validate_io_paths
     # 判断一次即知道有没有图：确需图时同一次 plan 给清单，不要求作者重跑
     # 带 --assets-out 的第二条命令；无图则绝不写空清单。
     if has_media and not assets_out:
         assets_out = str(Path(out or brief_path).expanduser().with_name("asset_manifest.json"))
     if assets_out:
         bundle["workflow"]["assets_manifest_path"] = str(Path(assets_out).expanduser().resolve())
+
+    # 所有已知写目标先检查，不能把 brief、清单、骨架或提示词缓存互相覆盖。
+    # 骨架 .new.py 回退也纳入集合，避免覆盖输入后才报告冲突。
+    source_paths = {"brief": brief_path}
+    for i, item in enumerate(brief.get("slides") or []):
+        origin = item.get("asset_source") if isinstance(item, dict) else None
+        if isinstance(origin, dict) and origin.get("path"):
+            path = Path(origin["path"]).expanduser()
+            source_paths[f"asset_source[{i}]"] = (path if path.is_absolute() else
+                                                  Path(brief_path).expanduser().resolve().parent / path)
+    validate_io_paths(source_paths, {
+        "plan": out, "skeleton": skeleton,
+        "skeleton fallback": str(Path(skeleton).expanduser().with_name(
+            Path(skeleton).name + ".new.py")) if skeleton else None,
+        "assets manifest": assets_out, "asset cache": asset_cache if assets_out else None})
+    if skeleton:
+        target = Path(skeleton).expanduser()
+        text = build_skeleton(bundle)
+        compile(text, str(target), "exec")  # 验证语法，不执行作者文件
+        if target.exists() and target.read_text(encoding="utf-8") != text:
+            target = target.with_name(target.name + ".new.py")
+        if target.exists() and target.read_text(encoding="utf-8") != text:
+            raise FileExistsError(f"保留已有稿件：{target}；请指定新的 --skeleton 路径")
+        target.parent.mkdir(parents=True, exist_ok=True)
 
     timing["asset_manifest_build_ms"] = 0.0
     timing["asset_manifest_prepare_ms"] = 0.0
@@ -200,16 +221,7 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
 
     t = time.perf_counter()
     if skeleton:
-        target = Path(skeleton).expanduser()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        text = build_skeleton(bundle)
-        compile(text, str(target), "exec")  # 验证生成语法，不执行作者文件
-        if target.exists() and target.read_text(encoding="utf-8") != text:
-            target = target.with_name(target.name + ".new.py")
-        if target.exists():
-            if target.read_text(encoding="utf-8") != text:
-                raise FileExistsError(f"保留已有稿件：{target}；请指定新的 --skeleton 路径")
-        else:
+        if not target.exists():
             with target.open("x", encoding="utf-8") as handle:
                 handle.write(text)
         bundle["workflow"]["skeleton_path"] = str(target.resolve())
@@ -479,7 +491,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     info["reused"] = False
     try:
         target.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        _json_write(marker, info)
     except (OSError, TypeError, ValueError) as exc:
         # 写不下 marker 只是失去「下轮复用」的机会，预览本身仍然有效；但静默失败会
         # 让下一轮莫名重画，所以留一行诊断（不改变本轮结论）。
@@ -522,6 +534,20 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
     output_path = Path(output).expanduser()
     packet_path = Path(packet).expanduser() if packet else output_path.with_suffix(".repair.json")
     mode = str(mode or "draft").strip().lower()
+    from primitives import validate_io_paths, PathConflictError
+    # 必须在 fail() 之外：冲突时连诊断文件也不能写，否则错误路径本身会毁稿。
+    qc_path = (Path(assets_manifest).expanduser().with_name(
+        Path(assets_manifest).stem + ".qc.json") if assets_manifest else None)
+    writes = {"PPTX": output_path, "repair packet": packet_path,
+              "release manifest": output_path.with_suffix(".manifest.json") if mode == "release" else None,
+              "asset QC": qc_path}
+    preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
+                              if mode == "release" else None)
+    managed_dirs = {"preview": preview_dir,
+                    "compile cache": output_path.with_name(output_path.stem + "_vao")
+                    if mode != "spec" else None}
+    validate_io_paths({"build": build_path, "assets manifest": assets_manifest}, writes,
+                      managed_dirs=managed_dirs)
 
     def fail(exc: Exception) -> tuple:
         from verify import fail_result
@@ -566,11 +592,46 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             isinstance(slide, dict) and isinstance(slide.get("elements"), list)
             and any(isinstance(e, dict) and e.get("type") == "image"
                     for e in slide["elements"]) for slide in slides))
+        source_paths = {"build": build, "assets manifest": assets_manifest}
+        if has_images:
+            # 即使缺清单而将被阻断，修复包/预览也不许覆盖声明的原图。
+            # 同时保护编译与结构预览采用的相对路径候选；不导入 Office 引擎。
+            roots = {build.parent, output_path.resolve().parent, Path.cwd()}
+            for si, slide in enumerate(slides):
+                if not isinstance(slide, dict) or not isinstance(slide.get("elements"), list):
+                    continue
+                for ei, element in enumerate(slide["elements"]):
+                    if not isinstance(element, dict) or element.get("type") != "image":
+                        continue
+                    raw = element.get("src") or ((element.get("asset") or {}).get("src")
+                                                  if isinstance(element.get("asset"), dict) else None)
+                    if raw:
+                        path = Path(str(raw)).expanduser()
+                        for ri, root in enumerate(roots):
+                            source_paths[f"raw image {si}/{ei}/{ri}"] = path if path.is_absolute() else root / path
+        validate_io_paths(source_paths, writes, managed_dirs=managed_dirs)
         asset_binding = None
         t_bind = time.perf_counter()
         if has_images and assets_manifest:
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
         asset_bind_ms = round((time.perf_counter() - t_bind) * 1000, 2)
+        if has_images and assets_manifest:
+            from primitives import json_read_cached
+            from assets import asset_entries, resolve_asset
+            payload = json_read_cached(assets_manifest)
+            validate_io_paths({**source_paths,
+                               "brief": (payload.get("workflow") or {}).get("brief_path"),
+                               **{f"asset {e['asset_id']}": resolve_asset(
+                                   e, payload, assets_manifest, assets_dir)
+                                  for e in asset_entries(payload)}}, writes, managed_dirs=managed_dirs)
+
+        if mode == "release":
+            # 路径/资产来源预检完成后立即撤销旧发布资格。编译或预览中断时，
+            # 即使进程被终止，也不能让上一轮 PASS 冒充本轮完成。
+            from verify import fail_result, release_manifest
+            pending = fail_result({"source_spec_hash": spec_hash}, ["本轮 release 核验尚未完成；须完整复跑 check"])
+            _json_write(output_path.with_suffix(".manifest.json"),
+                        release_manifest(spec, pending, spec_hash=spec_hash))
 
         # 只有实际使用图片才读取清单与像素；漏传清单的图片在编译前直接阻断。
         workflow = {"status": "SKIPPED", "issues": [], "image_count": 0,
@@ -626,8 +687,15 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                 "contact_sheet_cached": False, "render_skipped": "asset_blocked",
                 "total_ms": round((time.perf_counter() - started) * 1000, 2),
             }
+            manifest_path = None
+            if mode == "release":
+                from verify import release_manifest
+                manifest_path = output_path.with_suffix(".manifest.json")
+                _json_write(manifest_path, release_manifest(spec, result, workflow=workflow,
+                                                           spec_hash=spec_hash))
+                result["manifest_path"] = str(manifest_path)
             _json_write(packet_path, repair_packet(result, mode, build, output_path))
-            _print_line(result, None, None, packet_path, speed, mode, json_output)
+            _print_line(result, None, manifest_path, packet_path, speed, mode, json_output)
             return result, 2
 
         t_normalize = time.perf_counter()
@@ -686,8 +754,6 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
         # 不另起 preview 命令，release 的一次 check 已产出页图与联络表。
         ghost = None
         render_skip_reason = "not_requested"
-        preview_dir = preview or (str(output_path.with_name(output_path.stem + "_preview"))
-                                  if mode == "release" else None)
         if preview_dir:
             if not result.get("passed"):
                 render_skip_reason = "verdict_blocked"
@@ -768,6 +834,16 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                 print(f"VAO warning: 无法清理过期修复包 {packet_path}: {exc}", file=sys.stderr)
         _print_line(result, ghost, manifest_path, packet_path, speed, mode, json_output)
         return result, (0 if passed else 2)
+    except PathConflictError:
+        raise  # 不得让 fail() 把诊断写回刚发现冲突的输入文件
+    except KeyboardInterrupt as exc:
+        try:
+            fail(exc)
+        except Exception as failure:
+            print(f"VAO error: 中断状态无法落盘: {failure}", file=sys.stderr)
+        raise
+    except SystemExit as exc:
+        return fail(exc)  # 作者代码 sys.exit(0) 不是工作流成功
     except Exception as exc:
         return fail(exc)
 
@@ -958,6 +1034,12 @@ def main(argv=None) -> int:
             rep = run_qc(args.assets_manifest, args.assets_dir, args.speed)
             print(json.dumps(rep, ensure_ascii=False, indent=2))
             return 0 if rep["status"] == "PASS" else 2
+        return 2
+    except KeyboardInterrupt:
+        print("VAO interrupted: 本轮未完成；不得使用旧 PASS 作为本轮交付凭证", file=sys.stderr)
+        return 130
+    except SystemExit as exc:
+        print(f"VAO error: 作者代码中止执行（SystemExit {exc.code!r}）；本轮未完成", file=sys.stderr)
         return 2
     except ModuleNotFoundError as exc:
         print(f"VAO error: missing Python dependency {exc.name!r}; "

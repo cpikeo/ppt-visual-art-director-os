@@ -40,77 +40,13 @@ NEGATIVE_BASE: tuple[str, ...] = (
 )
 
 # --------------------------------------------------------------------------
-# 通用廉价症状拦截层（F12/v4.20——负面清单走出文档、落在出图层）
-# 包的避讳谱（Stock Photo Feeling / 人物摆拍 / Excessive Icons / Neon /
-# 机器人元素 / Glassmorphism / 科技蓝渐变 / Cheap AI Aesthetic）此前只活在
-# 审查语言里，出图层一条没拦——city skyline 卡可以大摇大摆端回一张图库握手照。
-# 本表是**既有口味法的执行**，不是新口味：每个短语在负面清单中有案源。
-# 守门纪律：排除廉价，不堆砌高级词——prompt 通胀（叠 luxury 词）不是质量门。
-# 刻意缺席：「3d render」——illustration 正向本就要求 3D minimal，
-# 3D Decoration 症状由水墨闸门按族拒绝，不进通用层（防自相矛盾）。
-#
-# v5.3 分层：全量负向清单对每张图无差别注入，会稀释对**这一张**真正要紧的
-# 反向词——静物青瓷摄影并不需要「no humanoid robot」。按「画面里可能有什么」
-# 分三层组装（见 build_asset_prompt 第 5 步）：
-#   UNIVERSAL_CHEAP_REJECTS  恒注入（画幅失效/图库感/廉价 AI 感，任何主体都中招）
-#   HUMAN_SCENE_REJECTS      主体可能出现人物时才注入（摆拍/握手/机器人）
-#   TECH_STYLE_REJECTS       非水墨资产才注入（赛博朋克/玻璃拟态；水墨闸门有自己的反向清单）
+# 默认负向词只排除生产失效，不把某种风格、人物动作或题材判成“廉价”。
+# 具体画面禁项由作者 negative / brief.avoid 给出；不从主体关键词扩张禁令。
 # --------------------------------------------------------------------------
 UNIVERSAL_CHEAP_REJECTS: tuple[str, ...] = (
-    "generic stock photo",                        # Stock Photo Feeling
-    "clip art", "clipart illustration",           # Excessive Icons → 剪贴画感
-    "neon glow",                                  # Neon（D06 禁项）
-    "tech blue gradient", "rainbow gradient",     # Excessive Gradients / 科技蓝渐变
-    "plastic skin", "oversaturated colors",       # Cheap AI Aesthetic
-    "heavy HDR", "AI artifacts",
-    # 边框类：模型把「四周留白」误读成「加一圈画框 / 白边 / 黑边」是高频失效模式。
-    # 实测：prompt 里写 generous margins on all four sides，就输出了一张竖构图
-    # 带白边的 letterbox —— 画幅整段作废，这张图只能重出。这不是审美问题，
-    # 是画幅失效，所以放进通用反向，不留给逐页去记。
-    "white border", "black bars", "letterbox", "picture frame", "poster mockup",
-    # 假留白面板：实测失效模式——「留白区」被画成一块硬边平色块，边界肉眼可见。
-    # 与 letterbox 同类（画幅失效），因此进通用反向，不留给逐页去记。
-    "flat painted panel", "hard-edged rectangle of flat tone", "visible seam or step edge",
+    "AI artifacts", "unintended borders or letterboxing",
+    "unintended flat painted panels", "unintended visible seams",
 )
-HUMAN_SCENE_REJECTS: tuple[str, ...] = (
-    "cliché corporate imagery", "corporate handshake",
-    "posed smiling people", "thumbs up",          # 人物摆拍
-    "humanoid robot", "robot mascot",             # 机器人元素（D06 禁项）
-)
-TECH_STYLE_REJECTS: tuple[str, ...] = (
-    "cyberpunk",                                  # Neon Cyberpunk（D06 禁项）
-    "glassmorphism", "frosted glass panels",      # Glassmorphism
-)
-
-# 主体可能涉及人物的词：命中任一即注入 HUMAN_SCENE_REJECTS。
-# 宁可多注入（反向词不伤正向画面），不可漏注入（图库握手照是最贵的废图）。
-PERSON_SUBJECT_TERMS: tuple[str, ...] = (
-    "人", "用户", "客户", "团队", "员工", "创始", "肖像", "手部", "面部", "身影",
-    "people", "person", "team", "founder", "user", "customer", "portrait",
-    "hands", "face", "crowd", "audience", "silhouette",
-)
-
-
-def _term_hit(text: str, term: str) -> bool:
-    """CJK 用子串；拉丁整词（避免 handmade 命中 hand、user 命中 userland）。
-
-    实现归 primitives.latin_word_match —— 与 route 的关键词判定同一份口径。
-    """
-    from primitives import latin_word_match
-    return latin_word_match(text, term)
-
-
-def subject_implies_people(card: dict) -> bool:
-    """主体/世界/风格语言里是否可能出现人物（决定人物场景反向词注不注入）。
-
-    只扫 subject / world / style：material 与 texture 是材质语言
-    （handmade paper 里有 hand，但那不是人手），不参与判定。
-    """
-    if not isinstance(card, dict):
-        return False
-    blob = " ".join(str(x) for k in ("subject", "world", "style")
-                    for x in _as_list(card.get(k))).lower()
-    return any(_term_hit(blob, t) for t in PERSON_SUBJECT_TERMS)
 
 # --------------------------------------------------------------------------
 # 水墨纪律闸门（F6/v4.17——材质语言的执行质量保底）
@@ -131,45 +67,30 @@ INK_TERMS: tuple[str, ...] = (
 # contradictory "hand-painted ... no photographic shading" clauses.
 
 INK_DISCIPLINE: tuple[str, ...] = (
-    "hand-painted Chinese ink-wash (shui-mo / sumi-e) painting",
-    "single deliberate brushwork, dry-brush gradients with visible stroke structure",
-    "generous unpainted rice-paper ground, more than half the frame left empty",
-    "limited ink tonal range of three to four values",
-    "forms built from confident strokes, no photographic outlines or shading",
+    "ink-wash marks and pigment behavior consistent with the declared medium",
+    "preserve the depicted forms and the declared composition through controlled brushwork",
 )
 INK_CHEAP_REJECTS: tuple[str, ...] = (
-    "photographic landscape", "stock photo scenery",
-    "muddy gray ink pooling", "random paint splatter",
-    "oversaturated red sun disc", "photorealistic animals",
-    "clip-art bamboo", "digital airbrush gradients",
-    "symmetric centered composition", "heavy vignette",
-    "watercolor clip-art", "3d render", "postcard look",
+    "unintended muddy ink pooling", "unmotivated paint splatter",
+    "unintended digital airbrush artifacts",
 )
 
 
 def ink_gate_active(card: dict) -> bool:
     """资产卡是否已选择水墨语言（纯检测，供调用方/自检复用）。
 
-    判据是**这张资产自己**的介质声明，不是整副 deck 的方向：
-
-      * `medium`——最明确的信号（`chinese ink-wash painting` / `水墨`）；
-      * subject / color / composition / style 里出现水墨词汇；
-      * 逐页亲手写下的 material / lighting。
-
-    不扫 enhance_asset_card 自动注入的 motion/texture 弱描述（微浮雕里一句
-    rice paper 是材质底味，不等于选择了水墨画），也不扫方向默认值
-    （`material_source == "direction"` 说的是整副 deck 用什么质感说话——
-    一份宋韵里每张照片都拍在纸台上，不代表每张照片都是水墨画）。
-
-    这里曾经还认一个方向族名白名单（song_elegance）：方向名送不进来时它永不命中，
-    送进来之后又把全 deck 的摄影页一起拖成水墨——两头都是错的，已删除。
+    显式 medium 优先；未声明时才看对象/构图/显式材质的介质线索。
+    不扫描世界默认材质、纹理、动势或整稿方向，不把纸面摄影误作水墨。
     """
     if not isinstance(card, dict):
         return False
-    fields = [card.get("medium"), card.get("subject"), card.get("color"),
+    medium = str(card.get("medium") or "").strip().lower()
+    if medium:
+        return any(t.lower() in medium for t in INK_TERMS)
+    fields = [card.get("subject"), card.get("color"),
               card.get("composition"), card.get("style")]
     for key in ("material", "lighting"):
-        if str(card.get(f"{key}_source") or "declared").lower() != "direction":
+        if str(card.get(f"{key}_source") or "declared").lower() == "declared":
             fields.append(card.get(key))
     blob = " ".join(str(x) for seg in fields for x in _as_list(seg)).lower()
     return any(t.lower() in blob for t in INK_TERMS)
@@ -177,32 +98,24 @@ def ink_gate_active(card: dict) -> bool:
 
 
 # --------------------------------------------------------------------------
-# 摄影写实纪律闸门（v4.21——摄影语言的执行质量保底，与水墨闸门同源同理）
-# 资产卡语言为摄影（background 型、非水墨、非插画/3D/矢量）时注入少量正向
-# 写实纪律：光有方向与衰减、空间有空气与真实尺度、质感有胶片性格。
-# 闸门不做审美决策——拍还是画是调用方的事；它只压「选了摄影感却滑向
-# 塑料商业图」的默认分布。廉价症状的反向清单住在 UNIVERSAL_CHEAP_REJECTS
-# （heavy HDR / plastic skin / oversaturated / generic stock photo 已有案源），
-# 这里只补过度锐化与均匀布光两条新案源（高端品牌项目校准）。
-# 守门纪律不变：排除廉价，不堆砌高级词——正向仅 3 句。
+# 摄影执行只补物理可信性；光照由逐页声明/世界/兜底统一结算。
+# 不预设自然光、单光源、浅景深、胶片颗粒或摄影必须充当背景。
 # --------------------------------------------------------------------------
 _PHOTO_STYLE_EXCLUDE = ("illustration", "3d", "vector", "render", "painting",
                         "clipart", "ink", "sumi")
 PHOTO_REALISM_DISCIPLINE: tuple[str, ...] = (
-    "single natural light source with visible direction and gentle falloff",
-    "subtle atmospheric perspective, faint air between planes",
-    "true-to-life spatial scale, medium format film character, soft micro grain",
+    "physically plausible illumination consistent with the depicted scene",
+    "credible photographic geometry, scale and surface response",
+    "faithful photographic detail without invented evidence",
 )
 PHOTO_CHEAP_REJECTS: tuple[str, ...] = (
-    "over-sharpened details", "uniform flat studio lighting",
+    "over-sharpening artifacts",
 )
 
 
 def photo_gate_active(card: dict) -> bool:
-    """资产卡是否已选择摄影语言（纯检测）。插画/3D/矢量/水墨卡不点火。"""
+    """检测摄影介质，不以背景/对象角色代替介质，也不覆盖显式其他介质。"""
     if not isinstance(card, dict):
-        return False
-    if (card.get("asset_type") or "background") != "background":
         return False
     if ink_gate_active(card):
         return False
@@ -235,9 +148,7 @@ SUBJECT_TEXT_RELATION_PHRASES = {
     "center": "subject pulled away from the centre so a calm middle stays open for the page's text",
 }
 
-# 插图遇「介质已声明」（photography / ink-wash / illustration …）时，风格词归介质，
-# 类型后缀不许再替它宣告「3D minimal illustration / soft material / editorial style」，
-# 也不许要求透明剪影——一张摄影插图不是抠图。此时只保留「独立视觉对象」的结构纪律。
+# 对象型插图的结构职责，不替作者选择介质、材质、透明底或画法。
 ILLUSTRATION_STRUCTURE: tuple[str, ...] = (
     "single subject readable as an independent visual object",
     "clean separation from what surrounds it, nothing competing for attention",
@@ -352,10 +263,10 @@ def safe_area_phrase(area: dict, text_color: str | None = None) -> str:
         return ""
     dark = str(text_color or "").lower() != "light"
     if dark:
-        return ("the open side of the frame stays quiet and unbroken, its even tone coming from "
-                "light falling off across the material, never from a painted block")
-    return ("the open side of the frame stays dark and unbroken, its shadow coming from light "
-            "falling away across the material, never from a painted block")
+        return ("the intended text area stays quiet and visually continuous with its surroundings, "
+                "with an even tone suitable for dark type placed later; do not add a separate panel")
+    return ("the intended text area stays quiet and visually continuous with its surroundings, "
+            "with a dark tone suitable for light type placed later; do not add a separate panel")
 
 
 LIGHT_PHRASES = {
@@ -367,10 +278,9 @@ LIGHT_PHRASES = {
 }
 
 ENERGY_PHRASES = {
-    "low": ("very low contrast, no dramatic highlights, no glowing edges, "
-            "no strong vignette, no bokeh"),
-    "medium": "controlled contrast, single soft light source, no hard specular highlights",
-    "high": "one dramatic light source, cinematic contrast",
+    "low": "subdued lighting intensity and restrained contrast",
+    "medium": "moderate lighting intensity and controlled contrast",
+    "high": "stronger light contrast supporting the intended visual hierarchy",
 }
 
 # 能量调谐：视觉世界给光的**方向与质感**，页面判断只在 low/high 时追加一句
@@ -379,9 +289,9 @@ ENERGY_PHRASES = {
 ASSET_FUNCTION_PHRASES = {
     "frame": "the image frames the message without competing with it",
     "separate": "the image separates sections while staying quiet",
-    "direct": "the light leads the eye toward the main subject",
+    "direct": "the image guides the eye toward the main subject",
     "contextualize": "the image establishes context while keeping the foreground readable",
-    "immersive": "immersive cinematic full-bleed background environment, soft atmospheric depth, spacious foreground for typography",
+    "immersive": "immersive full-bleed spatial field supporting the declared subject and page hierarchy",
 }
 
 # --------------------------------------------------------------------------
@@ -452,11 +362,11 @@ ROLE_DISCIPLINE: dict[str, tuple[str, ...]] = {
     ),
     "illustration": (
         "one clearly readable subject treated as an independent visual object",
-        "silhouette, scale and position are decided; light shapes the subject rather than the scene",
+        "internal relationships, scale and placement remain clear at the intended viewing size",
     ),
     "hybrid": (
         "one defined subject set inside a continuous spatial field",
-        "subject and space share the frame with a clear depth order",
+        "subject and surroundings have clearly differentiated visual responsibilities",
     ),
     "icon": (),          # icon 有专属后缀，不叠加场景纪律
 }
@@ -472,37 +382,23 @@ ASSET_TYPE_SUFFIX = {
     # hybrid：同一资产确实同时承担「空间 + 对象」。非默认选项——只有真的两者都要时才用。
     "hybrid": (
         "single frame where one defined subject and its surrounding space are inseparable",
-        "depth order kept legible: subject forward, material and light receding",
+        "the subject remains primary while the surrounding field supports the page reading path",
     ),
-    "illustration": (
-        "3D minimal illustration",
-        "soft material",
-        "editorial style",
-        # 透明底只描述一次，避免 "transparent background" + "no background" 冗余矛盾表述
-        "isolated on pure transparent background, clean cutout, no scenery behind",
-    ),
+    "illustration": ILLUSTRATION_STRUCTURE,
     "icon": (
-        "single line icon",
-        "thin stroke",
-        "consistent weight",
-        "no fill",
-        "minimal",
-        "SVG style",
-        "isolated on pure transparent background, clean cutout",
+        "one semantically recognizable symbol",
+        "coherent visual weight, proportions and level of detail",
+        "legible at its intended presentation size",
     ),
 }
 
-# 透明资产对比度防护：
-# 透明底 + 主体色与幻灯片底色同明度 = 插图"无背景色"且"与主题色差相同"（零对比、被吞没）。
-# 必须在 prompt 显式要求主体与底色形成明确明度差。脚本不持有主题，
-# 故"从 foreground 角色取色"由调用方在 CARD.color 中保证（见 §6.1）。
+# 对象可辨认性防护，不要求透明底、粗轮廓或扁平着色。
 ASSET_CONTRAST_GUARD = {
     "illustration": (
-        "subject tone clearly contrasts with the slide background, bold readable silhouette",
-        "no low-contrast wash that blends into the page",
+        "preserve legibility of the subject and its necessary internal detail against the page",
     ),
     "icon": (
-        "stroke tone clearly contrasts with the slide background",
+        "symbol tone clearly contrasts with the slide background",
     ),
 }
 
@@ -520,9 +416,7 @@ REQUIRED_SEGMENTS = ("subject", "color", "material", "lighting", "composition")
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# 提示词智能三层：动势（Motion）/ 微浮雕（Micro Texture）/ 空间融合（Fusion）
-# 图片不是静态素材：动势给视觉方向，微浮雕给近观质感，融合消灭「贴纸感」。
-# 全部为弱描述子句；微浮雕纪律：微弱、低对比、近距可感知，禁止明显纹理。
+# 可选执行层：只展开调用方已选的动势/纹理/融合，不把质感叠加当成升级。
 # --------------------------------------------------------------------------
 MOTION_LAYERS: dict[str, tuple[str, ...]] = {
     "still": ("a single frozen moment, nothing moving in frame",),
@@ -546,8 +440,8 @@ TEXTURE_LAYERS: dict[str, tuple[str, ...]] = {
     "screen": ("soft light spill on a dark surface",),
 }
 TEXTURE_DISCIPLINE: tuple[str, ...] = (
-    "texture faint and low-contrast, perceivable only at close range",
-    "no obvious pattern, no grunge, no heavy grain")
+    "texture follows the declared medium, subject scale and material",
+    "texture must not obscure necessary structure or the intended text area")
 FUSION_LAYERS: tuple[str, ...] = (
     "image melts into the layout background, no sticker edges, no hard rectangle",
     "negative space reserved and aligned to the text-safe area",
@@ -559,7 +453,7 @@ FUSION_LAYERS: tuple[str, ...] = (
 def _expand_layer(spec, table: dict) -> list[str]:
     """把「层键名 or 自由文本」统一展开成可读语言。
 
-    键名（`eastern` / `natural` / `luxury` …）查表取句：默认第一句；
+    执行键名查表取句：默认第一句；
     视觉世界传下来的是键名（still/reveal/spatial、paper/stone/metal…），
     brief 里逐页写的是自由文本，两种写法都要能用，且展开只发生在这一处：
     自由文本原样保留——调用方显式写下的句子永远赢。
@@ -579,20 +473,23 @@ def _expand_layer(spec, table: dict) -> list[str]:
 
 def enhance_asset_card(card: dict, motion: list | tuple | None = None,
                        texture: list | tuple | None = None,
-                       fusion: bool = True) -> dict:
-    """纯函数：为资产卡注入动势/微浮雕/融合三层（确定性、去重、限量）。
+                       fusion: bool | None = None) -> dict:
+    """展开已选执行层；不把背景的表面/融合强加给对象素材。
 
-    motion / texture 由视觉世界给出（intelligence.derive_world），本函数不再持有
-    「风格族 → 材质」预设表：材质属于内容，不属于风格名。调用方显式传入时永远赢。
-    默认 motion 1 句、texture 1 句 + 2 句纪律、fusion 2 句——提示词密度也是克制的一部分。
+    显式列表（含空列表）逐条保留；无纹理就不附加纹理纪律。
+    背景默认可融合，对象/混合职责是否融合由作者决定。
     """
     out = dict(card)
-    m_keys = motion if motion is not None else card.get("motion") or ("still",)
+    m_keys = motion if motion is not None else card.get("motion")
     t_keys = texture if texture is not None else card.get("texture")
-    out["motion"] = _expand_layer(m_keys, MOTION_LAYERS)[:1]
-    out["texture"] = _expand_layer(t_keys, TEXTURE_LAYERS)[:1] + list(TEXTURE_DISCIPLINE)
-    if fusion:
-        out["fusion"] = list(card.get("fusion") or FUSION_LAYERS[:2])
+    out["motion"] = _expand_layer(m_keys, MOTION_LAYERS)
+    out["texture"] = _expand_layer(t_keys, TEXTURE_LAYERS)
+    if out["texture"]:
+        out["texture"] += list(TEXTURE_DISCIPLINE)
+    if fusion is None:
+        fusion = (card.get("asset_type") or "background") == "background"
+    out["fusion"] = (list(_as_list(card["fusion"])) if "fusion" in card
+                     else list(FUSION_LAYERS[:2])) if fusion else []
     return out
 
 
@@ -676,7 +573,7 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
       declared          作者逐页显式声明 —— 逐字赢，能量不得触碰；
       world             视觉世界给光 —— 页面能量在 low/high 时追加一句强弱（不叠加同义句）；
       fallback          卡片有光语但既非声明也非方向（保守兜底）—— 冻结原文；
-      photo_discipline  摄影写实纪律独家给光（介质说了算）；
+      photo_discipline  无既有光语的摄影卡才补物理可信性，不预设光源样式；
       phrase_fallback   卡片完全无光语时，句式光 + 能量句式一起兜底。
 
     返回 dict(card, resolved={...})；resolved 亦随资产清单落盘（manifest 是
@@ -696,19 +593,12 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
              "phrase": None, "energy_phrase": None,
              "energy": energy, "energy_applied": False}
     if ink:
-        # 水墨工艺纪律句不包含光语，与光来源正交，永远逐字附送。
+        # 已选介质的执行说明不包含光语，不规定构图或固定留白。
         light["ink_lines"] = list(INK_DISCIPLINE)
     if photo:
-        if declared:
-            # 作者声明的光照是唯一光来源；摄影介质句（大气透视/胶片质感）保留。
-            light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE[1:])
-            light["from"] = "declared"
-            light["card_lines"] = card_lights
-        else:
-            # 摄影写实纪律独家给光：预设/兜底光让位，避免同帧两种光。
-            light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE)
-            light["from"] = "photo_discipline"
-    elif declared:
+        # 介质说明不再接管光照：作者/世界的光均沿同一优先级结算。
+        light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE[1:])
+    if declared:
         # 作者写了光照句子：逐字赢，能量不得触碰（不着一字）；
         # 写了来源却没写句子（罕见）：尊重声明的沉默，句式兜底光不许接管。
         light["from"] = "declared"
@@ -725,6 +615,9 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
                 light["energy_applied"] = True   # 页面能量判断真的抵达了像素
         else:
             light["from"] = "fallback"
+    elif photo:
+        light["from"] = "photo_discipline"
+        light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE)
     else:
         light["from"] = "phrase_fallback"
         light["phrase"] = LIGHT_PHRASES.get(light_dir)
@@ -793,7 +686,7 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     segments = []
     for key in CARD_SEGMENTS:
         if key == "lighting":
-            # 光语只从结论读：摄影纪律接管时结论是 []，预设/兜底/声明各归其位。
+            # 光语只从结算结论读；作者/世界/兜底各归其位。
             segments.extend(_as_list(light_decision.get("card_lines")))
             continue
         segments.extend(_as_list(card.get(key)))
@@ -814,20 +707,17 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
                          or card.get("asset_function") or "frame").lower()
     fusion_allowed = card.get("fusion_enabled")
     if fusion_allowed is None:
-        fusion_allowed = asset_type in ("background", "hybrid") or (
-            asset_type != "illustration" and function_hint in {
-                "frame", "separate", "context", "contextualize"})
-    segments.extend(_as_list(resolved.get("motion"))[:1] if isinstance(resolved, dict)
-                    else _as_list(card.get("motion"))[:1])
+        fusion_allowed = asset_type == "background"
+    segments.extend(_as_list(resolved.get("motion")) if isinstance(resolved, dict)
+                    else _as_list(card.get("motion")))
     texture = _as_list(resolved.get("texture")) if isinstance(resolved, dict) \
         else _as_list(card.get("texture"))
-    # One material cue + one discipline cue is enough; prompt length is part
-    # of visual direction and excess adjectives reduce model fidelity.
-    segments.extend(texture[:2])
+    # 作者声明的多条纹理逐条保留；默认世界提示的限量在决策期完成。
+    segments.extend(texture)
     if fusion_allowed:
         fusion_lines = _as_list(resolved.get("fusion")) if isinstance(resolved, dict) \
             else _as_list(card.get("fusion"))
-        segments.extend(fusion_lines[:2])
+        segments.extend(fusion_lines)
 
     # --- 介质纪律句：照决策期结论逐字搬运（水墨工艺 / 摄影写实，无调停）---
     segments.extend(_as_list(light_decision.get("ink_lines")))
@@ -867,17 +757,12 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
 
     # --- 4. Universal QC + 类型后缀 + 对比度防护 -------------------------
     if include_qc:
-        # The old constant is intentionally kept as a reusable vocabulary, but
-        # production uses a compact tail and resolves ratio at the call site.
+        # 质量尾段只描述生成边界；比例句尊重角色，不重选媒介。
         segments.extend(PROMPT_QC_COMPACT)
-        segments.append(f"{ratio} presentation background")
-    if asset_type == "illustration" and medium:
-        # 介质说了算：类型后缀只留结构纪律（见 ILLUSTRATION_STRUCTURE）。
-        segments.extend(ILLUSTRATION_STRUCTURE)
-    else:
-        segments.extend(ASSET_TYPE_SUFFIX[asset_type])
-        # 仅对透明资产（illustration / icon）追加对比度防护
-        segments.extend(ASSET_CONTRAST_GUARD.get(asset_type, ()))
+        label = "image" if asset_type == "hybrid" else asset_type
+        segments.append(f"{ratio} presentation {label}")
+    segments.extend(ASSET_TYPE_SUFFIX[asset_type])
+    segments.extend(ASSET_CONTRAST_GUARD.get(asset_type, ()))
 
     # 无安全区（画心独占版面）时，凡是「把眼睛引向留白锚点 / 留白对齐到文字安全区 /
     # 把某一侧让给页面文字」一类句子都是空指令——版面根本不压文字。
@@ -888,14 +773,10 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
                                                 "text-safe area", "page's text"))]
     prompt = separator.join(s_ for s_ in _dedup(segments) if s_)
 
-    # --- 5. 反向提示词（分层组装：核心恒注入，场景层按画面可能有什么注入）---
+    # --- 5. 反向提示词：生产失效 + 作者禁项 + 所选介质执行失效 ---
     negatives = list(NEGATIVE_BASE) + list(UNIVERSAL_CHEAP_REJECTS) \
         + list(_as_list(card.get("negative"))) \
         + list(_as_list(extra_negative))
-    if subject_implies_people(card):
-        negatives.extend(HUMAN_SCENE_REJECTS)
-    if not ink:
-        negatives.extend(TECH_STYLE_REJECTS)   # 水墨闸门有自己的反向清单，不叠科技词
     if ink:
         negatives.extend(INK_CHEAP_REJECTS)
     if photo:
@@ -957,7 +838,7 @@ def asset_fingerprint(card: dict, page: dict | None = None) -> str:
 
 # --------------------------------------------------------------------------
 # 图像轻量体检（出图后）：只找问题、给建议，不打分。
-# Issue + Suggestion，绝不输出数值分数（评分是 QA/渲染层的职责，这里只做定性体检）。
+# Issue + Suggestion，绝不输出审美分数；设计验收由作者按 SKILL 进行。
 # --------------------------------------------------------------------------
 QC_BLOCK = 64                      # 局部纹理统计的块边长（px）
 QC_FLAT_STD = 0.05                 # 块内标准差低于该值视为「平坦」（留白/均匀区）
@@ -1270,14 +1151,18 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         # 快路径：不透明图直接以 L 通道工作——RGB→RGBA 转换、alpha 通道抽取、
         # alpha_composite 三步在整幅 4K 图上都是纯开销（判据只用亮度与是否可见）。
         transparent = opened.mode in ("RGBA", "LA", "PA", "P") or "transparency" in opened.info
-    except (OSError, ValueError) as exc:
+        try:
+            opened.load()  # 头部可识别不代表像素完整；解码失败同样属于资产错误
+        except BaseException:
+            opened.close()
+            raise
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
         return {"file": str(p), "status": "error", "issue": str(exc), "checks": []}
 
     # 整幅只解码一次（v5.9）：解码是 4K 源图上最贵的一步，而它被三个消费者需要——
     # 降采样工作域、原生分辨率安全区纹理、以及下游编译器要用的解码底图。
     # 此前会为了「原生分辨率安全区」把同一个 blob 解开第二遍，等于白付一次解码。
     native = opened
-    native.load()
     native.fp = None                  # 像素已在内存：流句柄可放（底图可能被下游持有）
     handed = False
     scale = 1
@@ -1588,15 +1473,18 @@ def prepare_manifest(manifest: dict, need: dict, bundle: dict, brief_path,
 def verify_sources(manifest: dict) -> list:
     """清单自洽性：schema + brief 文件凭证。不重复校验 plan（页绑定由核验直检）。"""
     wf = manifest.get("workflow") or {}
-    if manifest.get("schema") != "vao-assets-v2" or not str(wf.get("schema", "")).startswith("vao-asset-chain"):
+    if manifest.get("schema") != "vao-assets-v2" or wf.get("schema") != "vao-asset-chain-v2":
         return ["缺少 v2 资产链凭证；旧清单须从 brief → plan → assets 重新建立"]
     problems = []
-    try:
-        raw_hash = file_digest(wf.get("brief_path"))
-        if wf.get("brief_file_sha256") and raw_hash and raw_hash != wf["brief_file_sha256"]:
-            problems.append("brief 文件已变更（资产规划时的需求与现在不同）；建议重新 plan → assets")
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
+    expected = wf.get("brief_file_sha256")
+    if (not isinstance(expected, str) or len(expected) != 64
+            or any(c not in "0123456789abcdefABCDEF" for c in expected)):
+        problems.append("缺少合法 brief_file_sha256；须从 brief 重新 plan 建立凭证")
+    raw_hash = file_digest(wf.get("brief_path"))
+    if raw_hash is None:
+        problems.append("brief 文件缺失或不可读取；不能确认资产需求来源，须恢复原 brief 或重新 plan")
+    elif isinstance(expected, str) and raw_hash != expected.lower():
+        problems.append("brief 文件已变更（资产规划时的需求与现在不同）；建议重新 plan → assets")
     return problems
 
 
@@ -1688,7 +1576,8 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
                 issues.append(f"{sid}/{aid}: QC 缺少实际图片尺寸；重新检查")
             else:
                 iw, ih = map(float, dimensions)
-                crop = e.get("crop") or [0, 0, 0, 0]
+                from primitives import image_crop
+                crop = image_crop(e.get("crop"))
                 iw *= 1 - float(crop[0]) - float(crop[2])
                 ih *= 1 - float(crop[1]) - float(crop[3])
                 if min(iw, ih) <= 0:
@@ -1766,6 +1655,7 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
             accent_name = hex_to_color_name(accent_hex)
             color_cue.append(f"accent color {accent_name} ({accent_hex})" if accent_name
                              else f"accent color {accent_hex}")
+    background = asset_role == "background"
     card = {
         "apc": f"APC-{str(asset_id).upper().replace('-', '_')}",
         "asset_type": asset_role,
@@ -1776,23 +1666,29 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
         "subject": [subject],
         "subject_source": "title_fallback" if subject_fallback else "declared",
         "color": color_cue,
-        "material": [str(raw.get("material") or derived.get("visual_world")
-                         or "quiet matte surface")],
+        "material": [str(raw.get("material") or
+                         (derived.get("visual_world") if background else None)
+                         or "surface and rendering appropriate to the declared subject and medium")],
         "material_source": ("declared" if raw.get("material")
-                            else "world" if derived.get("visual_world") else "fallback"),
-        "lighting": [str(raw.get("lighting") or derived.get("light") or "single soft directional light")],
+                            else "world" if background and derived.get("visual_world") else "fallback"),
+        "lighting": [str(raw.get("lighting") or (derived.get("light") if background else None)
+                         or "illumination only as appropriate to the declared medium and subject")],
         "lighting_source": ("declared" if raw.get("lighting")
-                            else "world" if derived.get("light") else "fallback"),
-        "composition": [grammar_phrase(derived.get("composition_grammar"))],
+                            else "world" if background and derived.get("light") else "fallback"),
+        "composition": [str(raw.get("asset_composition") or
+                             (grammar_phrase(derived.get("composition_grammar")) if background else
+                              "preserve the subject's necessary structure and its intended page placement"))],
 
-        "world": [visual_world[:160]] if visual_world else [],
+        "world": [visual_world[:160]] if background and visual_world else [],
         "asset_function": function,
         "fusion_enabled": raw.get("fusion_enabled"),
         "negative": list(raw.get("negative") or []) + list(brief.get("avoid") or []),
     }
-    card = enhance_asset_card(card, motion=None,
-                              texture=raw.get("texture") or derived.get("texture_keys"),
-                              fusion=card["fusion_enabled"] is not False)
+    card = enhance_asset_card(
+        card, motion=None,
+        texture=(raw["texture"] if "texture" in raw else
+                 list(derived.get("texture_keys") or [])[:1] if background else []),
+        fusion=(card["fusion_enabled"] if card["fusion_enabled"] is not None else background))
     page_contract = {
         "negative_space_anchor": anchor,
         "safe_area": safe_area,
@@ -1841,7 +1737,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     if cache_file:
         try:
             loaded = json.loads(cache_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v2":
+            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v3":
                 prompt_cache = loaded.get("entries") or {}
         except (OSError, ValueError, TypeError):
             prompt_cache = {}
@@ -1894,6 +1790,19 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         fingerprint = asset_fingerprint(card, page_contract)
         existing = by_fingerprint.get(fingerprint)
         if existing:
+            # 视觉身份刻意不含 QC 声明（校准安全区不应让已出图改名），
+            # 但不能因此把另一页的压字区/底色/角色静默丢掉。
+            # 不新增生成身份或多份出图任务；异契约交作者登记 existing 后分别核验。
+            same_qc = (
+                existing.get("safe_area") == page_contract["safe_area"]
+                and (existing.get("meta") or {}).get("text_color") == page_contract["text_color"]
+                and existing.get("background_color") == _page_background_color(raw, plan_deck)
+                and existing.get("allow_crop") == (raw.get("asset_allow_crop") is True)
+                and existing.get("asset_role") == card["asset_role"]
+                and existing.get("asset_role_source") == card["asset_role_source"])
+            if not same_qc:
+                raise ValueError(f"{sid}: 同一生成资产的跨页 QC 契约不同，不能合并；"
+                                 "请先备图，再用逐页 asset_source 登记同一文件以分别核验")
             existing["slide_ids"].append(sid)
             assets.append({"slide_id": sid, "decision": "reuse_generated",
                            "asset_id": existing["asset_id"], "fingerprint": fingerprint})
@@ -1940,7 +1849,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         generated_count += 1
     if cache_file:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v2", "entries": prompt_cache})
+        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v3", "entries": prompt_cache})
     return {
         "schema": "vao-assets-v1",
         "visual_world": (plan_deck.get("world") or {}).get("name"),
@@ -1980,33 +1889,38 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
         if (prev_report.get("manifest_sha256") == digest(manifest)
                 and prev_report.get("pixel_profile") == profile
                 and prev_report.get("qc_engine") == engine_fingerprint("measure")):
-            reuse_base = "sha256" if profile.get("speed") == "strict" else "size+mtime_ns"
+            reuse_base = "sha256"
             prev_results = {str(r.get("asset_id")): r for r in (prev_report.get("results") or [])}
     reused_assets = 0
     workflow_issues = verify_sources(manifest)
     results = []
     actions: dict = {}
     pending: list = []
-    strict_witness = (reuse_base == "sha256")
-    for entry in asset_entries(manifest):
+    # 每轮按源路径读取/哈希一次，即使像素测量命中也交接真实快照。
+    # stat 相同并不证明字节相同；fast 只降低像素统计预算，不降低资产身份保证。
+    source_blobs: dict = {}
+    source_hashes: dict = {}
+    entries = asset_entries(manifest)
+    if persist:
+        from primitives import validate_io_paths
+        validate_io_paths({"assets manifest": manifest_file,
+                           "brief": (manifest.get("workflow") or {}).get("brief_path"),
+                           **{f"asset {e['asset_id']}": resolve_asset(e, manifest, manifest_file, input_dir)
+                              for e in entries}}, {"asset QC": prev_path})
+    for entry in entries:
         candidate = resolve_asset(entry, manifest, manifest_file, input_dir)
         try:
             stat = candidate.stat()
             size, mtime_ns = stat.st_size, stat.st_mtime_ns
         except OSError:
             size, mtime_ns = None, None
-        carried = (prev_results or {}).get(str(entry.get("asset_id"))) or {}
-        carried_witness = carried.get("witness") or {}
-        carried_sha = carried_witness.get("sha256")
-        carried_ok = bool(not strict_witness and carried_sha
-                          and witness_same(carried_witness,
-                                           {"size": size, "mtime_ns": mtime_ns}))
-
-        def _bytes():
-            return candidate.read_bytes() if candidate.is_file() else None
-
-        blob = None if carried_ok else _bytes()
-        image_sha = carried_sha if carried_ok else (digest_bytes(blob) if blob is not None else None)
+        key = str(candidate)
+        if key not in source_blobs:
+            blob = candidate.read_bytes() if candidate.is_file() else None
+            source_blobs[key] = blob
+            source_hashes[key] = digest_bytes(blob) if blob is not None else None
+        blob = source_blobs[key]
+        image_sha = source_hashes[key]
         if entry["decision"] == "generate" and (not entry.get("prompt") or not entry.get("negative")):
             workflow_issues.append(f"{entry['asset_id']}: 缺少 prompt / negative")
         if entry["decision"] == "existing":
@@ -2028,13 +1942,9 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
             same_bytes = witness_same(
                 previous.get("witness") or {},
                 {"size": size, "mtime_ns": mtime_ns, "sha256": image_sha},
-                strict=(reuse_base == "sha256"))
+                strict=True)
             if same_bytes and previous.get("qc_inputs") == qc_inputs:
                 reused_qc = dict(previous.get("qc") or {})
-        if reused_qc is None and blob is None:
-            blob = _bytes()
-            if image_sha is None:
-                image_sha = digest_bytes(blob) if blob is not None else None
         if blob is not None and snapshots is not None:
             snapshots[str(candidate)] = blob
         if image_sha is not None and digests is not None:
@@ -2091,7 +2001,9 @@ def qc_report(manifest_path, input_dir=None, *, phase="draft", speed="strict",
     out_path = prev_path
     report["report_path"] = str(out_path)
     phase_changed = bool(prev_report) and prev_report.get("phase") != qc_phase
-    if persist and (phase_changed or not (prev_report and reuse_base is not None and results
+    state_changed = (prev_report.get("status") != report["status"]
+                     or prev_report.get("workflow_issues") != workflow_issues)
+    if persist and (phase_changed or state_changed or not (prev_report and reuse_base is not None and results
                                          and reused_assets == len(results))):
         json_write(out_path, report)
     return report, 0 if report["status"] == "PASS" else 2

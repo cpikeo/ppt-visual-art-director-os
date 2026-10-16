@@ -53,6 +53,67 @@ def json_write(path, value, *, indent: int = 2, trailing_newline: bool = True,
     return target
 
 
+def execute_module(code, source, name: str):
+    """执行明确可信的作者模块；先注册，失败回滚，不使用 pyc。不是沙箱。"""
+    import types
+    mod = types.ModuleType(name)
+    mod.__file__ = str(source)
+    previous = sys.modules.get(name)
+    sys.modules[name] = mod
+    try:
+        exec(code, mod.__dict__)
+    except BaseException:
+        if previous is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous
+        raise
+    return mod
+
+
+class PathConflictError(ValueError):
+    """不能落修复包的路径冲突：诊断写入本身也可能覆盖输入。"""
+
+
+def validate_io_paths(reads: dict, writes: dict, *, managed_dirs: dict | None = None) -> None:
+    """写入前拒绝输入/输出及输出彼此别名（含现有符号链接与硬链接）。
+
+    只检查本次明确的文件集合，不限制作者选择工作目录；不是不可信目录的沙箱。
+    """
+    inputs = [(name, Path(path).expanduser().resolve()) for name, path in reads.items() if path]
+    outputs = [(name, Path(path).expanduser().resolve()) for name, path in writes.items() if path]
+
+    def same(a, b):
+        if a == b:
+            return True
+        try:
+            return a.samefile(b)
+        except OSError:
+            return False
+
+    for index, (name, path) in enumerate(outputs):
+        for other, source in inputs + outputs[:index]:
+            if same(path, source):
+                raise PathConflictError(f"路径冲突：{name} 与 {other} 指向同一文件 {path}；未写入任何产物")
+
+    # 预览会批量写入/清理页图，编译缓存有派生文件名：整个目录都必须专用。
+    # 先做包含关系检查，再检查已有链接；不能等写进辅助文件后才发现它是输入。
+    directories = [(name, Path(path).expanduser().resolve())
+                   for name, path in (managed_dirs or {}).items() if path]
+    for index, (name, directory) in enumerate(directories):
+        for other, path in inputs + outputs:
+            if path == directory or path.is_relative_to(directory):
+                raise PathConflictError(f"路径冲突：{other} 位于 {name} 专用目录 {directory}；未写入任何产物")
+        for other, path in directories[:index]:
+            if directory == path or directory.is_relative_to(path) or path.is_relative_to(directory):
+                raise PathConflictError(f"路径冲突：{name} 与 {other} 专用目录重叠；未写入任何产物")
+        if directory.exists() and not directory.is_dir():
+            continue  # 缓存目录被文件占位：调用方仍可诊断并回落完整编译，不覆盖它
+        for child in directory.rglob("*"):
+            if child.is_symlink() or (child.is_file() and child.stat().st_nlink > 1):
+                raise PathConflictError(f"辅助目录含链接文件/目录，可能覆盖外部数据：{child}；未写入任何产物")
+
+
 def _stamp_after_write(target: Path, before_ns: int | None) -> None:
     """写入后保证 mtime_ns 严格前进（本库的「字节变了吗」凭证是 size+mtime_ns）。
 
@@ -546,6 +607,24 @@ def color_to_hex(value) -> str | None:
 def fallback_ink():
     """未声明墨色时的安全值（RGBColor 语义；pptx 未加载时为等价对象，不导入）。"""
     return _rgb_new(0x20, 0x20, 0x20)
+
+
+def image_crop(value) -> tuple:
+    """四边裁切比例的物理契约；不允许负裁切伪造有效像素。"""
+    if value is None:
+        return (0.0, 0.0, 0.0, 0.0)
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError("crop 必须为四个有限比例 [left, top, right, bottom]")
+    try:
+        if any(isinstance(v, bool) for v in value):
+            raise ValueError
+        crop = tuple(float(v) for v in value)
+        if (any(not math.isfinite(v) or not 0 <= v < 1 for v in crop)
+                or crop[0] + crop[2] >= 1 or crop[1] + crop[3] >= 1):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("crop 每边须在 [0,1) 且有限，对边之和必须小于 1") from None
+    return crop
 
 
 def emu(px) -> int:

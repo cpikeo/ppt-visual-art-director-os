@@ -1274,7 +1274,6 @@ def test_production(tmp: Path):
     label_pptx = tmp / 'shape-text.pptx'
     compile_deck(shape_deck, label_pptx, speed='fast')
     label_native = Presentation(str(label_pptx)).slides[0].shapes[0]
-    from pptx.oxml.ns import qn
     native_alpha = label_native.text_frame.paragraphs[0].runs[0]._r.find('.//' + qn('a:alpha'))
     check("editorial: 形状文字的粗细/行距/不换行/透明度与原生文本语义相同",
           label_image.tobytes() == equivalent_image.tobytes()
@@ -1987,7 +1986,7 @@ def test_cli(tmp: Path):
           cache_first.returncode == 0 and cache_second.returncode == 0
           and cache_file.is_file()
           and json.loads(cache_file.read_text(encoding="utf-8")).get("schema")
-          == "vao-asset-prompt-cache-v2" and cache_meta.get("hits") == 1,
+          == "vao-asset-prompt-cache-v3" and cache_meta.get("hits") == 1,
           f"rc={cache_second.returncode} hits={cache_meta.get('hits')} "
           f"{cache_second.stderr[-160:]}")
 
@@ -2293,7 +2292,6 @@ def test_release_evidence(tmp: Path):
     import io
     import vao
     from verify import check_spec, release_manifest, preview_issues
-    from primitives import spec_fingerprint, RenderContext
     from compiler import compile_deck
     from pptx import Presentation
     from ghost import ghost_page
@@ -3226,6 +3224,660 @@ def test_audit_boundaries(tmp):
         g._FONT_FALLBACKS.clear(); g._FONT_FALLBACKS.update(saved[2])
 
 
+def test_delivery_safety(tmp: Path):
+    """真实故障的负例；路径冲突一律在写任何修复包/清单之前拒绝。"""
+    import copy
+    import io
+    import os
+    import contextlib
+    from unittest.mock import patch
+    import vao
+    import compiler
+    import ghost
+    from intelligence import think
+    from verify import check_spec
+    from primitives import json_write
+    from pptx import Presentation
+
+    build = make_build(tmp, chart=False)
+    spec, _ = vao.load_spec(build)
+
+    def rejects(call):
+        try:
+            call()
+        except (ValueError, FileExistsError):
+            return True
+        return False
+
+    with contextlib.redirect_stdout(io.StringIO()) as captured:
+        original = build.read_bytes()
+        rejected = rejects(lambda: vao.run_check(str(build), str(build), json_output=True))
+        check("safety: output 不能覆盖 build 输入", rejected and build.read_bytes() == original)
+        build.write_bytes(original)
+        rejected = rejects(lambda: vao.run_check(str(build), str(tmp / 'safe.pptx'),
+                                                packet=str(build), json_output=True))
+        check("safety: packet 不能覆盖 build 输入", rejected and build.read_bytes() == original)
+        build.write_bytes(original)
+        linked = tmp / 'build-hardlink.py'
+        os.link(build, linked)
+        rejected = rejects(lambda: vao.run_check(str(build), str(linked), json_output=True))
+        check("safety: 硬链接别名也不得覆盖输入", rejected and build.read_bytes() == original)
+        linked.unlink()
+        build.write_bytes(original)
+        brief = tmp / 'brief.json'
+        json_write(brief, BRIEF)
+        original_brief = brief.read_bytes()
+        rejected = rejects(lambda: vao.run_plan(str(brief), str(brief)))
+        check("safety: plan 不能覆盖 brief", rejected and brief.read_bytes() == original_brief)
+        brief.write_bytes(original_brief)
+        plan = tmp / 'plan.json'
+        rejected = rejects(lambda: vao.run_plan(str(brief), str(plan), skeleton=str(plan)))
+        check("safety: plan 与 skeleton 不能写到同一路径", rejected and not plan.exists())
+        # 持久 QC 的派生路径也属于写集合，不能撞到 spec。
+        man = tmp / 'asset_manifest.json'
+        json_write(man, {"schema": "vao-assets-v2", "assets": []})
+        qbuild = tmp / 'asset_manifest.qc.json'
+        qspec = copy.deepcopy(spec)
+        qspec['slides'][0]['elements'].append(
+            {"type": "image", "id": "im", "src": "missing.png", "asset_id": "x",
+             "x": 0, "y": 0, "width": 10, "height": 10})
+        json_write(qbuild, qspec)
+        before = qbuild.read_bytes()
+        rejected = rejects(lambda: vao.run_check(str(qbuild), str(tmp / 'image.pptx'),
+                                                assets_manifest=str(man), json_output=True))
+        check("safety: QC 派生报告不能覆盖 spec", rejected and qbuild.read_bytes() == before)
+
+    print("\n".join(line for line in captured.getvalue().splitlines() if line.startswith("[")))
+
+    # 混合坏项以前从 drawable 列表里消失，spec 档会错误通过。
+    bad = copy.deepcopy(spec)
+    bad['slides'][0]['elements'].append(42)
+    report = check_spec(bad)
+    check("guard: elements 中的非对象项必须阻断", not report['passed'])
+    for value in (0, -1, float('nan'), float('inf'), True, 'bad'):
+        bad = copy.deepcopy(spec)
+        bad['canvas']['width'] = value
+        check(f"guard: 显式非法 canvas.width={value!r} 必须阻断", not check_spec(bad)['passed'])
+
+    duplicate = copy.deepcopy(BRIEF)
+    duplicate['slides'][1]['id'] = duplicate['slides'][0]['id']
+    check("plan: 重复页面 id 在判断/资产映射前拒绝", rejects(lambda: think(duplicate)))
+
+    kpi = {"type": "chart", "chart_kind": "kpi", "id": "zero", "value": 0,
+           "label": "零事故", "x": 48, "y": 200, "width": 500, "height": 240}
+    ks = copy.deepcopy(spec)
+    ks['slides'] = [{"id": "s1", "elements": [kpi]}]
+    check("guard: 0 是合法 KPI，不是缺失值", check_spec(ks)['passed'])
+    kp = tmp / 'zero.pptx'
+    kr = compiler.compile_deck(ks, kp)
+    text = {s.name: s.text for s in Presentation(kp).slides[0].shapes if s.has_text_frame}
+    check("compiler: 0 KPI 原样保留为可编辑文字", kr['passed'] and text.get('zero__value') == '0')
+    with patch.object(ghost.ImageDraw.ImageDraw, 'text', autospec=True) as draw:
+        ghost.ghost_page(ks['slides'][0], ks, scale=0.5)
+    check("ghost: 0 KPI 在结构预览中不消失", any('0' == str(c.args[2]) for c in draw.call_args_list))
+    for kind in ('pie', 'donut', 'donut_composition'):
+        bad = copy.deepcopy(ks)
+        bad['slides'][0]['elements'][0].update(chart_kind=kind,
+            data=[{"label": "正", "value": 10}, {"label": "负", "value": -3}])
+        check(f"guard: {kind} 不接受无定义的负构成", not check_spec(bad)['passed'])
+
+    # 已有 PASS 后改成含图无清单：早退必须撤销旧发布资格。
+    with contextlib.redirect_stdout(io.StringIO()) as captured:
+        out = tmp / 'stale.pptx'
+        _, code = vao.run_check(str(build), str(out), mode='release', speed='strict',
+                                json_output=True)
+        check("release: stale 负例的健康前置条件", code == 0)
+        broken = copy.deepcopy(spec)
+        broken['slides'][0]['elements'].append({"type": "image", "id": "im",
+            "src": "absent.png", "x": 0, "y": 0, "width": 10, "height": 10})
+        js = tmp / 'broken.json'
+        json_write(js, broken)
+        _, code = vao.run_check(str(js), str(out), mode='release', json_output=True)
+        manifest = json.loads(out.with_suffix('.manifest.json').read_text(encoding='utf-8'))
+        check("release: 资产早退必须替换旧 PASS 清单", code == 2
+              and manifest['status'] == 'BLOCKED' and not manifest['release_eligible'])
+
+    print("\n".join(line for line in captured.getvalue().splitlines() if line.startswith("[")))
+
+    # 编译/后处理失败不能破坏上一次的完整包；固定 .tmp 不得成为符号链接写入面。
+    target = tmp / 'atomic.pptx'
+    compiler.compile_deck(spec, target)
+    healthy = target.read_bytes()
+    failed = False
+    try:
+        with patch.object(compiler, '_postprocess_package', side_effect=OSError('disk full')):
+            compiler.compile_deck(spec, target)
+    except OSError:
+        failed = True
+    check("compiler: 后处理失败保留旧完整产物", failed and target.read_bytes() == healthy)
+    victim = tmp / 'victim.txt'
+    victim.write_text('keep', encoding='utf-8')
+    trap = target.with_suffix('.pptx.tmp')
+    # Windows CI 未授权 symlink 时仍测试同名普通文件不能被覆盖或删除。
+    try:
+        trap.symlink_to(victim)
+    except OSError:
+        trap.write_text('keep', encoding='utf-8')
+    compiler._postprocess_package(target)
+    check("compiler: 不触碰固定临时路径（含符号链接）", victim.read_bytes() == b'keep'
+          and trap.exists() and trap.read_bytes() == b'keep')
+    check("compiler: 成败路径均清理唯一临时文件", not list(tmp.glob('.atomic.pptx-*')))
+
+    # 快档也不能把 size/mtime 当 QC 字节证明：等长 BMP 换成黑图并恢复 mtime。
+    import assets
+    from PIL import Image
+    image = tmp / 'same-stat.bmp'
+    Image.new('RGB', (320, 180), (240, 240, 240)).save(image)
+    mpath = tmp / 'same-stat.json'
+    entry = {"asset_id": "same", "decision": "existing", "slide_ids": ["s1"],
+             "origin": {"kind": "original", "path": str(image), "source": "test"},
+             "safe_area": {}, "background_color": "#FFFFFF", "retry_budget": 0}
+    source_brief = tmp / "source-brief.json"
+    json_write(source_brief, {"slides": [{"id": "s1"}]})
+    source_workflow = {"schema": "vao-asset-chain-v2", "brief_path": str(source_brief),
+                       "brief_file_sha256": assets.file_digest(source_brief)}
+    json_write(mpath, {"schema": "vao-assets-v2",
+                      "workflow": source_workflow, "assets": [entry]})
+    good, _ = assets.qc_report(mpath, speed='fast', phase='release')
+    check("assets: 同 stat 换图负例的健康前置条件", good['status'] == 'PASS')
+    stat = image.stat()
+    Image.new('RGB', (320, 180), (0, 0, 0)).save(image)
+    os.utime(image, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    shots, hashes = {}, {}
+    changed, _ = assets.qc_report(mpath, speed='fast', phase='release', snapshots=shots, digests=hashes)
+    check("assets: fast 同 size/mtime 换图重测并阻断", changed['status'] == 'BLOCKED'
+          and not changed['results'][0]['qc'].get('reused'))
+    check("assets: QC 暖路径也交接当轮字节与真实 SHA", shots.get(str(image)) == image.read_bytes()
+          and hashes.get(str(image)) == assets.file_digest(image))
+    # 同一文件不同 QC 契约只读取一次，不把不同契约错误合并。
+    both = copy.deepcopy(entry)
+    both.update(asset_id='second', safe_area={"x": 0, "y": 0, "width": 0.2, "height": 0.5})
+    json_write(mpath, {"schema": "vao-assets-v2", "workflow": source_workflow,
+                      "assets": [entry, both]})
+    reader = Path.read_bytes
+    calls = []
+    def track_read(path):
+        if path == image:
+            calls.append(path)
+        return reader(path)
+    with patch.object(Path, 'read_bytes', track_read):
+        assets.qc_report(mpath, speed='strict', persist=False)
+    check("assets: 同源不同 QC 契约共享单轮读图", len(calls) == 1, str(len(calls)))
+
+
+    # 路径检查需覆盖资产源，不止 CLI 的显式输入文件。
+    with contextlib.redirect_stdout(io.StringIO()) as captured:
+        js = tmp / 'asset-source.json'
+        source_spec = copy.deepcopy(spec)
+        source_spec['slides'] = [{"id": "s1", "elements": [{"type": "image", "id": "i",
+            "asset_id": "same", "x": 0, "y": 0, "width": 100, "height": 100}]}]
+        json_write(js, source_spec)
+        before = image.read_bytes()
+        rejected = rejects(lambda: vao.run_check(str(js), str(image), assets_manifest=str(mpath),
+                                                json_output=True))
+        check("safety: 输出不能覆盖清单绑定的原图", rejected and image.read_bytes() == before)
+        b = copy.deepcopy(BRIEF)
+        b['slides'][0]['asset_source'] = entry['origin']
+        bf = tmp / 'with-source.json'
+        json_write(bf, b)
+        rejected = rejects(lambda: vao.run_plan(str(bf), str(image)))
+        check("safety: plan 不能覆盖 brief 引用的原图", rejected and image.read_bytes() == before)
+    print("\n".join(line for line in captured.getvalue().splitlines() if line.startswith("[")))
+
+    import bench
+    baseline = {"cases": [{"id": "passed", "passed": True}, {"id": "failed", "passed": False}]}
+    reg = bench.regression({"cases": []}, baseline)
+    check("bench: 缺失案例不是修复、也不能免除回归", reg['regressed_cases'] == ['passed']
+          and reg['fixed_cases'] == [] and reg.get('missing_cases') == ['failed', 'passed'])
+    cases = json.loads((SCRIPTS / 'judgment_cases.json').read_text(encoding='utf-8'))
+    cases['cases'] = cases['cases'][:1]
+    cp = tmp / 'reduced-cases.json'
+    json_write(cp, cases)
+    bp = tmp / 'baseline.json'
+    full = bench.run(cp)
+    full['cases'].append({"id": "removed", "passed": True})
+    json_write(bp, full)
+    probe = subprocess.run([sys.executable, str(SCRIPTS / 'bench.py'), '--cases', str(cp),
+                            '--baseline', str(bp)], capture_output=True, encoding='utf-8')
+    check("bench: baseline 案例消失时 CLI 非零", probe.returncode == 1)
+
+
+    module = tmp / 'dataclass-build.py'
+    module.write_text("from __future__ import annotations\nfrom dataclasses import dataclass\n"
+                      "@dataclass\nclass Label:\n    text: str\n"
+                      "SPEC = {'slides': [], 'label': Label('first').text}\n", encoding='utf-8')
+    ok = False
+    try:
+        loaded_module, _ = vao._load_module(module, name='vao_dataclass_probe')
+        ok = loaded_module.SPEC.get('label') == 'first'
+    except Exception:
+        pass
+    finally:
+        sys.modules.pop('vao_dataclass_probe', None)
+    check("loader: 可信 build 支持 dataclass 与延迟注解", ok)
+    module.write_text("SPEC = {'slides': [], 'label': 'second'}\n", encoding='utf-8')
+    loaded, _ = vao.load_spec(module)
+    check("loader: 连续加载替换模块身份，不保留旧 SPEC", sys.modules['vao_build'].SPEC == loaded)
+    prior = sys.modules['vao_build']
+    module.write_text("raise RuntimeError('author failure')\n", encoding='utf-8')
+    try:
+        vao.load_spec(module)
+    except RuntimeError:
+        pass
+    check("loader: 作者模块异常回滚注册状态", sys.modules.get('vao_build') is prior)
+
+    broken_png = tmp / 'truncated.png'
+    Image.effect_noise((128, 128), 60).convert('RGB').save(broken_png)
+    raw = broken_png.read_bytes()
+    broken_png.write_bytes(raw[:len(raw) // 2])
+    result = None
+    try:
+        result = assets.image_qc(str(broken_png))
+    except OSError:
+        pass
+    check("assets: 已识别头部但解码失败的图片返回可诊断 error", isinstance(result, dict)
+          and result.get('status') == 'error' and bool(result.get('issue')))
+
+
+    # 同一生成视觉需求不能吞掉第二页的压字/底色/角色契约。
+    b = {"audience": "评审", "decision": "发布", "tension": "可读性", "slides": []}
+    for i, safe in enumerate(({}, {"x": 0.1, "y": 0.1, "width": 0.3, "height": 0.4})):
+        b['slides'].append({"id": f's{i}', "title": "同一图像", "content": "保留证据",
+                            "asset": "required", "asset_subject": "soft paper",
+                            "asset_function": "context", "asset_role": "background", "safe_area": safe})
+    check("assets: 生成去重不得静默吞掉跨页 QC 契约", rejects(lambda: assets.build_manifest(b, think(b))))
+
+
+    from intelligence import load_brief
+    module.write_text("from __future__ import annotations\nfrom dataclasses import dataclass\n"
+                      "@dataclass\nclass Label:\n    text: str\n"
+                      "BRIEF = {'subject': Label('brief').text, 'slides': []}\n", encoding='utf-8')
+    loaded_brief = None
+    try:
+        loaded_brief = load_brief(module)
+    except Exception:
+        pass
+    check("loader: Python brief 与 build 共用安全模块注册语义", loaded_brief is not None
+          and loaded_brief.get('subject') == 'brief')
+
+
+    for kind in ('pie', 'donut', 'donut_composition'):
+        for values in ([10, -3], [0, 0]):
+            bad = copy.deepcopy(ks)
+            bad['slides'][0]['elements'][0].update(chart_kind=kind, categories=['A', 'B'],
+                                                 series=[{'name': 'one', 'values': values}])
+            check(f"guard: {kind} series 载荷也拒绝负构成/全零 {values}", not check_spec(bad)['passed'])
+    bad['slides'][0]['elements'][0].update(chart_kind='pie',
+        series=[{'name': 'one', 'values': [10, 20]}, {'name': 'two', 'values': [20, 10]}])
+    check("guard: pie 不得悄悄隐藏第二条序列", not check_spec(bad)['passed'])
+
+
+
+def test_material_direction(tmp: Path):
+    """锁定作者判断的执行保真，不评分素材美感或增加自动配图。"""
+    import copy
+    import assets as a
+    import intelligence as intel
+
+    def planned(**overrides):
+        slide = {"id": "diagram", "title": "剖面说明传动关系", "content": "输入轴驱动输出机构。",
+                 "role": "explain", "asset": "required", "asset_role": "illustration",
+                 "asset_subject": "a mechanical cutaway showing an input shaft and an output linkage",
+                 "safe_area": {}, **overrides}
+        brief = {"audience": "技术评审", "decision": "理解机构关系", "tension": "不清楚传动关系",
+                 "slides": [slide]}
+        bundle = intel.think(brief)
+        bundle["deck"]["world"].update(
+            visual_world="chinese ink-wash stage with paper grain",
+            light="warm theatrical spotlights from the rear", texture_keys=["paper", "stage"])
+        return brief, bundle
+
+    def card_for(brief, bundle):
+        return a.asset_card(bundle["pages"][0], brief, bundle["deck"], "material-test")
+
+    brief, bundle = planned()
+    card, page = card_for(brief, bundle)
+    result = a.build_asset_prompt(card, page)
+    check("material: 未声明介质的对象不被强制为 3D/软材质/透明剪影",
+          not any(x in result["prompt"] for x in
+                  ("3D minimal", "soft material", "pure transparent background")))
+    check("material: 对象比例句不再误称背景",
+          "16:9 presentation illustration" in result["prompt"]
+          and "presentation background" not in result["prompt"])
+    check("material: 对象不继承世界纸纹/舞台灯光/融合，品牌色仍保留",
+          card["material_source"] == "fallback" and card["lighting_source"] == "fallback"
+          and not card["texture"] and not card["fusion"] and bool(card["color"])
+          and not any(x in result["prompt"] for x in ("paper grain", "spotlights", "melts into")))
+
+    icon = {**card, "asset_type": "icon", "asset_role": "", "medium": "solid pictogram",
+            "subject": ["one solid lock symbol"], "style": ["filled geometric symbol"],
+            "lighting": ["flat graphic rendering without shading"], "lighting_source": "declared"}
+    icon.pop("resolved", None)
+    icon_result = a.build_asset_prompt(icon, page, ratio="1:1")
+    check("material: 图标保留实心声明，不强加细线/空心/透明底",
+          "filled geometric symbol" in icon_result["prompt"]
+          and "1:1 presentation icon" in icon_result["prompt"]
+          and not any(x in icon_result["prompt"] for x in
+                      ("thin stroke", "no fill", "single line icon", "pure transparent background"))
+          and icon_result["meta"]["fusion_enabled"] is False)
+
+    reason = "看清不可从外观照片辨认的内部传动；不充当实测证据。"
+    composition = "tight cutaway at right; retain the full linkage and its connection to the input shaft"
+    textures = ["fine hatching on the cut face", "stippling on the bearing", "smooth line on the outer shell"]
+    brief, bundle = planned(asset_reason=reason, asset_composition=composition,
+                            medium="scientific cutaway illustration", material="precise schematic linework",
+                            lighting="uniform flat studio lighting without directional shading",
+                            texture=textures, energy="high", negative=["decorative dividers"])
+    card, page = card_for(brief, bundle)
+    result = a.build_asset_prompt(card, page)
+    check("material: 素材理由进入判断与骨架而不进入出图主体",
+          bundle["pages"][0]["judgment"]["media"]["necessity"] == reason
+          and reason in intel.build_skeleton(bundle) and reason not in result["prompt"])
+    check("material: 素材内部构图原样到提示词且不改 QC 几何",
+          card["composition"] == [composition] and composition in result["prompt"]
+          and page["safe_area"] == {})
+    check("material: 作者三条纹理均抵达实际提示词，不被截为一两条",
+          all(x in result["prompt"] for x in textures))
+    check("material: 作者光照不被高能量/舞台光接管，禁项实际透传",
+          result["prompt"].count("uniform flat studio lighting without directional shading") == 1
+          and card["resolved"]["light"]["from"] == "declared"
+          and not card["resolved"]["light"]["energy_applied"]
+          and "no decorative dividers" in result["negative"])
+    changed = copy.deepcopy(bundle)
+    changed["pages"][0]["declarations"]["asset_composition"] = "wide view preserving the entire mechanism"
+    changed_card, changed_page = card_for(brief, changed)
+    check("material: 资产构图改变进入视觉身份，避免复用旧构图提示词",
+          a.asset_fingerprint(card, page) != a.asset_fingerprint(changed_card, changed_page))
+
+    brief, bundle = planned(asset_role="background", medium="photography", texture=[],
+                            fusion_enabled=False, light_direction="right")
+    card, page = card_for(brief, bundle)
+    result = a.build_asset_prompt(card, page)
+    check("material: 背景仍继承空间/光，显式空纹理和关闭融合可生效",
+          card["material_source"] == "world" and card["lighting_source"] == "world"
+          and not card["texture"] and not card["fusion"]
+          and result["meta"]["fusion_enabled"] is False and page["light_direction"] == "right")
+    check("material: 摄影尊重世界光，不强加自然单光/胶片/空中透视",
+          a.photo_gate_active(card) and card["resolved"]["light"]["from"] == "world"
+          and "warm theatrical spotlights from the rear" in result["prompt"]
+          and not any(x in result["prompt"] for x in
+                      ("single natural light", "medium format film", "soft micro grain", "faint air between planes")))
+    photo = {**card, "asset_type": "illustration", "medium": "photography",
+             "subject": ["a photographic reproduction of a chinese ink-wash painting"],
+             "lighting": ["uniform flat studio lighting"], "lighting_source": "declared"}
+    photo.pop("resolved", None)
+    photo_result = a.build_asset_prompt(photo, page)
+    check("material: 摄影对象中的水墨题材不会反向接管显式摄影介质",
+          not a.ink_gate_active(photo) and a.photo_gate_active(photo)
+          and "uniform flat studio lighting" in photo_result["prompt"]
+          and "no uniform flat studio lighting" not in photo_result["negative"]
+          and "ink-wash marks and pigment behavior" not in photo_result["prompt"])
+    ink = {**photo, "medium": "chinese ink-wash painting", "composition": ["centered subject"]}
+    ink_result = a.build_asset_prompt(ink, page)
+    check("material: 水墨不强加半幅留白/固定色阶或禁止居中",
+          a.ink_gate_active(ink) and not a.photo_gate_active(ink)
+          and not any(x in ink_result["prompt"] for x in
+                      ("more than half", "three to four values"))
+          and "no symmetric centered composition" not in ink_result["negative"])
+    people = {**photo, "subject": ["people shaking hands with a humanoid robot under neon glow"]}
+    people_result = a.build_asset_prompt(people, page)
+    check("material: 不按人物词或风格名附加与主体矛盾的禁项",
+          not any(x in people_result["negative"] for x in
+                  ("no humanoid robot", "no corporate handshake", "no neon glow", "no cyberpunk")))
+
+    no_image = intel.think({"slides": [{"id": "text", "title": "关系由文字说明",
+                                       "asset_reason": "暂存设计考虑，不是出图指令"}]})
+    none = intel.think({"slides": [{"id": "none", "title": "直接陈述", "asset": "none",
+                                   "asset_subject": "a product photograph"}]})
+    check("material: 仅写理由不触发出图，显式 none 仍覆盖已有主体",
+          no_image["assets_hint"]["generate"] == [] and none["assets_hint"]["generate"] == [])
+    u = intel.understand("输入轴驱动输出机构")
+    check("material: 图表与必要对象可由作者协调共存，不自动加图",
+          intel.media_necessity(u, "explain", has_chart=True)["decision"] == "none"
+          and intel.media_necessity(u, "explain", has_chart=True,
+                                   declared="required")["decision"] == "required")
+
+    brief, bundle = planned()
+    fresh = a.build_manifest(brief, bundle)
+    entry = next(x for x in fresh["assets"] if x["decision"] == "generate")
+    cache = tmp / "old-prompt-cache.json"
+    cache.write_text(json.dumps({"schema": "vao-asset-prompt-cache-v2", "entries": {
+        entry["fingerprint"]: {"prompt": "outdated forced 3D minimal illustration",
+                               "negative": "no flat graphics", "meta": {}}}}), encoding="utf-8")
+    rebuilt = a.build_manifest(brief, bundle, cache_path=cache)
+    warm = a.build_manifest(brief, bundle, cache_path=cache)
+    check("material: 旧 v2 提示词缓存重建，v3 暖缓存保留确定性复用",
+          rebuilt["prompt_cache"]["hits"] == 0 and warm["prompt_cache"]["hits"] == 1
+          and json.loads(cache.read_text(encoding="utf-8"))["schema"] == "vao-asset-prompt-cache-v3"
+          and rebuilt["assets"][0]["prompt"] == warm["assets"][0]["prompt"]
+          and "outdated forced" not in rebuilt["assets"][0]["prompt"])
+
+
+def test_deep_release(tmp: Path):
+    """本轮已复现缺陷：辅助写入、未完成发布、数据载荷与像素表达。"""
+    import contextlib
+    import copy
+    import io
+    import os
+    import subprocess
+    import zipfile
+    from unittest.mock import patch
+    from PIL import Image
+    import assets
+    import compiler
+    import ghost
+    import vao
+    import verify
+    from primitives import json_write
+    base = {"canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111", "primary": "#123456",
+                                  "secondary": "#789ABC", "accent": "#C05030", "muted": "#555555"}},
+            "slides": [{"id": "one", "elements": [{"id": "t", "type": "text", "x": 64, "y": 80,
+                        "width": 1000, "height": 100, "text": "Engineering fixture", "size": 32, "color": "ink"}]}]}
+
+    def quiet(build, output, **kw):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return vao.run_check(str(build), str(output), **kw)
+
+    # 专用辅助目录不仅要保护固定 marker，还要覆盖页图、清理范围和链接目标。
+    for label, kind in (("预览覆盖 PPTX", "output"), ("预览 marker 覆盖输入", "marker"),
+                        ("编译缓存覆盖输入", "cache"), ("packet 覆盖预览页图", "packet")):
+        d = tmp / kind; d.mkdir()
+        build = d / "input.json"; output = d / "out.pptx"; kw = {}
+        if kind == "cache": build = d / "out_vao" / "compile_cache.json"
+        elif kind == "marker": build = d / "ghost.meta.json"; kw["preview"] = str(d)
+        elif kind == "output": output = d / "ghost-01.png"; kw["preview"] = str(d)
+        else:
+            kw.update(preview=str(d / "preview"), packet=str(d / "preview" / "ghost-01.png"))
+        json_write(build, base); before = build.read_bytes(); rejected = False
+        try: quiet(build, output, mode="release", speed="strict", **kw)
+        except ValueError: rejected = True
+        check("deep: " + label + " 在写入前拒绝", rejected and build.read_bytes() == before and not output.exists())
+
+    raw_image = tmp / "raw.png"; Image.new("RGB", (320, 180), "gray").save(raw_image)
+    raw_spec = copy.deepcopy(base)
+    raw_spec["slides"][0]["elements"] = [{"id": "i", "type": "image", "src": str(raw_image),
+                                        "x": 64, "y": 80, "width": 200, "height": 100}]
+    raw_build = tmp / "raw.json"; json_write(raw_build, raw_spec); before = raw_image.read_bytes()
+    rejected = False
+    try: quiet(raw_build, tmp / "raw.pptx", packet=str(raw_image), mode="release")
+    except ValueError: rejected = True
+    check("deep: 缺清单的失败诊断也不许覆盖 raw src", rejected and raw_image.read_bytes() == before)
+
+    for link_kind in ("symlink", "hardlink"):
+        preview = tmp / link_kind; preview.mkdir()
+        victim = tmp / (link_kind + "-victim.txt"); victim.write_bytes(b"precious input")
+        trap = preview / "ghost-01.png"
+        try:
+            trap.symlink_to(victim) if link_kind == "symlink" else os.link(victim, trap)
+        except OSError:
+            print(f"[SKIP] deep: 本平台不能创建 {link_kind}")
+            continue
+        build = tmp / (link_kind + ".json"); json_write(build, base); rejected = False
+        try: quiet(build, tmp / (link_kind + ".pptx"), preview=str(preview), mode="release")
+        except ValueError: rejected = True
+        check(f"deep: 辅助目录 {link_kind} 不得覆盖外部文件", rejected and victim.read_bytes() == b"precious input")
+
+    build = tmp / "state.json"; output = tmp / "state.pptx"; json_write(build, base)
+    initial, rc = quiet(build, output, mode="release", speed="strict")
+    check("deep: 发布负例的真实健康前置条件", rc == 0 and initial["release_eligible"])
+    observed = []
+    def interrupted_compile(*args, **kwargs):
+        observed.append(json.loads(output.with_suffix(".manifest.json").read_text())["status"])
+        raise RuntimeError("injected compile interruption")
+    with patch.object(vao, "_compile_step", interrupted_compile):
+        _, rc = quiet(build, output, mode="release", speed="strict")
+    check("deep: 编译进行中已撤销旧 PASS", observed == ["BLOCKED"] and rc == 2)
+    quiet(build, output, mode="release", speed="strict")
+    interrupted = False
+    with patch.object(vao, "_ghost", side_effect=KeyboardInterrupt()):
+        try: quiet(build, output, mode="release", speed="strict")
+        except KeyboardInterrupt: interrupted = True
+    state = json.loads(output.with_suffix(".manifest.json").read_text())
+    check("deep: KeyboardInterrupt 后无旧发布资格", interrupted and state["status"] == "BLOCKED" and not state["release_eligible"])
+
+    for command, code in (("check", "raise SystemExit(0)"), ("plan", "raise SystemExit(0)"),
+                           ("check", "raise KeyboardInterrupt()")):
+        script = tmp / (command + ("-ctrlc" if "Keyboard" in code else "-exit") + ".py")
+        script.write_text(code, encoding="utf-8")
+        args = [command, str(script), str(output), "--mode", "release", "--json"] if command == "check" else [
+            "plan", str(script), "--out", str(tmp / "abort-plan.json")]
+        run = subprocess.run([sys.executable, str(Path(vao.__file__)), *args], capture_output=True, text=True,
+                             encoding="utf-8")
+        expected = 130 if "Keyboard" in code else 2
+        check(f"deep: CLI {command} / {code} 不伪报成功", run.returncode == expected, str(run.returncode))
+
+    import bench
+    blind_src = tmp / "blind-src"; blind_src.mkdir(); (blind_src / "evidence.txt").write_bytes(b"evidence")
+    rejected = False
+    with patch("shutil.copytree", side_effect=RuntimeError("unsafe copier reached")):
+        try: bench.blind_pack([str(blind_src)], blind_src / "review")
+        except (ValueError, RuntimeError) as exc: rejected = isinstance(exc, ValueError)
+    check("deep: blind pack 在复制前拒绝递归输出", rejected and not (blind_src / "review").exists())
+    blind_output = tmp / "blind-output"; blind_key = tmp / "blind-output.key.json"
+    blind_key.write_bytes(b"precious source"); original_key = blind_key.read_bytes()
+    run = subprocess.run([sys.executable, str(Path(bench.__file__)), "blind", "pack", str(blind_output),
+                          str(blind_key)], capture_output=True, text=True, encoding="utf-8")
+    check("deep: blind pack 的 key 不得覆盖待评原件", run.returncode == 2 and blind_key.read_bytes() == original_key)
+    relative_source = os.path.relpath(blind_src, Path.cwd())
+    healthy_pack = bench.blind_pack([relative_source], tmp / "healthy-blind", seed=1)
+    check("deep: blind pack 正常目录及评分表保持可用", (tmp / "healthy-blind/V01/evidence.txt").read_bytes() == b"evidence"
+          and Path(healthy_pack["sheet"]).is_file()
+          and json.loads(Path(healthy_pack["key"]).read_text()) == {"V01": relative_source})
+
+    chart = {"id": "c", "type": "chart", "chart_kind": "ranked_bar", "x": 64, "y": 80,
+             "width": 1000, "height": 400, "data": [{"label": "Visible", "value": 1}],
+             "categories": ["Hidden"], "series": [{"name": "Hidden series", "values": [9]}],
+             "source": "fixture", "unit": "count", "period": "test", "basis": "test"}
+    for kind in ("ranked_bar", "column"):
+        spec = copy.deepcopy(base); spec["slides"][0]["elements"] = [dict(chart, chart_kind=kind)]
+        check(f"deep: {kind} 不可静默选择一份双载荷", not verify.check_spec(spec)["passed"])
+        report = compiler.compile_deck(spec, tmp / (kind + ".pptx"))
+        check(f"deep: 独立编译 {kind} 双载荷也不能给 passed", not report["passed"])
+    valid = copy.deepcopy(base); e = dict(chart, chart_kind="column"); e.pop("data")
+    valid["slides"][0]["elements"] = [e]
+    check("deep: 合法原生 categories + series 路径不退化", verify.check_spec(valid)["passed"]
+          and compiler.compile_deck(valid, tmp / "valid-series.pptx")["passed"])
+
+    brief = tmp / "brief.json"; json_write(brief, {"slides": [{"id": "one"}]})
+    wf = {"schema": "vao-asset-chain-v2", "brief_path": str(brief), "brief_file_sha256": assets.file_digest(brief)}
+    man = {"schema": "vao-assets-v2", "workflow": wf, "assets": []}
+    check("deep: 完整资产需求凭证可验证", not assets.verify_sources(man))
+    for label, changes in (("缺 SHA", {"brief_file_sha256": None}), ("坏 SHA", {"brief_file_sha256": "x" * 64}),
+                            ("缺 brief", {"brief_path": str(tmp / "missing.json")}),
+                            ("伪链版本", {"schema": "vao-asset-chain-invented"})):
+        check("deep: 资产来源 " + label + " 不再静默通过", bool(assets.verify_sources({**man, "workflow": {**wf, **changes}})))
+
+    # 像素暖复用不等于工作流状态不变：brief 改变时 QC 磁盘报告也须撤销 PASS。
+    qc_image = tmp / "warm-qc.png"; Image.new("RGB", (320, 180), (240, 240, 240)).save(qc_image)
+    qc_man = {**man, "assets": [{"asset_id": "warm", "slide_ids": ["one"], "decision": "existing",
+        "origin": {"kind": "original", "path": str(qc_image), "source": "fixture"},
+        "safe_area": {}, "asset_role": "background", "asset_role_source": "declared"}]}
+    qc_manifest = tmp / "warm-manifest.json"; json_write(qc_manifest, qc_man)
+    healthy, _ = assets.qc_report(qc_manifest, speed="strict", phase="release")
+    original_brief = brief.read_bytes(); brief.write_bytes(original_brief + b" ")
+    blocked, _ = assets.qc_report(qc_manifest, speed="strict", phase="release")
+    persisted = json.loads(Path(blocked["report_path"]).read_text())
+    check("deep: QC 像素暖命中但需求改变时磁盘撤销旧 PASS", healthy["status"] == "PASS"
+          and blocked["status"] == "BLOCKED" and persisted["status"] == "BLOCKED")
+    brief.write_bytes(original_brief)
+    recovered, _ = assets.qc_report(qc_manifest, speed="strict", phase="release")
+    check("deep: QC 需求恢复后的状态也同步落盘", recovered["status"] == "PASS"
+          and json.loads(Path(recovered["report_path"]).read_text())["status"] == "PASS")
+
+    alpha = tmp / "alpha.png"; image = Image.new("RGBA", (100, 100), (255, 0, 0, 0))
+    image.paste((0, 255, 0, 255), (25, 25, 75, 75)); image.save(alpha)
+    spec = copy.deepcopy(base); spec["slides"][0]["background"] = "#171310"
+    spec["slides"][0]["elements"] = [{"id": "i", "type": "image", "x": 64, "y": 80,
+                                     "width": 200, "height": 100, "src": str(alpha), "fit": "contain"}]
+    out = tmp / "alpha.pptx"; report = compiler.compile_deck(spec, out)
+    with zipfile.ZipFile(out) as z:
+        embedded = next(n for n in z.namelist() if n.startswith("ppt/media/"))
+        with Image.open(io.BytesIO(z.read(embedded))) as pixels:
+            check("deep: 透明符号与 contain 留白不压平为 deck 白底", report["passed"]
+                  and pixels.mode == "RGBA" and pixels.getpixel((0, 0))[3] == 0)
+
+    split = Image.new("RGB", (100, 100), "red"); split.paste((0, 255, 0), (50, 0, 100, 100))
+    source = tmp / "split.png"; split.save(source)
+    spec["slides"][0]["elements"][0].update(src=str(source), crop=[0.5, 0, 0, 0], fit="cover")
+    preview = ghost.ghost_page(spec["slides"][0], spec)
+    check("deep: ghost 实际消费图片 crop", preview.getpixel((84, 100))[:3] == (0, 255, 0))
+    second = copy.deepcopy(spec["slides"][0]); second["id"] = "two"
+    second["elements"][0]["crop"] = [0, 0, 0.5, 0]; spec["slides"].append(second)
+    rendered = []; ghost.ghost_deck(spec, tmp / "crops", scale=1, store=False, images_out=rendered)
+    check("deep: 同源不同裁切不共用错误的预览适配缓存", rendered[0].getpixel((84, 100))[:3] == (0, 255, 0)
+          and rendered[1].getpixel((84, 100))[:3] == (255, 0, 0))
+    for crop in ([-1, -1, 0, 0], [float("nan"), 0, 0, 0], [0, 0, 1, 0], [0, 0]):
+        bad = copy.deepcopy(spec); bad["slides"][0]["elements"][0]["crop"] = crop
+        check("deep: 非物理 crop 在硬门拒绝 " + str(crop), not verify.check_spec(bad)["passed"])
+
+    folder = tmp / "sheet"; paths = ghost.ghost_deck(base, folder)
+    cache = folder / "cache"; cache.mkdir(); target = folder / "sheet.png"
+    ghost.make_contact_sheet(paths, target, cache_dir=cache)
+    cached = next(cache.glob("sheet-*.png")); cached.write_bytes(b"broken PNG")
+    ghost.make_contact_sheet(paths, target, cache_dir=cache)
+    try:
+        with Image.open(target) as decoded: decoded.verify()
+        valid_png = True
+    except OSError:
+        valid_png = False
+    check("deep: 损坏联络表缓存重建并修复而非发布坏字节", valid_png
+          and target.read_bytes() != b"broken PNG" and cached.read_bytes() != b"broken PNG")
+    if not valid_png:
+        target.write_bytes(paths[0].read_bytes())  # 下一项中断测试仍以完整 PNG 为前置
+    previous = target.read_bytes()
+    def partial_save(img, destination, *args, **kw):
+        if hasattr(destination, "write"): destination.write(b"partial PNG")
+        else: Path(destination).write_bytes(b"partial PNG")
+        raise KeyboardInterrupt()
+    with patch.object(Image.Image, "save", partial_save):
+        try:
+            if hasattr(ghost, "_write_png"): ghost._write_png(target, split)
+            else: split.save(target, "PNG")
+        except KeyboardInterrupt: pass
+    check("deep: PNG 写入中断保留原完整图且清理暂存", target.read_bytes() == previous
+          and not list(target.parent.glob("." + target.name + "-*")))
+    quiet(build, output, mode="release", speed="strict")
+    release = json.loads(output.with_suffix(".manifest.json").read_text())
+    preview_claim = copy.deepcopy(release["ghost_preview"])
+    preview_claim["pages"][0] = str(tmp / "absent-preview.png")
+    check("deep: 有声明但无实际页图不算发布预览", bool(verify.preview_issues(preview_claim, ["one"])))
+
+    # 离线评测导出也不能成功后毁掉自己的案例/基线文件。
+    import bench
+    scripts = Path(vao.__file__).parent
+    for script, source in (("bench.py", "judgment_cases.json"),
+                           ("unseen_bench.py", "generalization_cases.json")):
+        cases = tmp / source; cases.write_bytes((scripts / source).read_bytes()); before = cases.read_bytes()
+        run = subprocess.run([sys.executable, str(scripts / script), "--cases", str(cases), "--out", str(cases)],
+                             capture_output=True, text=True, encoding="utf-8")
+        check(f"deep: {script} 报告不能覆盖案例", run.returncode == 2 and cases.read_bytes() == before)
+    baseline = tmp / "baseline.json"; json_write(baseline, bench.run(scripts / "judgment_cases.json")); before = baseline.read_bytes()
+    run = subprocess.run([sys.executable, str(scripts / "bench.py"), "--baseline", str(baseline), "--out", str(baseline)],
+                         capture_output=True, text=True, encoding="utf-8")
+    check("deep: bench 报告不能覆盖回归基线", run.returncode == 2 and baseline.read_bytes() == before)
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -3262,7 +3914,10 @@ def main():
                          ("release_evidence", test_release_evidence),
                          ("design_judgment", test_design_judgment),
                          ("boundary_typography", test_boundary_typography),
-                         ("audit_boundaries", test_audit_boundaries)):
+                         ("audit_boundaries", test_audit_boundaries),
+                         ("delivery_safety", test_delivery_safety),
+                         ("material_direction", test_material_direction),
+                         ("deep_release", test_deep_release)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

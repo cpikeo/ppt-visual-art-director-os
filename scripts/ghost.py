@@ -36,8 +36,9 @@ _FONT_FALLBACKS: dict[str, int] = {}
 def font_fallbacks() -> dict:
     """本轮进程内发生的字面回落（角色 → 次数）；空字典 = 每个字面都取到了真字体。"""
     return dict(_FONT_FALLBACKS)
-from primitives import (PREVIEW_FONT_CANDIDATES as _FONT_CANDIDATES,
-                        PREVIEW_FONT_BOLD_CANDIDATES as _FONT_BOLD_CANDIDATES,
+# 兼容导出：selftest 的字体身份探针按此别名覆盖候选表。
+from primitives import (PREVIEW_FONT_CANDIDATES as _FONT_CANDIDATES,  # noqa: F401
+                        PREVIEW_FONT_BOLD_CANDIDATES as _FONT_BOLD_CANDIDATES,  # noqa: F401
                         preview_font_names as _font_names,
                         preview_font_stamp as _font_stamp)
 _FONT_IDENTITY: str | None = None
@@ -61,6 +62,29 @@ def _font_family(element: dict, ctx: RenderContext) -> str:
     serif = ("serif" in resolved and "sans" not in resolved) or any(
         name in resolved for name in ("宋", "song", "明朝", "mincho", "georgia", "times", "cambria"))
     return "_serif" if serif else ""
+
+
+class _BitmapFallback(ImageFont.ImageFont):
+    """Pillow 10.0 默认位图只支持 Latin-1；缺字明确占位，不让结构预览崩溃。
+
+    仅作用于已记录回落的预览字面，绝不改写 spec 或 PPTX 的中文原文。
+    """
+    def __init__(self, font):
+        self.font = font
+        self.size = 11  # 内置位图的固定行高，不是假装缩放到了请求字号
+
+    @staticmethod
+    def _text(text):
+        return text.encode("latin-1", errors="replace").decode("latin-1") if isinstance(text, str) else text
+
+    def getbbox(self, text, *args, **kwargs):
+        return self.font.getbbox(self._text(text), *args, **kwargs)
+
+    def getlength(self, text, *args, **kwargs):
+        return self.font.getlength(self._text(text), *args, **kwargs)
+
+    def getmask(self, text, mode="", *args, **kwargs):
+        return self.font.getmask(self._text(text), mode, *args, **kwargs)
 
 
 def _font(size: float, *, cjk: bool = False, bold: bool = False,
@@ -95,6 +119,8 @@ def _font(size: float, *, cjk: bool = False, bold: bool = False,
         # 用默认位图字体顶上并记账。默认字体不含中文字形，这一轮的预览只能当结构线看。
         _FONT_FALLBACKS[base] = _FONT_FALLBACKS.get(base, 0) + 1
         loaded = ImageFont.load_default()
+        if isinstance(loaded, ImageFont.ImageFont) and not isinstance(loaded, ImageFont.FreeTypeFont):
+            loaded = _BitmapFallback(loaded)
     _FONT_CACHE[key] = loaded
     return loaded
 
@@ -567,7 +593,9 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
             # 同一张图在整副预览里只解码/适配一次（重复页/重复使用是常态）。
             # 键含源身份 + 落位尺寸 + 适配方式：不同盒子各自成立，同盒子直接命中。
             cache = getattr(ctx, "preview_image_cache", None)
-            key = (str(path), w, h, fit, radius)
+            from primitives import image_crop
+            crop = image_crop(e.get("crop"))
+            key = (str(path), w, h, fit, radius, crop)
             fitted = cache.get(key) if cache is not None else None
             held = (getattr(ctx, "image_decoded", None) or {}).get(str(path))
             if held is not None:
@@ -584,12 +612,16 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
                     held = None
             if fitted is None:
                 if held is not None:
-                    image = held if held.mode == "RGBA" else held.convert("RGBA")
+                    image = held.convert("RGBA")
                 else:
                     with Image.open(io.BytesIO(blob) if blob is not None else path) as opened:
                         # exif_transpose 在无 EXIF 时是纯拷贝：先判空再转，省一次全图复制。
                         image = (ImageOps.exif_transpose(opened)
                                  if opened.getexif() else opened).convert("RGBA")
+                if any(crop):
+                    iw, ih = image.size
+                    image = image.crop((int(iw * crop[0]), int(ih * crop[1]),
+                                        int(iw * (1 - crop[2])), int(ih * (1 - crop[3]))))
                 if fit == "contain":
                     fitted = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     image.thumbnail((w, h), Image.Resampling.LANCZOS)
@@ -748,7 +780,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     # 数字展示（kpi/executive_kpi/big_number）读的是元素级 value/label，不是 data 行。
     # 预览必须和产物说同一件事——否则「交付证据」会显示一个空框，与 PPTX 不符。
     if kind in ("kpi", "executive_kpi", "big_number"):
-        value = str(e.get("value") or "").strip()
+        value = str(e["value"] if e.get("value") is not None else "").strip()
         label = str(e.get("label") or "").strip()
         big = _font(px_to_pt(min(120.0, float(e.get("value_size", 56))) * scale),
                     cjk=_has_cjk(value), bold=True)
@@ -1533,6 +1565,26 @@ def _page_key(slide: dict, spec: dict, scale: float, supersample: int,
     }, schema="vao-preview-page-v1", short=20)
 
 
+def _write_png(path, image=None, *, source=None, compress_level=1) -> None:
+    """页图/缓存/联络表统一原子发布；中断不覆盖上轮完整 PNG。"""
+    import os
+    import tempfile
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix="." + target.name + "-", dir=target.parent)
+    staged = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            if source is not None:
+                with Path(source).open("rb") as original:
+                    shutil.copyfileobj(original, handle)
+            else:
+                image.save(handle, "PNG", compress_level=int(compress_level))
+        os.replace(staged, target)
+    finally:
+        staged.unlink(missing_ok=True)
+
+
 def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
                scale: float = 0.5, *, supersample: int = 1,
                store: bool = True, png_compress_level: int = 1,
@@ -1585,7 +1637,7 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
             drawn = True
             if cached_file is not None and store:
                 try:
-                    image.save(cached_file, "PNG", compress_level=int(png_compress_level))
+                    _write_png(cached_file, image, compress_level=png_compress_level)
                     cache_valid = True
                 except OSError:
                     # 写不进去只影响下一次命中，不影响这一轮的像素；但必须可见——
@@ -1605,12 +1657,12 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
             if cached_file is not None and cache_valid and cached_file.is_file():
                 try:
                     # 缓存 PNG 已编码：复制字节作为交付预览，避免同一像素再编码一次。
-                    shutil.copyfile(cached_file, path)
+                    _write_png(path, source=cached_file)
                     copied = True
                 except OSError:
                     pass
             if not copied:
-                image.save(path, "PNG", compress_level=int(png_compress_level))
+                _write_png(path, image, compress_level=png_compress_level)
             paths.append(path)
     if store:
         # 这层是可交付的页图集合，不是页缓存：请求 5→2 页时把旧 3 张从输出
@@ -1679,12 +1731,17 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
         if cached.is_file():
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(cached, target)
+                # 缓存存在不等于 PNG 可用；坏联络表必须重建。
+                with Image.open(cached) as check:
+                    if check.format != "PNG":
+                        raise ValueError("联络表缓存不是 PNG")
+                    check.verify()
+                _write_png(target, source=cached)
                 if stats is not None:
                     stats["sheet_cached"] = True
                 return target
-            except OSError:
-                cached = None          # 复制不成 = 没缓存，照旧重建
+            except (OSError, ValueError, SyntaxError):
+                pass                   # 重建后原子修复同一缓存，不能永远复用坏字节
     in_memory = list(images or [])
     if len(in_memory) != len(valid):
         in_memory = []
@@ -1712,14 +1769,14 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
         draw.text((x, y + cell_h + 8), f"PAGE {path.stem.split('-')[-1]}",
                   fill=(50, 48, 44), font=label_font)
     target.parent.mkdir(parents=True, exist_ok=True)
-    sheet.save(target, "PNG", compress_level=int(png_compress_level))
+    _write_png(target, sheet, compress_level=png_compress_level)
     if stats is not None:
         stats["sheet_cached"] = False
     if cached is not None:
         try:
             cached.parent.mkdir(parents=True, exist_ok=True)
             # 联络表像素只编码一次；缓存副本直接复制 PNG 字节。
-            shutil.copyfile(target, cached)
+            _write_png(cached, source=target)
         except OSError:
             # 写不进缓存只影响下一次命中，不影响这一轮的像素；但要看得见。
             if stats is not None:

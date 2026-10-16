@@ -201,6 +201,12 @@ def main() -> int:
             _stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError, OSError):
             pass
+    from primitives import validate_io_paths, json_write
+    try:
+        validate_io_paths({"cases": args.cases or CASES}, {"report": args.out})
+    except (ValueError, OSError) as exc:
+        print(f"unseen_bench error: {exc}", file=sys.stderr)
+        return 2
     report = run(Path(args.cases) if args.cases else CASES)
     buckets: dict[str, int] = {}
     fails = []
@@ -228,8 +234,7 @@ def main() -> int:
             print(f"  {cid}.{c['field']} [{CLASS_NAMES.get(c['fail_class'], c['fail_class'])}]"
                   f" 期望 {c['expected']} · 实得 {c['actual']}")
     if args.out:
-        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=1),
-                                  encoding="utf-8")
+        json_write(args.out, report, indent=1)
         print(f"\n结果: {args.out}")
     return 1 if n_fail else 0
 

@@ -12,6 +12,13 @@ QA 只回答硬约束与凭证是否通过（PASS / BLOCK），不签署视觉�
 - **不拦（归作者判断）**：好不好看、密度、颜色克制度、字号与留白、构图平衡、图表类型是否选得对、
   口径文字怎么写。
 
+## 文件与信任边界
+
+- `.py` brief/build 是**明确可信的作者代码**，以当前进程权限执行，不是沙箱；不可信输入只用 JSON/YAML（YAML 走 safe_load），仍应限制文件大小与运行资源。
+- `plan/check` 拒绝已知输入、原图与输出/修复包/清单/QC 报告彼此同路径，含现有符号链接与硬链接；路径冲突直接非零退出，不落可能覆盖输入的修复包。
+- PPTX 保存与后处理均使用同目录唯一临时文件，完成后原子替换；失败保留旧完整包。旧包存在不代表本轮成功，交付须同时核对退出码、当前清单状态及 output_sha256。
+- 单文件原子写入不等于整套产物事务：不支持多个任务并发写同一 output/preview/manifest；不要把工作目录交给不可信进程并发改符号链接。中断后须复跑完整 check。
+
 ## 文本测量边界
 
 Guard 的字号、折行、字距与段距是**粗估**，不是目标字体的真实排版；中文禁则回退只在 ghost 折行模型里生效，
@@ -37,7 +44,7 @@ spec = {
 有自己的风险色相时再显式声明 `colors.negative` 或 `chart_palette.negative` 覆盖它。
 plan 按视觉世界给出种子，作者可覆盖任意一项。**颜色只能写 #HEX 或 token 名**——写错名字会在产物里静默回落，所以必拦。
 
-页面 `id` 全稿唯一；取证顺序跟随 `slides`，不按 ID 字典序重排。
+brief 与 spec 的页面 `id` 全稿唯一；取证顺序跟随 `slides`，不按 ID 字典序重排。
 
 **元素信封**：`id`（非空、页内唯一）、`type`、`x/y/width/height`（必填）、`role`。
 
@@ -72,7 +79,9 @@ PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过
 `chart_kind` 的合法值、编译路由（原生/形状/大数字）、载荷形态、数值属性、截断上限
 与预览口径只在 `primitives.CHART_SPEC` 定义一次（五维一表），Guard、编译器与预览
 全部派生自它；本文不再抄录枚举与数值表——双写迟早漂移成「放行但截尾」。
-`kpi/executive_kpi/big_number` 读元素级 `value`（数字展示）。数值图表齐 `source / unit / period / basis`（release 硬门）；
+`kpi/executive_kpi/big_number` 读元素级 `value`（数字展示），数值 `0` 是有效内容，不是缺失。
+`pie/donut/donut_composition` 的数值须非负且每个构成序列的有效总和大于零；`pie` 只接受一个序列，不得静默隐藏其他系列。
+数值图表齐 `source / unit / period / basis`（release 硬门）；
 同 `metric` 跨页必须同单位。原生数值图表的 `show_values`、`number_format`、
 `label_collision_policy` 不因 `data` 或 `categories + series` 载荷改变；多序列的
 容量计数为类别数 × 序列数。`label_size` 控制原生轴标签、`value_size` 控制数值标签，
@@ -143,3 +152,14 @@ PIL 是结构取证，字体字形/换行在 PowerPoint 上须另行校验；过
 ghost_preview / asset_workflow / status`。缺 spec 戳、PPTX 摘要或预览证据即不能 PASS；输入异常时覆盖旧 PASS 清单。
 `release_eligible` 仅在 release、编译通过且凭证全有效时为真。`verification.target_powerpoint / native_editing /
 independent_visual_review` 恒为未验证；工具不消费外部签署，也不自动升级它们。
+
+
+### 安全发布与失败语义（未发布修复）
+
+- 预览与编译缓存目录须独立于输入、PPTX、修复包、清单及另一辅助目录；现有 symlink/hardlink 子项拒绝。缓存目录被普通文件占位仍可诊断并回落完整编译，不覆盖占位文件。
+- 路径冲突返回 2，且不写任何可能覆盖输入的诊断；因此这类冲突不得仅靠磁盘上的旧清单判定本轮结果。
+- release 在安全路径/资产预检后先写 `status=BLOCKED, release_eligible=false` 的未完成清单；只有全链完成才能替换成 PASS。Ctrl-C 退出 130；可信作者 Python 内的 `SystemExit(0)` 使 CLI 失败（2），不是成功凭据。
+- 原子写入是单文件保证，不是多产物全局事务或并发锁；预检前 SIGKILL、同输出并发及敌对 TOCTOU 未获保证。请为每个运行使用独立工作目录，并以当轮退出码及当轮凭证共同判定。
+- 图表载荷 `data` 与 `series` 不能同时声明（即使空数组也不作静默优先级）；旧 `data` 加冗余 `categories`、没有 series 的输入继续兼容。
+- 图片 `crop` 是 `[left, top, right, bottom]` 四个有限非 bool 数，单项 `[0,1)`、对边和 `<1`；`null` 等价四个 0。编译与 ghost 共用，缓存包含 crop。
+- `ghost_preview` 中的物理文件须存在且非空；联络表缓存验证 PNG 可解码后才复用。此项不是图片内容签名、语义认证或真实 PowerPoint 视觉验收。

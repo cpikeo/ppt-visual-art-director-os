@@ -343,6 +343,8 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
     # 先把源读成 bytes：per-compile 缓存与流式读取都需要「可重复消费」的输入，
     # 直接对活流调用 Image.open 会让流位置前进，后续透传就会拿到半截字节。
     blob = _as_bytes(source)
+    from primitives import image_crop
+    crop = image_crop(crop)
     # 解码缓存：同一张源图落在多个盒子里时（全幅背景 + 局部插图 + 复用页），
     # 解码与「RGBA 合成 / 裁切」只做一次；后续的 crop/resize 都是纯函数式操作，
     # 共享同一张已解码底图不会互相污染。
@@ -380,8 +382,7 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
         if crop is not None or _needs_alpha(opened):
             if _needs_alpha(opened):
                 rgba = opened.convert("RGBA")
-                background = Image.new("RGBA", rgba.size, (*(bg or (255, 255, 255)), 255))
-                img = Image.alpha_composite(background, rgba).convert("RGB")
+                img = rgba  # 不在这里压平 alpha；透明对象须透出真实底层/页背景
             else:
                 img = opened.convert("RGB")
             if crop is not None:
@@ -401,6 +402,10 @@ def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None) -> bytes:
     """已解码底图 → 落位尺寸的 PNG bytes（cover / contain）。"""
     import io
     from PIL import Image
+    if bg is not None and _needs_alpha(img):
+        rgba = img.convert("RGBA")
+        matte = Image.new("RGBA", rgba.size, (*bg, 255))
+        img = Image.alpha_composite(matte, rgba).convert("RGB")
     iw, ih = img.size
     target_w = max(1, min(iw, int(round(w * MEDIA_MAX_OVERSAMPLE))))
     target_h = max(1, min(ih, int(round(h * MEDIA_MAX_OVERSAMPLE))))
@@ -409,8 +414,13 @@ def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None) -> bytes:
         nw, nh = max(int(round(iw * scale)), 1), max(int(round(ih * scale)), 1)
         if (nw, nh) != (iw, ih):
             img = _resize_quality(img, (nw, nh))
-        canvas = Image.new("RGB", (target_w, target_h), bg if bg is not None else (255, 255, 255))
-        canvas.paste(img, ((target_w - nw) // 2, (target_h - nh) // 2))
+        canvas = Image.new("RGBA" if bg is None else "RGB", (target_w, target_h),
+                           (0, 0, 0, 0) if bg is None else bg)
+        offset = ((target_w - nw) // 2, (target_h - nh) // 2)
+        if img.mode == "RGBA" and canvas.mode == "RGBA":
+            canvas.alpha_composite(img, offset)
+        else:
+            canvas.paste(img, offset)
         img = canvas
     else:  # cover
         scale = max(target_w / iw, target_h / ih)
@@ -498,9 +508,8 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
     blob = None
     if fit in ("cover", "contain") or crop:
         try:
-            # contain 留白填充主题背景色，保证暗色主题下无白边。
-            bg_rgb = ctx.color("background")
-            bg_tuple = tuple(bg_rgb) if bg_rgb is not None else None
+            # 留白和源 alpha 保持透明，透出实际页背景/渐变/底层对象，而非 deck 底色。
+            bg_tuple = None
             crop_key = tuple(crop) if crop else ()
             cache = getattr(ctx, "image_transform_cache", None)
             key = (str(src), round(float(w), 2), round(float(h), 2), str(fit), crop_key, bg_tuple)
@@ -1581,6 +1590,11 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
 def add_chart(slide, element: dict, ctx: RenderContext) -> None:
     kind = str(element.get("chart_kind") or element.get("kind", ""))
 
+    if element.get("series") is not None:
+        if CHART_SPEC.get(kind, {}).get("renderer") != "native" or element.get("data"):
+            ctx.warn(f"chart '{element.get('id')}': 不支持的多序列或双载荷，拒绝静默丢弃数据")
+            return
+
     if kind in ("kpi", "executive_kpi", "big_number"):
         add_kpi(slide, element, ctx)
         return
@@ -1605,7 +1619,7 @@ def add_kpi(slide, element: dict, ctx: RenderContext) -> None:
     eid = str(element.get("id", "kpi"))
     align = element.get("align", "left")
 
-    value_text = str(element.get("value", "") or "").strip()
+    value_text = str(element["value"] if element.get("value") is not None else "").strip()
     label_text = str(element.get("label", "") or "").strip()
 
     vb = slide.shapes.add_textbox(
@@ -1702,9 +1716,13 @@ def _postprocess_package(output_path, *, media_stored: bool = True) -> dict:
     import re as _re
     import time as _time
     import zipfile as _zip
-    import shutil as _shutil
+    import os as _os
+    import tempfile as _tempfile
     path = Path(output_path)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # 固定 .tmp 会与并发写入争用，还会跟随预置符号链接截断无关文件。
+    fd, name = _tempfile.mkstemp(prefix="." + path.name + "-", suffix=".tmp", dir=path.parent)
+    _os.close(fd)
+    tmp = Path(name)
     empty_run = _re.compile(r"<a:r>(?:(?!</a:r>).)*?<a:t(?:\s[^>]*)?>\s*</a:t>"
                             r"(?:(?!</a:r>).)*?</a:r>", _re.S)
     t0 = _time.perf_counter()
@@ -1734,7 +1752,7 @@ def _postprocess_package(output_path, *, media_stored: bool = True) -> dict:
                 item.date_time = _FIXED_ZIP_STAMP
                 item.compress_type = compression
                 zout.writestr(item, data)
-        _shutil.move(str(tmp), str(path))
+        _os.replace(tmp, path)
     finally:
         # 半截包必须清掉：写盘中断（磁盘满 / 条目损坏）时 tmp 里是一份不完整
         # 的 PPTX，留在交付物旁边既占空间又可能被当成产物（实测：损坏条目会让
@@ -1877,9 +1895,20 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     t_save = time.perf_counter()
-    prs.save(str(output_path))
-    save_ms = (time.perf_counter() - t_save) * 1000
-    package = _postprocess_package(output_path)
+    import os
+    import tempfile
+    fd, name = tempfile.mkstemp(prefix="." + output_path.name + "-", suffix=".pptx",
+                                dir=output_path.parent)
+    os.close(fd)
+    staged = Path(name)
+    try:
+        prs.save(str(staged))
+        save_ms = (time.perf_counter() - t_save) * 1000
+        package = _postprocess_package(staged)
+        # 保存与后处理全部完成才发布；失败时旧完整产物保持原样。
+        os.replace(staged, output_path)
+    finally:
+        staged.unlink(missing_ok=True)
     report = {
         "passed": len(ctx.warnings) == 0,
         "warnings": list(ctx.warnings),

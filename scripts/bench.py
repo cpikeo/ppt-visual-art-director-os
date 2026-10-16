@@ -51,10 +51,9 @@ def _checks(expect: dict, actual: dict) -> list[dict]:
     rows = []
     for key, want in expect.items():
         if key == "evidence_not":
-            ok, field, shown = actual["evidence"] not in want, "evidence", actual["evidence"]
+            ok, shown = actual["evidence"] not in want, actual["evidence"]
             want_s = f"不是 {want}"
         else:
-            field = key
             shown = actual[key]
             if isinstance(want, bool):
                 ok, want_s = shown == want, str(want)
@@ -120,11 +119,12 @@ def ablate(names: list[str], cases_path: Path = DEFAULT_CASES) -> dict:
 def regression(current: dict, baseline: dict) -> dict:
     """修复回归率：基线里通过、现在失败的案例占基线通过数的比例。"""
     base_pass = {r["id"] for r in baseline["cases"] if r["passed"]}
-    now_fail = {r["id"] for r in current["cases"] if not r["passed"]}
-    broke = sorted(base_pass & now_fail)
-    fixed = sorted({r["id"] for r in baseline["cases"] if not r["passed"]}
-                   - now_fail)
-    return {"regressed_cases": broke,
+    now_pass = {r["id"] for r in current["cases"] if r["passed"]}
+    now_ids = {r["id"] for r in current["cases"]}
+    missing = sorted({r["id"] for r in baseline["cases"]} - now_ids)
+    broke = sorted(base_pass - now_pass)
+    fixed = sorted({r["id"] for r in baseline["cases"] if not r["passed"]} & now_pass)
+    return {"regressed_cases": broke, "missing_cases": missing,
             "fixed_cases": fixed,
             "regression_rate": round(len(broke) / max(len(base_pass), 1), 3)}
 
@@ -139,23 +139,33 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict
     """打乱并改名待评版本。映射写入 out_dir 之外的 key 文件，评审目录里只有匿名件与空白评分表。"""
     import random
     import shutil
+    from primitives import validate_io_paths, PathConflictError, json_write
+    out_dir = Path(out_dir).expanduser().resolve()
+    sources = [Path(item).expanduser().resolve() for item in items]
+    key_path = out_dir.parent / (out_dir.name + ".key.json")
+    # copytree 不得递归读入自己刚创建的输出；key 也不能写回待评输入树。
+    for src in sources:
+        if src.is_dir() and (out_dir == src or out_dir.is_relative_to(src)
+                             or key_path.is_relative_to(src)):
+            raise PathConflictError(f"盲评输出不能位于待评输入目录内：{src}")
+    validate_io_paths({f"item {i}": src for i, src in enumerate(sources)},
+                      {"blind key": key_path}, managed_dirs={"blind output": out_dir})
     rng = random.Random(seed)
     order = list(range(len(items)))
     rng.shuffle(order)
     out_dir.mkdir(parents=True, exist_ok=True)
     mapping, rows = {}, []
     for n, idx in enumerate(order, 1):
-        src = Path(items[idx])
+        src = sources[idx]
         code = f"V{n:02d}"
         dst = out_dir / f"{code}{src.suffix}"
         if src.is_dir():
             shutil.copytree(src, out_dir / code, dirs_exist_ok=True)
         else:
             shutil.copyfile(src, dst)
-        mapping[code] = str(src)
+        mapping[code] = str(Path(items[idx]))  # 保留 key 中原有的作者路径表达
         rows.append(code)
-    key_path = out_dir.parent / (out_dir.name + ".key.json")
-    key_path.write_text(json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8")
+    json_write(key_path, mapping)
     sheet = out_dir / "score_sheet.csv"
     header = ["reviewer", "item"] + list(BLIND_DIMS) + ["reason"]
     sheet.write_text(",".join(header) + "\n" +
@@ -243,7 +253,12 @@ def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["blind"]:
         if len(argv) >= 3 and argv[1] == "pack":
-            print(json.dumps(blind_pack(argv[3:], Path(argv[2])), ensure_ascii=False, indent=2))
+            try:
+                result = blind_pack(argv[3:], Path(argv[2]))
+            except (ValueError, OSError) as exc:
+                print(f"bench error: {exc}", file=sys.stderr)
+                return 2
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if len(argv) >= 4 and argv[1] == "score":
             print(json.dumps(blind_score(argv[3:], argv[2]), ensure_ascii=False, indent=2))
@@ -257,6 +272,12 @@ def main(argv=None) -> int:
     parser.add_argument("--out", default=None)
     parser.add_argument("--ablate", action="store_true", help="逐组消融语义词表，打印指标变化")
     args = parser.parse_args(argv)
+    from primitives import validate_io_paths, json_write
+    try:
+        validate_io_paths({"cases": args.cases, "baseline": args.baseline}, {"report": args.out})
+    except (ValueError, OSError) as exc:
+        print(f"bench error: {exc}", file=sys.stderr)
+        return 2
     if args.ablate:
         result = ablate(list(ABLATABLE), Path(args.cases))
         f = result["full"]
@@ -267,7 +288,7 @@ def main(argv=None) -> int:
             ch = ", ".join(f"{k}→{v}" for k, v in a["changed_to"].items()) or "无变化"
             print(f"  去掉 {name:20} 通过 {m['cases_passed']}/{m['cases']} · 准确率 {m['accuracy']:.1%} · 变化：{ch}")
         if args.out:
-            Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            json_write(args.out, result)
         return 0
     report = run(Path(args.cases))
     if args.baseline:
@@ -275,8 +296,10 @@ def main(argv=None) -> int:
         report["regression"] = regression(report, baseline)
     _print(report)
     if args.out:
-        Path(args.out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    return 0 if report["metrics"]["cases_passed"] == report["metrics"]["cases"] else 1
+        json_write(args.out, report)
+    reg = report.get("regression") or {}
+    return 0 if (report["metrics"]["cases_passed"] == report["metrics"]["cases"]
+                 and not reg.get("regressed_cases") and not reg.get("missing_cases")) else 1
 
 
 if __name__ == "__main__":

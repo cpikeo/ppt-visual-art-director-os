@@ -191,6 +191,9 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
     if not slides:
         add("slide_schema", "slides", "error",
             "spec 里没有任何页（slides 为空）；空 deck 不是可交付物")
+    for key in ("width", "height"):
+        if key in canvas and not _positive_num(canvas[key]):
+            add("canvas_schema", "canvas", "error", f"canvas.{key} 必须是正的有限数字")
     if "grid_columns" in canvas and not _positive_int(canvas.get("grid_columns")):
         add("canvas_schema", "canvas", "error", "canvas.grid_columns 必须是正整数")
     if "grid_unit" in canvas and not _positive_num(canvas.get("grid_unit")):
@@ -217,7 +220,12 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
         seen_slide_ids.add(sid)
         if "elements" in slide and not isinstance(slide.get("elements"), list):
             add("slide_schema", sid, "error", "slide.elements 必须是数组/list")
-        drawable = [e for e in (slide.get("elements") or []) if isinstance(e, dict)]
+        raw_elements = slide.get("elements")
+        raw_elements = raw_elements if isinstance(raw_elements, list) else []
+        for ei, element in enumerate(raw_elements):
+            if not isinstance(element, dict):
+                add("element_schema", f"{sid}[{ei}]", "error", "elements 每项必须是对象/dict，不得静默丢弃")
+        drawable = [e for e in raw_elements if isinstance(e, dict)]
         if not drawable and not slide.get("background"):
             add("page_contract", sid, "error",
                 "这一页没有任何元素，也没有 background：画面上什么都没有"
@@ -389,6 +397,15 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
                 f"（字号 {cap['size']:g} × 可用栏宽 {cap['measure_cjk'] * cap['size']:.0f}px）："
                 "分栏、收窄栏宽或拆成两条，不要缩字号")
 
+    if typ == "image":
+        from primitives import image_crop
+        try:
+            image_crop(e.get("crop"))
+            if e.get("fit", "cover") not in ("cover", "contain"):
+                raise ValueError("fit 只接受 cover|contain")
+        except ValueError as exc:
+            add("element_schema", eid, "error", str(exc))
+
     if typ in ("chart", "native_chart"):
         _check_chart(e, eid, add, require_provenance=require_provenance)
 
@@ -400,8 +417,25 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
         add("chart_type", eid, "error",
             f"未知 chart_kind={kind!r}；合法值：{sorted(SUPPORTED_CHART_KINDS)}")
         return
+    from primitives import CHART_SPEC
+    has_series = e.get("series") is not None
+    if has_series:
+        if CHART_SPEC[kind]["renderer"] != "native":
+            add("chart_payload", eid, "error", f"{kind} 只消费 data/元素级载荷，不支持 categories + series；不得静默丢弃序列")
+            return
+        if e.get("data"):
+            add("chart_payload", eid, "error", "data 与 categories + series 是替代载荷，不能同时声明并静默隐藏一份")
+            return
+        if (not isinstance(e.get("categories"), list) or not e["categories"]
+                or not isinstance(e.get("series"), list) or not e["series"]
+                or any(not isinstance(sr, dict) for sr in e["series"])):
+            add("chart_payload", eid, "error", "多序列载荷必须有非空 categories 列表和 series 对象列表")
+            return
     data = e.get("data") or []
-    if kind in ELEMENT_METRIC_KINDS and not str(e.get("value") or "").strip():
+    if not isinstance(data, list):
+        add("chart_payload", eid, "error", "data 必须为数组/list")
+        return
+    if kind in ELEMENT_METRIC_KINDS and (e.get("value") is None or not str(e["value"]).strip()):
         add("chart_payload", eid, "error",
             f"{kind} 缺少元素级 value（大数字没有数字）")
     if kind == "matrix":
@@ -465,6 +499,8 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
         if multi:
             if not n_cat:
                 add("data_integrity", eid, "error", "多序列图表缺少 categories")
+            if kind == "pie" and n_series > 1:
+                add("data_integrity", eid, "error", "pie 只能表达一个构成序列；多序列请拆图，不能隐藏其他系列")
             for sidx, sr in enumerate(series):
                 vals = sr.get("values") if isinstance(sr, dict) else None
                 if not isinstance(vals, list) or not vals:
@@ -478,6 +514,12 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                     if not _finite(v):
                         add("data_integrity", f"{eid}[s{sidx}][{vi}]", "error",
                             f"series[{sidx}] value={v!r} 不是有限数字")
+                    elif kind in {"pie", "donut", "donut_composition"} and float(v) < 0:
+                        add("data_integrity", f"{eid}[s{sidx}][{vi}]", "error",
+                            f"{kind} 不接受负值构成；请改用可表达正负关系的图表")
+                if kind in {"pie", "donut", "donut_composition"} and all(_finite(v) for v in vals):
+                    if sum(max(0, float(v)) for v in vals) <= 0:
+                        add("data_integrity", f"{eid}[s{sidx}]", "error", "构成序列的有效数值总和必须大于 0")
         elif not isinstance(data, list) or not data:
             add("data_integrity", eid, "error", "数值图表缺少 data，无法验证或渲染")
         else:
@@ -495,7 +537,8 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                 if not _finite(row.get("value")):
                     add("data_integrity", f"{eid}[{di}]", "error",
                         f"图表数据 value={row.get('value')!r} 不是有限数字")
-                elif kind in {"ranked_bar", "progress_bar", "stacked_bar", "bubble"} \
+                elif kind in {"ranked_bar", "progress_bar", "stacked_bar", "bubble",
+                                      "pie", "donut", "donut_composition"} \
                         and float(row["value"]) < 0:
                     add("data_integrity", f"{eid}[{di}]", "error",
                         f"{kind} 不接受负值；请改用可表达正负关系的图表")
@@ -963,6 +1006,13 @@ def preview_issues(ghost, page_ids: list) -> list:
             or len(set(map(str, expected))) != len(expected)
             or len(set(map(str, pages))) != len(pages)):
         return ["预览声明页、唯一文件与实际渲染页数不一致"]
+    from pathlib import Path
+    try:
+        files = [*pages, ghost.get("contact_sheet")]
+        if any(not p or not Path(p).is_file() or Path(p).stat().st_size == 0 for p in files):
+            return ["结构预览页图或联络表缺失/为空；须重新取证"]
+    except (OSError, TypeError, ValueError):
+        return ["结构预览文件路径无效或不可读取"]
     if scope == "full":
         if expected != page_ids:
             return ["预览页没有按叙事顺序完整覆盖当前稿件"]

@@ -8,7 +8,7 @@ on:
 
 jobs:
   selftest:
-    name: selftest · ${{ matrix.os }} · py${{ matrix.python }}
+    name: selftest · ${{ matrix.os }} · py${{ matrix.python }} · ${{ matrix.dependencies }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -17,6 +17,11 @@ jobs:
         # 都是平台相关分支，只在 Linux 上跑等于没测到最容易坏的地方。
         os: [ubuntu-latest, windows-latest]
         python: ["3.10", "3.12", "3.13"]
+        dependencies: [latest]
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+            dependencies: minimum
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +33,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+
+      - name: Check declared dependency lower bounds
+        if: matrix.dependencies == 'minimum'
+        run: python -m pip install "python-pptx==1.0.2" "Pillow==10.0.0" "numpy==1.24.0" "PyYAML==6.0"
 
       - name: Install package (editable, exposes the flat script modules)
         run: python -m pip install -e .
@@ -44,6 +53,15 @@ jobs:
 
       - name: Judgment regression (all 57 cases; failure exits nonzero)
         run: python scripts/bench.py
+
+      - name: Frozen generalization regressions
+        run: |
+          python - <<'PYTEST'
+          import pathlib, subprocess, sys
+          for cases in sorted(pathlib.Path("scripts").glob("generalization_cases*.json")):
+              subprocess.run([sys.executable, "scripts/unseen_bench.py", "--cases", str(cases)], check=True)
+          PYTEST
+        shell: bash
 
       - name: Whitespace check
         if: matrix.os == 'ubuntu-latest'

@@ -57,10 +57,8 @@ def load_brief(path, *, with_digest: bool = False):
         except json.JSONDecodeError as exc:
             raise ValueError(f"brief JSON 解析失败：{p}:{exc.lineno}:{exc.colno} — {exc.msg}") from None
     elif p.suffix == ".py":
-        import types
-        mod = types.ModuleType("need_mod")
-        mod.__file__ = str(p)
-        exec(compile(text, str(p), "exec"), mod.__dict__)
+        from primitives import execute_module
+        mod = execute_module(compile(text, str(p), "exec"), p, "need_mod")
         value = dict(mod.BRIEF) if hasattr(mod, "BRIEF") else (
             dict(mod.NEED) if hasattr(mod, "NEED") else None)
         if value is None:
@@ -2115,21 +2113,20 @@ def _media_hint(function: str, cue: str) -> dict:
 
 
 def media_necessity(u: dict, role: str, *, declared: str | None = None,
-                    has_chart: bool = False) -> dict:
-    """图片必须通过必要性测试：**没有它，这一页会下降在哪里？**
+                    has_chart: bool = False, reason: str | None = None) -> dict:
+    """无作者声明时保守不出图；词表只提示，不裁决审美。
 
-    唯一两种可成立的答案：
-      witness  — 它是证词：现场/人/物件本身就是主张所声称的东西；
-      subject  — 它就是主语：产品/世界本身需要被看见（开场建立）。
-    答不出来的，判定为不出图——装饰图、氛围图、无意义背景一律过不了这道测试。
+    witness / subject 是可检测的线索，不穷尽解释、概念或空间价值。
+    真实必要性由作者依据 SKILL 复核，reason 只承载理由，不触发出图。
     """
     if declared in ("required", "reuse", "none"):
         return {"decision": declared, "source": "author",
-                "function": "declared", "necessity": "作者显式声明：压过一切判断。"}
+                "function": "declared", "necessity": str(reason).strip() if reason and str(reason).strip()
+                else "作者显式声明；素材价值仍须按内容与构图人工复核。"}
     if has_chart:
         return {"decision": "none", "source": "judgment",
                 "function": None,
-                "necessity": "本页已有图表承担注意力，再放图片＝两个焦点互相削价。"}
+                "necessity": "本页已有图表，默认不追加素材；若图像承担不可替代的对象或解释职责，先明确构图再由作者声明。"}
     presence = bool(u.get("individual") or u.get("scene"))
     physical = [s for s in (u.get("subjects") or []) if s in _PHYSICAL_SUBJECTS]
     # 一个具体的人的话/做法是证词线索，不依赖职业词表；compare/explain/summarize 的注意力不属于人物。
@@ -2144,12 +2141,12 @@ def media_necessity(u: dict, role: str, *, declared: str | None = None,
     if role == "prove" and presence and str(u.get("evidence")) not in ("series", "comparison", "part_whole"):
         return _media_hint("witness", "人物、场所或记录动作")
     reasons = {
-        "compare": "对比页的注意力属于两端本身，图片会把比较读成氛围。",
-        "explain": "结构页的注意力属于关系本身，图片无法替代关系。",
-        "summarize": "收尾页的注意力属于要做的决定，图片会把请求变成一个画面。",
-        "persuade": "主张页的注意力属于那句话，配图会把不可回答的问题装饰掉。",
-        "prove": "这一页的说服力来自可核验的量，图像的证明力低于数字本身。",
-        "establish": "内容里没有可指认的人/现场：用排版与字阶建立世界，比塞一张图更诚实。",
+        "compare": "默认让比较关系承担注意力；若需看见对象差异，由作者确认图像价值与位置。",
+        "explain": "默认先表达关系；确需图解、剖面或概念插图时，由作者确认结构可信性与解释任务。",
+        "summarize": "默认把注意力留给决定；如需视觉收束，先说明与核心请求的关系。",
+        "persuade": "默认把注意力留给主张与论据；图像若有独立表达任务，由作者声明。",
+        "prove": "默认保留可核验证据的主次；真实记录可作为证据，生成图不能冒充记录。",
+        "establish": "没有明确图像任务时用排版与空间建立世界；确需背景或对象时，由作者说明其价值。",
     }
     return {"decision": "none", "source": "judgment",
             "function": None,
@@ -2346,8 +2343,8 @@ def derive_world(brief: dict, understanding: list) -> dict:
 # 12 · 逐页判断（judgment = 一次算完的完整判断卡）
 # ─────────────────────────────────────────────────────────────────────
 _PAGE_DECLARATIONS = ("audience", "decision", "tension", "density", "energy",
-                      "asset", "asset_role", "asset_function", "asset_subject",
-                      "medium", "material", "lighting", "texture",
+                      "asset", "asset_role", "asset_function", "asset_subject", "asset_reason", "asset_composition",
+                      "medium", "material", "lighting", "texture", "fusion_enabled", "negative", "light_direction",
                       "asset_color", "safe_area", "text_color", "negative_space_anchor",
                       "asset_ratio", "asset_allow_crop", "asset_source", "composition",
                       "insight", "focus",
@@ -2635,7 +2632,7 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     tension = tension_of(item, brief, role["role"])
     media = media_necessity(u, role["role"],
                             declared=str(item.get("asset") or "").lower() or None,
-                            has_chart=bool(item.get("chart")))
+                            has_chart=bool(item.get("chart")), reason=item.get("asset_reason"))
     claim_text = str(claim.get("text") or "")
     # 主张自己带数字时，也要把它当**主张**来锚定（把 claim 传给 number_roles）：
     # 只按「终值信号」扫一遍，会把决策页的「扩到 3 个」当成主语，而真正要批的
@@ -2767,6 +2764,13 @@ def think(brief: dict) -> dict:
     if not isinstance(raw, list):
         raise TypeError("brief.slides must be a list of page briefs")
     items = [it if isinstance(it, dict) else {"title": str(it)} for it in raw]
+
+    seen_ids = set()
+    for i, item in enumerate(items):
+        sid = str(item.get("id") or f"s{i + 1:02d}")
+        if not sid.strip() or sid in seen_ids:
+            raise ValueError(f"brief 页面 id 必须非空且唯一：{sid!r}")
+        seen_ids.add(sid)
 
     views = [judgment_view(it, i) for i, it in enumerate(items)]
     understanding = [understand(f"{v.get('title') or ''} {v.get('content') or ''}".strip(),
@@ -2982,6 +2986,7 @@ def build_skeleton(bundle: dict) -> str:
         status = (f'同次 plan 已准备清单 {manifest}' if manifest_path else
                   '只有 think 判断卡、尚未落盘：用一次 vao.py plan 生成资产清单')
         L += ['', f'有图：{status}；媒体有证据职责才占画面。',
+              '先按内容与构图复核素材价值，再选材/出图；判断见 SKILL.md §3，人工验收见 §6。',
               '图像元素写 asset_id；出图按清单一次批量进行，check 时绑定核验。']
         manifest_flag = f' --assets-manifest "{manifest}"'
     else:
