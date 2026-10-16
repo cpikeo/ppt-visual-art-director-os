@@ -609,6 +609,26 @@ def test_intelligence(tmp: Path):
     check("number_roles: 主张用序数点名某年时，焦点落在该年（第二年 → 2027 年的 12.8 亿元）",
           intel.number_roles(years)[1]["raw"] == "4.6 亿元"
           and intel.number_roles(years, "三年测算里最关键的是第二年")[1]["raw"] == "12.8 亿元")
+    # 单位绑定：「个」是分类词，必须与计量名词同进同出（审计实测：主语量显示成「2.1 个」）
+    check("numerals: 个百分点/个点/个季度 不被「个」截断（数字与单位不拆开）",
+          [n["raw"] for n in intel.numerals("提升 2.1 个点、5 个百分点、缩短 2 个季度")]
+          == ["2.1 个点", "5 个百分点", "2 个季度"]
+          and intel.numerals("5 个百分点")[0]["unit"] == "个百分点"
+          and intel.numerals("2.1 个点")[0]["unit"] == "个点"
+          and intel.numerals("缩短 2 个季度")[0]["unit"] == "个季度"
+          and intel.numerals("5 个方案")[0]["unit"] == "个",
+          str(intel.numerals("提升 2.1 个点、5 个百分点、缩短 2 个季度")))
+    # 目标/计划量是意图，不是「当前状态」（审计实测：下降序列的焦点被 2025 目标量顶掉）
+    plan_text = ("2022 年 31%，2023 年 27%，2024 年 22%。"
+                 "计划：2025 年试点季度回访，目标把复捐率拉回 28%。")
+    check("number_roles: 目标/计划量不当选「序列当前值」（22% 是现状，28% 是目标）",
+          intel.number_roles(plan_text, "捐赠人复捐率三年连续下降")[1]["raw"] == "22%",
+          str(intel.number_roles(plan_text, "捐赠人复捐率三年连续下降")[1]))
+    check("number_roles: 整段都是目标句时退回目标量；复合名词「目标客户」不算意图",
+          intel.number_roles("目标把复捐率拉回 28%", "目标把复捐率拉回 28%")[1]["raw"] == "28%"
+          and intel.number_roles("新增 30 万，目标客户 500 万。",
+                                 "目标客户 500 万")[1]["raw"] == "500 万",
+          str(intel.number_roles("新增 30 万，目标客户 500 万。", "目标客户 500 万")[1]))
     # 多量纲 + 主张无量 → 数字退为支撑，第一落点回到那句话
     mixed = intel.think(dict(BRIEF, slides=[
         {"id": "m1", "title": "真正的阻力不是竞争，是清关与用工这两件我们无法靠补贴解决的事",
@@ -3686,19 +3706,21 @@ def _portable_relpath(target: Path, base: Path) -> str:
 
 
 def test_win_portability(tmp: Path):
-    """平台地形不该掀掉回归套件：Windows 跨盘符 + 无 POSIX 权限位。
+    """平台地形不该掀掉回归套件：同盘相对 vs 跨盘绝对必须分开验。
 
     背景（本轮拿到的 CI 日志）：`selftest · windows-latest · py3.12` 在
     `test_deep_release` 里 `os.path.relpath(blind_src, Path.cwd())` 抛
     `ValueError: path is on mount 'C:', start on mount 'D:'` —— 工作区在 D:、
     临时目录在 C:，两棵根之间没有相对路径，测试直接崩在 setup 而不是断言上。
-    同一台机器上 POSIX 权限位也不存在（见 test_atomic_publish）。
-    两件事都在本机以**平台无关的方式**复现，不需要 Windows。
+    同一台机器上没有 POSIX 权限位——那条判据在 test_atomic_publish（覆盖前后
+    权限不变，数值相等只在 POSIX 追加），本测试只验路径分支，都在本机以
+    **平台无关的方式**复现，不需要 Windows。
     """
     import ntpath
     from unittest.mock import patch
 
     # 1) 复现 CI 的确切条件：ntpath 在跨盘符时就是抛 ValueError（本机可验证）
+    message = ""
     cross_drive = False
     try:
         ntpath.relpath(r"C:\Users\runner\AppData\Local\Temp\blind-src", r"D:\a\repo")
@@ -3708,21 +3730,27 @@ def test_win_portability(tmp: Path):
     check("win: 跨盘符 relpath 确实无解（CI 崩溃的真实条件，本机用 ntpath 复现）",
           cross_drive and "mount" in message, message[:80])
 
-    # 2) 助手在同样条件下不抛异常，退回绝对路径；能相对时仍然是相对路径
+    # 2) 同盘（同根）对走相对路径分支。前提修正：不能拿 tmp 与 Path.cwd() 配对
+    #    代表「同盘」——windows-latest 的 tmp 在 C:、工作区在 D:，那对本身就是跨盘，
+    #    恰好落进兜底分支，断言与前提相反。同盘对必须两头同根：Windows 语义用
+    #    ntpath 直接验，POSIX 语义用同一棵树里的目录对验。
     work = tmp / "winrt"
     work.mkdir()
-    relative_ok = _portable_relpath(work, Path.cwd())
+    check("win: 同盘符 relpath 保持相对（Windows 语义，ntpath 同盘对）",
+          ntpath.relpath(r"D:\a\repo\review\blind-src", r"D:\a\repo") == "review\\blind-src")
+    relative_ok = _portable_relpath(work, tmp)
     check("win: 同盘符仍给出相对路径（不因兜底丢掉本来的覆盖）",
-          not Path(relative_ok).is_absolute() and (Path.cwd() / relative_ok).resolve() == work.resolve(),
+          not Path(relative_ok).is_absolute() and (tmp / relative_ok).resolve() == work.resolve(),
           relative_ok)
 
+    # 3) 跨盘（mock 复现 CI 的 ValueError）时退回绝对路径而不是抛错
     with patch("os.path.relpath", side_effect=ValueError(
             "path is on mount 'C:', start on mount 'D:'")):
         fallback = _portable_relpath(work, Path.cwd())
     check("win: 跨盘符时退回绝对路径而不是抛错",
           Path(fallback).is_absolute() and fallback == str(work))
 
-    # 3) blind_pack 必须接受这个绝对路径并原样记录来源标识（覆盖 CI 上会走的那条分支）
+    # 4) blind_pack 必须接受这个绝对路径并原样记录来源标识（覆盖 CI 上会走的那条分支）
     import bench
     (work / "blind-src").mkdir()
     (work / "blind-src" / "evidence.txt").write_bytes(b"evidence")
@@ -4482,7 +4510,6 @@ def test_asset_diagnosis(tmp: Path):
     （损坏 / 截断 / 超预算）只写在 QC 报告 results[].qc.issue 里，作者得再开一个文件
     才知道哪里坏了——与「硬门阻断必须是可修的诊断」不符。
     """
-    import assets as assets_mod
     from assets import qc_report, verify_chain
 
     work = tmp / "diagnosis"

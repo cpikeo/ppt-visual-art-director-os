@@ -287,10 +287,9 @@ _UNIT_HEAD = re.compile(
                       sorted(set(_UNIT_WORDS), key=len, reverse=True)) + ")")
 # 双字单位的内部断点：断在「个|月」「万|元」「小|时」中间，单位被读成两个词。
 # 只在**跨断口的两字正好构成单位内部相邻对**时触发，不会误并「大小｜时间」。
-_UNIT_INNER = {u[i:i + 2] for u in
-               ("亿元", "万元", "万户", "万单", "万人", "万家", "万次",
-                "个月", "分钟", "小时", "美元", "公里", "千米", "公斤",
-                "千克", "厘米", "毫米", "毫升", "平方", "立方", "千瓦")
+# 集合从 UNIT_WORDS 直接派生（多字词的每一对相邻字），不再手抄子集：
+# 手抄版漏过「方米」「瓦时」以及「个百分点/个点/个季度」的内部对，词表一扩就漂移。
+_UNIT_INNER = {u[i:i + 2] for u in _UNIT_WORDS if len(u) >= 2
                for i in range(len(u) - 1)}
 
 
@@ -313,9 +312,11 @@ def _cjk_break_fix(seg: str, lo: int) -> int:
     if lo > 1 and left[-1:] and left[-1] in _NO_LINE_END:
         lo -= 1                                    # 开引号/括号不收尾
         left, right = sides(lo)
-    if lo > 1 and left[-1:] and right[:1] and (left[-1] + right[0]) in _UNIT_INNER:
-        lo -= 1                                    # 双字单位不腰斩：退到单位之前，
-        left, right = sides(lo)                    # 随后由数字规则把整个数一起推下
+    while lo > 1 and left[-1:] and right[:1] and (left[-1] + right[0]) in _UNIT_INNER:
+        lo -= 1                                    # 计量短语不腰斩：一路退到短语之前
+        left, right = sides(lo)                    #（「万美元」「个百分点」有三字，单次
+                                                   #  回退仍停在短语内部），随后由数字
+                                                   #  规则把整个数一起推下
     if lo >= 1 and left[-1:].isdigit() and _UNIT_HEAD.match(right):
         start = len(left) - 1                      # 数字不与单位拆开：整个数推下
         while start > 1 and (left[start - 1].isdigit() or left[start - 1] in ".,"):

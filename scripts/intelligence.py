@@ -104,7 +104,12 @@ _NUM = re.compile(
     r"(亿美元|万美元|亿元|万元|万家|万人|万次|个月|分钟|小时|美元|公里|千米|"
     r"万吨|吨|公斤|千克|克|厘米|毫米|米|升|毫升|千瓦时|千瓦|平方米|平米|立方米|"
     r"台|套|箱|份|笔|张|页|股|手|"
-    r"%|％|pp|倍|万|亿|元|家|人|个|名|位|件|次|天|月|年|分|秒)?")
+    # 「个」是分类词，不是量：它必须与后面的计量名词同进同出。「5 个百分点」
+    # 只截「个」会把数字与单位拆开（实测：主语量显示成「2.1 个」「3.4 个」，
+    # 而页面写的是「个点/个百分点/个季度」）；无名词跟随时仍是计数（「5 个」）。
+    r"%|％|pp|倍|万|亿|元|家|人|个百分点|百分点|"
+    r"个(?:季度|星期|周|点|小时|分钟|名|位|件|家|次|台|套|箱|份|笔|张|页|股|手|元|分|秒|人)?"
+    r"|名|位|件|次|天|月|年|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
 _NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|不得超[过越]|[不未]超[过越]")
@@ -175,6 +180,16 @@ _PERIOD_LABEL = re.compile(r"(?:[12]\d{3}\s*)?Q[1-4]|[12]\d{3}\s*年\s*第\s*[�
 #（当前/当时），误剥会吃掉真实从句。
 _CONDITIONAL_CLAUSE = re.compile(
     r"(?:如果|若|假如|倘若|一旦|除非)[^。；;！？!?\n]{0,40}?(?:[，,]|则|就|便)")
+# 计划/目标子句里的数是尚未发生的**意图**，不是当前状态：「…。计划：…目标把复捐率拉回
+# 28%」的 28% 不能当选「序列的当前值」（实测：下降序列的焦点被目标量顶掉，判断理由却
+# 写「先立住现状」）。与条件从句同池处理——被申请的量（请批准…）不受限；整句都是意图时
+# 退回全体，不判空。判据是**子句级**情态标记：「目标客户/目标市场/目标 PowerPoint」是
+# 复合名词（后接客体名），「计划外支出」「计划部」同理，都不算意图标记。
+_INTENTION_MARK = re.compile(
+    r"(?:总)?目标(?!(?:客户|市场|用户|人群|客群|群体|受众|区域|渠道|品牌|品类|"
+    r"产品|行业|画像|客层|软件|系统))"
+    r"|计划(?![外内部处科室])|规划(?![部处科室图])|力争|争取|预计|预期|期望|打算"
+    r"|拟[建投新增扩改]")
 _MULTIPLE_OF = re.compile(r"\d+(?:\.\d+)?\s*倍")
 # 被否定的比较仍然是比较：「尚未超过对手」讲的就是这个落差。判据是**宾语类型**——
 # 否定词 + 超过 + 名词宾语（对手/同行/去年…）＝两端被并置后否定；否定词 + 超过 + 数字
@@ -641,10 +656,12 @@ def _metric_of_clause(clause: str) -> list[str]:
             # 后但起头是普通词，必须保留。被杀的游程尾部可能带着真标签（「元高于上周」
             # 的「上周」是比较基准名）——对整个游程尾部剥单位字与动词壳后抢救，
             # 不得整段吞掉；虚词分隔符（含「上」）会把「上周」切碎，逐段救不回来。
-            unit_head = "元%％万亿倍℃吨升米克角钱"
+            # （这里的 unit_chars 是字符级抢救判据，与 primitives.unit_head 函数
+            # 不是一回事；起名避开导入名，防止在本函数里遮蔽单一来源的词表接口。）
+            unit_chars = "元%％万亿倍℃吨升米克角钱"
             prev = clause[:m.start() + a].rstrip()[-1:]
-            if prev and prev.isdigit() and tok[:1] in unit_head:
-                salvage = run[a:].lstrip(unit_head)
+            if prev and prev.isdigit() and tok[:1] in unit_chars:
+                salvage = run[a:].lstrip(unit_chars)
                 salvage = re.sub(r"^(?:高于|低于|超过|升至|降至|增至|降到|涨到|掉到|达到)", "", salvage)
                 core_s = re.sub(r"(降至|升至|增到|减到|达到|超过|低于|高于|为|约|达|从)$", "", salvage)
                 if len(core_s) >= 2 and core_s not in _METRIC_STOPWORDS:
@@ -795,6 +812,8 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
       5. 条件从句里的数（「若 6 月前获批」的 6 月）是边界条件，不是已发生的量——
          与区间下界同池出局；整句都是条件时退回全体，不判空；
       6. 「A 超过 B」的 B 侧数字是比较的另一端（「行业均值 5.9%」），不是主语。
+      7. 计划/目标子句里的数是意图不是现状（「目标把复捐率拉回 28%」的 28%）——
+         与条件从句同池出局；被申请的量不受限；整句都是意图时退回全体，不判空。
     """
     spans = _clause_spans(text)
     years = _year_by_clause(text)
@@ -802,6 +821,7 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     own_metric = {id(n): m for n, m in _metric_attribution(text, nums)}
     year = _ordinal_year(text, claim)
     cond_spans = [m.span() for m in _CONDITIONAL_CLAUSE.finditer(text)]
+    intent_spans = [sp for sp in spans if _INTENTION_MARK.search(text[sp[0]:sp[1]])]
     # 「A 超过/低于 B」型主张：B 是**比较的另一端**，不是这一页的主语
     # （「退货率超过行业均值」的主语是我们的 8.4%，不是行业均值 5.9%）。
     # 端点只按谓语切分，不认行业词；归属到宾语侧而未归属主语侧的数字出局。
@@ -844,6 +864,9 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         # 条件从句里的数是护栏（「若 6 月前获批」），不是页面在展示的量；
         # 被申请的量不受此限（「若批准，30 家先行」的 30 家就是请求本身）。
         is_guardrail = (not requested) and any(a <= pos < b for a, b in cond_spans)
+        # 意图量（计划/目标）同池出局：主张陈述已发生的变化时，「目标/预计」里的
+        # 数不能顶掉现状值。被申请的量（请批准…目标 35 家）不受此限。
+        is_intention = (not requested) and any(a <= pos < b for a, b in intent_spans)
         # 「A 高于 B」的 B 侧数字是比较的另一端：位置是真凭据——数字落在主张的
         # 宾语侧串里（「高于上周 37 元」的 37 元）就出局；主张没写数字时退回
         # 度量归属判（「行业均值 5.9%」）。Q05 实测：度量归属会因单位粘连丢标签，
@@ -855,6 +878,7 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         is_denominator = total_sig is not None and (
             round(n["value"], 6), n.get("unit") or "") == total_sig
         scored.append((score, not is_range_bound and not is_guardrail
+                       and not is_intention
                        and not is_other_end and not is_denominator,
                        n, tuple(metrics.get(idx, ()))))
     alive = [s for s in scored if s[1]]
@@ -915,10 +939,15 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
                                   for m in _metric_of_clause(str(claim)))
     ev_nums = [n for n in nums if not n["year"]]
     spans = _clause_spans(text)
-    timed_flags = []
+    intent_spans = [sp for sp in spans if _INTENTION_MARK.search(text[sp[0]:sp[1]])]
+    timed_flags, current = [], []
     for n, pos in _locate_numbers(text, ev_nums):
         start = next((a for a, b in spans if a <= pos < b), 0)
+        if any(a <= pos < b for a, b in intent_spans):
+            continue      # 目标/计划量不是「当前状态」的候选（全为意图时下面分支不判空）
+        current.append(n)
         timed_flags.append(bool(_TIME_POINT.search(text[start:pos])))
+    ev_nums = current
     if (claim_nums_ok and timed_flags and all(timed_flags) and len(ev_nums) >= 2
             and len({n.get("unit") or "" for n in ev_nums}) == 1
             and (_hit(str(claim), _CHANGE_WORDS + _SERIES_WORDS)
