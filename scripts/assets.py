@@ -1147,6 +1147,18 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     try:
         blob = image_bytes if image_bytes is not None else p.read_bytes()
         opened = Image.open(io.BytesIO(blob))
+        # EXIF Orientation：产物与预览都按「显示方向」落像素（编译器把转置烘焙进
+        # PNG，ghost 尊重 EXIF），QC 必须量同一坐标系——否则安全区纹理、主体位置、
+        # 上报的 dimensions/ratio 全部基于旋转前的存储方向，门判的是错的像素。
+        try:
+            orient = opened.getexif().get(0x0112, 1)
+        except Exception:
+            orient = 1
+        if isinstance(orient, int) and 2 <= orient <= 8:
+            from PIL import ImageOps
+            upright = ImageOps.exif_transpose(opened)
+            opened.close()
+            opened = upright
         w, h = opened.size
         # 快路径：不透明图直接以 L 通道工作——RGB→RGBA 转换、alpha 通道抽取、
         # alpha_composite 三步在整幅 4K 图上都是纯开销（判据只用亮度与是否可见）。

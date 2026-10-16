@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+
 jobs:
   selftest:
     name: selftest · ${{ matrix.os }} · py${{ matrix.python }} · ${{ matrix.dependencies }}
@@ -58,7 +62,13 @@ jobs:
         run: |
           python - <<'PYTEST'
           import pathlib, subprocess, sys
-          for cases in sorted(pathlib.Path("scripts").glob("generalization_cases*.json")):
+          required = {"generalization_cases.json", "generalization_cases_r2.json",
+                      "generalization_cases_r3.json", "generalization_cases_r4.json"}
+          found = {p.name for p in pathlib.Path("scripts/json").glob("generalization_cases*.json")}
+          missing = required - found
+          if missing:
+              sys.exit("Missing frozen suites: " + ", ".join(sorted(missing)))
+          for cases in sorted(pathlib.Path("scripts/json").glob("generalization_cases*.json")):
               subprocess.run([sys.executable, "scripts/unseen_bench.py", "--cases", str(cases)], check=True)
           PYTEST
         shell: bash

@@ -20,4 +20,4 @@ asset_prompt_cache.json
 # OS / 编辑器
 .DS_Store
 
-# 回归语义样本收敛到 scripts/judgment_cases.json；无特例产物目录。
+# 回归语义样本收敛到 scripts/json/judgment_cases.json；无特例产物目录。

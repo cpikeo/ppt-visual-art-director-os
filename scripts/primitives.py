@@ -995,7 +995,11 @@ def _append_alpha(clr_el, alpha: float) -> None:
     qn = _p()["qn"]
     for old in clr_el.findall(qn("a:alpha")):
         clr_el.remove(old)
-    el = clr_el.makeelement(qn("a:alpha"), {"val": str(int(round(alpha * 100000)))})
+    # a:alpha 的 schema 值域是 0–100000：负数/超过 1 的 opacity 会写出非法 XML
+    # （PowerPoint 打开即报「内容有问题」并进入修复流程）。这里在唯一的写入点
+    # 夹紧；guard 的 element_schema 会在更早处拒绝越界值并给出诊断。
+    clamped = max(0.0, min(1.0, float(alpha)))
+    el = clr_el.makeelement(qn("a:alpha"), {"val": str(int(round(clamped * 100000)))})
     clr_el.append(el)
 
 
@@ -1039,8 +1043,10 @@ def gradient_fill(fill, stops, angle=90.0) -> None:
         if rgb is None:
             continue
         alpha_xml = ""
-        if alpha is not None and alpha < 1.0:
-            alpha_xml = f'<a:alpha val="{int(round(alpha * 100000))}"/>'
+        if alpha is not None:
+            alpha_c = max(0.0, min(1.0, float(alpha)))   # 与 _append_alpha 同值域纪律
+            if alpha_c < 1.0:
+                alpha_xml = f'<a:alpha val="{int(round(alpha_c * 100000))}"/>'
         parts.append(
             f'<a:gs pos="{int(round(max(0.0, min(1.0, pos)) * 100000))}">'
             f'<a:srgbClr val="{rgb}">{alpha_xml}</a:srgbClr></a:gs>')
@@ -1049,9 +1055,13 @@ def gradient_fill(fill, stops, angle=90.0) -> None:
                    stops[0][2] if len(stops[0]) > 2 else None)
         return
     P = _p()
+    # a:lin/@ang 是 xsd:int（单位 1/60000°）：作者写出 1e9 这类值时 int(round(...))
+    # 会超出 int32，产物 schema 非法、PowerPoint 进入修复流程。对 360° 取模是无损
+    # 归一（角度本来就是周期量）；guard 同时拒绝 ±360 之外的声明，双保险。
+    ang = int(round(float(angle) * 60000)) % 21600000
     xml = (f'<a:gradFill {P["nsdecls"]("a")} rotWithShape="1">'
            f'<a:gsLst>{"".join(parts)}</a:gsLst>'
-           f'<a:lin ang="{int(round(angle * 60000))}" scaled="1"/>'
+           f'<a:lin ang="{ang}" scaled="1"/>'
            f'</a:gradFill>')
     spPr = fill._xPr
     for tag in ("a:noFill", "a:solidFill", "a:gradFill", "a:blipFill",
@@ -1078,6 +1088,34 @@ def stroke_color(line, color, alpha=None, width=None) -> None:
 _JSON_CACHE: dict[str, tuple[str, dict]] = {}
 
 
+MAX_DOC_NODES = 250_000
+
+
+def assert_bounded_expansion(value, *, limit: int = MAX_DOC_NODES,
+                             source: str = "文档") -> None:
+    """按引用计数遍历已解析文档，超过 limit 个节点立即拒绝。
+
+    YAML 的 anchor/alias 允许几百字节的文件共享引用出上亿个「展开节点」：
+    safe_load 本身线性完成（别名指向同一对象），但下游任何 str()/json.dumps/
+    逐页迭代都会按引用次数放大——表现为卡死或内存耗尽。迭代计数、超限即停，
+    守卫本身不会先被炸掉。真实 brief/spec/manifest 只有几千节点，limit 留了
+    两个数量级余量。
+    """
+    stack = [value]
+    seen = 0
+    while stack:
+        node = stack.pop()
+        seen += 1
+        if seen > limit:
+            raise ValueError(
+                f"{source} 结构展开超过 {limit} 个节点（别名嵌套展开或超大文档）；"
+                "请精简文档后重试")
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, (list, tuple)):
+            stack.extend(node)
+
+
 def json_read_cached(path) -> dict:
     """读取当前字节；内容相同时复用解析结果。失败不缓存。"""
     import json
@@ -1091,6 +1129,7 @@ def json_read_cached(path) -> dict:
     value = json.loads(raw.decode("utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"JSON 顶层必须为对象: {path}")
+    assert_bounded_expansion(value, source=f"JSON {target.name}")
     if len(_JSON_CACHE) >= 512:
         _JSON_CACHE.clear()
     _JSON_CACHE[key] = (digest, value)

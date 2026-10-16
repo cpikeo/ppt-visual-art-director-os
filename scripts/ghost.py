@@ -392,7 +392,8 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     if text_fill and not (isinstance(text_fill, dict)
                           and str(text_fill.get("type", "")).lower() == "none"):
         _fill(img, (x, y, w, h), ctx, text_fill, radius=0)
-    text = str(e.get("text", ""))
+    raw_text = e.get("text", "")
+    text = "" if raw_text is None or isinstance(raw_text, bool) else str(raw_text)
     if bool(e.get("uppercase")):
         text = text.upper()
     spacing_pt = float(e.get("char_spacing", 0) or 0)
@@ -624,9 +625,15 @@ def _draw_image(img: Image.Image, e: dict, ctx: RenderContext, scale: float,
                                         int(iw * (1 - crop[2])), int(ih * (1 - crop[3]))))
                 if fit == "contain":
                     fitted = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-                    image.thumbnail((w, h), Image.Resampling.LANCZOS)
-                    fitted.alpha_composite(image, ((w - image.width) // 2,
-                                                   (h - image.height) // 2))
+                    # 与产物同一 contain 语义：内接等比缩放——源图小于盒子时也放大
+                    # 到贴住盒子一边。thumbnail 只缩不放，会在预览里留白，而产物
+                    # （渲染器把等比画布拉伸铺满 pic 边框）是填满的——预览≠产物。
+                    s_fit = min(w / max(image.width, 1), h / max(image.height, 1))
+                    nw = max(1, int(round(image.width * s_fit)))
+                    nh = max(1, int(round(image.height * s_fit)))
+                    if (nw, nh) != image.size:
+                        image = image.resize((nw, nh), Image.Resampling.LANCZOS)
+                    fitted.alpha_composite(image, ((w - nw) // 2, (h - nh) // 2))
                 else:
                     fitted = ImageOps.fit(image, (w, h), method=Image.Resampling.LANCZOS,
                                           centering=(0.5, 0.5))
@@ -997,14 +1004,17 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 if text.strip():
                     d.text((lx, ly), text, font=label_font, fill=label_ink, anchor="mm")
             start = end
-        hole = max(1, int(min(right - left, bottom - top) * 0.52))
         cx, cy = (left + right) // 2, (top + bottom) // 2
-        bg = _rgb(ctx, "background", (255, 255, 255))
-        d.ellipse((cx - hole // 2, cy - hole // 2, cx + hole // 2, cy + hole // 2), fill=(*bg, 255))
+        # 环心孔只属于 donut/donut_composition：compiler 的 pie 是实心饼，预览若
+        # 一律挖孔，作者看到的是环、产物是饼——最显眼的几何上「预览≈产物」分叉。
         # 环心 KPI 与 compiler 同形同几何（inner = min(w,h)*0.46、值行居于孔心、
         # 标签行在其下方）：产物里它是两个可编辑文本框，预览此前把孔留空——作者
         # 无法判断环心数字是否会挤到孔外，也看不到自己写的读数是否存在。
         if kind in ("donut", "donut_composition"):
+            hole = max(1, int(min(right - left, bottom - top) * 0.52))
+            bg = _rgb(ctx, "background", (255, 255, 255))
+            d.ellipse((cx - hole // 2, cy - hole // 2, cx + hole // 2, cy + hole // 2),
+                      fill=(*bg, 255))
             center_value = e.get("center_value")
             center_label = e.get("center_label")
             if center_value is not None or center_label:
@@ -1348,7 +1358,10 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     ctx.image_decoded = spec.get("_image_decoded") or {}
     ctx.preview_image_cache = image_cache if image_cache is not None else {}
     _draw_background(img, slide.get("background"), ctx)
-    roots = [Path.cwd(), Path(str(spec.get("_base_path") or ".")).expanduser()]
+    # 解析根与 _page_media_stamp 完全同序（base 优先，cwd 兜底）：stamp 已把按此序
+    # 解析到的字节写进 spec["_image_bytes"]（键含作者原样 src），绘制端若用别的
+    # 顺序解析，同名相对路径会在两个目录各有一张图时画出与缓存身份不符的另一张。
+    roots = [Path(str(spec.get("_base_path") or Path.cwd())).expanduser(), Path.cwd()]
     elements = list(slide.get("elements") or [])
     elements.sort(key=lambda e: 0 if isinstance(e, dict) and (
         str(e.get("layer", "")).lower() in {"background", "backdrop"}

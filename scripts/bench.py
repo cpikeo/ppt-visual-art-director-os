@@ -20,7 +20,7 @@ from pathlib import Path
 import intelligence as intel
 
 # 测试样本随最小技能包保留一份；历史各套案例与来源记录在同一文件中。
-DEFAULT_CASES = Path(__file__).with_name("judgment_cases.json")
+DEFAULT_CASES = Path(__file__).resolve().parent / "json" / "judgment_cases.json"
 BRIEF = {"audience": "内部评审会", "decision": "批准下一步预算"}
 # 判断错误的类别：用于「错误布局 / 错误图片 / 错误信息图表」的误判率。
 MISJUDGE_FIELDS = {"media", "media_source", "comparison", "evidence", "evidence_not"}

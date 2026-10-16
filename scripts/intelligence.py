@@ -44,6 +44,7 @@ def load_brief(path, *, with_digest: bool = False):
         raise ValueError(f"brief 不是 UTF-8 文本：{p}（{exc.reason}）") from None
     if p.suffix in (".yml", ".yaml"):
         import yaml
+        from primitives import assert_bounded_expansion
         try:
             value = yaml.safe_load(text) or {}
         except yaml.YAMLError as exc:
@@ -51,11 +52,20 @@ def load_brief(path, *, with_digest: bool = False):
             where = f":{mark.line + 1}:{mark.column + 1}" if mark else ""
             raise ValueError(f"brief YAML 解析失败：{p}{where} — "
                              f"{getattr(exc, 'problem', None) or exc}") from None
+        try:
+            assert_bounded_expansion(value, source=f"brief {p.name}")
+        except ValueError as exc:
+            raise ValueError(f"brief 不可信输入被拒绝：{p} — {exc}") from None
     elif p.suffix == ".json":
         try:
             value = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(f"brief JSON 解析失败：{p}:{exc.lineno}:{exc.colno} — {exc.msg}") from None
+        from primitives import assert_bounded_expansion
+        try:
+            assert_bounded_expansion(value, source=f"brief {p.name}")
+        except ValueError as exc:
+            raise ValueError(f"brief 不可信输入被拒绝：{p} — {exc}") from None
     elif p.suffix == ".py":
         from primitives import execute_module
         mod = execute_module(compile(text, str(p), "exec"), p, "need_mod")

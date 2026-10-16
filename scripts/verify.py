@@ -289,6 +289,28 @@ def _unknown_color(value, known_tokens) -> str | None:
     return None if raw in known_tokens else raw
 
 
+def _alpha_ok(v) -> bool:
+    """opacity 是否可安全写入 a:alpha（0–1 有限数；bool 视为 schema 错误）。"""
+    if isinstance(v, bool):
+        return False
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(f) and 0.0 <= f <= 1.0
+
+
+def _angle_ok(v) -> bool:
+    """渐变 angle 是否为 ±360 内的有限数（越界会写出非法 OOXML ang）。"""
+    if isinstance(v, bool):
+        return False
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(f) and abs(f) <= 360.0
+
+
 def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
                    ch: float, *, require_provenance: bool = False) -> None:
     # 定位符带上页面 id：「focus」在全稿多页重复，修复包必须能指到具体哪一页。
@@ -321,12 +343,50 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
         if "text" not in e:
             hint = "；检测到 content，请改用 text" if "content" in e else ""
             add("TEXT_FIELD_MISSING", eid, "error", f"text 元素缺少必需字段 'text'{hint}")
+        elif e["text"] is None:
+            add("TEXT_FIELD_INVALID", eid, "error",
+                "text 为 null；编译会得到字面 'None' 上屏——请写结论文字，或删掉该元素")
         elif "content" in e:
             add("TEXT_FIELD_INVALID", eid, "error",
                 "text 元素使用了未消费字段 'content'，请改用顶层字段 'text'")
         if "style" in e:
             add("TEXT_STYLE_INVALID", eid, "error",
                 "text 元素使用了未消费的嵌套字段 'style'；size/color/bold/line_height 放顶层")
+    if isinstance(e.get("text"), bool):
+        add("TEXT_FIELD_INVALID", eid, "error",
+            f"text 收到布尔值 {e['text']!r}（YAML 把 yes/no/on/off/true/false 解析成 bool）；"
+            "编译会得到字面 'True'/'False'——请写成带引号的字符串")
+
+    # 透明度与渐变角是纯数值通道：越界值要么写出非法 OOXML（a:alpha 值域 0–100000、
+    # a:lin/@ang 是 int32，PowerPoint 打开即进修复流程），要么被静默丢弃（>1 的
+    # opacity 编译为完全不透明）。guard 在编译前拒绝并给出诊断。
+    for key in ("opacity", "fill_opacity", "stroke_opacity", "text_opacity"):
+        val = e.get(key)
+        if val is not None and not _alpha_ok(val):
+            add("element_schema", eid, "error",
+                f"{key} 须为 0–1 的有限数，收到 {val!r}"
+                "（负值会写出非法 a:alpha，>1 会被静默丢弃）")
+    if isinstance(fill, dict):
+        fop = fill.get("opacity")
+        if fop is not None and not _alpha_ok(fop):
+            add("element_schema", eid, "error",
+                f"fill.opacity 须为 0–1 的有限数，收到 {fop!r}")
+        if str(fill.get("type", "")).lower() == "gradient":
+            ang = fill.get("angle")
+            if ang is not None and not _angle_ok(ang):
+                add("element_schema", eid, "error",
+                    f"渐变 angle 须为 ±360 内的有限数，收到 {ang!r}"
+                    "（越界值会写出非法 OOXML ang）")
+            for s_i, stop in enumerate(fill.get("stops") or []):
+                if isinstance(stop, dict):
+                    sop = stop.get("opacity", stop.get("alpha"))
+                elif isinstance(stop, (list, tuple)) and len(stop) > 2:
+                    sop = stop[2]
+                else:
+                    sop = None
+                if sop is not None and not _alpha_ok(sop):
+                    add("element_schema", eid, "error",
+                        f"渐变 stop[{s_i}] 透明度须为 0–1 的有限数，收到 {sop!r}")
 
     # 几何：缺项 / 非有限 / 退化 —— 不可见的内容比溢出更隐蔽
     missing = [k for k in ("x", "y", "width", "height") if e.get(k) is None]

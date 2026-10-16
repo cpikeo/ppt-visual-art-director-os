@@ -35,7 +35,7 @@ scripts/
   primitives.py       最小原语（身份 / 字节 / 几何 / 颜色 / 文本测量 / 图表单一规范 CHART_SPEC）
   ghost.py            PIL 结构预览（关键页取证）
   bench.py            判断基准与盲评通道（不进生产入口）
-  judgment_cases.json 57 例测试样本 + 规划回归输入（不进生产入口）
+  json/               judgment_cases.json（57 例判断回归）及四组冻结泛化 JSON（不进生产入口）
   selftest.py         核心自检
 references/           contract.md（字段与失败码）、assets.md（资产链）
 ```
@@ -74,7 +74,7 @@ Context 按需读取：判断校准读 `SKILL.md §2–3`；写 spec 读 `refere
 
 ### 判断基准
 
-判断回归案例合并在 `scripts/judgment_cases.json`：保留四组共 57 个案例、各组来源说明以及七页规划回归输入。
+判断回归案例合并在 `scripts/json/judgment_cases.json`：保留四组共 57 个案例、各组来源说明以及七页规划回归输入。
 
 ```bash
 python scripts/bench.py             # 57 个判断案例；任一失败返回非零

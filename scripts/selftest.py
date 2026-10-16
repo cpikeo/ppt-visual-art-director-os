@@ -3063,7 +3063,7 @@ def test_audit_boundaries(tmp):
     import intelligence
     from unittest.mock import patch
     from primitives import file_digest, json_read_cached
-    corpus = json.loads((SCRIPTS / "judgment_cases.json").read_text(encoding="utf-8"))
+    corpus = json.loads((SCRIPTS / "json" / "judgment_cases.json").read_text(encoding="utf-8"))
     groups = {name: [case for case in corpus["cases"] if case.get("suite") == name]
               for name in ("cases", "holdout", "transfer", "semantic_transfer")}
     check("bench: 精简后四组判断案例未丢失",
@@ -3404,8 +3404,8 @@ def test_delivery_safety(tmp: Path):
     changed, _ = assets.qc_report(mpath, speed='fast', phase='release', snapshots=shots, digests=hashes)
     check("assets: fast 同 size/mtime 换图重测并阻断", changed['status'] == 'BLOCKED'
           and not changed['results'][0]['qc'].get('reused'))
-    check("assets: QC 暖路径也交接当轮字节与真实 SHA", shots.get(str(image)) == image.read_bytes()
-          and hashes.get(str(image)) == assets.file_digest(image))
+    check("assets: QC 暖路径也交接当轮字节与真实 SHA", shots.get(str(image.resolve())) == image.read_bytes()
+          and hashes.get(str(image.resolve())) == assets.file_digest(image))
     # 同一文件不同 QC 契约只读取一次，不把不同契约错误合并。
     both = copy.deepcopy(entry)
     both.update(asset_id='second', safe_area={"x": 0, "y": 0, "width": 0.2, "height": 0.5})
@@ -3414,7 +3414,7 @@ def test_delivery_safety(tmp: Path):
     reader = Path.read_bytes
     calls = []
     def track_read(path):
-        if path == image:
+        if path.resolve() == image.resolve():
             calls.append(path)
         return reader(path)
     with patch.object(Path, 'read_bytes', track_read):
@@ -3446,7 +3446,7 @@ def test_delivery_safety(tmp: Path):
     reg = bench.regression({"cases": []}, baseline)
     check("bench: 缺失案例不是修复、也不能免除回归", reg['regressed_cases'] == ['passed']
           and reg['fixed_cases'] == [] and reg.get('missing_cases') == ['failed', 'passed'])
-    cases = json.loads((SCRIPTS / 'judgment_cases.json').read_text(encoding='utf-8'))
+    cases = json.loads((SCRIPTS / 'json' / 'judgment_cases.json').read_text(encoding='utf-8'))
     cases['cases'] = cases['cases'][:1]
     cp = tmp / 'reduced-cases.json'
     json_write(cp, cases)
@@ -3885,11 +3885,11 @@ def test_deep_release(tmp: Path):
     scripts = Path(vao.__file__).parent
     for script, source in (("bench.py", "judgment_cases.json"),
                            ("unseen_bench.py", "generalization_cases.json")):
-        cases = tmp / source; cases.write_bytes((scripts / source).read_bytes()); before = cases.read_bytes()
+        cases = tmp / source; cases.write_bytes((scripts / "json" / source).read_bytes()); before = cases.read_bytes()
         run = subprocess.run([sys.executable, str(scripts / script), "--cases", str(cases), "--out", str(cases)],
                              capture_output=True, text=True, encoding="utf-8")
         check(f"deep: {script} 报告不能覆盖案例", run.returncode == 2 and cases.read_bytes() == before)
-    baseline = tmp / "baseline.json"; json_write(baseline, bench.run(scripts / "judgment_cases.json")); before = baseline.read_bytes()
+    baseline = tmp / "baseline.json"; json_write(baseline, bench.run(scripts / "json" / "judgment_cases.json")); before = baseline.read_bytes()
     run = subprocess.run([sys.executable, str(scripts / "bench.py"), "--baseline", str(baseline), "--out", str(baseline)],
                          capture_output=True, text=True, encoding="utf-8")
     check("deep: bench 报告不能覆盖回归基线", run.returncode == 2 and baseline.read_bytes() == before)

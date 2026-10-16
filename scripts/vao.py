@@ -75,6 +75,8 @@ def load_spec(path):
                 raise ValueError(f"spec YAML 解析失败：{source}{where} — {exc}") from None
         if not isinstance(value, dict):
             raise ValueError(f"spec 顶层必须是对象，实际是 {type(value).__name__}：{source}")
+        from primitives import assert_bounded_expansion
+        assert_bounded_expansion(value, source=f"spec {source.name}")
         return value, source
     if source.suffix.lower() != ".py":
         raise ValueError("编排文件只接受 JSON/YAML，或作者明确指定的可信 .py 文件")

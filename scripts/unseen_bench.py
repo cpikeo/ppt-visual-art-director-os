@@ -23,7 +23,7 @@ from pathlib import Path
 
 import intelligence as intel
 
-CASES = Path(__file__).with_name("generalization_cases.json")
+CASES = Path(__file__).resolve().parent / "json" / "generalization_cases.json"
 BRIEF = {"audience": "内部评审会", "decision": "批准下一步预算"}
 
 CLASS_OF = {

@@ -90,6 +90,9 @@ def _gradient_stops(stops, ctx):
         if ctx.paint(resolved)[0] is None:
             raise ValueError(f"Invalid fill color token {col!r} in gradient stop.")
         normalized.append((float(pos), resolved, float(alpha) if alpha is not None else None))
+    # 与 ghost 预览同序：stop 按 position 升序写入 gsLst。作者乱序声明时，产物若按
+    # 原序写入，渲染器插值方向与预览（ghost 内部排序）分叉；排序是无损归一。
+    normalized.sort(key=lambda stop: stop[0])
     return normalized
 
 
@@ -125,6 +128,12 @@ def _validate_text_contract(element: dict) -> None:
         hint = "；检测到 content，请改用 text" if "content" in element else ""
         raise ValueError(
             f"TEXT_FIELD_MISSING: text 元素 '{eid}' 缺少必需字段 'text'{hint}"
+        )
+    if element["text"] is None or isinstance(element["text"], bool):
+        raise ValueError(
+            f"TEXT_FIELD_INVALID: text 元素 '{eid}' 的 text 为 {element['text']!r}；"
+            "null/bool 会编译成字面 'None'/'True' 上屏（YAML 把 yes/no/on/off 解析成 bool，"
+            "请写成带引号的字符串）"
         )
     if "content" in element:
         raise ValueError(
@@ -209,8 +218,13 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     alpha = element.get("text_opacity")
     size = float(element.get("text_size", 16))
     spacing = float(element.get("char_spacing", 0) or 0)
+    raw_text = element.get("text", "")
+    if raw_text is None or isinstance(raw_text, bool):
+        raise ValueError(
+            f"TEXT_FIELD_INVALID: 形状 '{element.get('id', '?')}' 的 text 为 {raw_text!r}；"
+            "null/bool 会编译成字面 'None'/'True' 上屏（请写成带引号的字符串）")
     p = tf.paragraphs[0]
-    p.text = str(element.get("text", ""))
+    p.text = str(raw_text)
     p.alignment = align_of(element.get("align", "center"), PP_ALIGN.CENTER)
     p.line_spacing = pt(size * float(element.get("text_line_height", 1.25)))
     for run in p.runs:
@@ -359,6 +373,22 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
             img = img.crop((cx0, cy0, cx1, cy1))
         return _encode_png(img, w, h, fit, bg)
     with Image.open(io.BytesIO(blob)) as opened:
+        # EXIF Orientation（相机/手机 JPEG 常见）：OOXML 渲染器按存储像素摆放，不读
+        # EXIF；ghost 预览则尊重 EXIF。不处理就是「预览 upright、产物横躺」的分叉。
+        # 修法：把显示方向烘焙进像素（转置后 EXIF 方向随副本失效），下游 aspect/
+        # crop/resize 全部基于转置后坐标系；透传也必须禁用——原字节还带着旋转标记，
+        # 且其 iw/ih 是旋转前的值，aspect 判定会用错坐标系。
+        rotated = False
+        try:
+            orient = opened.getexif().get(0x0112, 1)
+        except Exception:
+            orient = 1
+        if isinstance(orient, int) and 2 <= orient <= 8:
+            from PIL import ImageOps
+            upright = ImageOps.exif_transpose(opened)
+            opened.close()
+            opened = upright
+            rotated = True
         iw, ih = opened.size
         l, t, r, b = (crop or (0, 0, 0, 0))
         crop = (l, t, r, b) if any((l, t, r, b)) else None
@@ -369,11 +399,11 @@ def _fit_image_bytes(source, w: float, h: float, fit: str, crop=None,
         # 可见质量。比例不一致时必须做 cover/contain 变换（几何是设计决定）。
         aspect_ok = abs((iw / max(ih, 1)) / (sw / max(sh, 1)) - 1) <= 0.01
         fits = (sw * MEDIA_MAX_OVERSAMPLE >= iw and sh * MEDIA_MAX_OVERSAMPLE >= ih)
-        if crop is None and not _needs_alpha(opened) and aspect_ok and fits:
+        if crop is None and not rotated and not _needs_alpha(opened) and aspect_ok and fits:
             return blob                 # 原字节即正确素材：不解码、不重编码
         # JPEG 源：先 draft 到目标尺寸再解码（DCT 缩放解码，省掉整幅 4K 解码）。
         # PNG 源 draft 是空操作，因此这一步对任何格式都正确。
-        if not _needs_alpha(opened):
+        if not rotated and not _needs_alpha(opened):
             try:
                 opened.draft("RGB", (sw, sh))
                 iw, ih = opened.size
@@ -407,13 +437,21 @@ def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None) -> bytes:
         matte = Image.new("RGBA", rgba.size, (*bg, 255))
         img = Image.alpha_composite(matte, rgba).convert("RGB")
     iw, ih = img.size
-    target_w = max(1, min(iw, int(round(w * MEDIA_MAX_OVERSAMPLE))))
-    target_h = max(1, min(ih, int(round(h * MEDIA_MAX_OVERSAMPLE))))
+    bw, bh = max(1.0, float(w)), max(1.0, float(h))
+    # 显示比例 s：contain=内接、cover=外接，都在「盒子坐标系」里算。
+    s = min(bw / iw, bh / ih) if fit == "contain" else max(bw / iw, bh / ih)
+    # 栅格预算 t：嵌入位图不放大到源生分辨率 × MEDIA_MAX_OVERSAMPLE 以上，
+    # 但画布必须等比（t 对两轴一致）保持盒子长宽比——pic 边框就是元素盒子，
+    # 渲染器把嵌入位图拉伸铺满它；此前 target=min(iw,w)/min(ih,h) 逐轴夹紧，
+    # 源图小于盒子时画布比例≠盒子比例，拉伸即失真（contain/cover 都中招），
+    # 且与 ghost 预览（等比、不失真）分叉。等比画布下拉伸是恒等/均匀放大。
+    t = min(1.0, MEDIA_MAX_OVERSAMPLE / s) if s > 0 else 1.0
+    target_w = max(1, int(round(bw * t)))
+    target_h = max(1, int(round(bh * t)))
+    nw, nh = max(int(round(iw * s * t)), 1), max(int(round(ih * s * t)), 1)
+    if (nw, nh) != (iw, ih):
+        img = _resize_quality(img, (nw, nh))
     if fit == "contain":
-        scale = min(target_w / iw, target_h / ih)
-        nw, nh = max(int(round(iw * scale)), 1), max(int(round(ih * scale)), 1)
-        if (nw, nh) != (iw, ih):
-            img = _resize_quality(img, (nw, nh))
         canvas = Image.new("RGBA" if bg is None else "RGB", (target_w, target_h),
                            (0, 0, 0, 0) if bg is None else bg)
         offset = ((target_w - nw) // 2, (target_h - nh) // 2)
@@ -423,10 +461,6 @@ def _encode_png(img, w: float, h: float, fit: str, bg: tuple | None) -> bytes:
             canvas.paste(img, offset)
         img = canvas
     else:  # cover
-        scale = max(target_w / iw, target_h / ih)
-        nw, nh = max(int(round(iw * scale)), 1), max(int(round(ih * scale)), 1)
-        if (nw, nh) != (iw, ih):
-            img = _resize_quality(img, (nw, nh))
         left, top = (nw - target_w) // 2, (nh - target_h) // 2
         img = img.crop((left, top, left + target_w, top + target_h))
     buf = io.BytesIO()
