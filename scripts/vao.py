@@ -197,9 +197,11 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
         target = Path(skeleton).expanduser()
         text = build_skeleton(bundle)
         compile(text, str(target), "exec")  # 验证语法，不执行作者文件
-        if target.exists() and target.read_text(encoding="utf-8") != text:
+        existing = target.read_text(encoding="utf-8") if target.exists() else None
+        if existing is not None and existing != text:
             target = target.with_name(target.name + ".new.py")
-        if target.exists() and target.read_text(encoding="utf-8") != text:
+            existing = target.read_text(encoding="utf-8") if target.exists() else None
+        if existing is not None and existing != text:
             raise FileExistsError(f"保留已有稿件：{target}；请指定新的 --skeleton 路径")
         target.parent.mkdir(parents=True, exist_ok=True)
 

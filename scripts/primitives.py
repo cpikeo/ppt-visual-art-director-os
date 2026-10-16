@@ -705,14 +705,6 @@ def is_light(hex_color: str) -> bool:
     return luminance(hex_color) > LIGHT_BG_LUMINANCE
 
 
-def latin_word_match(text: str, term: str) -> bool:
-    """拉丁词的整词匹配（CJK 用子串）。资产层术语判定与色彩 token 判定共用。"""
-    import re
-    if all(ord(c) < 128 for c in term):
-        return re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", text) is not None
-    return term in text
-
-
 # design px → pt：96 DPI 下 1 design px = 0.75 pt。**唯一真源**。
 # 需要浮点 pt 的地方（字号写入 set_para_font 等）用 px_to_pt()；
 # 需要 Pt 长度对象的地方（直接塞给 python-pptx 属性）用 pt()。

@@ -53,6 +53,12 @@
 - 本轮复跑（Windows 可移植性修复后，Linux）：selftest **680/680**、bench 57/57、四组冻结断言 81/31/14/8 不变、CI 的 spec 冒烟红线（禁 import pptx/lxml/compiler）本机逐字复刻通过。Windows 实机仍待 CI 矩阵验证，本地只做了条件模拟与平台文档级推论。
 
 
+### 审计精简（本轮 Agent Mode）
+
+- `vao.py`：骨架写盘前对目标文件的重复读取合并为一次（先读一次再比较），消除同一路径的二次 I/O。
+- `primitives.py`：删除从未被任何模块调用的 `latin_word_match`（grep 全仓库无消费者），减法测试无质量损失。
+- 本轮未改动判断基准、字段契约与测试期望；selftest 680/680、bench 57/57、四组冻结断言 81/31/14/8 全过。
+
 ## 9.33.0 — 2026-10-15
 
 - `resolve_chart_highlight` 统一序列/类别强调，类别强调写入原生 `dPt`；删除的 `series_highlight_index` 外部调用须迁移到返回 `(series_index, point_index)` 的新接口。
