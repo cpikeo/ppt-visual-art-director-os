@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -150,6 +151,11 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict
             raise PathConflictError(f"盲评输出不能位于待评输入目录内：{src}")
     validate_io_paths({f"item {i}": src for i, src in enumerate(sources)},
                       {"blind key": key_path}, managed_dirs={"blind output": out_dir})
+    # 合并复制会残留旧版本/旧评分，甚至泄露不属于本轮的素材；不擅自删除用户工作。
+    if out_dir.exists() and any(out_dir.iterdir()):
+        raise FileExistsError(f"盲评输出目录非空；请使用新的目录以隔离本轮评审：{out_dir}")
+    if key_path.exists():
+        raise FileExistsError(f"保留已有盲评映射；请使用新的输出目录：{key_path}")
     rng = random.Random(seed)
     order = list(range(len(items)))
     rng.shuffle(order)
@@ -195,18 +201,28 @@ def _icc_2_1(matrix: list[list[float]]) -> float | None:
 def blind_score(sheet_paths: list[str], key_path: str) -> dict:
     """汇总多位评审的评分表：每版本每维度均值 + ICC(2,1)。一致性低时不宣称共识。"""
     import csv
+    import io
     key = json.loads(Path(key_path).read_text(encoding="utf-8"))
+    if not isinstance(key, dict) or not key:
+        raise ValueError("盲评 key 必须是非空版本映射")
     by_reviewer: dict[str, dict[str, dict]] = {}
     for sp in sheet_paths:
-        for row in csv.DictReader(Path(sp).read_text(encoding="utf-8").splitlines()):
+        for row in csv.DictReader(io.StringIO(Path(sp).read_text(encoding="utf-8"), newline="")):
             if not row.get("item") or not row.get("reviewer"):
                 continue
+            if row["item"] not in key:
+                raise ValueError(f"评分引用未知版本：{row['item']}")
             vals = {d: row.get(d) for d in BLIND_DIMS}
             if all(vals[d] not in (None, "") for d in BLIND_DIMS):
-                by_reviewer.setdefault(row["reviewer"], {})[row["item"]] = {
-                    d: float(vals[d]) for d in BLIND_DIMS}
+                parsed = {d: float(vals[d]) for d in BLIND_DIMS}
+                if not all(math.isfinite(v) for v in parsed.values()):
+                    raise ValueError(f"评分必须为有限数字：{row['reviewer']}/{row['item']}")
+                ratings = by_reviewer.setdefault(row["reviewer"], {})
+                if row["item"] in ratings:
+                    raise ValueError(f"重复评分：{row['reviewer']}/{row['item']}")
+                ratings[row["item"]] = parsed
     reviewers = sorted(by_reviewer)
-    items = sorted({i for r in by_reviewer.values() for i in r})
+    items = sorted(key)  # 完整性以 key 为准，不以「恰好有人评分的版本」为准
     complete = [r for r in reviewers if set(by_reviewer[r]) == set(items)]
     report = {"reviewers": len(reviewers), "complete_reviewers": len(complete),
               "items": items, "dimensions": {}, "consensus": "NOT_ENOUGH_REVIEWERS"}
@@ -219,7 +235,7 @@ def blind_score(sheet_paths: list[str], key_path: str) -> dict:
         means = {i: round(sum(by_reviewer[r][i][d] for r in complete) / len(complete), 2) for i in items}
         report["dimensions"][BLIND_DIMS_CN[d]] = {"icc": None if icc is None else round(icc, 3),
                                                   "mean": {key.get(i, i): means[i] for i in items}}
-        if icc is None or icc < 0.5:
+        if icc is None or not math.isfinite(icc) or icc < 0.5:
             consensus = False
     report["consensus"] = "CONSENSUS_WEAK_OR_OK" if consensus else "NO_CONSENSUS"
     return report
@@ -261,7 +277,12 @@ def main(argv=None) -> int:
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if len(argv) >= 4 and argv[1] == "score":
-            print(json.dumps(blind_score(argv[3:], argv[2]), ensure_ascii=False, indent=2))
+            try:
+                result = blind_score(argv[3:], argv[2])
+            except (ValueError, OSError) as exc:
+                print(f"bench error: {exc}", file=sys.stderr)
+                return 2
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         print("用法：bench.py blind pack <评审目录> <版本1> <版本2> ...\n"
               "      bench.py blind score <key.json> <评分表1.csv> <评分表2.csv> ...", file=sys.stderr)

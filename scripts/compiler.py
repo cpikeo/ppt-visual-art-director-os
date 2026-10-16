@@ -749,8 +749,7 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
     show = element.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
     if show and count >= CHART_LABEL_MIN_COUNT and height < CHART_LABEL_MIN_H:
         if str(element.get("label_collision_policy", "fail")) == "hide_redundant":
-            show = False
-            ctx.warn(f"chart '{element.get('id')}': 标签空间不足，按 hide_redundant 隐藏重复数值")
+            show = False  # 作者已明确授权隐藏冗余值；不是编译失败
         else:
             ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡")
     plot = chart.plots[0]
@@ -1591,8 +1590,16 @@ def add_chart(slide, element: dict, ctx: RenderContext) -> None:
     kind = str(element.get("chart_kind") or element.get("kind", ""))
 
     if element.get("series") is not None:
-        if CHART_SPEC.get(kind, {}).get("renderer") != "native" or element.get("data"):
+        if CHART_SPEC.get(kind, {}).get("renderer") != "native" or "data" in element:
             ctx.warn(f"chart '{element.get('id')}': 不支持的多序列或双载荷，拒绝静默丢弃数据")
+            return
+
+    if CHART_SPEC.get(kind, {}).get("payload") == "rows" and element.get("series") is None:
+        data = element.get("data", [])
+        if (not isinstance(data, list) or any(
+                not isinstance(row, dict) or row.get("label") is None
+                or not str(row["label"]).strip() for row in data)):
+            ctx.warn(f"chart '{element.get('id')}': data 须为对象行列表且每行含非空 label，拒绝静默丢行")
             return
 
     if kind in ("kpi", "executive_kpi", "big_number"):
@@ -1851,7 +1858,8 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
         # 安全网：仅当主应用失败时才回落到纯色。
         # 注意必须用「成功标志」而不是检查 <p:cSld> 直接子元素——
         # 否则会把已正确写入 <p:bgPr> 的渐变误判为空并用纯色覆盖。
-        if not applied:
+        if not applied and ctx.colors.get("background") is not None:
+            # 没声明背景时保留 PPT 默认背景；不存在的 token 不是作者错误。
             try:
                 apply_fill(slide.background, "background", ctx)
             except Exception as exc:
@@ -1892,6 +1900,12 @@ def compile_deck(spec: dict, output_path, spec_path: str | None = None,
                 _shp.shadow.inherit = False
             except Exception:
                 pass
+
+    # 任一元素失败即不是完整交付；不能把其余元素组成的半成品发布到正式路径。
+    # 保留原有完整文件，但本轮报告不将其冒认为当前输出。
+    if ctx.warnings:
+        return {"passed": False, "warnings": list(ctx.warnings), "file_bytes": None,
+                "output_path": str(output_path), "output_exists": False}
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     t_save = time.perf_counter()

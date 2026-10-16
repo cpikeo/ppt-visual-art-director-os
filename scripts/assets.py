@@ -1738,7 +1738,8 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         try:
             loaded = json.loads(cache_file.read_text(encoding="utf-8"))
             if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v3":
-                prompt_cache = loaded.get("entries") or {}
+                entries = loaded.get("entries")
+                prompt_cache = entries if isinstance(entries, dict) else {}
         except (OSError, ValueError, TypeError):
             prompt_cache = {}
     cache_hits = 0

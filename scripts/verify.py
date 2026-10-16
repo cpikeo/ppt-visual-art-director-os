@@ -423,7 +423,7 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
         if CHART_SPEC[kind]["renderer"] != "native":
             add("chart_payload", eid, "error", f"{kind} 只消费 data/元素级载荷，不支持 categories + series；不得静默丢弃序列")
             return
-        if e.get("data"):
+        if "data" in e:
             add("chart_payload", eid, "error", "data 与 categories + series 是替代载荷，不能同时声明并静默隐藏一份")
             return
         if (not isinstance(e.get("categories"), list) or not e["categories"]
@@ -431,10 +431,16 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                 or any(not isinstance(sr, dict) for sr in e["series"])):
             add("chart_payload", eid, "error", "多序列载荷必须有非空 categories 列表和 series 对象列表")
             return
-    data = e.get("data") or []
+    data = e.get("data", [])
     if not isinstance(data, list):
         add("chart_payload", eid, "error", "data 必须为数组/list")
         return
+    if kind in ROWS_CHART_KINDS and not has_series:
+        for di, row in enumerate(data):
+            if (not isinstance(row, dict) or row.get("label") is None
+                    or not str(row["label"]).strip()):
+                add("chart_payload", f"{eid}[{di}]", "error",
+                    "每个 data 行须为对象并含非空 label；不得静默丢行或把 null 当文字")
     if kind in ELEMENT_METRIC_KINDS and (e.get("value") is None or not str(e["value"]).strip()):
         add("chart_payload", eid, "error",
             f"{kind} 缺少元素级 value（大数字没有数字）")

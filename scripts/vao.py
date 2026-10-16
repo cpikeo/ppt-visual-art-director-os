@@ -302,7 +302,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
     # strict cache probe 已对当前字节做过 SHA，可复用其摘要；fast 只用 size+mtime_ns
     # 见证缓存，因此仍须在发布前读取/哈希一次，维持产物凭证的完整性。
     t_attest = time.perf_counter()
-    if not compile_report.get("skipped"):
+    if compile_report.get("passed") and not compile_report.get("skipped"):
         try:
             expected_sha = compile_report.get("output_sha256")
             reused_sha = (expected_sha if compile_report.get("reused")
@@ -328,7 +328,7 @@ def _compile_step(spec, output_path, *, speed, spec_path=None,
 
     cache_write_ms = 0.0
     cache_write_error = None
-    if compile_report.get("output_sha256") and compile_report.get("output_exists") \
+    if compile_report.get("passed") and compile_report.get("output_sha256") and compile_report.get("output_exists") \
             and cache_reason in ("miss", "probe_failed"):
         t_write = time.perf_counter()
         try:
@@ -374,7 +374,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     level 6 只把每轮冷预览多花 ~70ms 换 ~10% 更小的证据文件——证据的效力
     在像素与见证，不在压缩比；实测 12 页 + 联络表 338ms → 275ms。
     """
-    from primitives import engine_fingerprint, file_digest, witness, witness_same
+    from primitives import engine_fingerprint, file_digest, witness, witness_same, json_read_cached
     fast = str(speed).lower() == "fast"
 
     def preview_witness(path):
@@ -397,7 +397,7 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
     fonts = preview_font_stamp(refresh=True)
     if output_sha and marker.exists():
         try:
-            cached = json.loads(marker.read_text(encoding="utf-8"))
+            cached = json_read_cached(marker)
         except (OSError, ValueError):
             cached = {}
         cached_pages = cached.get("pages") or []
@@ -611,10 +611,11 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                             source_paths[f"raw image {si}/{ei}/{ri}"] = path if path.is_absolute() else root / path
         validate_io_paths(source_paths, writes, managed_dirs=managed_dirs)
         asset_binding = None
-        t_bind = time.perf_counter()
+        asset_bind_ms = 0.0
         if has_images and assets_manifest:
+            t_bind = time.perf_counter()
             spec, asset_binding = bind_asset_manifest(spec, assets_manifest, assets_dir)
-        asset_bind_ms = round((time.perf_counter() - t_bind) * 1000, 2)
+            asset_bind_ms = round((time.perf_counter() - t_bind) * 1000, 2)
         if has_images and assets_manifest:
             from primitives import json_read_cached
             from assets import asset_entries, resolve_asset

@@ -2037,7 +2037,24 @@ def test_cli(tmp: Path):
     unused_timing = (json.loads(unused.stdout).get("timing") or {}) if unused.returncode == 0 else {}
     check("cli: 无图 release 不读取无关清单，也不触发额外像素验证",
           unused.returncode == 0 and unused_timing.get("asset_bind_ms") == 0
-          and unused_timing.get("qc_ms") == 0 and out.stat().st_mtime_ns == first)
+          and unused_timing.get("qc_ms") == 0 and out.stat().st_mtime_ns == first,
+          str(unused_timing))
+
+    # 空分支不能测出伪绑定成本；模拟调度/时钟开销，避免依赖一次恰好舍入为 0。
+    import contextlib
+    import io
+    import itertools
+    import time
+    import vao
+    from unittest.mock import patch
+    real_clock, ticks = time.perf_counter, itertools.count()
+    with patch.object(vao.time, "perf_counter", side_effect=lambda: real_clock() + next(ticks) * .001), \
+            contextlib.redirect_stdout(io.StringIO()):
+        no_bind, no_bind_code = vao.run_check(str(filled), str(out), mode="release",
+                                             assets_manifest=str(tmp / "nonexistent-asset.json"))
+    check("cli: 调度开销不使未执行的资产绑定计时变成非零",
+          no_bind_code == 0 and no_bind["performance"]["asset_bind_ms"] == 0
+          and no_bind["performance"]["qc_ms"] == 0)
 
     preview_dir = tmp / "deck_preview"
     contact = preview_dir / "ghost-contact-sheet.png"
@@ -3878,6 +3895,174 @@ def test_deep_release(tmp: Path):
     check("deep: bench 报告不能覆盖回归基线", run.returncode == 2 and baseline.read_bytes() == before)
 
 
+def test_integrity_followup(tmp: Path):
+    """失败发布、行丢失、坏缓存及盲评输入的真实失败边界。"""
+    import copy
+    import csv
+    import io
+    import contextlib
+    import bench
+    import compiler
+    import assets
+    import vao
+    import verify
+    from primitives import CACHE_NAME, json_write
+    base, _ = vao.load_spec(make_build(tmp))
+
+    def deck(element):
+        spec = copy.deepcopy(base)
+        spec["slides"] = [spec["slides"][2]]
+        spec["slides"][0]["elements"] = [element]
+        return spec
+
+    chart = {"id": "c", "type": "chart", "chart_kind": "process_flow",
+             "x": 48, "y": 232, "width": 1184, "height": 400}
+    for bad in (None, {}, {"label": None}, {"label": ""}, {"label": "  "}):
+        spec = deck(dict(chart, data=[{"label": "保留内容"}, bad]))
+        check(f"integrity: 非数值图不丢行 {bad!r}", not verify.check_spec(spec)["passed"])
+        target = tmp / "invalid-rows.pptx"
+        report = compiler.compile_deck(spec, target)
+        check(f"integrity: 独立编译不静默丢行 {bad!r}", not report["passed"])
+    multi = dict(chart, chart_kind="column", categories=["A"],
+                 series=[{"name": "Series", "values": [1]}])
+    for bad in ([], {}, "", False, None):
+        spec = deck(dict(multi, data=bad))
+        check(f"integrity: 显式双载荷 {bad!r}", not verify.check_spec(spec)["passed"])
+        check(f"integrity: compiler 双载荷 {bad!r}",
+              not compiler.compile_deck(spec, tmp / "dual.pptx")["passed"])
+
+    target = tmp / "preserved.pptx"
+    target.write_bytes(b"previous complete delivery")
+    spec = deck({"id": "bad", "type": "unknown", "x": 0, "y": 0, "width": 10, "height": 10})
+    report = compiler.compile_deck(spec, target)
+    check("integrity: 编译失败保留旧完整产物", not report["passed"]
+          and target.read_bytes() == b"previous complete delivery")
+    target.unlink()
+    report = compiler.compile_deck(spec, target)
+    check("integrity: 编译失败不发布部分新产物", not report["passed"] and not target.exists())
+
+    minimal = {"slides": [{"id": "minimal", "elements": [
+        {"id": "t", "type": "text", "x": 10, "y": 10, "width": 400,
+         "height": 80, "size": 24, "text": "中文默认背景"}]}]}
+    check("integrity: 未声明主题背景不是编译失败",
+          compiler.compile_deck(minimal, tmp / "minimal.pptx")["passed"])
+    hidden = dict(multi, height=120, categories=list("abcdef"),
+                  series=[{"name": "Series", "values": [1, 2, 3, 4, 5, 6]}],
+                  show_values=True, label_collision_policy="hide_redundant")
+    check("integrity: 作者授权隐藏冗余标签不是编译失败",
+          compiler.compile_deck(deck(hidden), tmp / "authorized-hide.pptx")["passed"])
+
+    # Guard 放行但绘制层失败：CLI 不得覆盖旧 PPTX、签署其摘要或污染编译缓存。
+    build = tmp / "runtime.json"; json_write(build, base)
+    output = tmp / "runtime.pptx"
+    with contextlib.redirect_stdout(io.StringIO()):
+        _, code = vao.run_check(str(build), str(output), mode="release", speed="strict")
+    old = output.read_bytes()
+    broken = copy.deepcopy(base)
+    broken["slides"][0]["elements"].append({"id": "unsupported-shape", "type": "shape",
+        "shape": "not-a-shape", "x": 64, "y": 300, "width": 100, "height": 100})
+    json_write(build, broken)
+    with contextlib.redirect_stdout(io.StringIO()):
+        result, failed_code = vao.run_check(str(build), str(output), mode="release", speed="strict")
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+    check("integrity: release 绘制失败保留旧 PPTX 且撤销资格", code == 0
+          and failed_code == 2 and old == output.read_bytes()
+          and manifest["status"] == "BLOCKED" and not manifest["release_eligible"])
+    check("integrity: 不为旧 PPTX 签署本轮失败编译摘要", not result["compile"].get("output_sha256"))
+    cache = json.loads((tmp / "runtime_vao" / CACHE_NAME).read_text(encoding="utf-8"))
+    check("integrity: 失败编译不写入缓存", cache["compile"]["report"]["passed"])
+
+    # 合法 JSON 但错误顶层类型仍是坏缓存，而不是生产输入错误。
+    good = deck(dict(chart, data=[{"label": "A"}, {"label": "B"}]))
+    preview = tmp / "preview"
+    preview.mkdir()
+    json_write(preview / "ghost.meta.json", ["corrupt cache"])
+    try:
+        result = vao._ghost(good, preview, speed="strict", output_sha="a" * 64)
+        ok = result["count"] == 1 and not result["reused"]
+    except (AttributeError, TypeError, ValueError):
+        ok = False
+    check("integrity: 非对象 ghost marker 重建", ok)
+    brief = {"audience": "评审", "decision": "批准", "tension": "证据",
+             "slides": [{"id": "s01", "title": "检查素材", "asset": "required",
+                         "asset_subject": "a tea bowl"}]}
+    import intelligence
+    bundle = intelligence.think(brief)
+    cache = tmp / "prompt-cache.json"
+    json_write(cache, {"schema": "vao-asset-prompt-cache-v3", "entries": ["bad"]})
+    try:
+        manifest = assets.build_manifest(brief, bundle, cache_path=cache)
+        ok = len(assets.asset_entries(manifest)) == 1
+    except (AttributeError, TypeError, ValueError):
+        ok = False
+    check("integrity: 错型 prompt cache 重建", ok)
+    brief_file = tmp / "brief.json"; json_write(brief_file, brief)
+    manifest_file = tmp / "assets.json"
+    json_write(manifest_file, {"schema": "vao-assets-v2", "assets": [],
+        "workflow": {"schema": "vao-asset-chain-v2", "brief_path": str(brief_file),
+                     "brief_file_sha256": assets.file_digest(brief_file)}})
+    json_write(tmp / "assets.qc.json", ["bad"])
+    try:
+        rep, code = assets.qc_report(manifest_file)
+        ok = code == 0 and rep["status"] == "PASS"
+    except (AttributeError, TypeError, ValueError):
+        ok = False
+    check("integrity: 非对象 QC cache 重建", ok)
+
+    key = tmp / "key.json"; json_write(key, {"V01": "a.pptx", "V02": "b.pptx", "V03": "c.pptx"})
+    sheet = tmp / "scores.csv"
+
+    def scores(items, value=None, duplicate=False):
+        stream = io.StringIO(newline="")
+        writer = csv.writer(stream)
+        writer.writerow(["reviewer", "item", *bench.BLIND_DIMS, "reason"])
+        for r in range(3):
+            for i, item in enumerate(items):
+                writer.writerow([f"r{r}", item, *([value or str(i + 1)] * len(bench.BLIND_DIMS)), "多行\n理由"])
+        if duplicate:
+            writer.writerow(["r0", items[0], *(["3"] * len(bench.BLIND_DIMS)), "duplicate"])
+        sheet.write_text(stream.getvalue(), encoding="utf-8")
+
+    for val in ("nan", "inf", "-inf"):
+        scores(["V01", "V02", "V03"], val)
+        try:
+            bench.blind_score([str(sheet)], str(key)); rejected = False
+        except ValueError:
+            rejected = True
+        check(f"integrity: 非有限盲评分拒绝 {val}", rejected)
+    scores(["V01", "V02"])
+    rep = bench.blind_score([str(sheet)], str(key))
+    check("integrity: 全体漏评同一版本不能宣称共识", rep["consensus"] == "NOT_ENOUGH_REVIEWERS"
+          and rep["complete_reviewers"] == 0)
+    for items, duplicate in ((["V01", "UNKNOWN"], False), (["V01", "V02", "V03"], True)):
+        scores(items, duplicate=duplicate)
+        try:
+            bench.blind_score([str(sheet)], str(key)); rejected = False
+        except ValueError:
+            rejected = True
+        check(f"integrity: 未知版本/重复评分拒绝 {duplicate}", rejected)
+    scores(["V01", "V02", "V03"])
+    check("integrity: 合法独立评分仍形成统计一致", bench.blind_score([str(sheet)], str(key))["consensus"]
+          == "CONSENSUS_WEAK_OR_OK")
+    scores(["V01", "V02", "V03"], "nan")
+    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            code = bench.main(["blind", "score", str(key), str(sheet)])
+        except Exception:
+            code = None
+    check("integrity: 盲评非法输入 CLI 返回 2", code == 2)
+    src = tmp / "source"; src.mkdir(); (src / "content.txt").write_text("new", encoding="utf-8")
+    out = tmp / "blind-output"
+    bench.blind_pack([str(src)], out, seed=1)
+    stale = out / "V01" / "stale.txt"; stale.write_text("private old version", encoding="utf-8")
+    try:
+        bench.blind_pack([str(src)], out, seed=1); rejected = False
+    except (ValueError, FileExistsError):
+        rejected = True
+    check("integrity: 重复盲评导出拒绝污染且保留旧工作", rejected
+          and stale.read_text(encoding="utf-8") == "private old version")
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -3917,7 +4102,8 @@ def main():
                          ("audit_boundaries", test_audit_boundaries),
                          ("delivery_safety", test_delivery_safety),
                          ("material_direction", test_material_direction),
-                         ("deep_release", test_deep_release)):
+                         ("deep_release", test_deep_release),
+                         ("integrity_followup", test_integrity_followup)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()
