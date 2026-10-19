@@ -59,6 +59,14 @@
 - `primitives.py`：删除从未被任何模块调用的 `latin_word_match`（grep 全仓库无消费者），减法测试无质量损失。
 - 本轮未改动判断基准、字段契约与测试期望；selftest 680/680、bench 57/57、四组冻结断言 81/31/14/8 全过。
 
+### Markdown 深度优化（Agent Mode 续，2026-10-16）
+
+- **SKILL.md**：合并「五问」与判断表为单一权威位置（表格），消除重复列举与冗余流程；「素材导演」五节各精简 40–50% 而保留全部独特判断能力；§2/§6 去除低价值铺垫与重复解释。217→143 行（-34%），~4378→~2972 tokens（-32%）。
+- **references/contract.md**：删除与 SKILL.md 重复的判断原则重述、冗余安全说明与过度展开的实现细节；保留全部执行契约字段与失败码。178→103 行（-42%），~3769→~2047 tokens（-46%）。
+- **references/assets.md**：删除与 SKILL.md §3「素材导演」重叠的设计原则；保留资产执行字段、QC 判据与来源链硬边界。84→55 行（-35%），~1806→~918 tokens（-49%）。
+- **总计**：三份核心 Markdown 从 ~9953 tokens 降至 ~5937 tokens（-40%），AI 读取 Context 的信息密度提升，同一判断能力以更少篇幅传递。
+- 本轮未改动任何脚本逻辑、判断基准或测试期望；selftest 684/684、bench 57/57、四组冻结断言 81/31/14/8 全过；plan + check 生产链路正常。
+
 ### 审计修复（Agent Mode 续，2026-10-16）
 
 - **`test_win_portability` 的错误前提**（Windows 腿）：「同盘符仍给出相对路径」拿 `tmp` 与 `Path.cwd()` 配对——windows-latest 的 tmp 在 `C:`、工作区在 `D:`，这对本身就是跨盘，恰好落进兜底分支，断言与前提相反（本机以 PureWindowsPath + ntpath 语义复现：该断言在目标平台上必失败）。同盘对改为**两头同根**构造（`work` vs `tmp`），并补一条 ntpath 同盘对的 Windows 语义断言；跨盘对仍用 ntpath 实错 + mock 复现。**生产逻辑未动**：`_portable_relpath` 的「能相对就相对」与 `blind_pack` 的「key 原样记录作者路径表达」保持原样。
