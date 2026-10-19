@@ -136,7 +136,10 @@ def _strip_annotations(text: str) -> str:
 # 结论判定，也不该顶掉作者写下的主张（实测：样本行的「42 家」成了页面主语，主张与
 # 焦点一起落到取证范围上）。与封面元信息同一条原则，只是作用范围是全页。
 _SCOPE_HEADS = ("样本", "口径", "期间", "统计", "数据来源", "来源", "取数", "抽样",
-                "基准日", "截止", "注", "说明来源")
+                "基准日", "截止", "注", "说明来源",
+                # 「数据周期为 2026 年 4 至 9 月」这类期间声明句是档案坐标：
+                # 它曾被当成「短句＋数字」抽成本页主张（实测），与「样本 42 家」同池出局。
+                "数据周期", "统计周期", "数据区间", "统计范围", "时间范围")
 _SCOPE_HEAD_RE = re.compile(r"^\s*(?:" + "|".join(_SCOPE_HEADS) + r")\s*[:：]?\s*")
 # 取证段从**句首或分隔符之后**开始（不认空格后的标签：「客户来源是口碑」不是取证段）。
 _SCOPE_SEGMENT = re.compile(r"(?:^|(?<=[；;。\n]))\s*(?:"
@@ -891,6 +894,27 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     # 不够——两个不同指标的「月」（提交月 vs 条件月）不是一条序列，末值优先会让
     # 护栏日期顶掉已发生的事实（实测：合规页主语成了「若 6 月前获批」的 6 月）。
     tied = [t for t in pool if round(t[0], 6) == round(best[0], 6)]
+    # 主张点名**两个指标**时（「订单量增长与履约成本同步上升」），每个指标的全部
+    # 历史取值同分，单位不同又挡住整体末值回退——max 落在第一个数上，主语成了
+    # 序列开头的基期值（实测：三年双指标页的主语是 2023 年的量）。先在**每个指标
+    # 内部**折叠到自己的当前值（同指标同单位才折叠，护栏日期仍不冒充现状），
+    # 再在指标之间按主张里的出现顺序取主语——主张的主语位是它的第一落点。
+    reduced: list = []
+    seen_metrics: set = set()
+    for t in tied:
+        if t[3] in seen_metrics:
+            continue
+        seen_metrics.add(t[3])
+        group = [x for x in tied if x[3] == t[3]]
+        if len(group) >= 2 and len({x[2].get("unit") or "" for x in group}) == 1:
+            reduced.append(group[-1])            # 该指标的当前值（文本顺序的末值）
+        else:
+            reduced.append(t)
+    if len(reduced) >= 2 and all(t[3] for t in reduced):
+        def _claim_order(t) -> int:
+            pos = [claim.find(m) for m in t[3] if m and claim.find(m) >= 0]
+            return min(pos) if pos else len(claim) + 1
+        return min(reduced, key=_claim_order)[2]
     if len(tied) >= 2 and len({t[2].get("unit") or "" for t in tied}) == 1 \
             and len({t[3] for t in tied}) == 1:
         return tied[-1][2]
@@ -1623,6 +1647,18 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
         role = "summarize"
         why = "收尾页把主张收成一句可执行的话（做什么、谁来做、什么时候）。"
         alts = [["prove", "收尾再补证据＝把决定推迟到最后一次提问之后"]]
+    elif int(u.get("distinct_numerals") or 0) >= 3 \
+            and not evidence_numerals(str(claim.get("text") or "")):
+        # 多指标并列面板（「单均利润 1.9 元、月订单 8.4 万单、客单价 58 元」）：
+        # 没有单一形状（序列/比较/结构），但这一页靠**一组可核验的量**成立——
+        # 是证据页，不是观点页。判成 persuade 会让张力、焦点与构图全链落到
+        # 「说服」上，而这一页该做的是把量排整齐、守住口径。
+        # 主张自己带着数字的不在此列（「相加为100不是共同分母」）：数字是被
+        # 讨论的对象，不是支持证据，页面仍在下判断——那是观点页。
+        role = "prove"
+        why = ("这一页靠一组可核验的量成立：多指标并排是证据面板，不是观点——"
+               "先给对齐与同屏参照，再谈措辞。")
+        alts = [["persuade", "把证据面板讲成观点＝观众既被要求相信，又找不到可核对的数"]]
     elif ev == "proposition" and str(tension or "").strip():
         role = "persuade"
         why = (f"这一页对着观众的疑虑成立（「{str(tension)[:24]}」），不回应它，"
@@ -1853,7 +1889,10 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
     s["linear_structure"] = (4.5 if u.get("relations") else
                              3.0 if ev in ("sequence", "structure") else 0.0)
     s["asymmetric_tension"] = (2.5 if u.get("comparison") else 0.0) \
-        + (1.5 if role == "compare" else 0.0) + (1.0 if n >= 2 else 0.0)
+        + (1.5 if role == "compare" else 0.0) \
+        + (1.0 if n >= 2 and u.get("comparison") else 0.0)
+    # 末项随 comparison 走：两端张力算子自己的落选理由就是「等权时不制造倾向」——
+    # 没有比较内容的页面（多指标面板、拆项行）不该只因数字 ≥2 就漂进张力构图。
     s["editorial"] = (2.0 if text_len > 60 else 0.0) \
         + (1.5 if role == "summarize" else 0.0) + (1.0 if n == 0 else 0.0) \
         + (0.5 if text_len > 120 else 0.0)
@@ -2024,8 +2063,10 @@ _BREAK_RULES = (
     (("，", "、", "；", "：", "。", "！", "？"), "after"),          # 停顿：最强
     (("而是", "而非", "不是", "不再", "尚未", "所以", "因此", "同时",
       "另外", "其中", "其次", "最后", "首先", "就是", "才是", "但", "却",
-      "则", "是"), "before"),                                     # 系词/转折：领起谓语
-    (("年", "季度", "月", "日", "天", "小时", "倍"), "after"),      # 时间数量短语之后
+      "则", "是", "把", "将",
+      "带动", "推动", "导致", "促使", "进而", "从而", "使得", "有助于",
+      "用于", "旨在"), "before"),                                  # 系词/转折/处置式/结果连词：领起谓语
+    (("年", "季度", "月", "日", "天", "小时", "倍", "后"), "after"),  # 时间数量短语/事件状语之后
     (("的",), "after"),                                           # 定语之后（悬挂）
 )
 # 禁则与「数字后接单位」判据都取自 primitives 单一来源，不再各维护一份词表：
@@ -2041,9 +2082,12 @@ def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
     把「，」甩到行首。这里只给一处断口（两行），用「｜」标出；作者仍可改写。
     """
     text = str(sentence or "").strip()
-    if len(text) < 8 or len(text) <= max_line:
+    # 超过两行能容纳的长度：两行断行建议本身不成立（每行都会超出行宽预算），
+    # 此时给一个「一头长一头短」的断点只会骗作者把字号缩到可读域之外——
+    # 该改写的是句子，不是断点。
+    if len(text) < 8 or len(text) <= max_line or len(text) > 2 * max_line:
         return None
-    cap = max(max_line, (len(text) + 1) // 2 + 4)
+    cap = max_line
     best, best_score = None, None
     for strength, (group, side) in enumerate(_BREAK_RULES):
         for i in range(1, len(text)):
@@ -2052,7 +2096,10 @@ def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
                 continue
             at = i + len(hit) if side == "after" else i
             left, right = text[:at], text[at:]
-            if len(left) < 4 or len(right) < 4:
+            # 单字「把/将」与双字连词不同：它们也出现在名词内部（把握/将来），
+            # 误切的代价是割裂词。只收两侧都足够长的断口——短句自然轮不到它们。
+            floor = 6 if hit in ("把", "将") else 4
+            if len(left) < floor or len(right) < floor:
                 continue
             if max(len(left), len(right)) > cap:
                 continue
@@ -2136,6 +2183,9 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
         rule = BASE_DISCIPLINE
     scale = {"lead_break": suggest_break(str(claim.get("text") or "")),
              **measure_of(int(text_len or 0))}
+    if len(str(claim.get("text") or "").strip()) > 2 * _LEAD_MAX_CJK:
+        # 断行救不了一句两行装不下的主张：先改写，再谈断行（SKILL §2：删除比添加重要）。
+        scale["lead_rewrite"] = "主张超过两行：先改写成一句更短的可复述结论，而不是缩小字阶硬排。"
     return {"lead": focal, "support": secondary, "discipline": rule, "scale": scale}
 
 
@@ -2403,10 +2453,14 @@ _LABEL_HEAD_PREFIX = ("我们", "本页", "这一页", "首先", "其次", "同�
                       "因此", "所以", "但是", "请", "建议", "也就是说", "换句话说",
                       "同期", "本期", "目前", "当前", "今年", "未来")
 # 眉标在**谓语/虚词之前**收口：主语短语才是「这一段在论证里的位置」。
+# 「用」「有」不在边界表里：它们嵌在名词词内的频率高于作独立虚词（利用率/现有），
+# 按它们切开会把「利用率不足」劈成「利｜率不足」、「保留现有干线」劈成「保留现｜干线」，
+# 碎片再通过长度与首尾检查就成了眉标（两例均为实测）。段首的「用数据说话」由
+# _LABEL_HEAD_STOP 拒绝，不需要边界表兜底。
 _LABEL_BOUNDARY = ("是", "在", "与", "和", "或", "由", "从", "对", "把", "被", "并",
                    "为", "到", "至", "使", "让", "的", "，", "。", "、", "；", "：",
                    "！", "？", "只", "才", "更", "最", "也", "都", "还", "就", "而",
-                   "却", "但", "已", "将", "会", "能", "要", "有", "按", "靠", "用",
+                   "却", "但", "已", "将", "会", "能", "要", "按", "靠",
                    # 副词也是切段边界：「同店销售额仍在增长」的名词短语在「仍」处
                    # 结束，收到「仍在增长」会把眉标读成半句话。
                    "仍", "再", "又", "仅", "正", "且",
@@ -2426,9 +2480,16 @@ _BOUNDARY_SPLIT = re.compile("|".join(
 # 领头的动词/介词/数词：以它们开头的段是谓语或数量说明，不是眉标要的名词短语
 _LABEL_HEAD_STOP = set("把被将使让在为到按靠用向给与和或并且也还就而却但已会能要"
                        "有只才更最都半多少整全各每本该此其做至升降增减投买卖产销"
-                       "提开完实进转扩缩换不从由")
+                       "提开完实进转扩缩换不从由"
+                       # 「以用户留存为核心…」被「为」劈开后，「以…」是介词框架的
+                       # 前半截，不是名词短语（实测「以用户留存」）
+                       "以")
 # 收尾的动词/连词/量词：以它们结尾的段是半句话或一个数量短语，不是可定位的名词
 _LABEL_TAIL_STOP = set("做在为有成给使让占到把被与和或并且而则及升降增减投买卖产"
+                       # 动词/「X到X为X成」补语结构被边界字劈开后收尾的半截谓语：
+                       # 「单均成本压（到）」「收入改（为）」「覆盖半径需（要）」「总部职（能）」
+                       # 均为实测；后四字同属此类高频补语前字。
+                       "压讲写谈推拉落涨改转拆切提分需职"
                        "销是年月日周季天时分秒个片条块件层倍成回次遍"
                        # 否定/未完副词收尾 = 被截断的从句，不是名词短语：
                        # 「答案不在开店速度」曾派生出眉标「答案不」，
@@ -2443,7 +2504,7 @@ _MEASURE_CORES = frozenset({"亿元", "万元", "元", "万户", "万单", "万�
 
 
 def section_label(item: dict, claim: dict, role: str) -> str:
-    """眉标：本页结论的**主题短语**（3–6 字），派不出来就缺省为空。
+    """眉标：本页结论的**主题短语**（2–7 字，优取 3–6），派不出来就缺省为空。
 
     取法：先剥语气/时间前缀，再在第一个虚词或谓语之前收口（「三个市场｜里只有…」
     → 三个市场）；收口太短就顺延到下一个边界，太长就退回空——宁可缺省，
@@ -2464,16 +2525,23 @@ def section_label(item: dict, claim: dict, role: str) -> str:
         return ""
 
     def _label_of(seg: str) -> str:
-        """按虚词/谓语切段，取**第一个干净的名词短语**作眉标（2–6 字，优取 3–6）。
+        """按虚词/谓语切段，取**第一个干净的名词短语**作眉标（2–7 字，优取 3–6）。
 
         旧做法先删数字、再按「第一个边界之前」截断：等于把数字两侧的汉字缝在一起
         （「中国 800 元以上」→「中国元以」），或收下一截动词短语（「会员做」）。
         眉标是页眉上的定位词，缝出来的词比退回角色词更糟——它看着像有信息，
         实际是噪声。切段 + 首尾虚词/动词剔除，宁可退回角色词。
         """
-        for part in _BOUNDARY_SPLIT.split(seg):
+        parts = _BOUNDARY_SPLIT.split(seg)
+        for idx, part in enumerate(parts):
             q = part.strip()
             core = re.sub(r"[^一-鿿]", "", q)
+            # 相邻段是**单字**＝切口落在两字词内部（「付费会员」被「会」劈成
+            # 「付费｜员」、「利用率不足」被「用」劈成「利｜率不足」）：
+            # 无论候选在单字段之前还是之后，它都是那个词的半截，跳过。
+            if (idx > 0 and len(parts[idx - 1].strip()) == 1) \
+                    or (idx + 1 < len(parts) and len(parts[idx + 1].strip()) == 1):
+                continue
             # 以数字开头的段是数量短语（「15 万元」「2 人」）：残留的单位字不是主题。
             # 实测：「单店月净利…低于 15 万元」的眉标被派成「万元」。
             if re.match(r"\s*[0-9]", q) or core in _MEASURE_CORES:
@@ -2484,7 +2552,9 @@ def section_label(item: dict, claim: dict, role: str) -> str:
             if not core or core not in q:
                 continue
             p = core.strip(_LABEL_TAIL)
-            if not (2 <= len(p) <= 6):
+            # 上限 7：完整的主语短语（「去年订单量增长」7 字）好过整页缺省；
+            # 词内碎片几乎都短于 7 字，放宽上限不增加碎片面。
+            if not (2 <= len(p) <= 7):
                 continue
             if p[0] in _LABEL_HEAD_STOP or p[-1] in _LABEL_TAIL_STOP:
                 continue                       # 动词/量词领头或收尾的不是名词短语
@@ -2696,6 +2766,12 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     open_q = []
     if weight.get("delete_candidates"):
         open_q.append(f"删除候选 {len(weight['delete_candidates'])} 句待作者裁决（高密度页，按对主张的贡献排序）")
+    if claim_text and not _hit(claim_text, _ASK_WORDS) \
+            and _hit(f"{title} {content}", _ASK_WORDS):
+        # 请求句藏在正文里而主张没点名它（「…成本可回到 5.8 元。请委员会批准…」）：
+        # 数字焦点合法地占了第一落点，但请求被挤成一行正文＝决定被推迟到下一页。
+        open_q.append(f"本页正文含请求/决定句（「{_fired(f'{title} {content}', _ASK_WORDS)}」）："
+                      "把请求与资源量同屏落在收束位，别让数字焦点把它挤成一行正文")
     if claim["source"] == "absent":
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
     if media["source"] == "judgment" and media["decision"] == "required":
@@ -2731,11 +2807,32 @@ def _coherence_pass(pages: list) -> dict:
                          f"{pages[i]['judgment']['focus'].get('element_role')}："
                          "确认每页真的需要同一落点，否则合并页面或改写结论")
         i = j
+    # 相邻页信息增量（前页已建立的内容应被引用、压缩或深化，而非重新铺陈）：
+    # 后页的非年份取值全是前页已出现过的量时，唯一能让它成立的是新观点/新口径/
+    # 新拆解——三者都没有就是重复铺陈。收束页回收量、比较页引用两端是职责本身，
+    # 不在其列。只提示复核，不自动改页。
+    for index in range(1, len(pages)):
+        if len(notes) >= 3:
+            break
+        cur, prev = pages[index]["judgment"], pages[index - 1]["judgment"]
+        if cur["visual_role"]["role"] == "summarize" \
+                or cur["understanding"].get("evidence") == "comparison" \
+                or cur["understanding"].get("comparison"):
+            continue
+        cur_vals = {(round(n["value"], 6), n.get("unit") or "")
+                    for n in cur["understanding"].get("numerals") or [] if not n.get("year")}
+        prev_vals = {(round(n["value"], 6), n.get("unit") or "")
+                     for n in prev["understanding"].get("numerals") or [] if not n.get("year")}
+        if len(cur_vals) >= 2 and cur_vals <= prev_vals:
+            notes.append(f"{pages[index]['id']} 与 {pages[index - 1]['id']} 数字完全复现"
+                         f"（{len(cur_vals)} 个量无一新增）：确认本页带来的是新观点、"
+                         "新口径还是新拆解；都不是就压缩为引用或合并页面")
     media_seq = [f"{p['judgment']['media'].get('decision')}"
                  f":{p['judgment']['media'].get('function') or '-'}"
                  for p in pages]
     # 同一次整套回看，给作者一条跨页呼吸说明；只标注内容已造成的变化，
     # 不为看起来不一样而强制改构图，也不单独另跑一轮『节奏 AI』。
+    density_order = {"sparse": 0, "balanced": 1, "dense": 2}
     for index, page in enumerate(pages):
         current = page["judgment"]
         previous = pages[index - 1]["judgment"] if index else None
@@ -2744,7 +2841,14 @@ def _coherence_pass(pages: list) -> dict:
         elif index == len(pages) - 1:
             move, why = "close", "回收开场的决定，不用新装饰或谢谢页稀释请求。"
         elif current["production"]["density_target"] != previous["production"]["density_target"]:
-            move, why = ("breathe", "信息密度变化来自证据体量；用疏密给前一页让出阅读时间。")
+            # 方向要说对话：密度抬升是加压（负荷上来了），密度回落才是喘息——
+            # 两个方向共用一个词会把「负荷增加」说成「让出阅读时间」。
+            heavier = density_order.get(current["production"]["density_target"], 1) > \
+                density_order.get(previous["production"]["density_target"], 1)
+            move, why = (("build", "证据体量增大，阅读负荷上升：密度抬升处必须有新的"
+                                  "信息增量，否则把负荷还给前页。")
+                         if heavier else
+                         ("breathe", "信息密度回落来自证据体量；用疏密给前一页让出阅读时间。"))
         elif current["media"]["decision"] != previous["media"]["decision"]:
             move, why = ("turn", "内容决定图像是否在场；视觉重心随证据载体切换。")
         elif current["composition"]["chosen"] == previous["composition"]["chosen"]:
@@ -3095,6 +3199,8 @@ def build_skeleton(bundle: dict) -> str:
             head += f' · 行长≈{sc.get("body_measure_cjk")}字'
         if sc.get("lead_break"):
             head += f' · 断行: {sc["lead_break"]}'
+        if sc.get("lead_rewrite"):
+            head += f'；{sc["lead_rewrite"]}'
         if typ.get("discipline") != BASE_DISCIPLINE:
             head += f'；{typ.get("discipline")}'
         L.append(head)

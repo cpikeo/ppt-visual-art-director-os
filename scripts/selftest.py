@@ -3076,6 +3076,139 @@ def test_design_judgment(tmp: Path):
               warnings=[]).get("open_questions") or [])))
 
 
+def test_cjk_rhythm_regression(tmp: Path):
+    """构图排版（中文）与跨页节奏的本轮回归：每条钉住一个可复现的误判现场。
+
+    覆盖：长主张断行建议、口径句不当主张、KPI 面板角色、双指标当前值、
+    眉标断词碎片、相邻页数字复现、节奏方向语义、正文请求句与超长主张提示。
+    """
+    import intelligence as intel
+
+    # 1 · 断行建议此前只认标点/系词/「的」：无标点的长主张（中文标题最常见形态）
+    #     拿不到任何断口（实测「…制把单均成本压到 5.4 元」返回 None）。
+    check("break: 处置式「把」字句是谓语起点，给出语义断口",
+          intel.suggest_break("同行领先者用区域枢纽制把单均成本压到 5.4 元")
+          == "同行领先者用区域枢纽制｜把单均成本压到 5.4 元",
+          str(intel.suggest_break("同行领先者用区域枢纽制把单均成本压到 5.4 元")))
+    check("break: 结果连词「带动」领起新谓语；时间单位不再劈开「全年经常性收入」",
+          intel.suggest_break("以用户留存为核心重构会员体系带动全年经常性收入增长")
+          == "以用户留存为核心重构会员体系｜带动全年经常性收入增长",
+          str(intel.suggest_break("以用户留存为核心重构会员体系带动全年经常性收入增长")))
+    check("break: 事件状语「后」之后是合法断口",
+          intel.suggest_break("试点落地后单店模型跑通复制速度取决于店长供给")
+          == "试点落地后｜单店模型跑通复制速度取决于店长供给",
+          str(intel.suggest_break("试点落地后单店模型跑通复制速度取决于店长供给")))
+    # 2 · 行长上限：旧 cap 随句长放宽（len//2+4），41–48 字的主张被建议 21–26 字
+    #     的一行——超出主张字阶的可读域。两行装不下就如实说装不下。
+    check("break: 超出两行预算的断口不再给出（宁无可改写提示，不给超宽行）",
+          intel.suggest_break("长三角三城联动与区域仓网重构之后配送成本下降四成但履约时长仍在持续上升爬坡")
+          is None,
+          str(intel.suggest_break("长三角三城联动与区域仓网重构之后配送成本下降四成但履约时长仍在持续上升爬坡")))
+    long_claim = "投产后单均履约成本将从当前的 7.2 元一路回落到 5.8 元并且在两年之内收回全部 3.2 亿元的改造投资"
+    judged_long = intel.page_judgment(
+        {"id": "q0", "title": long_claim, "content": "预计节约 2.6 亿元"},
+        index=1, total=3, brief={"audience": "委员会", "decision": "批准"},
+        world=intel.derive_world({"audience": "委员会"}, [intel.understand("x")]), warnings=[])
+    check("typography: 两行装不下的主张改提「先改写」，不硬给断点",
+          judged_long["typography"]["scale"].get("lead_rewrite") is not None
+          and judged_long["typography"]["scale"].get("lead_break") is None,
+          str(judged_long["typography"]["scale"]))
+
+    # 3 · 口径句被抽成主张：「数据周期为 2026 年 4 至 9 月」曾凭「短句＋数字」
+    #     赢下结论位（实测）。期间/范围声明与「样本 42 家」同池出局。
+    scope_claim = intel.extract_claim(
+        {"title": "试点县城的经营数据",
+         "content": "本轮试点覆盖 12 个县城：单均利润 1.9 元，月订单 8.4 万单。数据周期为 2026 年 4 至 9 月"})
+    check("claim: 口径/期间声明句不当主张（ 宁可 absent，不拿档案坐标当结论）",
+          scope_claim["text"] is None and scope_claim["source"] == "absent",
+          str(scope_claim))
+
+    # 4 · KPI 面板页：多指标并列（无单一形状）曾判 persuade（观点页），焦点落到
+    #     statement_text——这一页靠一组可核验的量成立，是证据页。主张自己带着
+    #     数字的不在此列：数字是被讨论的对象，页面仍在下判断。
+    world = intel.derive_world({"audience": "管理层"}, [intel.understand("x")])
+    panel = intel.page_judgment(
+        {"id": "p1", "title": "试点县城单均利润为正但薄",
+         "content": "试点 12 个县城，单均利润 1.9 元，月订单 8.4 万单，履约成本 6.2 元/单，客单价 58 元"},
+        index=2, total=6, brief={"audience": "管理层", "decision": "批准"},
+        world=world, warnings=[])
+    specimen = intel.page_judgment(
+        {"id": "p2", "title": "相加为100不是共同分母",
+         "content": "60% 缓解率，40% 不良反应发生率，同一患者可同时满足两者"},
+        index=2, total=6, brief={"audience": "管理层", "decision": "批准"},
+        world=world, warnings=[])
+    check("role: 多指标并列面板是证据页（prove），不再判成观点页",
+          panel["visual_role"]["role"] == "prove",
+          str(panel["visual_role"]["role"]))
+    check("role: 主张自带数字的标本页仍是观点页（数字是被讨论的对象）",
+          specimen["visual_role"]["role"] == "persuade",
+          str(specimen["visual_role"]["role"]))
+
+    # 5 · 双指标系列的主语：主张点名两个指标时全部取值同分、单位不同挡住末值
+    #     回退——max 落在第一个数上，2023 年的基期值成了页面主语（实测）。
+    _, primary = intel.number_roles(
+        "2023年订单量 1,840 万单，履约成本 11.2 亿元；2024年订单量 2,150 万单，"
+        "履约成本 13.8 亿元；2025年订单量 2,490 万单，履约成本 16.1 亿元",
+        "去年订单量增长与履约成本同步上升")
+    check("focus: 双指标系列按「指标内末值＋主张主语位」取当前量，不回基期",
+          primary is not None and primary["raw"] == "2,490 万",
+          str(primary and primary["raw"]))
+
+    # 6 · 眉标断词：单字边界切在词内，碎片通过长度与首尾检查成了页眉
+    #     （「率不足」「保留现」均为实测）。完整主语短语（7 字）照常派生。
+    for text, want, why in (
+            ("利用率不足的担忧通过分期投放来化解", "利用率不足", "「用」不再劈开「利用率」"),
+            ("建议建设两个区域枢纽仓并保留现有干线", "保留现有干线", "「有」不再劈开「现有」"),
+            ("去年订单量增长与履约成本同步上升", "去年订单量增长", "7 字完整主语好过缺省"),
+            ("付费会员的核心价值是把一次性交易变成持续关系", "", "切口落在两字词内部时宁可缺省")):
+        got = intel.section_label({}, {"text": text}, "prove")
+        check(f"eyebrow: {why}", got == want, repr(got))
+
+    # 7 · 相邻页信息增量：后页数字完全复现前页（无一新增）= 重复铺陈候选，
+    #     交作者裁决；末页回收量（summarize）与比较页引用两端不在其列。
+    dup = intel.think({"audience": "管理层", "decision": "批准", "tension": "成本", "slides": [
+        {"id": "r1", "title": "试点数据",
+         "content": "试点 12 个县城，单均利润 1.9 元，月订单 8.4 万单，履约成本 6.2 元/单，客单价 58 元"},
+        {"id": "r2", "title": "试点经营情况",
+         "content": "本轮试点覆盖 12 个县城：单均利润 1.9 元，月订单 8.4 万单，履约成本 6.2 元/单，客单价 58 元"},
+        {"id": "r3", "title": "谢谢", "content": "供应链部"}]})
+    check("coherence: 相邻页数字完全复现进 notes（确认增量，不自动改页）",
+          dup["deck"]["coherence"]["notes"]
+          and "r2 与 r1 数字完全复现" in dup["deck"]["coherence"]["notes"][0],
+          str(dup["deck"]["coherence"]["notes"]))
+    exempt = intel.think({"audience": "管理层", "decision": "批准", "tension": "成本", "slides": [
+        {"id": "e1", "title": "试点数据",
+         "content": "试点 12 个县城，单均利润 1.9 元，月订单 8.4 万单，履约成本 6.2 元/单，客单价 58 元"},
+        {"id": "e2", "title": "谢谢",
+         "content": "试点 12 个县城，单均利润 1.9 元，月订单 8.4 万单"}]})
+    check("coherence: 收束页回收已建立的量不算重复",
+          exempt["deck"]["coherence"]["notes"] is None,
+          str(exempt["deck"]["coherence"]["notes"]))
+
+    # 8 · 节奏方向：密度抬升是加压不是喘息——两个方向共用 breathe 会把
+    #     「负荷增加」说成「让出阅读时间」。
+    tempo = intel.think({"audience": "管理层", "decision": "批准", "tension": "成本", "slides": [
+        {"id": "a", "title": "开场", "content": "我们只做一件事"},
+        {"id": "b", "title": "面板",
+         "content": "华东营收 3.2 亿元，华南营收 2.8 亿元，西南营收 1.1 亿元，华北 0.9 亿元，海外 0.3 亿元"},
+        {"id": "c", "title": "谢谢", "content": "供应链部"}]})
+    check("rhythm: 密度抬升记 build（负荷上升），密度回落才是 breathe",
+          [p["judgment"]["rhythm"]["move"] for p in tempo["pages"]]
+          == ["open", "build", "close"],
+          str([p["judgment"]["rhythm"]["move"] for p in tempo["pages"]]))
+
+    # 9 · 请求句藏在正文里而主张没点名它：数字焦点合法占了第一落点，但请求被
+    #     挤成一行正文＝决定被推迟（实测「请委员会批准…」被 5.8 元压掉）。
+    ask_page = intel.page_judgment(
+        {"id": "q1", "title": "投产后单均成本可回到 5.8 元，两年收回投资",
+         "content": "预计节约 2.6 亿元。请委员会批准方案并同意 11 月启动一期建设"},
+        index=1, total=3, brief={"audience": "委员会", "decision": "批准"},
+        world=world, warnings=[])
+    check("open_questions: 正文含请求句时提醒作者把它落到收束位",
+          any("请求" in q for q in ask_page["open_questions"] or []),
+          str(ask_page["open_questions"]))
+
+
 def test_audit_boundaries(tmp):
     """独立关系不变式 + 字体/文件缓存身份；不把结构证据升级为视觉终验。"""
     import os
@@ -4661,6 +4794,7 @@ def main():
                          ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries),
                          ("release_evidence", test_release_evidence),
                          ("design_judgment", test_design_judgment),
+                         ("cjk_rhythm_regression", test_cjk_rhythm_regression),
                          ("boundary_typography", test_boundary_typography),
                          ("audit_boundaries", test_audit_boundaries),
                          ("delivery_safety", test_delivery_safety),
