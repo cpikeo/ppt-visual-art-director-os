@@ -25,6 +25,7 @@
 - **预览排版口径与产物对齐**：`_draw_text` 无条件插入混排脚本间隙（compiler.py:197 对所有 run 插入、guard 按间隙后文本量宽，此前 char_spacing=0 时预览不插，同一行文本三个口径）；space_before/space_after 计入段间隙（compiler 写真实段落属性，此前被预览忽略）；逐段折行，段内禁则照旧、截断按段记账。
 - **完全出画布的元素记账**：bbox 与画布无交集的元素进 `out_of_canvas()` 台账并转 meta/stderr 提示；部分出血不算（常为有意构图）。此前预览静默裁掉，「观众不可见」与「不存在」无从区分。
 - **联络表自我声明与混尺寸对齐**：标签带（表格 chrome，不碰页面像素）标注「结构预览 · 方向证据 · 非目标软件渲染」；独立调用给出不同尺寸页图时按格子缩放对齐，不再把小图露底/大图压格画进证据。
+- **Pillow 10.0 位图回落下 ghost 标注的锚点定位**：依赖下限档（Pillow==10.0）的 `load_default()` 返回位图字面，`draw.text` 的 anchor 被静默忽略——截断标记（rs）、联络表边界声明（ra）与 PREVIEW_ABSTRACT 占位声明（mb/mt）会画到锚点右下方之外（CI minimum 档实测：标记 corner 墨迹 2px、边界带 0px；latest 档 Pillow≥10.1 的默认字面是 FreeType 故不复现）。新增 `_draw_anchored`：FreeType 直接用 anchor，位图回落按 bbox 手工偏移；只影响 ghost 自己的标注文字，待评内容的绘制路径与 Pillow 约束不变（requirements 下限仍为 10.0）。
 - ghost.meta.json 新增可选键 `text_truncations`、`out_of_canvas`（无则不写，既有键与契约不变）；页缓存键含 engine 指纹（preview scope 含 ghost.py），本轮改动自动失效全部页缓存并重画——属设计内行为。
 
 ### 评估与盲评链路（bench）

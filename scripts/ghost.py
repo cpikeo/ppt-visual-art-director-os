@@ -502,9 +502,9 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
         # 截断必须可见：产物不截断（PowerPoint 原生文本会全部排出来），预览按
         # 声明收笔——不标一句话，作者会把「预览装下了」当成「目标软件也装下了」。
         note_font = _font(max(9.0, min(size * 0.6, 14.0)), cjk=True)
-        d.text((x + w - pad, y + h - pad),
-               f"还有 {dropped} 行未显示（max_lines）",
-               font=note_font, fill=_rgba(ctx, "muted", 0.95), anchor="rs")
+        _draw_anchored(d, (x + w - pad, y + h - pad),
+                       f"还有 {dropped} 行未显示（max_lines）",
+                       note_font, _rgba(ctx, "muted", 0.95), "rs")
     if overlay is not None:
         img.alpha_composite(overlay)
 
@@ -789,6 +789,31 @@ PREVIEW_ABSTRACT = frozenset(k for k, v in CHART_SPEC.items() if v["preview"] ==
 
 
 
+def _draw_anchored(d: ImageDraw.ImageDraw, xy, text: str, font, fill, anchor: str) -> None:
+    """ghost 自己的标注文字：锚点在所有受支持的 Pillow 上都必须成立。
+
+    Pillow 10.0（依赖下限档）的 load_default() 返回位图字面，draw.text 的
+    anchor 被静默忽略——标注会画到锚点右下方之外（CI minimum 档实测：截断
+    标记 corner 墨迹 2px、联络表边界带 0px）。FreeType 字面直接用 anchor；
+    位图回落按 bbox 手工偏移，标注仍落在声明位置。待评内容的绘制路径不变。
+    """
+    if isinstance(font, ImageFont.FreeTypeFont):
+        d.text(xy, text, font=font, fill=fill, anchor=anchor)
+        return
+    bbox = d.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x, y = float(xy[0]), float(xy[1])
+    if anchor[0] == "r":
+        x -= tw
+    elif anchor[0] in {"m", "c"}:
+        x -= tw / 2
+    if anchor[-1] in {"s", "b", "d"}:
+        y -= th
+    elif anchor[-1] in {"m", "c"}:
+        y -= th / 2
+    d.text((x, y), text, font=font, fill=fill)
+
+
 def _draw_wrapped(d: ImageDraw.ImageDraw, text: str, xy: tuple[int, int], width: int,
                   font, fill, line_gap: float = 1.3) -> None:
     """按像素宽度折行的小段文本（steps 的 desc 用；与 compiler 文本框同口径）。"""
@@ -806,10 +831,10 @@ def _draw_unrendered(d: ImageDraw.ImageDraw, box: tuple[int, int, int, int], kin
     cx, cy = (left + right) // 2, (top + bottom) // 2
     name = _font(px_to_pt(12.5 * scale), cjk=False)
     note = _font(px_to_pt(11 * scale), cjk=True)
-    d.text((cx, cy - int(10 * scale)), kind.upper(), font=name, fill=(150, 150, 150, 200),
-           anchor="mb")
-    d.text((cx, cy + int(10 * scale)), "预览不渲染此图形 · 以编译产物为准",
-           font=note, fill=(150, 150, 150, 200), anchor="mt")
+    _draw_anchored(d, (cx, cy - int(10 * scale)), kind.upper(), name,
+                   (150, 150, 150, 200), "mb")
+    _draw_anchored(d, (cx, cy + int(10 * scale)), "预览不渲染此图形 · 以编译产物为准",
+                   note, (150, 150, 150, 200), "mt")
 
 
 def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> None:
@@ -1878,8 +1903,9 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
         if i == 0:
             # 证据边界随图走：联络表是最常被单独截屏传播的工件，脱离 meta 之后
             # 仍然要说清自己是什么——标签带是表格的 chrome，不碰页面像素。
-            draw.text((x + cell_w, y + cell_h + 8), "结构预览 · 方向证据 · 非目标软件渲染",
-                      fill=(140, 136, 130), font=note_font, anchor="ra")
+            _draw_anchored(draw, (x + cell_w, y + cell_h + 8),
+                           "结构预览 · 方向证据 · 非目标软件渲染",
+                           note_font, (140, 136, 130), "ra")
     target.parent.mkdir(parents=True, exist_ok=True)
     _write_png(target, sheet, compress_level=png_compress_level)
     if stats is not None:
