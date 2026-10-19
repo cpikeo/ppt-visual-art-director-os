@@ -3311,22 +3311,49 @@ def test_ghost_observations(tmp: Path):
 
     # 1 · max_lines 截断不再静默：产物（PowerPoint 原生文本）从不截断，预览按
     #     声明收笔时必须留下「还有 N 行未显示」的可见标记与台账记录。
-    long_text = "这是一段相当长的中文文本，它的折行数会超过作者声明的最大行数，观察预览如何标记截断。"
+    #     截断机制与字面无关：拉丁文本在真字体/回退字体下走同一套代码，先钉机制
+    #     本身（CI 的 Linux 无 CJK 字面，正好覆盖回退路径）；中文度量再按字面
+    #     环境分支——有真 CJK 字面验度量，没有则验回落记账，不假装有字体。
+    from ghost import _wrap_lines, _font
+    latin_text = ("Define the layout decision in one short repeatable sentence "
+                  "for every single slide review meeting.")
     g._TRUNCATIONS.clear()
-    truncated = ghost_page(slide_of([{"id": "t1", "type": "text", "x": 100, "y": 100,
-                                  "width": 240, "height": 70, "text": long_text,
-                                  "size": 18, "color": "ink", "max_lines": 2}]),
-                           spec([]), scale=1.0)
-    px = truncated.load()
-    corner = [(x, y) for y in range(140, 168) for x in range(220, 342)
+    latin_page = ghost_page(slide_of([{"id": "en", "type": "text", "x": 100, "y": 100,
+                                       "width": 150, "height": 80, "text": latin_text,
+                                       "size": 16, "color": "ink", "max_lines": 2}]),
+                            spec([]), scale=1.0)
+    px = latin_page.load()
+    corner = [(x, y) for y in range(156, 186) for x in range(110, 252)
               if sum(px[x, y][:3]) < 500]
+    expected_dropped = max(0, len(_wrap_lines(latin_text, _font(16, cjk=False), 150)) - 2)
     check("ghost: max_lines 截断在框右下角留下可见标记",
-          len(corner) > 30, str(len(corner)))
+          expected_dropped > 0 and len(corner) > 30,
+          f"dropped={expected_dropped} corner={len(corner)}")
     check("ghost: 截断台账按「页/元素」记录被丢弃的行数",
-          text_truncations().get("s1/t1") == 2, str(text_truncations()))
+          text_truncations().get("s1/en") == expected_dropped, str(text_truncations()))
+    long_text = "这是一段相当长的中文文本，它的折行数会超过作者声明的最大行数，观察预览如何标记截断。"
+    has_cjk_metrics = _font(18, cjk=True).getlength("第") >= 12
+    if has_cjk_metrics:
+        g._TRUNCATIONS.clear()
+        ghost_page(slide_of([{"id": "t1", "type": "text", "x": 100, "y": 100,
+                              "width": 240, "height": 70, "text": long_text,
+                              "size": 18, "color": "ink", "max_lines": 2}]),
+                   spec([]), scale=1.0)
+        check("ghost: 中文文本按真实 CJK 度量折行截断（13 字/行 × 4 行 → 丢 2 行）",
+              text_truncations().get("s1/t1") == 2, str(text_truncations()))
+    else:
+        g._TRUNCATIONS.clear()
+        g._FONT_FALLBACKS.clear()
+        g._FONT_CACHE.clear()   # 回落只在真实加载时记账；清缓存强制重走加载路径
+        ghost_page(slide_of([{"id": "t1", "type": "text", "x": 100, "y": 100,
+                              "width": 240, "height": 70, "text": long_text,
+                              "size": 18, "color": "ink", "max_lines": 2}]),
+                   spec([]), scale=1.0)
+        check("ghost: 本机无 CJK 字面时回落记账（缺字面必须可见，不静默降级）",
+              g.font_fallbacks() != {}, str(g.font_fallbacks()))
     g._TRUNCATIONS.clear()
     ghost_page(slide_of([{"id": "t1", "type": "text", "x": 100, "y": 100,
-                      "width": 240, "height": 70, "text": long_text,
+                      "width": 240, "height": 70, "text": latin_text,
                       "size": 18, "color": "ink"}]), spec([]), scale=1.0)
     check("ghost: 未声明 max_lines 时不产生截断记录（溢出画出框外，与产物同向）",
           text_truncations() == {}, str(text_truncations()))
@@ -3415,12 +3442,13 @@ def test_ghost_observations(tmp: Path):
     #     meta 里，新的一轮从零开始记账。
     g._TRUNCATIONS.clear()
     g._TRUNCATIONS["stale/x"] = 9
-    deck_spec = spec([{"id": "t1", "type": "text", "x": 100, "y": 100, "width": 240,
-                       "height": 70, "text": long_text, "size": 18, "color": "ink",
+    deck_spec = spec([{"id": "t1", "type": "text", "x": 100, "y": 100, "width": 150,
+                       "height": 80, "text": latin_text, "size": 16, "color": "ink",
                        "max_lines": 2}])
     ghost_deck(deck_spec, tmp / "deck_preview", scale=0.5)
+    deck_dropped = max(0, len(_wrap_lines(latin_text, _font(8, cjk=False), 75)) - 2)
     check("ghost: ghost_deck 开新账（上轮截断记录不串轮）",
-          text_truncations() == {"s1/t1": 2}, str(text_truncations()))
+          text_truncations() == {"s1/t1": deck_dropped}, str(text_truncations()))
 
 
 def test_audit_boundaries(tmp):
