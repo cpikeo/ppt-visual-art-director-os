@@ -3031,6 +3031,87 @@ def test_design_judgment(tmp: Path):
     _bkey.write_text('{"V01": "a.pptx", "V02": "b.pptx"}', encoding="utf-8")
     check("blind: 评审不足三位时输出 NOT_ENOUGH_REVIEWERS（不宣称共识）",
           _bench.blind_score([str(_bsheet)], str(_bkey))["consensus"] == "NOT_ENOUGH_REVIEWERS")
+    # 盲评链路审计钉（bench 轮）：文献对拍 / 匿名净化 / 溯源 / 量表 / 统计诚实性
+    check("blind: ICC(2,1) 对拍 Shrout & Fleiss (1979) 文献值 0.290",
+          abs(_bench._icc_2_1([[9, 2, 5, 8], [6, 1, 3, 2], [8, 4, 6, 8],
+                               [7, 1, 2, 6], [10, 5, 6, 9], [6, 2, 4, 7]]) - 0.290) < 5e-4)
+    from pptx import Presentation as _Prs
+    import zipfile as _zf
+    _prs = _Prs()
+    _prs.core_properties.author = "审计作者"
+    _vp = tmp / "ident.pptx"
+    _prs.save(str(_vp))
+    _pk = _bench.blind_pack([str(_vp)], tmp / "blindpack", seed=11)
+    _core = _zf.ZipFile(tmp / "blindpack" / "V01.pptx").read("docProps/core.xml").decode("utf-8")
+    _key2 = json.loads(Path(_pk["key"]).read_text(encoding="utf-8"))
+    check("blind: 打包抹去 pptx 作者身份并记录前后哈希（材料可查调包）",
+          "审计作者" not in _core
+          and _key2["sha256"]["V01"]["source_sha256"] != _key2["sha256"]["V01"]["packed_sha256"]
+          and bool(_key2.get("packed_at_utc")) and _key2.get("seed") == 11)
+    import shutil as _shutil
+    import io as _io
+    import csv as _csv
+    _vd = tmp / "deckdir"
+    (_vd / "out_preview").mkdir(parents=True)
+    (_vd / "out.manifest.json").write_text("{}", encoding="utf-8")
+    (_vd / "out_preview" / "ghost.meta.json").write_text("{}", encoding="utf-8")
+    _shutil.copyfile(_vp, _vd / "deck.pptx")
+    _bench.blind_pack([str(_vd)], tmp / "blinddir", seed=1)
+    _copied = [q.name for q in (tmp / "blinddir" / "V01").rglob("*")]
+    check("blind: 目录源不携带流程工件（manifest/meta 留在评审目录外）",
+          "out.manifest.json" not in _copied and "ghost.meta.json" not in _copied
+          and "deck.pptx" in _copied)
+    _k3 = tmp / "k3.json"
+    _k3.write_text(json.dumps({"V01": "a.pptx", "V02": "b.pptx", "V03": "c.pptx"}), encoding="utf-8")
+
+    def _wsheet(rows, name):
+        stream = _io.StringIO(newline="")
+        writer = _csv.writer(stream)
+        writer.writerow(["reviewer", "item", *_bench.BLIND_DIMS, "reason"])
+        for r_ in rows:
+            writer.writerow(r_)
+        p_ = tmp / name
+        p_.write_text(stream.getvalue(), encoding="utf-8")
+        return p_
+
+    _full = lambda r_, i_, v_: [r_, i_, *([str(v_)] * 5), ""]
+    try:
+        _bench.blind_score([str(_wsheet([_full("r1", "V01", 9), _full("r1", "V02", 1),
+                                         _full("r1", "V03", 1)], "oob.csv"))], str(_k3))
+        _rej = False
+    except ValueError:
+        _rej = True
+    check("blind: 量表外分数拒绝（1–7 之外不入统计）", _rej)
+    _rep_same = _bench.blind_score(
+        [str(_wsheet([_full(r_, i_, 4) for r_ in ("r1", "r2", "r3")
+                      for i_ in ("V01", "V02", "V03")], "same.csv"))], str(_k3))
+    check("blind: 完全一致矩阵按「一致」处理并注明零方差（不再误判 NO_CONSENSUS）",
+          _rep_same["consensus"] == "CONSENSUS_SUPPORTED" and "零方差" in _rep_same["dimensions"]["叙事"]["note"])
+    _rep2 = _bench.blind_score(
+        [str(_wsheet([_full("r1", i_, v_) for i_, v_ in (("V01", 5), ("V02", 3), ("V03", 4))]
+                     + [_full("r2", i_, v_) for i_, v_ in (("V01", 4), ("V02", 4), ("V03", 5))],
+                     "two.csv"))], str(_k3))
+    check("blind: 评审不足三位仍报告均值与缺口（不丢弃已收数据）",
+          _rep2["consensus"] == "NOT_ENOUGH_REVIEWERS" and _rep2["dimensions"]["叙事"]["mean"]
+          and _rep2["missing_items_by_reviewer"] == {})
+    _vec = lambda r_: [_full(r_, "V01", 5), _full(r_, "V02", 3), _full(r_, "V03", 4)]
+    _rep_dup = _bench.blind_score(
+        [str(_wsheet(_vec("r1") + _vec("r2")
+                     + [_full("r3", i_, v_) for i_, v_ in (("V01", 2), ("V02", 5), ("V03", 3))],
+                     "dup.csv"))], str(_k3))
+    check("blind: 完全相同向量双评审被标记（保留数据交组织者复核，不静默平均）",
+          _rep_dup.get("suspect_identical_reviewers") == [["r1", "r2"]])
+    _rep_ci = _bench.blind_score(
+        [str(_wsheet([_full("r1", "V01", 5), _full("r1", "V02", 3), _full("r1", "V03", 4),
+                      _full("r2", "V01", 4), _full("r2", "V02", 4), _full("r2", "V03", 5),
+                      _full("r3", "V01", 5), _full("r3", "V02", 3), _full("r3", "V03", 3)],
+                     "ci.csv"))], str(_k3))
+    _dim = _rep_ci["dimensions"]["叙事"]
+    check("blind: ICC 带自助法区间与小样本注记（不假装点估计很准）",
+          isinstance(_dim.get("icc_ci95"), list) and _dim["n_items"] == 3 and "版本少" in _dim["note"]
+          and _dim["icc_ci95"][0] <= _dim["icc"] <= _dim["icc_ci95"][1])
+    check("blind: 汇总报告写明一致性与质量的边界（读法不靠约定俗成）",
+          "不衡量设计质量" in _rep_ci["how_to_read"] and _rep_ci["identified_report"] is True)
     # R7 文档：SKILL 保留逐页五问，且五问不被删成空话
     check("docs: SKILL §3 保留逐页五问（受众 / 主张 / 证据 / 焦点 / 构图理由）",
           all(k in (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -3207,6 +3288,139 @@ def test_cjk_rhythm_regression(tmp: Path):
     check("open_questions: 正文含请求句时提醒作者把它落到收束位",
           any("请求" in q for q in ask_page["open_questions"] or []),
           str(ask_page["open_questions"]))
+
+
+def test_ghost_observations(tmp: Path):
+    """ghost 专项审计回归：预览的证据诚实性与口径对齐（每条对应一个实测缺陷）。
+
+    覆盖：max_lines 截断可见（页面标记 + 台账）、段距与产物同义、混排间隙
+    与 compiler/guard 同一份文本、联络表混尺寸页图对齐格子、证据边界随图走。
+    这些是「结构预览」对自身边界说话的纪律，不是把预览当第二个渲染器。
+    """
+    import ghost as g
+    from ghost import ghost_page, ghost_deck, text_truncations, make_contact_sheet
+
+    theme = {"colors": {"background": "#FFFFFF", "ink": "#111111", "muted": "#888888"}}
+
+    def spec(elements):
+        return {"canvas": {"width": 1280, "height": 720}, "theme": theme,
+                "slides": [{"id": "s1", "elements": elements}]}
+
+    def slide_of(elements):
+        return {"id": "s1", "elements": elements}
+
+    # 1 · max_lines 截断不再静默：产物（PowerPoint 原生文本）从不截断，预览按
+    #     声明收笔时必须留下「还有 N 行未显示」的可见标记与台账记录。
+    long_text = "这是一段相当长的中文文本，它的折行数会超过作者声明的最大行数，观察预览如何标记截断。"
+    g._TRUNCATIONS.clear()
+    truncated = ghost_page(slide_of([{"id": "t1", "type": "text", "x": 100, "y": 100,
+                                  "width": 240, "height": 70, "text": long_text,
+                                  "size": 18, "color": "ink", "max_lines": 2}]),
+                           spec([]), scale=1.0)
+    px = truncated.load()
+    corner = [(x, y) for y in range(140, 168) for x in range(220, 342)
+              if sum(px[x, y][:3]) < 500]
+    check("ghost: max_lines 截断在框右下角留下可见标记",
+          len(corner) > 30, str(len(corner)))
+    check("ghost: 截断台账按「页/元素」记录被丢弃的行数",
+          text_truncations().get("s1/t1") == 2, str(text_truncations()))
+    g._TRUNCATIONS.clear()
+    ghost_page(slide_of([{"id": "t1", "type": "text", "x": 100, "y": 100,
+                      "width": 240, "height": 70, "text": long_text,
+                      "size": 18, "color": "ink"}]), spec([]), scale=1.0)
+    check("ghost: 未声明 max_lines 时不产生截断记录（溢出画出框外，与产物同向）",
+          text_truncations() == {}, str(text_truncations()))
+
+    # 2 · 段距与产物同义（compiler 写 p.space_before/space_after）：两段之间的
+    #     空隙必须随 space_before/after 拉开，预览不再把多段落排得比产物紧。
+    def bands(elem):
+        im = ghost_page(slide_of([elem]), spec([]), scale=1.0)
+        p = im.load()
+        rows = [y for y in range(40, 500)
+                if sum(1 for x in range(90, 720) if sum(p[x, y][:3]) < 600) > 2]
+        out, start = [], rows[0]
+        for a, b in zip(rows, rows[1:]):
+            if b - a > 3:
+                out.append((start, a))
+                start = b
+        out.append((start, rows[-1]))
+        return out
+
+    two_para = {"id": "p", "type": "text", "x": 100, "y": 50, "width": 600,
+                "height": 400, "text": "第一段\n第二段", "size": 20, "color": "ink"}
+    tight = bands(two_para)
+    spaced = bands(dict(two_para, space_before=40, space_after=20))
+    base_gap = tight[1][0] - tight[0][1]
+    grew_gap = spaced[1][0] - spaced[0][1]
+    check("ghost: 段前/段后距计入段间隙（与 compiler 段落间距同义）",
+          grew_gap - base_gap == 60,
+          f"base={base_gap} grew={grew_gap}")
+
+    # 3 · 混排间隙总是插入：compiler 对所有文本 run 插脚本间隙、guard 按间隙后
+    #     文本量宽，预览曾只在显式字距时插入——同一行文本三个口径。
+    import primitives as prim
+    calls = {"n": 0}
+    real = prim.insert_script_gaps
+
+    def spy(t):
+        calls["n"] += 1
+        return real(t)
+
+    prim.insert_script_gaps = spy
+    try:
+        ghost_page(slide_of([{"id": "m", "type": "text", "x": 100, "y": 100,
+                          "width": 600, "height": 60, "text": "订单量 1,840 万单",
+                          "size": 20, "color": "ink"}]), spec([]), scale=1.0)
+    finally:
+        prim.insert_script_gaps = real
+    check("ghost: 字距缺省时同样插入混排间隙（与产物/guard 同一份文本）",
+          calls["n"] >= 1, str(calls))
+
+    # 4 · 联络表：独立调用可能给出不同尺寸的页图，网格按第一张算——
+    #     不缩放会把错误的结构画进证据（大图压相邻格 / 小图周围露底）。
+    from PIL import Image as _Img
+    d = tmp / "sheet"
+    d.mkdir(parents=True, exist_ok=True)
+    big, small = d / "ghost-01.png", d / "ghost-02.png"
+    _Img.new("RGB", (640, 360), (200, 60, 60)).save(big)
+    _Img.new("RGB", (320, 180), (60, 60, 200)).save(small)
+    sheet = make_contact_sheet([big, small], d / "sheet.png", columns=2)
+    center = _Img.open(sheet).getpixel((640 + 24 + 160, 24 + 180))
+    check("ghost: 联络表混尺寸页图对齐格子尺寸（不把错误结构画进证据）",
+          center == (60, 60, 200), str(center))
+
+    # 5 · 证据边界随图走：联络表是最常被单独传播的工件，标签带（表格 chrome，
+    #     不碰页面像素）必须说清「结构预览 · 非目标软件渲染」。
+    mark = _Img.open(sheet).crop((400, 384, 664, 414))
+    dark = sum(1 for pxl in mark.getdata() if sum(pxl[:3]) < 620)
+    check("ghost: 联络表标签带带证据边界声明（结构预览 ≠ 目标软件渲染）",
+          dark > 40, str(dark))
+
+    # 6 · bbox 完全出画布的元素记账（部分出血不算）：观众在预览和产物里都看不到它，
+    #     静默裁掉会让「看不见」混进「不存在」。
+    g._TRUNCATIONS.clear()
+    g._OUT_OF_CANVAS.clear()
+    ghost_page(slide_of([
+        {"id": "bleed", "type": "shape", "x": 1200, "y": 100, "width": 200,
+         "height": 100, "fill": "ink"},
+        {"id": "off", "type": "shape", "x": 1400, "y": 100, "width": 200,
+         "height": 100, "fill": "ink"},
+        {"id": "neg", "type": "shape", "x": -300, "y": 100, "width": 200,
+         "height": 100, "fill": "ink"},
+    ]), spec([]), scale=1.0)
+    check("ghost: bbox 完全出画布的元素记账（部分出血不算）",
+          g.out_of_canvas() == {"s1": ["off", "neg"]}, str(g.out_of_canvas()))
+
+    # 7 · ghost_deck 是台账的轮次边界：上一轮的截断记录留在缓存 PNG 与上轮
+    #     meta 里，新的一轮从零开始记账。
+    g._TRUNCATIONS.clear()
+    g._TRUNCATIONS["stale/x"] = 9
+    deck_spec = spec([{"id": "t1", "type": "text", "x": 100, "y": 100, "width": 240,
+                       "height": 70, "text": long_text, "size": 18, "color": "ink",
+                       "max_lines": 2}])
+    ghost_deck(deck_spec, tmp / "deck_preview", scale=0.5)
+    check("ghost: ghost_deck 开新账（上轮截断记录不串轮）",
+          text_truncations() == {"s1/t1": 2}, str(text_truncations()))
 
 
 def test_audit_boundaries(tmp):
@@ -3893,7 +4107,7 @@ def test_win_portability(tmp: Path):
     key = json.loads(Path(pack["key"]).read_text(encoding="utf-8"))
     check("win: 跨盘符分支下 blind pack 仍可用且来源标识不被改写",
           (work / "out" / "V01" / "evidence.txt").read_bytes() == b"evidence"
-          and key == {"V01": source}, str(key))
+          and key["items"] == {"V01": source} and key["seed"] == 3, str(key))
 
 
 def test_deep_release(tmp: Path):
@@ -4006,7 +4220,7 @@ def test_deep_release(tmp: Path):
     healthy_pack = bench.blind_pack([relative_source], tmp / "healthy-blind", seed=1)
     check("deep: blind pack 正常目录及评分表保持可用", (tmp / "healthy-blind/V01/evidence.txt").read_bytes() == b"evidence"
           and Path(healthy_pack["sheet"]).is_file()
-          and json.loads(Path(healthy_pack["key"]).read_text(encoding="utf-8")) == {"V01": relative_source})
+          and json.loads(Path(healthy_pack["key"]).read_text(encoding="utf-8"))["items"] == {"V01": relative_source})
 
     chart = {"id": "c", "type": "chart", "chart_kind": "ranked_bar", "x": 64, "y": 80,
              "width": 1000, "height": 400, "data": [{"label": "Visible", "value": 1}],
@@ -4269,7 +4483,7 @@ def test_integrity_followup(tmp: Path):
         check(f"integrity: 未知版本/重复评分拒绝 {duplicate}", rejected)
     scores(["V01", "V02", "V03"])
     check("integrity: 合法独立评分仍形成统计一致", bench.blind_score([str(sheet)], str(key))["consensus"]
-          == "CONSENSUS_WEAK_OR_OK")
+          == "CONSENSUS_SUPPORTED")
     scores(["V01", "V02", "V03"], "nan")
     with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
         try:
@@ -4796,6 +5010,7 @@ def main():
                          ("design_judgment", test_design_judgment),
                          ("cjk_rhythm_regression", test_cjk_rhythm_regression),
                          ("boundary_typography", test_boundary_typography),
+                         ("ghost_observations", test_ghost_observations),
                          ("audit_boundaries", test_audit_boundaries),
                          ("delivery_safety", test_delivery_safety),
                          ("material_direction", test_material_direction),

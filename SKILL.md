@@ -109,7 +109,7 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 - 终稿用 `--speed strict` 全页取证；迭代可用 `fast`（只取关键页，不等于全页视觉验收）。
 - `BLOCK` 后读取修复包，按根因组一次批量修复，再复跑同一条 check；不逐页重试。
 - 图像清单含独立提示词供批量出图；本技能包**不替外部生成器出图**。
-- 视觉质量由人评，不由自动门评。盲评通道见 `scripts/bench.py blind`。
+- 视觉质量由人评，不由自动门评。盲评通道见 `scripts/bench.py blind`（量表 1–7；汇总报 ICC 一致性，一致性≠质量）。
 
 ## 6. QA
 

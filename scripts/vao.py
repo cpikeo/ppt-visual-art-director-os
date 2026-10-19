@@ -494,6 +494,24 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
         print("VAO warning: 本机缺少预览字面 " + "、".join(sorted(fallbacks))
               + "；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。",
               file=sys.stderr)
+    # max_lines 截断同理：预览按声明收笔，产物（PowerPoint）不截断。页面上已有
+    # 可见标记；台账让它进 meta，可按「页/元素」复核，不必逐页放大找那一行字。
+    from ghost import text_truncations
+    truncations = text_truncations()
+    if truncations:
+        info["text_truncations"] = truncations
+        print("VAO warning: 预览有 " + str(len(truncations))
+              + " 个文本被 max_lines 截断（页面已标记）；目标 PowerPoint 不截断，"
+                "请核对框容量或放宽 max_lines。", file=sys.stderr)
+    # bbox 完全出画布的元素：预览裁掉、产物同样不可见——不是预览失真，是稿子
+    # 本身有观众看不到的元素。部分出血不算（那常是有意构图）。
+    from ghost import out_of_canvas
+    outside = out_of_canvas()
+    if outside:
+        info["out_of_canvas"] = outside
+        print("VAO warning: " + "、".join(
+            f"{pg} 页 {', '.join(ids)}" for pg, ids in sorted(outside.items()))
+            + " 整体在画布外，观众不可见；若非有意放置请移回画布。", file=sys.stderr)
     # 页图与联络表是交付证据，不仅要存在，还得是上轮验证的那份字节。
     info["file_witnesses"] = {str(p): preview_witness(p)
                               for p in [*paths, *([contact] if contact else [])]}

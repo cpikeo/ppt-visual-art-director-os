@@ -67,7 +67,10 @@ def _checks(expect: dict, actual: dict) -> list[dict]:
 
 
 def run(cases_path: Path = DEFAULT_CASES) -> dict:
-    data = json.loads(Path(cases_path).read_text(encoding="utf-8"))
+    import hashlib
+    data_path = Path(cases_path)
+    raw = data_path.read_bytes()
+    data = json.loads(raw.decode("utf-8"))
     results = []
     for case in data["cases"]:
         actual = _actual(case)
@@ -78,7 +81,11 @@ def run(cases_path: Path = DEFAULT_CASES) -> dict:
                         "actual": actual, "checks": checks,
                         "passed": all(c["ok"] for c in checks),
                         "why": case.get("why", "")})
-    return {"cases": results, "metrics": _metrics(results)}
+    # 报告绑定案例文件身份：结果与「哪一份案例集的哪个版本」可互相追认，
+    # 开发集、冻结集与未来独立集在报告层面不再混淆。
+    return {"cases": results, "metrics": _metrics(results),
+            "cases_identity": {"file": str(data_path),
+                               "sha256_12": hashlib.sha256(raw).hexdigest()[:12]}}
 
 
 def _metrics(results: list[dict]) -> dict:
@@ -134,12 +141,54 @@ def regression(current: dict, baseline: dict) -> dict:
 BLIND_DIMS = ("narrative", "focus", "composition", "typography", "completeness")
 BLIND_DIMS_CN = {"narrative": "叙事", "focus": "焦点", "composition": "构图",
                  "typography": "中文排版", "completeness": "整体完成度"}
+BLIND_SCALE = (1, 7)        # 评分量表：1 严重不足 … 4 及格线 … 7 优秀；量表外一律拒绝
+BLIND_ICC_THRESHOLD = 0.5   # 启发式共识线，不是统计检验；不确定性看各维度 icc_ci95
+HOW_TO_READ_BLIND = ("ICC 衡量评审者之间的一致性，不衡量设计质量：一致地高与一致地低都可能。"
+                     "均值是本组评审的平均印象，不是客观质量；0.5 共识线是启发式阈值，不是统计检验。"
+                     "mean 键为真实来源路径（含映射信息），本报告勿直接外发。")
+# vao/bench 生成的流程工件：带着它们进评审目录，等于把作者/版本线索递给评审者。
+_BLIND_STRIP_PATTERNS = (".git", "__pycache__", "*.pyc", "pages",   # pages = ghost 页缓存
+                         "*manifest*.json", "ghost.meta.json", "*.key.json", "score_sheet.csv")
+
+
+def _scrub_pptx_identity(path: Path) -> None:
+    """原地重写 pptx，仅抹去 docProps/core.xml 的「谁/何时」身份字段。
+
+    清得掉的是文件属性身份；作者写进画面、备注或文件名里的身份清不掉，
+    由 pack 内 README 提醒送评人自检——不假装净化是彻底的。
+    """
+    import re
+    import zipfile
+    blank = [(re.compile(r"(<dc:creator>).*?(</dc:creator>)", re.S), r"\1\2"),
+             (re.compile(r"(<cp:lastModifiedBy>).*?(</cp:lastModifiedBy>)", re.S), r"\1\2"),
+             (re.compile(r"(<cp:lastPrinted>).*?(</cp:lastPrinted>)", re.S), r"\1\2"),
+             (re.compile(r"(<cp:revision>).*?(</cp:revision>)", re.S), r"\1\2"),
+             (re.compile(r"(<dcterms:created[^>]*>).*?(</dcterms:created>)", re.S), r"\1\2"),
+             (re.compile(r"(<dcterms:modified[^>]*>).*?(</dcterms:modified>)", re.S), r"\1\2")]
+    with zipfile.ZipFile(path) as zin:
+        entries = [(info, zin.read(info.filename)) for info in zin.infolist()]
+    with zipfile.ZipFile(path, "w") as zout:
+        for info, data in entries:
+            if info.filename == "docProps/core.xml":
+                text = data.decode("utf-8")
+                for pat, rep in blank:
+                    text = pat.sub(rep, text)
+                data = text.encode("utf-8")
+            zout.writestr(info, data)
 
 
 def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict:
-    """打乱并改名待评版本。映射写入 out_dir 之外的 key 文件，评审目录里只有匿名件与空白评分表。"""
+    """打乱并改名待评版本；评审目录只留匿名件、空白评分表与评审须知，映射与溯源写进目录外的 key。
+
+    匿名化的边界（诚实声明，不伪装彻底）：pptx 的「谁/何时」文件属性被抹去，
+    vao/bench 流程工件（manifest/meta/key/页缓存）不进评审目录；作者写进画面
+    内容、备注或文件名里的身份无法自动清除，README 提醒送评人自检。
+    """
+    import csv
+    import hashlib
     import random
     import shutil
+    import time
     from primitives import validate_io_paths, PathConflictError, json_write
     out_dir = Path(out_dir).expanduser().resolve()
     sources = [Path(item).expanduser().resolve() for item in items]
@@ -156,31 +205,65 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict
         raise FileExistsError(f"盲评输出目录非空；请使用新的目录以隔离本轮评审：{out_dir}")
     if key_path.exists():
         raise FileExistsError(f"保留已有盲评映射；请使用新的输出目录：{key_path}")
+    # 未给种子时生成并记进 key：打乱顺序因此可复现、可审计，而不是「没人记得顺序怎么来的」。
+    seed = random.SystemRandom().randrange(2 ** 31) if seed is None else seed
     rng = random.Random(seed)
     order = list(range(len(items)))
     rng.shuffle(order)
     out_dir.mkdir(parents=True, exist_ok=True)
-    mapping, rows = {}, []
+    mapping, digest, rows = {}, {}, []
     for n, idx in enumerate(order, 1):
         src = sources[idx]
         code = f"V{n:02d}"
-        dst = out_dir / f"{code}{src.suffix}"
         if src.is_dir():
-            shutil.copytree(src, out_dir / code, dirs_exist_ok=True)
+            shutil.copytree(src, out_dir / code, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns(*_BLIND_STRIP_PATTERNS))
+            for pptx in sorted((out_dir / code).rglob("*.pptx")):
+                _scrub_pptx_identity(pptx)
+            digest[code] = {"type": "dir",
+                            "packed_files": sum(1 for p in (out_dir / code).rglob("*") if p.is_file())}
         else:
+            dst = out_dir / f"{code}{src.suffix}"
             shutil.copyfile(src, dst)
+            if src.suffix.lower() == ".pptx":
+                _scrub_pptx_identity(dst)
+            digest[code] = {"source_sha256": hashlib.sha256(src.read_bytes()).hexdigest(),
+                            "packed_sha256": hashlib.sha256(dst.read_bytes()).hexdigest()}
         mapping[code] = str(Path(items[idx]))  # 保留 key 中原有的作者路径表达
         rows.append(code)
-    json_write(key_path, mapping)
+    key = {"version_format": 2, "tool": "vao-bench-blind-pack/2",
+           "packed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "seed": seed, "items": mapping, "sha256": digest}
+    json_write(key_path, key)
     sheet = out_dir / "score_sheet.csv"
-    header = ["reviewer", "item"] + list(BLIND_DIMS) + ["reason"]
-    sheet.write_text(",".join(header) + "\n" +
-                     "\n".join(f",{c},,,,,," for c in rows) + "\n", encoding="utf-8")
-    return {"items": rows, "sheet": str(sheet), "key": str(key_path)}
+    header = ["reviewer", "item"] + list(BLIND_DIMS) + ["reason", "review_time"]
+    with sheet.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(header)
+        for code in rows:
+            writer.writerow(["", code] + [""] * len(BLIND_DIMS) + ["", ""])
+    readme = out_dir / "README.txt"
+    readme.write_text(
+        f"盲评材料 · 打包于 {key['packed_at_utc']}\n"
+        "\n"
+        "评分：每版本每维度 1–7 分（1 严重不足 … 4 及格线 … 7 优秀），可为半分；量表外分数汇总时拒绝。\n"
+        "维度：narrative 叙事 / focus 焦点 / composition 构图 / typography 中文排版 / completeness 整体完成度。\n"
+        "纪律：每位评审复制本表单独填写、单独提交，互不看对方分数；review_time 列记录评审时间。\n"
+        "至少 3 位完整评审才估计评审者一致性（ICC）；不足时汇总只报均值与缺口，不装作有共识。\n"
+        "\n"
+        "匿名化边界：已抹去 pptx 文件属性里的作者/时间（docProps/core.xml），已剔除 vao/bench\n"
+        "流程工件（manifest/meta/key/页缓存）；作者写进画面、备注或文件名里的身份无法自动清除，\n"
+        "送评前请自行检查。若需核验材料未被调包，key 文件记录了各版本的 sha256。\n",
+        encoding="utf-8")
+    return {"items": rows, "sheet": str(sheet), "key": str(key_path),
+            "readme": str(readme), "scale": "1-7"}
 
 
 def _icc_2_1(matrix: list[list[float]]) -> float | None:
-    """ICC(2,1)：双向随机效应、单次测量的绝对一致性。matrix[target][rater]。"""
+    """ICC(2,1)：双向随机效应、单次测量的绝对一致性。matrix[target][rater]。
+
+    实现对照 Shrout & Fleiss (1979) Table 1：ICC(2,1)=0.290、ICC(3,1)=0.715，逐位吻合。
+    """
     n = len(matrix)
     k = len(matrix[0]) if n else 0
     if n < 2 or k < 2:
@@ -198,46 +281,140 @@ def _icc_2_1(matrix: list[list[float]]) -> float | None:
     return None if den == 0 else (msr - mse) / den
 
 
+def _icc_ci_bootstrap(mat: list[list[float]], replicates: int = 2000,
+                      seed: int = 20261015) -> tuple[float, float] | None:
+    """按「版本」重抽样的自助法 95% 区间；固定种子，可复现。
+
+    版本少时区间必然宽——这是要暴露的不确定性，不是缺陷。半数以上重抽样
+    不可估（矩阵退化）时放弃区间：给一个不可信的区间比不给更糟。
+    """
+    import random
+    n = len(mat)
+    if n < 2:
+        return None
+    rng = random.Random(seed)
+    vals = []
+    for _ in range(replicates):
+        sample = [mat[rng.randrange(n)] for _ in range(n)]
+        v = _icc_2_1(sample)
+        if v is not None and math.isfinite(v):
+            vals.append(v)
+    if len(vals) < replicates // 2:
+        return None
+    vals.sort()
+    return vals[int(0.025 * (len(vals) - 1))], vals[int(0.975 * (len(vals) - 1))]
+
+
+def _blind_key_items(key: dict) -> dict:
+    """兼容两代 key：v2（溯源元数据 + items 嵌套）与 v1（平铺 code→路径）。"""
+    items = key.get("items") if isinstance(key.get("items"), dict) else key
+    if not items:
+        raise ValueError("盲评 key 必须是非空版本映射")
+    return items
+
+
 def blind_score(sheet_paths: list[str], key_path: str) -> dict:
-    """汇总多位评审的评分表：每版本每维度均值 + ICC(2,1)。一致性低时不宣称共识。"""
+    """汇总多位评审的评分表：每版本每维度均值 + ICC(2,1)（含自助法 95% 区间）。
+
+    只有 ≥3 位完整评审时估计一致性；不足时仍报告均值与缺口——证据不足要说明
+    缺什么，而不是把已收到的数据一起扔掉。部分填写的行记数不统计，量表外拒绝。
+    """
     import csv
     import io
     key = json.loads(Path(key_path).read_text(encoding="utf-8"))
     if not isinstance(key, dict) or not key:
         raise ValueError("盲评 key 必须是非空版本映射")
+    items_map = _blind_key_items(key)
     by_reviewer: dict[str, dict[str, dict]] = {}
+    partial_rows = 0
     for sp in sheet_paths:
         for row in csv.DictReader(io.StringIO(Path(sp).read_text(encoding="utf-8"), newline="")):
-            if not row.get("item") or not row.get("reviewer"):
+            reviewer = (row.get("reviewer") or "").strip()
+            item = (row.get("item") or "").strip()
+            if not item or not reviewer:
                 continue
-            if row["item"] not in key:
-                raise ValueError(f"评分引用未知版本：{row['item']}")
-            vals = {d: row.get(d) for d in BLIND_DIMS}
-            if all(vals[d] not in (None, "") for d in BLIND_DIMS):
+            if item not in items_map:
+                raise ValueError(f"评分引用未知版本：{item}")
+            vals = {d: (row.get(d) or "").strip() for d in BLIND_DIMS}
+            filled = [d for d in BLIND_DIMS if vals[d]]
+            if not filled:
+                continue
+            if len(filled) < len(BLIND_DIMS):
+                partial_rows += 1  # 半填的行记数不统计：静默丢行会让缺口不可见
+                continue
+            try:
                 parsed = {d: float(vals[d]) for d in BLIND_DIMS}
-                if not all(math.isfinite(v) for v in parsed.values()):
-                    raise ValueError(f"评分必须为有限数字：{row['reviewer']}/{row['item']}")
-                ratings = by_reviewer.setdefault(row["reviewer"], {})
-                if row["item"] in ratings:
-                    raise ValueError(f"重复评分：{row['reviewer']}/{row['item']}")
-                ratings[row["item"]] = parsed
+            except ValueError:
+                raise ValueError(f"评分必须为数字：{reviewer}/{item}") from None
+            if not all(math.isfinite(v) for v in parsed.values()):
+                raise ValueError(f"评分必须为有限数字：{reviewer}/{item}")
+            off_scale = {d: v for d, v in parsed.items()
+                         if not (BLIND_SCALE[0] <= v <= BLIND_SCALE[1])}
+            if off_scale:
+                raise ValueError(f"评分须在 {BLIND_SCALE[0]}–{BLIND_SCALE[1]} 内："
+                                 f"{reviewer}/{item} = {off_scale}")
+            ratings = by_reviewer.setdefault(reviewer, {})
+            if item in ratings:
+                raise ValueError(f"重复评分：{reviewer}/{item}")
+            ratings[item] = parsed
     reviewers = sorted(by_reviewer)
-    items = sorted(key)  # 完整性以 key 为准，不以「恰好有人评分的版本」为准
+    items = sorted(items_map)  # 完整性以 key 为准，不以「恰好有人评分的版本」为准
     complete = [r for r in reviewers if set(by_reviewer[r]) == set(items)]
     report = {"reviewers": len(reviewers), "complete_reviewers": len(complete),
-              "items": items, "dimensions": {}, "consensus": "NOT_ENOUGH_REVIEWERS"}
-    if len(complete) < 3:
+              "items": items, "scale": f"{BLIND_SCALE[0]}-{BLIND_SCALE[1]}",
+              "partial_rows": partial_rows,
+              "missing_items_by_reviewer": {r: sorted(set(items) - set(by_reviewer[r]))
+                                            for r in reviewers if set(by_reviewer[r]) != set(items)},
+              "ratings_count": {i: sum(1 for r in reviewers if i in by_reviewer[r]) for i in items},
+              "dimensions": {}, "consensus": "NOT_ENOUGH_REVIEWERS",
+              "identified_report": True, "how_to_read": HOW_TO_READ_BLIND}
+    # 完全相同的评审向量 = 重复提交或疑似串通：标记不剔除（保留数据，交组织者复核）。
+    dupes = [sorted((a, b)) for i, a in enumerate(complete) for b in complete[i + 1:]
+             if by_reviewer[a] == by_reviewer[b]]
+    if dupes:
+        report["suspect_identical_reviewers"] = dupes
+    if not complete:
+        return report
+    k = len(complete)
+
+    def mean_of(d: str) -> dict:
+        return {items_map.get(i, i): round(sum(by_reviewer[r][i][d] for r in complete) / k, 2)
+                for i in items}
+
+    if k < 3:
+        for d in BLIND_DIMS:
+            report["dimensions"][BLIND_DIMS_CN[d]] = {
+                "mean": mean_of(d), "n_items": len(items), "k_raters": k,
+                "note": "评审不足 3 位：不估计一致性，仅呈现均值与缺口"}
         return report
     consensus = True
     for d in BLIND_DIMS:
         mat = [[by_reviewer[r][i][d] for r in complete] for i in items]
-        icc = _icc_2_1(mat)
-        means = {i: round(sum(by_reviewer[r][i][d] for r in complete) / len(complete), 2) for i in items}
-        report["dimensions"][BLIND_DIMS_CN[d]] = {"icc": None if icc is None else round(icc, 3),
-                                                  "mean": {key.get(i, i): means[i] for i in items}}
-        if icc is None or not math.isfinite(icc) or icc < 0.5:
-            consensus = False
-    report["consensus"] = "CONSENSUS_WEAK_OR_OK" if consensus else "NO_CONSENSUS"
+        entry = {"mean": mean_of(d), "n_items": len(items), "k_raters": k, "icc": None}
+        if len({v for row in mat for v in row}) == 1:
+            # 零方差＝评审完全一致；ICC 不可估是数学事实，不是「无共识」。
+            # 也可能意味着评审偷懒或串通——suspect 标记与 review_time 供组织者复核。
+            entry["note"] = "全部分值相同：完全一致；ICC 因零方差不可估，请结合 suspect 标记复核是否独立"
+        else:
+            icc = _icc_2_1(mat)
+            if icc is not None and math.isfinite(icc):
+                entry["icc"] = round(icc, 3)
+                # 阈值判定用原始值，但把结论显式写出来：读者不该拿四舍五入的
+                # 显示值反推判定（0.50 显示、0.4999 判定的差一眼看得见）。
+                entry["meets_threshold"] = icc >= BLIND_ICC_THRESHOLD
+                lo, hi = _icc_ci_bootstrap(mat)
+                entry["icc_ci95"] = None if lo is None else [round(lo, 3), round(hi, 3)]
+                if len(items) < 5:
+                    entry["note"] = "版本少：点估计不稳定，请以区间宽度理解"
+                if icc < BLIND_ICC_THRESHOLD:
+                    consensus = False
+            else:
+                consensus = False
+                entry["note"] = "ICC 不可估（矩阵退化）"
+        report["dimensions"][BLIND_DIMS_CN[d]] = entry
+    report["consensus"] = "CONSENSUS_SUPPORTED" if consensus else "NO_CONSENSUS"
+    report["icc_model"] = ("ICC(2,1) 双向随机、单次测度、绝对一致；0.5 共识线为启发式阈值，"
+                           "非统计检验；区间为按版本重抽样的自助法估计")
     return report
 
 

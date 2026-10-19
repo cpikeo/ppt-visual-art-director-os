@@ -31,6 +31,32 @@ _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.Imag
 # 那个字体没有中文字形——整页中文会画成空白/豆腐块，而预览记录依旧写着「已渲染全页」。
 # 预览是拿来做方向判断的证据，不能被静默降级成误导；所以回落必须可查、必须出声。
 _FONT_FALLBACKS: dict[str, int] = {}
+# max_lines 截断台账（"页/元素" → 本轮累计被截断行数）：预览按作者声明的 max_lines
+# 收笔，但产物（PowerPoint 原生文本）从不截断——预览里"干净收住"的地方，目标软件
+# 里可能正在挤出框外。台账与页面上的标记让"声明容量"和"实际内容"的分歧可见、可查；
+# 空字典 = 本轮绘制的页面没有任何截断。
+_TRUNCATIONS: dict[str, int] = {}
+
+
+def text_truncations() -> dict:
+    """本轮绘制中被 max_lines 截断的元素（"页/元素" → 行数）；空字典 = 无截断。
+
+    只覆盖**本轮新画**的页面：ghost_deck 开头清账；缓存命中的页不重画，
+    它们的截断标记已烙在缓存 PNG 与上轮 meta 里。
+    """
+    return dict(_TRUNCATIONS)
+
+
+_OUT_OF_CANVAS: dict[str, list[str]] = {}
+
+
+def out_of_canvas() -> dict:
+    """本轮绘制中 bbox 完全出画布的元素（"页" → [元素 id]）；空字典 = 无。
+
+    与产物同向的几何事实：PowerPoint 也画不到画布上，观众看不到这些元素。
+    部分出血（与画布相交）不算——那常是有意的构图。
+    """
+    return {k: list(v) for k, v in _OUT_OF_CANVAS.items()}
 
 
 def font_fallbacks() -> dict:
@@ -399,21 +425,41 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
         text = text.upper()
     spacing_pt = float(e.get("char_spacing", 0) or 0)
     tracking = spacing_pt / 0.75 * scale
-    if tracking:
-        from primitives import insert_script_gaps
-        text = insert_script_gaps(text)
+    # 混排间隙与产物同一份文本：compiler 对**所有**文本 run 插入脚本间隙
+    # （U+2009 / 数字-单位 U+00A0），guard 的容量估算也按间隙后的文本量宽。
+    # 预览曾只在显式字距时插入——字距缺省时预览量的、画的都是"生文本"，
+    # 与产物和 guard 各差一个口径（一行里几个中西边界，行宽就差出几个间隙）。
+    from primitives import insert_script_gaps
+    text = insert_script_gaps(text)
     pad = int(round(float(e.get("padding", 0) or 0) * scale))
     size = float(e.get("size", 18) or 18) * scale
     font = _font(size, cjk=_has_cjk(text), bold=bool(e.get("bold")),
                  family=_font_family(e, ctx))
     color = _rgba(ctx, e.get("color") or "ink", e.get("opacity"), fallback=(24, 24, 24))
-    lines = (_wrap_lines(text, font, w - 2 * pad, tracking)
-             if bool(e.get("wrap", True)) else text.split("\n"))
+    # 段距与产物同义（compiler 写 p.space_before/space_after，guard 计入容量）：
+    # 预览曾忽略它——多段落文本在预览里比产物排得紧，作者按预览判断的留白是错的。
+    para_gap = max(0.0, float(e.get("space_before", 0) or 0)
+                   + float(e.get("space_after", 0) or 0)) * scale
+    # 逐段折行；line_gaps 与 lines 等长，记录每行行前的额外段距（仅段首行非零）。
+    lines: list[str] = []
+    line_gaps: list[float] = []
+    for pi, para in enumerate(text.split("\n")):
+        para_lines = (_wrap_lines(para, font, w - 2 * pad, tracking)
+                      if bool(e.get("wrap", True)) else [para]) or [""]
+        for li, line in enumerate(para_lines):
+            lines.append(line)
+            line_gaps.append(para_gap if (pi and li == 0) else 0.0)
     max_lines = e.get("max_lines")
-    if isinstance(max_lines, int) and max_lines > 0:
+    dropped = 0
+    if isinstance(max_lines, int) and max_lines > 0 and len(lines) > max_lines:
+        dropped = len(lines) - max_lines
         lines = lines[:max_lines]
+        line_gaps = line_gaps[:max_lines]
+        page_id = str(getattr(ctx, "page_id", "?") or "?")
+        key = f"{page_id}/{e.get('id') or '?'}"
+        _TRUNCATIONS[key] = _TRUNCATIONS.get(key, 0) + dropped
     line_height = float(e.get("line_height", 1.35) or 1.35) * size
-    total_h = max(1, len(lines)) * line_height
+    total_h = sum(line_height + gap for gap in line_gaps)
     anchor = str(e.get("anchor", "top")).lower()
     if anchor in {"middle", "center"}:
         cy = y + (h - total_h) / 2
@@ -431,7 +477,8 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     # 只有居中/右对齐才需要量行宽：左对齐（默认，绝大多数文字）不量，
     # 每行省一次 textbbox（实测 12 页 193 行 ~31ms，占预览段的 ~10%）。
     need_width = align in {"center", "middle", "right", "end"}
-    for line in lines:
+    for line, gap in zip(lines, line_gaps):
+        cy += gap
         if need_width:
             bbox = d.textbbox((0, 0), line, font=font)
             tw = bbox[2] - bbox[0] + max(0, len(line) - 1) * tracking
@@ -451,6 +498,13 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
         else:
             d.text((int(tx), int(cy)), line, font=font, fill=color)
         cy += line_height
+    if dropped:
+        # 截断必须可见：产物不截断（PowerPoint 原生文本会全部排出来），预览按
+        # 声明收笔——不标一句话，作者会把「预览装下了」当成「目标软件也装下了」。
+        note_font = _font(max(9.0, min(size * 0.6, 14.0)), cjk=True)
+        d.text((x + w - pad, y + h - pad),
+               f"还有 {dropped} 行未显示（max_lines）",
+               font=note_font, fill=_rgba(ctx, "muted", 0.95), anchor="rs")
     if overlay is not None:
         img.alpha_composite(overlay)
 
@@ -1371,6 +1425,8 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     img = Image.new("RGBA", (max(1, int(cw * render_scale)), max(1, int(ch * render_scale))), (255, 255, 255, 255))
     ctx = RenderContext(spec.get("theme"), canvas)
     ctx.image_bytes = spec.get("_image_bytes") or {}
+    # 截断台账的定位键：台账与页面标记要能对到「哪一页的哪个元素」。
+    ctx.page_id = str(slide.get("id") or "?")
     # 核验阶段已经为一整批底图付过解码（同一份字节 + 同一个路径身份），预览直接用，
     # 不必为了往 640×360 的页面上贴一张 4K 图再解一遍。键与 _image_bytes 完全一致。
     ctx.image_decoded = spec.get("_image_decoded") or {}
@@ -1388,6 +1444,16 @@ def ghost_page(slide: dict, spec: dict, scale: float = 1.0, *, supersample: int 
     for e in elements:
         if not isinstance(e, dict):
             continue
+        # 整体在画布外的元素：预览把它裁得无影无踪，产物（PowerPoint）同样
+        # 画不到画布上——观众看不到它。这是几何事实，留账让交付层提示复核
+        # （部分出血是构图手段，不算；这里只记 bbox 完全出界的）。
+        try:
+            ex, ey = float(e.get("x", 0)), float(e.get("y", 0))
+            ew, eh = float(e.get("width", 0)), float(e.get("height", 0))
+        except (TypeError, ValueError):
+            ex = None
+        if ex is not None and (ex >= cw or ey >= ch or ex + ew <= 0 or ey + eh <= 0):
+            _OUT_OF_CANVAS.setdefault(ctx.page_id, []).append(str(e.get("id") or "?"))
         typ = str(e.get("type", "text")).lower()
         if typ == "text":
             _draw_text(img, e, ctx, render_scale)
@@ -1638,6 +1704,9 @@ def ghost_deck(spec: dict, out_dir, pages: list[int] | None = None,
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    # 台账是「本轮绘制」的账：上一轮的截断记录在缓存 PNG 与上轮 meta 里，这里清零。
+    _TRUNCATIONS.clear()
+    _OUT_OF_CANVAS.clear()
     cache_dir = out / PAGE_CACHE_DIR
     if page_cache:
         # 目录必须先存在：否则 save 会抛 OSError，被下面的兜底吞掉，缓存静默失效
@@ -1789,6 +1858,7 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
                                rows * (cell_h + label_height) + (rows + 1) * gap), (245, 244, 241))
     draw = ImageDraw.Draw(sheet)
     label_font = _font(16, cjk=False, bold=True)
+    note_font = _font(13, cjk=True)
     for i, path in enumerate(valid):
         row, col = divmod(i, max(1, columns))
         x = gap + col * (cell_w + gap)
@@ -1798,9 +1868,18 @@ def make_contact_sheet(paths: list[Path], out_path: str | Path, *, columns: int 
         else:
             with Image.open(path) as opened:
                 image = opened.convert("RGB")
+        if image.size != (cell_w, cell_h):
+            # 独立调用可能给出不同尺寸的页图：网格按第一张算，不缩放的话
+            # 小图周围是底色、大图会压进相邻格——联络表自己画出错误的结构。
+            image = image.resize((cell_w, cell_h), Image.Resampling.LANCZOS)
         sheet.paste(image, (x, y))
         draw.text((x, y + cell_h + 8), f"PAGE {path.stem.split('-')[-1]}",
                   fill=(50, 48, 44), font=label_font)
+        if i == 0:
+            # 证据边界随图走：联络表是最常被单独截屏传播的工件，脱离 meta 之后
+            # 仍然要说清自己是什么——标签带是表格的 chrome，不碰页面像素。
+            draw.text((x + cell_w, y + cell_h + 8), "结构预览 · 方向证据 · 非目标软件渲染",
+                      fill=(140, 136, 130), font=note_font, anchor="ra")
     target.parent.mkdir(parents=True, exist_ok=True)
     _write_png(target, sheet, compress_level=png_compress_level)
     if stats is not None:
