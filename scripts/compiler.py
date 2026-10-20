@@ -975,7 +975,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
         _add_multi_series(slide, element, ctx, kind, x, y, w, h)
         return
 
-    rows = _rows(element)
+    rows = chart_rows(element)
     if not rows:
         ctx.warn(f"chart '{element.get('id')}': 没有可渲染的数据行，已跳过")
         return
@@ -1120,7 +1120,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
     x, y, w, h = ctx.bounds(element)
     cn, latin = ctx.families(element)
     primary, secondary, ink, muted = chart_colors(element, ctx)
-    rows = _rows(element)
+    rows = chart_rows(element)
     limit = CHART_LIMITS.get(kind)  # 截断上限与 Guard 同源（CHART_SPEC），不再各写字面量
     eid = str(element.get("id", kind))
     # 元素级载荷的 kind（matrix→points / architecture→layers）不走数据行：

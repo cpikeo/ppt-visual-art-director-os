@@ -1283,22 +1283,26 @@ def split_runs(text: str):
 
 
 def text_units(value: str) -> float:
-    """文本容量估算：CJK 字符计 1.0（全角方块），拉丁字符计 0.55。
-    0.55 取自 Helvetica / Inter 等常见无衬线字体在 14–20px 时
-    拉丁字母平均宽度与 CJK 字符宽度的经验比值（0.50–0.58 区间的中位）。
-    修正点：原 0.53 在大字号下偏低估，密集正文的容量估算易「乐观」，
-    表现为 Guard 通过、渲染溢出。把 0.55 设为默认后，估算与渲染
-    可读性复核的对齐误差更小；字段契约见 references/contract.md。
-    注意该估算不是 Office 字体的精确度量，终稿仍须人工验收。
-    中西混排细空格（HAIR_SPACE）计 0.2，使插入脚本间隙后的估算与渲染一致。"""
+    """文本容量估算：CJK 字符计 1.0（全角方块），拉丁字符按字形宽度细分。
+    HAIR_SPACE 计 0.2，NO_BREAK_SPACE 计 0.55（与普通空格同占位）。
+    拉丁宽窄区分（MW@#%& 为 0.95，窄字符 ilI 为 0.3，其余 0.55–0.6）与 text_width 共用
+    同一物理口径，使 Guard 的容量估算与 Ghost 预览的实际占宽一致，避免“估算通过、
+    渲染溢出”。细化后密集正文的容量误差更小；字段契约见 references/contract.md。
+    注意该估算仍非 Office 精确度量，终稿须人工验收。"""
     total = 0.0
     for c in value:
         if c == HAIR_SPACE:
             total += 0.2
         elif c == NO_BREAK_SPACE:
-            total += 0.55          # 与普通空格同占位，单位不被算成第 N 个汉字
+            total += 0.55
         elif ord(c) > 127:
             total += 1.0
+        elif c == " ":
+            total += 0.55          # 普通空格与不断行空格同宽（契约锁定，避免“数字+单位”间隙被算作窄字符）
+        elif c in "MW@#%&":
+            total += 0.95
+        elif c in "ilI.,:;!'|":
+            total += 0.3
         else:
             total += 0.55
     return total
@@ -1324,9 +1328,9 @@ def estimate_lines(text: str, width: float, size: float, wrap: bool = True,
     """
     if not text or not wrap:
         return 1
-    used = text_units(text) * size
-    if spacing > 0:
-        used = max(used, text_width(text, size, spacing))
+    # 容量估算需与预览/编译的实际占宽一致：text_units 与 text_width 已共用同一
+    # 拉丁字形宽度表，此处取两者最大值，确保含宽字符（MW）与字距的文本不被低估。
+    used = max(text_units(text) * size, text_width(text, size, spacing))
     return max(1, math.ceil(used / max(width, size)))
 
 

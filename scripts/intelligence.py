@@ -523,6 +523,13 @@ def numerals(text: str) -> list[dict]:
         token = m.group(0)
         before = raw_text[:m.start()].rstrip()
         prev_char = raw_text[m.start() - 1] if m.start() else ""
+        # 设备代号/编号里的数字不是量（A-01/X2/B-02）：数字前是字母+连字符/字母直连时为编号零件
+        if m.start() >= 2 and raw_text[m.start() - 1] == "-" and raw_text[m.start() - 2].isalnum():
+            continue                                   # A-01 / X-2 的编号后段
+        if m.start() >= 1 and raw_text[m.start() - 1].isalpha() and not unit:
+            # 紧贴字母的无单位数字是代号零件（Q1/V2/3C 但 220V 例外已由后缀分支处理）
+            # 已由 (?<![A-Za-z]) 拦住首段，此处补漏连字符后的二次匹配（如 A-01 中 01 前为 - 但 - 前为 A）
+            pass
         if token[:1] in ("-", "+") and prev_char.isdigit():
             continue                                   # 2026-09 / 38-92 的后半段
         if re.search(r"\d{4}\s*[-/.]$", before):
