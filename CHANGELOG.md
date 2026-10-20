@@ -2,6 +2,31 @@
 
 仅记录行为差异、迁移事项与验证边界。已提交的详细历史见 Git；本次压缩前工作树副本随审计交付保存。
 
+## 未发布 — 2026-10-20（第二轮审计 · 基线 2a51a44；包版本仍为 9.33.0）
+
+### 判断链与资产链的断链修复（P1–P5）+ 预览/产物同源（P6）
+
+- **P1 asset_function 词表同源**（assets.py）：`ASSET_FUNCTION_PHRASES` 补齐文档契约六值（hero/proof/emotion/context 的用途短语此前在提示词构建里**静默丢失**——实测 `build_asset_prompt(..., asset_function="hero")` 输出不含该值）；删除三个零消费者的死键（direct/contextualize/immersive）；`validate_asset_card` 点名未知值；`build_manifest` 对既有素材缺省 `frame`，与生成路径同一缺省，不再两套口径。SKILL/assets.md/模板注释同步。
+- **P2 主体缺口提问接通**（intelligence.py）：媒体提问的主体分支此前不可达（死分支）——`decision=reuse` 且 `media.direction.need_asset=False` 时永远走不到。现挂到 `decision ∈ (required, reuse)` 且无 `asset_subject`/`asset_source` 的页面上，问题模板改为「准备给这页什么素材？…或取自页面标题与正文」。
+- **P3 视觉分量与高潮入 plan**（intelligence.py）：`_coherence_pass` 新增 `judgment.emphasis{level:climax|lead|support|quiet, why}` 与 `coherence.climax{page, why}`；climax 优先级=最后的请求/决定页 → 首个主视觉（required/reuse 非 frame）页 → 首个有 claim 的 establish 页；`build_skeleton` 逐页输出视觉分量行与高潮行。rhythm 键集随 climax 扩一位，既有键值未动。
+- **P4 brief 模板补全**（templates/brief.yml）：媒体声明（kind/function/asset_function/safe_area/allow_crop/text_color）此前无示例声明，「无声明只作轻提示」对作者不可见；补注释与示例。
+- **P5 主张抽取误判修复**（intelligence.py）：「X 不到 Y 的三分之一」类比较句被判成话题题（claim absent / evidence none，E2E 实测发现）。「不到」补入 `_TITLE_ASSERTION` 与 `_COMPARISON_WORDS`（与「低于/不足」同族）；名词化门改为名词化形状不否决带断言谓语的标题。与既有阈值语义一致（「上线不到两周」判 comparison 不变）。
+- **P6 ghost 单序列条/柱取色与产物同源**（ghost.py）：bar/column 单序列分支硬编码 `ink`，无视 `chart_primary_color`（颜色角色系统的作者逃生口）——实测产物 `series=#8A8984`（primary_color=muted 生效）而预览画墨条，预览把「强调哪一项」画错。现与编译器同一条规则（含「有高亮且基础==accent 时让位 primary 角色」）。
+- 新增钉 21 个：`test_art_direction_linkage`（词表同源/提示词透传/死键点名/existing 缺省/主体缺口提问/emphasis-climax 传递/「不到」断言/名词化门对照）与 `test_ghost_chart_color_single_source`（像素级取证预览=产物）。
+- **端到端实证**：5 页中文经营评审稿（/home/user/e2e）走 `plan → manifest（提示词含 hero 职责短语）→ 资产 QC（2 轮 block 后 accept：contrast_suitability、subject_position 精确点名）→ check --mode release --speed strict PASS → 5 页 ghost + pptx`。QC 拦截与修复循环是链路正常工作的证据。
+- 验证：selftest **743/743**、bench **57/57**、四组冻结泛化断言不变（81/31/14/8），复跑通过。judgment_cases.json 57 案例期望未动。目标 PowerPoint 渲染与独立视觉终验仍未验证（见报告 §6）。
+
+## 未发布 — 2026-10-20（基线 d0fb621；包版本仍为 9.33.0）
+
+### 设计判断基准升级为完整艺术指导标准（SKILL.md §1–§3 / §6）
+
+- **身份与工作流**：§1 升为 Visual Art Director + Editorial Art Director 标准统筹摄影/背景/插画/图表配图/图标/装饰元素；新增页内微循环「理解 → 判断 → 编排 → 构图 → 执行 → 校验」，写明「先理解内容与叙事再确定视觉概念、先判断素材职责再构图与执行、先统筹整套视觉关系再落实单页细节」，明确不将艺术指导退化为风格套用、素材堆砌或规则化排版。
+- **设计哲学**：§2 增补核心原则（内容决定视觉，主张决定焦点，证据约束表达，构图组织关系，对比建立张力，统一塑造品质，变化推进叙事，留白维持呼吸）与最终标准（主体突出而不突兀…设计大胆而有秩序；单页有表达与构图，全篇有艺术方向与节奏）。新立两条纪律：**层级用六件工具**（尺度/位置/明暗/色彩/视觉重量/留白；主张、证据、图像互相支持，不为视觉冲击弱化关键内容或制造虚假关联）、**对比集中爆发**（尺度/景别/明暗/色彩/疏密/虚实/材质/视觉重心的差异要有目的，避免平均用力与无意义视觉冲突）；「统一的是表达逻辑」「内容驱动视觉」两条写明统一的是审美原则与表达逻辑而非每页布局，按叙事阶段在一致性中形成有依据的变化。
+- **判断链与素材导演**：§3 焦点行纳入视觉主角与注意力路径，跨页节奏行纳入叙事阶段（主视觉/证据展开/过渡/停顿/结论），整套回看行纳入「视觉高潮必须对应内容高潮」；素材导演重构为职责制——背景（氛围/语境）、主体图像（核心视觉：大幅主视觉/局部特写/非对称/边缘裁切/前景遮挡/负空间，协调主体比例、透视、方向与文字区域）、辅助图像（补充语义）、图表（数据关系）、插图（解释/概念）、图标（识别），增对比与构图张力、全局统一、图标族规范（线条/端点/填充/比例/视觉重量同族）、素材质量清单（来源/相关性/清晰度/裁切/主体完整性/透视/光影/色彩协调/文字可读性；优先复用，避免重复生图）；新增「全篇视觉叙事与节奏」小节（关键页给足视觉权重、次要页保留呼吸、避免连续同质化与每页争抢注意力），与 plan 的 rhythm 枚举对齐。
+- **QA**：§6 明写「区分结构检查与真实渲染验证……不得以规则通过或预览正常替代审美验收」；素材人工验收从五项扩为六项：语义（含素材与内容一致性）、焦点与对比（对比是否有效且集中）、主次与协调（图像与文字在实际页面是否协调）、清晰度（含裁切/透视/光影）、连续性与节奏（含页面间节奏与视觉高潮落点）、删除测试。停止信号增「对比有效而不刺眼 · 全篇方向统一、节奏有据」。
+- `references/assets.md` 增「素材家族与复用执行」（家族一致来源链、图标族执行、复用优先、一次批量）；README 对齐哲学表述与质量边界。**运行时行为不变**：plan / check / verify / ghost / compiler 判据与输出未动，judgment_cases 冻结期望未动；文档结构钉（六节、逐页五问、退役名）保持。
+- 验证：selftest **720/720**、bench **57/57**、四组冻结泛化断言不变，复跑通过。目标 PowerPoint 与专业视觉终验仍未验证（SKILL §6）。
+
 ## 未发布 — 2026-10-19（基线 d53cb55；包版本仍为 9.33.0）
 
 ### 中文排版与单页判断

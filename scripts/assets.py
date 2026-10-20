@@ -286,12 +286,19 @@ ENERGY_PHRASES = {
 # 能量调谐：视觉世界给光的**方向与质感**，页面判断只在 low/high 时追加一句
 # 强弱。两者正交：能量永远没有改方向的权力。作者逐页写下的光句逐字赢，
 # 能量不追加一个字。
+# asset_function 词表与文档契约同源（hero|proof|emotion|context|frame|separate，
+# 见本文件 §Asset Role Separation 的二维矩阵与 references/assets.md）：
+# 「为什么存在」只许有一套词。审计实测（2026-10-20）：旧表键名
+# （direct/contextualize/immersive）与文档词表漂移——作者按文档写 hero/proof/
+# emotion/context 时提示词**静默丢失**用途句，而三个旧键全库零消费者。
+# 死键按「死常量不保留」删除；用途句只描述职责，不承诺事实证词（生成图不是证据）。
 ASSET_FUNCTION_PHRASES = {
+    "hero": "the image carries the page's main visual statement",
+    "proof": "the image presents the examined subject plainly, readable for verification without dramatization",
+    "emotion": "the image carries the emotional register of the moment without melodrama",
+    "context": "the image establishes context while keeping the foreground readable",
     "frame": "the image frames the message without competing with it",
     "separate": "the image separates sections while staying quiet",
-    "direct": "the image guides the eye toward the main subject",
-    "contextualize": "the image establishes context while keeping the foreground readable",
-    "immersive": "immersive full-bleed spatial field supporting the declared subject and page hierarchy",
 }
 
 # --------------------------------------------------------------------------
@@ -541,10 +548,17 @@ def validate_asset_card(card: dict) -> list[str]:
         issues.append(f"未知 asset_role: {declared_role}"
                       f"（可选 {'|'.join(ASSET_ROLES)}）：background=承载空间 / "
                       "illustration=表达对象 / hybrid=两者兼有")
+    function = str(card.get("asset_function") or "").strip().lower()
+    if function and function not in ASSET_FUNCTION_PHRASES:
+        issues.append(f"未知 asset_function: {function}"
+                      f"（可选 {'|'.join(ASSET_FUNCTION_PHRASES)}）："
+                      "hero=主视觉 / proof=证据对象 / emotion=情绪 / context=环境 / "
+                      "frame=边界 / separate=分隔——写了读不懂的用途句不会进提示词，"
+                      "QC 还会按具象主体从严判")
     if not card.get("apc"):
         issues.append("缺少 apc：资产卡编号未溯源")
     if card.get("subject_source") == "title_fallback":
-        issues.append("未声明 asset_subject：主体描述取自页面标题。"
+        issues.append("未声明 asset_subject：主体描述取自页面标题与正文。"
                       "标题是观点（「这一年真正的收获，不是增速」），不是画面；"
                       "照着它出图会跑偏——补一句画面描述再出图。")
     subject_blob = " ".join(str(x) for x in _as_list(card.get("subject")))
@@ -1662,8 +1676,10 @@ def blocked_result(spec: dict, workflow: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════
 # 资产卡与清单规划（原 vao 内嵌段：规划 → 卡 → 批量清单）
 # ══════════════════════════════════════════════════════════════════
+# 用途 → 文字落侧的缺省（不声明 negative_space_anchor 时用）：与 ASSET_FUNCTION_PHRASES
+# 同一词表。frame/separate 走全局缺省 left，不在表内重复。审计删除旧键 direct（零消费者）。
 _NEGATIVE_SPACE_ANCHOR = {"hero": "left", "emotion": "left", "context": "left",
-                          "proof": "right", "direct": "right"}
+                          "proof": "right"}
 
 
 def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
@@ -1825,7 +1841,9 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
             entry = {"slide_ids": [sid], "decision": "existing",
                            "origin": origin,
-                           "asset_function": raw.get("asset_function", "context"),
+                           # 缺省与生成路径同源（frame）：一个字段一个缺省——
+                           # 审计实测旧缺省 "context" 与 asset_card/提示词的 "frame" 两套。
+                           "asset_function": raw.get("asset_function", "frame"),
                            "asset_role": str(raw.get("asset_role") or "").strip().lower() or None,
                            "asset_role_source": ("declared" if raw.get("asset_role") else None),
                            "safe_area": normalize_safe_area(

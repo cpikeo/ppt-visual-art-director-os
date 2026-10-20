@@ -7,7 +7,7 @@
 逐页 `asset: required|reuse|none` 为作者声明；`asset_subject` 为画面主体。图像只由作者声明产生（`asset: required|reuse`）；词表命中只写 hint 不出图。声明的图全部进入清单，不设自动额度。
 
 - `asset_role: background|illustration|hybrid`：承载空间 / 表达对象 / 两者兼有。角色影响提示词与 QC。
-- `asset_function`：页面用途（hero|proof|emotion|context|frame|separate）。
+- `asset_function`：页面用途（hero|proof|emotion|context|frame|separate）。缺省 `frame`（生成与既有素材同一缺省）；写不出用途句就别写假值——未知值会在卡片自检里被点名。
 - `asset_reason`（可选）：记录删除素材会损失什么；进入骨架，不作为出图触发器。
 - `asset_composition`（可选）：素材内部的景别、裁切、主体重心；覆盖资产构图句，不自动更改页面布局。
 - `material / lighting / texture`：原样覆盖 plan 推导值。`texture: []` 关闭纹理。
@@ -29,7 +29,16 @@ brief → plan（同次准备清单）→ 按清单批量备图/核权 → 编�
 
 图标语义与编排判断见 SKILL §3；当前不增加 `asset_role: icon` 或 SVG 编译器。
 
-## 4. 三条路径
+## 4. 素材家族与复用执行
+
+职责判定（这张图帮观众理解什么、承担什么、删掉损失什么）见 SKILL §3，此处只管执行一致：
+
+- **家族一致**：同套素材的介质、光语与材质走同一来源链（作者显式声明 > 世界推导 > 兜底）；跨介质混排（摄影 / 插图 / 扁平 / 三维）由作者以 `medium / material / lighting / texture` 显式声明并写明表达理由（`asset_reason`），提示词不替作者发明关系。
+- **图标族**：图标条目以同一组 `medium / style / lighting` 声明固化族特征（线条、端点、填充、比例、视觉重量一致），逐条复用不逐条改写；按 1:1 出图，落位尺寸由作者按视觉校正。
+- **复用优先**：`asset_source.kind: reuse|provided|licensed|original` 走既有素材路径，跳过生成仍须 QC；同一素材跨页复用一个主条目 + `slide_ids`，不重复生图。提示词缓存只省算力，不降低当轮 QC 与链核验标准。
+- **一次批量**：清单出图一次批量进行；删除测试不过的素材不进清单，进了清单的素材必须落到页面职责上。
+
+## 5. 三条路径
 
 | 路径 | 做法 |
 |---|---|
@@ -37,7 +46,7 @@ brief → plan（同次准备清单）→ 按清单批量备图/核权 → 编�
 | **既有素材** | `asset_source: {kind: provided\|licensed\|original\|reuse, path, source}`；跳过生成，仍须 QC |
 | **无图** | `decision: none`；排版、留白与数字承担这一页 |
 
-## 5. QC 与核验
+## 6. QC 与核验
 
 - QC 只判物理事实：安全区是否被纹理压到文字、对比是否够、可见像素/透明度、比例是否匹配、有效分辨率是否低于落位尺寸。
 - 两档均读取并哈希当轮字节，测量缓存不得仅凭 size/mtime 复用。

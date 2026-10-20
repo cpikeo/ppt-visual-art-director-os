@@ -678,11 +678,12 @@ def test_intelligence(tmp: Path):
             ("请确认评审名单", "请于本周五前确认")], 1)]))
     streak_comps = [p["judgment"]["composition"]["chosen"] for p in streak["pages"]]
     streak_coh = streak["deck"]["coherence"]
-    check("coherence: 整套回看存在（节奏序列与页数对齐）",
+    check("coherence: 整套回看存在（节奏序列与页数对齐，climax 有落点）",
           set(streak_coh) == {"compositions", "densities", "roles", "media",
-                              "adjustments", "notes"}
+                              "climax", "adjustments", "notes"}
           and len(streak_coh["compositions"]) == 4
-          and len(streak_coh["roles"]) == 4 and len(streak_coh["media"]) == 4)
+          and len(streak_coh["roles"]) == 4 and len(streak_coh["media"]) == 4
+          and streak_coh["climax"]["page"] == "d04")
     check("coherence: 连续同构图不再改选次优项",
           len(set(streak_comps)) == 1 and not streak_coh["adjustments"], str(streak_comps))
     check("coherence: 节奏仍记录停留，不捏造内容变化",
@@ -5001,6 +5002,152 @@ def test_unit_visibility(tmp: Path):
               for c in report2.get("checks", [])))
 
 
+def test_art_direction_linkage(tmp: Path):
+    """艺术指导链路钉：asset_function 词表同源、出图主体缺口、视觉分量与高潮传递。"""
+    import assets as a
+    import intelligence as intel
+
+    # P1 · asset_function 词表与文档契约同源（hero|proof|emotion|context|frame|separate）：
+    # 审计实测旧提示词表缺 hero/proof/emotion/context（写了静默丢失），
+    # 另有 direct/contextualize/immersive 三个死键（全库零消费者）。
+    check("fn 词表: 与文档六值同源，无死键",
+          set(a.ASSET_FUNCTION_PHRASES) == {"hero", "proof", "emotion", "context",
+                                            "frame", "separate"},
+          str(sorted(a.ASSET_FUNCTION_PHRASES)))
+    card = {"asset_type": "background", "subject": ["a workshop"], "color": ["muted green"],
+            "material": ["stone"], "lighting": ["even light"], "composition": ["left subject"],
+            "resolved": {"light": {}}}
+    for fn in a.ASSET_FUNCTION_PHRASES:
+        r = a.build_asset_prompt(card, {}, asset_function=fn, include_qc=False)
+        check(f"fn 词表: {fn} 的用途句进入提示词（不再静默丢失）",
+              a.ASSET_FUNCTION_PHRASES[fn] in r["prompt"], r["prompt"][:120])
+    bad = {**card, "asset_function": "protagonist", "apc": "APC-TEST"}
+    check("fn 词表: 未知 asset_function 在卡片自检里被点名",
+          any("未知 asset_function" in x for x in a.validate_asset_card(bad)),
+          str(a.validate_asset_card(bad)))
+    check("fn 词表: 合法值不误报",
+          not any("未知 asset_function" in x
+                  for x in a.validate_asset_card({**bad, "asset_function": "hero"})))
+    brief_fn = {"audience": "评审", "decision": "批准", "tension": "风险",
+                "slides": [{"id": "s1", "title": "现场记录", "content": "分拣现场记录（来源：日报）",
+                            "asset": "reuse", "asset_subject": "a sorting line",
+                            "asset_source": {"kind": "provided", "path": "img.png",
+                                             "source": "用户提供的现场照片"}}]}
+    bundle_fn = intel.think(brief_fn)
+    entry_fn = next(x for x in a.build_manifest(brief_fn, bundle_fn)["assets"]
+                    if x.get("decision") == "existing")
+    check("fn 词表: 既有素材缺省与生成路径同源（frame，不再两套缺省）",
+          entry_fn["asset_function"] == "frame", str(entry_fn.get("asset_function")))
+
+    # P2 · 出图主体缺口：声明出图但未声明画面主体 → 判断层必须开口（旧条件挂在
+    # 永不触发的「judgment 来源 required」死分支上，plan 层静默，观点句当画面回落）。
+    def oq(slide, **kw):
+        b = intel.think({"audience": "评审", "decision": "批准预算", "tension": "成本",
+                         "slides": [{"id": "p", "title": "把资源从买量转向内容资产",
+                                     "content": "买量 CAC 涨 38%。（来源：台账）", **slide, **kw}]})
+        return b["pages"][0]["judgment"]["open_questions"] or []
+    check("subject 缺口: required 未声明主体 → 判断层提问（不再静默回落）",
+          any("图像主题由作者确认" in q for q in oq({"asset": "required"})),
+          str(oq({"asset": "required"})))
+    check("subject 缺口: 声明 asset_subject 后不再提问",
+          not any("图像主题由作者确认" in q
+                  for q in oq({"asset": "required", "asset_subject": "a workshop bench"})))
+    check("subject 缺口: 既有素材登记不需要画面主体（不误报）",
+          not any("图像主题由作者确认" in q
+                  for q in oq({"asset": "reuse",
+                               "asset_source": {"kind": "provided", "path": "p.png",
+                                                "source": "用户照片"}})))
+
+    # P3 · 视觉分量与高潮：内容高潮（请求/决定句 → 主视觉素材 → 建立主张）推导，
+    # 进判断卡与骨架，让 SKILL「视觉高潮必须对应内容高潮」在 BUILD 侧有落点。
+    def deck(slides):
+        return intel.think({"audience": "投资机构", "decision": "推进本轮融资",
+                            "tension": "增长是否可持续", "slides": slides})
+    pitch = deck([
+        {"id": "s01", "title": "全年经常性收入增长 42%", "content": "ARR 增长 42%。（来源：财报）"},
+        {"id": "s02", "title": "增量主要来自存量扩容", "content": "扩容贡献 61%。（来源：经营分析）"},
+        {"id": "s03", "title": "请批准本轮融资 2.5 亿元", "content": "用于产能与海外交付网络。"},
+    ])
+    check("视觉分量: 请求/决定句所在页是高潮位（结论权重）",
+          pitch["deck"]["coherence"]["climax"]["page"] == "s03"
+          and pitch["pages"][2]["judgment"]["emphasis"]["level"] == "climax",
+          str(pitch["deck"]["coherence"]["climax"]))
+    hero = deck([
+        {"id": "s01", "title": "青瓷茶碗立住这一季的器物语言",
+         "content": "釉色与器型成为系列基准。", "asset": "required",
+         "asset_subject": "a celadon tea bowl on a matte surface"},
+        {"id": "s02", "title": "系列复购带动客单提升", "content": "客单 +18%。（来源：台账）"},
+    ])
+    check("视觉分量: 无请求句时主视觉素材页承接高潮（图像承担最强分量）",
+          hero["deck"]["coherence"]["climax"]["page"] == "s01"
+          and hero["pages"][0]["judgment"]["emphasis"]["level"] == "climax"
+          and hero["pages"][1]["judgment"]["emphasis"]["level"] == "support",
+          str([(p["id"], p["judgment"]["emphasis"]["level"]) for p in hero["pages"]]))
+    framed = deck([
+        {"id": "s01", "title": "谢谢观看", "content": "2026 年度复盘（汇报人：设计组）"},
+        {"id": "s02", "title": "请批准把客服排班改为两班制", "content": "两班制覆盖 8:00–22:00。"},
+    ])
+    check("视觉分量: 凭证/框架页安静（quiet，不与主张页争注意力）",
+          framed["pages"][0]["judgment"]["emphasis"]["level"] == "quiet"
+          and framed["deck"]["coherence"]["climax"]["page"] == "s02",
+          str([(p["id"], p["judgment"]["emphasis"]["level"]) for p in framed["pages"]]))
+    sk = intel.build_skeleton(pitch)
+    check("视觉分量: 骨架携带高潮行与逐页视觉分量（传递到 BUILD）",
+          "视觉高潮（内容推导的候选）: s03" in sk and "视觉分量[climax]" in sk
+          and "视觉分量[support]" in sk and "否决" not in sk, sk[:400])
+    check("视觉分量: 无内容高潮时不硬指一页（缺主张/请求/素材就承认没有）",
+          deck([{"id": "c1", "title": "谢谢观看", "content": "2026 年度复盘（汇报人：设计组）"},
+                {"id": "c2", "title": "问答交流", "content": "欢迎提问。"}])
+          ["deck"]["coherence"]["climax"]["page"] is None)
+
+    # P5 · 比较结论谓语补全：「X 不到 Y 的三分之一」曾被判话题/无证据（「低于」
+    # 在断言与比较两表而「不到」两表都缺；名词化形状「…的…」再踩一脚）。
+    cmp_title = "追加人力成本不到流失挽回的三分之一"
+    cmp_content = "月度人力成本 +9.6 万元；夜间客诉导致的月度流失挽回约 32 万元。（来源：财务测算，2026-09）"
+    u_cmp = intel.understand(f"{cmp_title} {cmp_content}")
+    cl_cmp = intel.extract_claim({"title": cmp_title, "content": cmp_content})
+    check("比较谓语: 「不到」与「低于/不足」同族入断言与比较词表",
+          cl_cmp["source"] == "extracted" and cl_cmp.get("text") == cmp_title
+          and u_cmp["evidence"] == "comparison", str(cl_cmp))
+    check("比较谓语: 名词化形状不再否决带断言谓语的标题",
+          "作者标题为断言" in (cl_cmp.get("why") or ""), str(cl_cmp.get("why")))
+    check("比较谓语: 纯名词化话题（无断言谓语）仍不顶替正文",
+          intel.extract_claim({"title": "门店的晨会节奏",
+                               "content": "15 分钟站立会。（来源：观察）"})["text"]
+          != "门店的晨会节奏")
+
+
+def test_ghost_chart_color_single_source(tmp: Path):
+    """P6 · ghost 单序列条/柱基础色必须与产物同源（chart_primary_color）。"""
+    import ghost as _ghost
+    deck = {
+        "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
+        "theme": {"colors": {"background": "#FFFFFF", "ink": "#12120F",
+                             "muted": "#8A8984", "primary": "#12120F",
+                             "secondary": "#8A8984", "accent": "#6E6A63"},
+                  "fonts": {"cn": "Source Han Sans SC", "latin": "Arial"}},
+        "slides": [{"id": "c1", "elements": [
+            {"id": "ch", "type": "chart", "role": "chart",
+             "x": 100, "y": 100, "width": 600, "height": 360,
+             "chart_kind": "comparison_bar",
+             "data": [{"label": "前", "value": 47}, {"label": "后", "value": 8}],
+             "highlight": "后", "primary_color": "muted",
+             "unit": "分钟", "source": "s", "period": "p", "basis": "b",
+             "show_values": True}]}],
+    }
+    img = _ghost.ghost_page(deck["slides"][0], deck, scale=1, supersample=1).convert("RGB")
+    muted_hits = ink_hits = 0
+    for c in img.getdata():
+        if abs(c[0] - 144) <= 10 and abs(c[1] - 143) <= 10 and abs(c[2] - 138) <= 10:
+            muted_hits += 1
+        if abs(c[0] - 70) <= 12 and abs(c[1] - 70) <= 12 and abs(c[2] - 67) <= 12:
+            ink_hits += 1
+    check("ghost 单序列条基础色读 primary_color（预览=产物 muted 条）",
+          muted_hits > 3000, f"muted_px={muted_hits}")
+    check("ghost 非高亮条不再硬编码墨色（无大块 ink 条）",
+          ink_hits < 3000, f"ink_px={ink_hits}")
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -5053,7 +5200,9 @@ def main():
                          ("asset_diagnosis", test_asset_diagnosis),
                          ("guard_diagnostics", test_guard_diagnostics),
                          ("root_order", test_root_order),
-                         ("unit_visibility", test_unit_visibility)):
+                         ("unit_visibility", test_unit_visibility),
+                         ("art_direction_linkage", test_art_direction_linkage),
+                         ("ghost_chart_color", test_ghost_chart_color_single_source)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

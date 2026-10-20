@@ -1122,6 +1122,15 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         hl = highlight_index(e, rows, -1)
         show_values = native_values
         vfont = value_font
+        # 单序列基础色与编译器同一条规则（chart_primary_color 单一真源）：
+        # 此前硬编码 ink——作者用 primary_color 把非高亮条压回弱色时，产物
+        # （series=primary_color）与预览（墨条）分叉，预览把「强调哪一项」画错
+        # （2026-10-20 审计实测：PPTX series=#8A8984 而 ghost 画墨条）。有高亮
+        # 且基础==accent 时让位 primary 角色（同 compiler 的 hl0/base）。
+        prim = ctx.chart_primary_color(e)
+        if 0 <= hl and prim is not None and tuple(prim) == tuple(ctx.color("accent") or ()):
+            prim = ctx.chart_role("primary") or ctx.color("primary") or prim
+        base_col = _rgba_color(prim, 0.95) if prim is not None else ink
         # 零基轴线：条长编码的是**到零的距离**，不是「到最小值」。按最小值起算时，
         # 最负的一条长度为 0——产物里它是一根可见的负向条，预览里却什么都没有，
         # 作者会以为那一期没有数据。负值在轴线另一侧生长，两侧共用一把尺。
@@ -1165,7 +1174,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
                 col = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
-                col = accent if i == hl else ink
+                col = accent if i == hl else base_col
             x0, x1 = sorted((zero_x, zero_x + bw2))
             d.rounded_rectangle((x0, by, x1, by + bh),
                                 radius=max(1, int(4 * scale)), fill=col)
@@ -1216,7 +1225,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
                 fill = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
-                fill = accent if i == hl else ink
+                # 单序列基础色同 bar 分支：chart_primary_color 单一真源，不再硬编码 ink。
+                prim = ctx.chart_primary_color(e)
+                if 0 <= hl and prim is not None and tuple(prim) == tuple(ctx.color("accent") or ()):
+                    prim = ctx.chart_role("primary") or ctx.color("primary") or prim
+                fill = accent if i == hl else (
+                    _rgba_color(prim, 0.95) if prim is not None else ink)
             y0, y1 = sorted((zero_y, by))
             d.rounded_rectangle((bx, y0, bx + bw, y1), radius=max(1, int(4 * scale)),
                                 fill=fill)

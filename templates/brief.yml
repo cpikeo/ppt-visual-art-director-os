@@ -32,14 +32,19 @@ tension: ""             # 观众当前最大的疑问/风险/阻力——只写�
 # ============================================================
 # 03 · 页面叙事（先填写内容，不填页面模板/家族标签）
 # ============================================================
+# 逐页还可用 role / evidence 覆盖判断（合法值原样生效，非法值 warning 并忽略）：
+#   role: establish|explain|compare|prove|persuade|summarize
+#   evidence: comparison|series|part_whole|number|structure|sequence|proposition|none
+# 逐页 audience / decision / tension 压过 deck 级同名字段。
 slides:
   - id: s01
     title: ""           # 标题写结论（可复述的一句话），不写字段名
     content: ""         # 证据（数字/来源/事实）；证据型页留空 → 判断卡标 absent
     # insight: "本页唯一结论"      # 写了直通判断卡（作者压过抽取）
-    # focus: kpi_main            # 第一落点元素 id（作者压过焦点判定）
-    # density: sparse            # sparse|balanced|dense（写了锁定；不写由成稿判断）
-    # energy: medium             # low|medium|high（只调光语强弱，不改方向）
+    # focus: kpi_main              # 第一落点元素角色（如 kpi_main / image_subject；作者压过焦点判定）
+    # chart: true                  # 本页有图表（影响媒体/焦点判断；图表本体在 build 的元素里声明）
+    # density: sparse              # sparse|balanced|dense（写了锁定；不写由成稿判断）
+    # energy: medium               # low|medium|high（只调光语强弱，不改方向）
 
 # ============================================================
 # 04 · 逐页视觉声明（已声明即权威）
@@ -66,3 +71,8 @@ slides:
 #   kind: provided       # provided|licensed|original|reuse
 #   path: images/tea.jpg
 #   source: "用户提供的产品照片；商业使用授权待核实"
+# composition: image_narrative   # 作者声明构图（big_whitespace|editorial|data_field|image_narrative|
+#                                # linear_structure|asymmetric_tension），原样生效
+# negative: ["decorative dividers"]   # 页级禁项；与 deck 级 avoid 合并进清单 negative
+# light_direction: left  # left|right|top|radial|none（光照方向，不改光语材质）
+# asset_color: ["deep celadon green"] # 画面色彩线索；不写时按主题种子派生

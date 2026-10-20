@@ -204,7 +204,7 @@ _NEGATED_COMPARISON = re.compile(
 # 数值图表的载荷与规格行不含这个形状，不会被误收。
 _TWO_ENDS_JOINED = re.compile(r"\d[^，,。；;\n]{0,10}?\s*(?:对|vs\.?|VS\.?)\s*\d")
 _THRESHOLD_WORDS = ("高于", "低于", "超过")
-_COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "前者", "后者",
+_COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "不到", "前者", "后者",
                      "优于", "落后", "差距", "benchmark", "对标", "增减",
                      "超过", "超越")
 _SERIES_WORDS = ("趋势", "增长", "下降", "同比", "环比", "逐年", "路径", "曲线",
@@ -1207,7 +1207,7 @@ def _topic_shaped(title: str) -> bool:
 # 这一句就不只是名词标签（「华东区数据」），而是对内容有主张的一句话。
 # 断言谓语：标题里出现这些词，说明作者在下判断（「差距明显」「回本周期缩短」），
 # 而不是给一个名词标签（「华东区数据」）。词表只收谓语，不收题材名词。
-_TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足", "超过", "低于", "高于",
+_TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足", "不到", "超过", "低于", "高于",
                     "不再", "已经", "正在", "仍未", "尚未", "必须", "需要", "决定", "意味",
                     "成为", "没有", "不能", "无法", "达到", "降至", "升至", "翻倍",
                     "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成",
@@ -1363,7 +1363,8 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
             score += 0.6
             bits.append("作者标题为断言")
         if is_title and content and not _topic_shaped(title) \
-                and not _NOMINALIZED_TOPIC.match(title) and not content_claim_shaped:
+                and not (_NOMINALIZED_TOPIC.match(title) and not _title_assertive(title)) \
+                and not content_claim_shaped:
             # 标题在主张位、正文全是证据陈述：标题原话即主张（「先做中央商务区，
             # 两家运营商同步进场」）。名词化话题（「X 的 Y」）不在此列。
             score += 0.6
@@ -2774,8 +2775,14 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                       "把请求与资源量同屏落在收束位，别让数字焦点把它挤成一行正文")
     if claim["source"] == "absent":
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
-    if media["source"] == "judgment" and media["decision"] == "required":
-        open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）")
+    if media["decision"] in ("required", "reuse") and not item.get("asset_source") \
+            and not str(item.get("asset_subject") or "").strip():
+        # 死分支修复（审计实测）：旧条件挂在「judgment 来源的 required」上，而
+        # media_necessity 只有作者声明才返回 required——真正需要提问的是
+        # 「声明了出图、没说画什么」：主体会回落为标题与正文（观点句当画面），
+        # 出图必跑偏。清单 meta 的提醒在执行层，判断层也要开口。
+        open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）；"
+                      "声明 asset_subject——未声明时主体回落为标题与正文，观点句当画面会跑偏")
     if media["source"] == "hint":
         open_q.append("图像：内容提到人物或场所，但未声明是否配图；需要时声明 asset: required")
     if u.get("evidence") == "part_whole":
@@ -2857,10 +2864,56 @@ def _coherence_pass(pages: list) -> dict:
             move, why = ("turn", "主张或证据形态变化，阅读路径跟着内容转向。")
         current["rhythm"] = {"move": move, "previous": pages[index - 1]["id"] if index else None,
                              "why": why}
+
+    # 视觉分量（内容推导的候选，与 rhythm 同一次整套回看产出）：
+    # SKILL §3「视觉高潮必须对应内容高潮」在 BUILD 侧需要一个可读的落点——
+    # 谁拿全篇最强的视觉重量、谁安静。只从内容事实推导（请求/决定句、图像在场、
+    # 主张载体、凭证框架），不按审美口味打分；作者可覆盖。没有内容高潮就不硬指一页。
+    ask_pages = [p for p in pages
+                 if (p["judgment"].get("visual_role") or {}).get("source") == "decision"
+                 or _hit(str((p["judgment"].get("claim") or {}).get("text") or ""), _ASK_WORDS)]
+    hero_pages = [p for p in pages
+                  if (p["judgment"].get("media") or {}).get("decision") in ("required", "reuse")
+                  and (p["judgment"].get("claim") or {}).get("source") != "frame"]
+    establish_pages = [p for p in pages
+                       if (p["judgment"].get("visual_role") or {}).get("role") == "establish"
+                       and (p["judgment"].get("claim") or {}).get("text")]
+    climax_page, climax_why = None, ""
+    if ask_pages:
+        climax_page = ask_pages[-1]
+        climax_why = ("请求/决定落点在本页：内容高潮在这里，视觉重量向它集中，"
+                      "不为冲击力另起高潮")
+    elif hero_pages:
+        climax_page = hero_pages[0]
+        climax_why = ("全篇没有请求句；主视觉素材落在本页，"
+                      "图像承担全篇最强的视觉分量")
+    elif establish_pages:
+        climax_page = establish_pages[0]
+        climax_why = "建立页承载整套主张；无素材与请求时，分量落在开场的那句话"
+    else:
+        climax_why = "内容没有指认高潮位（无请求/主视觉/建立主张）：不硬指一页，先补内容"
+    for page in pages:
+        judgment = page["judgment"]
+        claim = judgment.get("claim") or {}
+        role = (judgment.get("visual_role") or {}).get("role")
+        media = (judgment.get("media") or {}).get("decision")
+        if climax_page is not None and page is climax_page:
+            level, why = "climax", climax_why
+        elif claim.get("source") == "frame":
+            level, why = ("quiet", "凭证/框架页不承载结论：视觉分量让给主张页，"
+                                  "不与主角争注意力")
+        elif media in ("required", "reuse") or role in ("establish", "persuade"):
+            level, why = ("lead", "图像在场：素材承担核心视觉分量，文字退到解说位"
+                          if media in ("required", "reuse")
+                          else f"{role} 页承载主张/决定：视觉分量高于普通证据页")
+        else:
+            level, why = ("support", "证据展开页：保持可读与秩序，把视觉高潮留给内容高潮")
+        judgment["emphasis"] = {"level": level, "why": why}
     return {"compositions": [p["judgment"]["composition"]["chosen"] for p in pages],
             "densities": [p["judgment"]["production"]["density_target"] for p in pages],
             "roles": [p["judgment"]["visual_role"]["role"] for p in pages],
             "media": media_seq,
+            "climax": {"page": climax_page["id"] if climax_page else None, "why": climax_why},
             "adjustments": None,
             "notes": notes or None}
 
@@ -3101,6 +3154,10 @@ def build_skeleton(bundle: dict) -> str:
     seq = coherence.get("compositions") or []
     if seq:
         facts.append("整套节奏: " + " → ".join(map(str, seq)))
+    climax = coherence.get("climax") or {}
+    facts.append("视觉高潮（内容推导的候选）: "
+                 + (f"{climax.get('page')} — {climax.get('why')}" if climax.get("page")
+                    else f"无 — {climax.get('why') or '未推导'}"))
     for adj in (coherence.get("adjustments") or [])[:4]:
         facts.append(f"跨页校准: {adj.get('page')} {adj.get('field')} "
                      f"{adj.get('from')}→{adj.get('to')}（{adj.get('why')}）")
@@ -3208,6 +3265,10 @@ def build_skeleton(bundle: dict) -> str:
             L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
         L.append(_action("跨页节奏", pg.get("id"),
                          f'        #    跨页节奏[{rhythm.get("move")}]：{rhythm.get("why")}'))
+        if j.get("emphasis"):
+            L.append(_action("视觉分量", pg.get("id"),
+                             f'        #    视觉分量[{j["emphasis"].get("level")}]：'
+                             f'{j["emphasis"].get("why")}'))
         if prod.get("must_place"):
             L.append(_action(
                 "必落元素/密度", pg.get("id"),
