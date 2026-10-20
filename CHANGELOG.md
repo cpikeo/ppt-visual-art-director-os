@@ -2,7 +2,18 @@
 
 仅记录行为差异、迁移事项与验证边界。已提交的详细历史见 Git；本次压缩前工作树副本随审计交付保存。
 
-## 未发布 — 2026-10-20（第四轮审计 · 规范—代码一致性；基线仍 684ff0a；包版本 9.33.0）
+## 9.34.0 — 2026-10-20（PPT_CASE_004 实测回流 · 瀑布桥小计死代码 / 柱顶值契约 / 构成图扇区反色）
+
+### 真实案例（PPT_CASE_004 · 15 页高端静奢红酒融资路演）逐页跨渲染器对拍抓出的三处静默分歧
+
+- **瀑布图小计段死代码（真缺陷）**：`compiler.py` 与 `ghost.py` 的 `waterfall` 分支均写了 `row.get("subtotal") or row.get("is_total") or row.get("total")` 从零轴起画整段并跳过跨小计桥接虚线，但上游唯一行解析 `primitives.chart_rows` 构造归一化行字典时漏掉了该布尔标记——导致两侧的小计分支**同时退化为死代码**。`PPT_CASE_004` P11（`240 - 18 - 19 → 毛利 203 [subtotal] - 62 → 营业利润 141 [subtotal]`）实测中，小计 `203` 被当成增量叠到 `406`。现由 `primitives.chart_rows` 统一透传 `subtotal`，编译与预览同步恢复零轴小计柱、强调色填充与桥接断口。
+- **瀑布图 `show_values` 静默失效与预览柱色分叉（真缺陷）**：
+  - `verify.py` 将 `waterfall` 归入 `NUMERIC_CHART_KINDS`：声明 `unit` 而未开 `show_values` 时报 `chart_unit_invisible` 提示「要显示请 `show_values: true`」；但作者开启 `show_values: True` 后，告警虽消失，`compiler.py` 与 `ghost.py` 却完全未消费 `show_values`，图上仍无任何数值/量纲。现两侧同步消费 `show_values`（默认 `False` 保持向后兼容；显式开启时于每段柱顶落居中可编辑数值与 `unit`）。
+  - `ghost.py` 正向瀑布柱曾硬编码为 `ink`（黑条），忽略 `chart_primary_color` 与 `secondary_color`，与产物（`primary` 酒红条 / `secondary` 石灰灰条）分叉；现统一走 `chart_primary_color` 与 `secondary_color`。
+- **构成图（`donut / donut_composition / pie`）逐扇区标签色坍塌与预览分叉（真缺陷）**：`compiler._native_chart_text` 将 `plot.data_labels.font.color` 统一设为 `ink`（深色），而各扇区实色由 `series_palette` 跨明度派生——`PPT_CASE_004` P09 深叶绿扇区 `#2E372D` 上落 `#1C1A19` 黑字，实测对比度仅 `1.18:1`；与此同时 `ghost.py` 一律画 `background` 浅字，在浅暖金扇区上反向失真。现 `compiler.py` 与 `ghost.py` 逐扇区统一走 `ctx.auto_text_for(palette[i])`（深扇区反白、浅扇区深墨），并在 OOXML `point.data_label` 完整写入 `a:ea / a:cs` 中文字族、`show_category_name`、`show_value` 与 `number_format`。
+- **新增钉 5 个**（selftest 751 → **756**）：`chart_rows` 透传 `subtotal/is_total/total` 且小计零轴起算不跨桥接 / `waterfall` 开启 `show_values` 在产物与预览同形落柱顶值与 `unit` / `waterfall` 预览正负柱色与产物 `primary_color` 同源 / `donut` 逐扇区 `auto_text_for` 反色且保留 `a:ea` 中文字体 / `donut` 预览扇区文字明暗与产物同向。
+
+## 9.33.0 — 2026-10-20（第四轮审计 · 规范—代码一致性；基线仍 684ff0a；包版本 9.33.0）
 
 ### 把「规范说了、代码没做到」变成可执行断言
 

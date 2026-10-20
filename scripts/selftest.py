@@ -5247,6 +5247,117 @@ def test_ghost_chart_color_single_source(tmp: Path):
           ink_hits < 3000, f"ink_px={ink_hits}")
 
 
+def test_case004_regressions(root: Path):
+    """PPT_CASE_004 实测回流回归：瀑布图 subtotal/show_values/同源色 + 环形图逐扇区反色。"""
+    import primitives, compiler, ghost
+    from pptx import Presentation
+    from pptx.oxml.ns import qn
+
+    spec = {
+        "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
+        "theme": {
+            "colors": {
+                "background": "#F4F0E8",
+                "surface": "#EAE4D8",
+                "ink": "#1C1A19",
+                "muted": "#6E685F",
+                "primary": "#5C232C",
+                "secondary": "#D8D0C2",
+                "accent": "#5C232C",
+            },
+            "fonts": {"cn": "Source Han Serif SC", "latin": "Georgia"},
+        },
+        "slides": [
+            {
+                "id": "s_wf",
+                "elements": [
+                    {
+                        "id": "wf1",
+                        "type": "chart",
+                        "chart_kind": "waterfall",
+                        "x": 64, "y": 120, "width": 760, "height": 420,
+                        "primary_color": "#5C232C",
+                        "secondary_color": "#6E685F",
+                        "show_values": True,
+                        "unit": "€",
+                        "data": [
+                            {"label": "单价", "value": 240},
+                            {"label": "酿造", "value": -37},
+                            {"label": "毛利", "value": 203, "subtotal": True},
+                            {"label": "履约", "value": -62},
+                            {"label": "净利", "value": 141, "total": True},
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "s_donut",
+                "elements": [
+                    {
+                        "id": "dn1",
+                        "type": "chart",
+                        "chart_kind": "donut",
+                        "x": 680, "y": 160, "width": 480, "height": 400,
+                        "highlight": "旗舰",
+                        "unit": "%",
+                        "center_value": "8.6万瓶",
+                        "data": [
+                            {"label": "旗舰", "value": 46},
+                            {"label": "正牌", "value": 39},
+                            {"label": "序章", "value": 15},
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+    rows = primitives.chart_rows(spec["slides"][0]["elements"][0])
+    check("waterfall: chart_rows 保留 subtotal/is_total/total（小计从零轴起且不跨桥接）",
+          [r["subtotal"] for r in rows] == [False, False, True, False, True],
+          str([r.get("subtotal") for r in rows]))
+
+    out_pptx = root / "case004_reg.pptx"
+    rep = compiler.compile_deck(spec, str(out_pptx))
+    prs = Presentation(str(out_pptx))
+    wf_shapes = {s.name: s for s in prs.slides[0].shapes}
+    bar0 = wf_shapes["wf1__bar_0"]
+    bar2 = wf_shapes["wf1__bar_2"]
+    # 小计段（203）与首段（240）底边均落在同一零轴上（而非叠到 406 高度）
+    zero_diff = abs((bar0.top + bar0.height) - (bar2.top + bar2.height))
+    has_val_boxes = all(f"wf1__v_{i}" in wf_shapes for i in range(5))
+    check("waterfall: show_values 在产物落柱顶值（含 unit）且小计柱底对齐零轴",
+          bool(rep.get("passed")) and zero_diff < 5000 and has_val_boxes
+          and "€" in wf_shapes["wf1__v_0"].text
+          and "wf1__conn_1" not in wf_shapes and "wf1__conn_2" not in wf_shapes,
+          f"zero_diff={zero_diff} boxes={has_val_boxes}")
+
+    gdir = root / "ghost_wf"
+    ghost.ghost_deck(spec, str(gdir))
+    from PIL import Image
+    wf_img = Image.open(gdir / "ghost-01.png").convert("RGB")
+    oxblood_px = sum(1 for r, g, b in wf_img.getdata()
+                     if abs(r - 0x5C) <= 10 and abs(g - 0x23) <= 10 and abs(b - 0x2C) <= 10)
+    check("waterfall: 预览正向柱色与产物 primary_color 同源（不硬编码墨色）",
+          oxblood_px > 500, f"oxblood_px={oxblood_px}")
+
+    dn_chart = [s for s in prs.slides[1].shapes if s.has_chart][0].chart
+    pts = list(dn_chart.series[0].points)
+    dl_colors = [str(pt.data_label.font.color.rgb) for pt in pts]
+    has_ea = all(bool(pt.data_label.font._element.xpath("a:ea")) for pt in pts)
+    # 至少同时存在深墨标签与浅反白标签（跨明度扇区自动反色），且保留 a:ea 中文字体
+    lums = [sum(int(c[j:j + 2], 16) for j in (0, 2, 4)) / 765.0 for c in dl_colors]
+    check("donut: 扇区标签按实色自动取反色且保留 a:ea 中文字体",
+          has_ea and min(lums) < 0.25 and max(lums) > 0.75,
+          f"colors={dl_colors} ea={has_ea}")
+
+    ctx = compiler.RenderContext(spec["theme"])
+    pal = ctx.series_palette(3, 0)
+    expected = [str(ctx.auto_text_for(c)) for c in pal]
+    check("donut: 预览与产物扇区文字明暗同源 auto_text_for",
+          dl_colors == expected, f"pptx={dl_colors} expected={expected}")
+
+
 def test_docs():
     import re
     package = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -5301,7 +5412,8 @@ def main():
                          ("root_order", test_root_order),
                          ("unit_visibility", test_unit_visibility),
                          ("art_direction_linkage", test_art_direction_linkage),
-                         ("ghost_chart_color", test_ghost_chart_color_single_source)):
+                         ("ghost_chart_color", test_ghost_chart_color_single_source),
+                         ("case004_regressions", test_case004_regressions)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

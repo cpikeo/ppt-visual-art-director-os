@@ -1072,12 +1072,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 预览曾用 ink/secondary/muted，与产物里的同色相明度阶梯毫无关系——作者会
         # 把「金色系深浅」误读成「中性灰」。
         hl = int(highlight_index(e, rows, 0))
-        palette = [_rgba_color(c, 0.92) for c in ctx.series_palette(len(vals), hl)]
+        raw_palette = ctx.series_palette(len(vals), hl)
+        palette = [_rgba_color(c, 0.92) for c in raw_palette]
         # 类别名直接标在扇区上：产物给构成图开了 showCatName（图例全局关闭），
         # 预览若只画色块，作者看到的就是四块没有名字的颜色——与产物不是一件事。
-        # 位置按扇区中角、半径中点；文字色取背景色（扇区上是实色填充）。
+        # 文字色与 compiler 同源走 auto_text_for(palette[i])（深扇区反白、浅扇区深墨）。
         label_font = native_font(e.get("value_size", 12), category_text)
-        label_ink = _rgba(ctx, "background", 0.95) or (255, 255, 255, 235)
         show_values = native_values
         cx0, cy0 = (left + right) / 2, (top + bottom) / 2
         radius = (right - left) / 2
@@ -1092,7 +1092,8 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 if show_values:
                     text += f" {int(val) if float(val).is_integer() else val}"
                 if text.strip():
-                    d.text((lx, ly), text, font=label_font, fill=label_ink, anchor="mm")
+                    auto_rgb = tuple(ctx.auto_text_for(raw_palette[i]))
+                    d.text((lx, ly), text, font=label_font, fill=(*auto_rgb, 242), anchor="mm")
             start = end
         cx, cy = (left + right) // 2, (top + bottom) // 2
         # 环心孔只属于 donut/donut_composition：compiler 的 pie 是实心饼，预览若
@@ -1341,13 +1342,26 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         n = max(len(rows), 1)
         bw = w / n * 0.46
         lfont = _font(px_to_pt(11 * scale), cjk=True)
+        wf_show_values = bool(e.get("show_values", False))
+        wf_unit = str(e.get("unit") or "").strip()
+        wf_vfont = _font(px_to_pt(float(e.get("value_size", 11.5)) * scale), bold=True, cjk=True)
+        prim_rgba = _rgba_color(ctx.chart_primary_color(e), 0.95) or ink
+        sec_tok = _resolve_color(ctx, e.get("secondary_color")) if e.get("secondary_color") else None
+        sec_rgba = (*sec_tok, 217) if sec_tok is not None else _rgba(ctx, "secondary", 0.8)
         for i, row in enumerate(rows):
             bx = x + w * (i + 0.5) / n - bw / 2
             top = max(starts[i], ends[i]); bot = min(starts[i], ends[i])
             ry = _py(top); rh = max(5 * scale, (top - bot) / span * plot_h)
             d.rectangle((int(bx), int(ry), int(bx + bw), int(ry + rh)),
                         fill=(accent if is_total[i] else
-                              (ink if (row.get("value") or 0) >= 0 else _rgba(ctx, "secondary", 0.8))))
+                              (prim_rgba if (row.get("value") or 0) >= 0 else sec_rgba)))
+            if wf_show_values:
+                raw_disp = str(row.get("display", row.get("value", "")))
+                vtxt = f"{raw_disp}{wf_unit}" if wf_unit and wf_unit not in raw_disp else raw_disp
+                d.text((int(bx + bw / 2), int(max(y, ry - 6 * scale))),
+                       vtxt[:16], font=wf_vfont,
+                       fill=prim_rgba if (is_total[i] or (row.get("value") or 0) >= 0) else _rgba(ctx, "muted", 0.95),
+                       anchor="mb")
             d.text((int(bx + bw / 2), int(y + h * 0.82 + 10 * scale)),
                    str(row.get("label", ""))[:12], font=lfont,
                    fill=ink if is_total[i] else _rgba(ctx, "muted", 0.9), anchor="ma")

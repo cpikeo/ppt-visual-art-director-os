@@ -513,7 +513,9 @@ def chart_rows(element: dict) -> list[dict]:
                 display = raw if isinstance(raw, str) else (
                     int(num) if float(num).is_integer() else num)
             rows.append({"label": str(it["label"]), "value": num,
-                         "display": display, "desc": it.get("desc"), "_index": i,
+                         "display": display, "desc": it.get("desc"),
+                         "subtotal": bool(it.get("subtotal") or it.get("is_total") or it.get("total")),
+                         "_index": i,
                          "missing": missing, "invalid": invalid})
         elif (isinstance(it, (int, float)) and not isinstance(it, bool)
               and math.isfinite(float(it))):

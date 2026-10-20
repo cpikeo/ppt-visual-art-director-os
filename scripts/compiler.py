@@ -1053,12 +1053,35 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
             hl = int(highlight_index(element, rows, 0))
             palette = ctx.series_palette(len(series.points), hl)
+            from pptx.oxml.xmlchemy import OxmlElement
+            dl_show_val = bool(element.get("show_values", kind == "donut"))
+            dl_fmt = element.get("number_format") or _unit_number_format(element.get("unit"))
             for i, point in enumerate(series.points):
                 point.format.fill.solid()
                 # 构成图各扇区用系列色区分（原先非高亮点统一 secondary，
                 # 多类构成会糊成同色块）；高亮点保持 accent 语义。
                 # 调色板从同一派生取：高亮档不会与任何扇区撞色。
                 point.format.fill.fore_color.rgb = palette[i]
+                try:
+                    # 逐扇区按实色自动取反色（CASE_004 P09 证据：深叶绿扇区 #2E372D
+                    # 继承 plot 级 ink=#1C1A19 时对比度仅 1.18:1，文字隐入扇区）。
+                    dl = point.data_label
+                    dl.show_category_name = True
+                    dl.show_value = dl_show_val
+                    if dl_fmt:
+                        dl.number_format = str(dl_fmt)
+                        dl.number_format_is_linked = False
+                    dl.font.size = pt(float(element.get("value_size", 12)))
+                    dl.font.color.rgb = ctx.auto_text_for(palette[i])
+                    dl.font.name = latin
+                    for tag in ("a:ea", "a:cs"):
+                        existing = dl.font._element.xpath(tag)
+                        node = existing[0] if existing else OxmlElement(tag)
+                        node.set("typeface", cn)
+                        if not existing:
+                            dl.font._element.append(node)
+                except Exception:
+                    pass
             # 环心 KPI：把「总数/结论」放进甜甜圈的洞（叠加可编辑文本框，
             # 不破坏原生扇区的可编辑性）。这是高端 dashboard 的标志性动作：
             # 洞不再空着，而是承担「这一图到底说了什么」的单一读数。
@@ -1298,6 +1321,9 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                 conn.line.dash_style = MSO_LINE_DASH_STYLE.DASH
             except Exception:
                 pass
+        wf_show_values = bool(element.get("show_values", False))
+        wf_unit = str(element.get("unit") or "").strip()
+        wf_vsize = px_to_pt(float(element.get("value_size", 11.5)))
         for i, r in enumerate(rows):
             left = x + w * (i + 0.5) / n - bw / 2
             top = max(starts[i], ends[i])
@@ -1313,6 +1339,20 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             else:
                 b.fill.fore_color.rgb = primary if r["value"] >= 0 else secondary
             b.line.fill.background()
+            if wf_show_values:
+                raw_disp = _display(r, element)
+                vtxt = (f"{raw_disp}{wf_unit}"
+                        if wf_unit and wf_unit not in raw_disp else raw_disp)
+                vb = slide.shapes.add_textbox(
+                    Emu(emu(left - bw * 0.45)), Emu(emu(max(y, ry - 24))),
+                    Emu(emu(bw * 1.9)), Emu(emu(22)))
+                vb.name = f"{eid}__v_{i}"
+                vp = vb.text_frame.paragraphs[0]
+                vp.text = vtxt
+                vp.alignment = PP_ALIGN.CENTER
+                set_para_font(vp, latin, cn, wf_vsize,
+                              primary if (is_total[i] or r["value"] >= 0) else muted,
+                              bool(is_total[i] or r["value"] >= 0))
             lb = slide.shapes.add_textbox(
                 Emu(emu(left - bw * 0.35)), Emu(emu(y + h * 0.82 + 10)),
                 Emu(emu(bw * 1.7)), Emu(emu(24)))
