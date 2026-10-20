@@ -13,7 +13,6 @@ from __future__ import annotations
 
 
 import math
-import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -23,14 +22,18 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
                         highlight_index, resolve_chart_highlight, color_to_hex,
                         CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS,
-                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows)
+                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows,
+                        TYPE_SCALE)
 
 
+# 键里带的是**声明的家族名**而不是桶名：同一个桶（cjk_serif）下 Noto Serif CJK 与
+# 思源宋体可能解析到不同字面，用桶做键会把先到者的字形发给后者。
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
 # 字面回落台账（角色 → 次数）：候选字面全不存在时 `_font` 只能用 PIL 默认位图字体，
 # 那个字体没有中文字形——整页中文会画成空白/豆腐块，而预览记录依旧写着「已渲染全页」。
 # 预览是拿来做方向判断的证据，不能被静默降级成误导；所以回落必须可查、必须出声。
 _FONT_FALLBACKS: dict[str, int] = {}
+_FONT_SUBSTITUTIONS: dict[str, str] = {}
 # max_lines 截断台账（"页/元素" → 本轮累计被截断行数）：预览按作者声明的 max_lines
 # 收笔，但产物（PowerPoint 原生文本）从不截断——预览里"干净收住"的地方，目标软件
 # 里可能正在挤出框外。台账与页面上的标记让"声明容量"和"实际内容"的分歧可见、可查；
@@ -62,6 +65,11 @@ def out_of_canvas() -> dict:
 def font_fallbacks() -> dict:
     """本轮进程内发生的字面回落（角色 → 次数）；空字典 = 每个字面都取到了真字体。"""
     return dict(_FONT_FALLBACKS)
+
+
+def font_substitutions() -> dict:
+    """声明家族 → 本机实际用来预览的字面（只记真的替换，不记精确解析）。"""
+    return dict(_FONT_SUBSTITUTIONS)
 # 兼容导出：selftest 的字体身份探针按此别名覆盖候选表。
 from primitives import (PREVIEW_FONT_CANDIDATES as _FONT_CANDIDATES,  # noqa: F401
                         PREVIEW_FONT_BOLD_CANDIDATES as _FONT_BOLD_CANDIDATES,  # noqa: F401
@@ -77,17 +85,19 @@ def _has_cjk(text: str) -> bool:
     return any(_is_cjk(c) for c in str(text))
 
 
-def _font_family(element: dict, ctx: RenderContext) -> str:
+def _font_family(element: dict, ctx: RenderContext) -> tuple[str, str]:
     """复用编译器的字体解析，不另解 token 或忽略主题默认值。
 
-    中文取 cn/body；font/family 按现有契约只覆盖拉丁字面。混排仍用单一
-    CJK 字面近似，并非 Office 的逐 run 字体回退或真实换行证明。
+    返回值是 (桶后缀, 声明的家族名)：桶后缀只在「本机没有这个家族」时兜底，
+    家族名用于按名字解析真字面——把声明 Noto Serif CJK 的页渲染成 DejaVu Serif，
+    是替换，不是近似（实测同一 `11.8%` 在预览两行、产物一行）。
+    混排仍用单一字面近似，并非 Office 的逐 run 字体回退或真实换行证明。
     """
     cn, latin = ctx.families(element)
-    resolved = str(cn if _has_cjk(element.get("text", "")) else latin).lower()
-    serif = ("serif" in resolved and "sans" not in resolved) or any(
-        name in resolved for name in ("宋", "song", "明朝", "mincho", "georgia", "times", "cambria"))
-    return "_serif" if serif else ""
+    declared = str(cn if _has_cjk(element.get("text", "")) else latin)
+    from primitives import family_bucket
+    bucket = family_bucket(declared)
+    return ("_serif" if bucket.endswith("_serif") else ""), declared
 
 
 class _BitmapFallback(ImageFont.ImageFont):
@@ -114,19 +124,31 @@ class _BitmapFallback(ImageFont.ImageFont):
 
 
 def _font(size: float, *, cjk: bool = False, bold: bool = False,
-          family: str = "") -> ImageFont.ImageFont:
+          family: str = "", family_name: str = "") -> ImageFont.ImageFont:
     global _FONT_IDENTITY
     stamp = _font_stamp()
     if stamp != _FONT_IDENTITY:
         _FONT_CACHE.clear()
         _FONT_FALLBACKS.clear()
+        _FONT_SUBSTITUTIONS.clear()
         _FONT_IDENTITY = stamp
     px = max(1, int(round(size)))
     base = ("cjk" if cjk else "latin") + ("_serif" if "_serif" in str(family) else "")
-    key = (base, px, bold)
+    key = (base, px, bold, family_name)
     if key in _FONT_CACHE:
         return _FONT_CACHE[key]
-    candidates = _font_names(base, bold)
+    candidates = ()
+    if family_name:
+        from primitives import resolve_family_font
+        resolved = resolve_family_font(family_name, bold)
+        if resolved:
+            candidates = (resolved,)
+        else:
+            # 声明了但本机没有：记一次替换，读图的人要能分辨「排版如此」与
+            # 「本机没这个字体」。同名家族不再重复记账。
+            actual = Path(_font_names(base, bold)[0]).stem if _font_names(base, bold) else "?"
+            _FONT_SUBSTITUTIONS.setdefault(str(family_name), actual)
+    candidates = candidates + tuple(_font_names(base, bold))
     loaded: ImageFont.ImageFont | None = None
     for name in candidates:
         try:
@@ -304,120 +326,26 @@ def _fill(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
 # 本层只留历史名，逐字再抄一份迟早与判断层分叉。
 _NO_LINE_START = NO_LINE_START_CJK
 _NO_LINE_END = NO_LINE_END_CJK
-# 单位词表的唯一来源在 primitives（编译器写不断行空格、预览判禁则共用一份）：
-# 曾经各写一份，两边的单位集合一旦漂移，「预览说不断、产物断了」就没人发现。
-from primitives import UNIT_WORDS as _UNIT_WORDS  # noqa: E402  (同目录平铺模块)
-
-_UNIT_HEAD = re.compile(
-    "^(?:" + "|".join(re.escape(w) for w in
-                      sorted(set(_UNIT_WORDS), key=len, reverse=True)) + ")")
-# 双字单位的内部断点：断在「个|月」「万|元」「小|时」中间，单位被读成两个词。
-# 只在**跨断口的两字正好构成单位内部相邻对**时触发，不会误并「大小｜时间」。
-# 集合从 UNIT_WORDS 直接派生（多字词的每一对相邻字），不再手抄子集：
-# 手抄版漏过「方米」「瓦时」以及「个百分点/个点/个季度」的内部对，词表一扩就漂移。
-_UNIT_INNER = {u[i:i + 2] for u in _UNIT_WORDS if len(u) >= 2
-               for i in range(len(u) - 1)}
-# 数字本身也是不可拆的：断在数字内部（「2.｜6 年」「1｜8%」）比「数字与单位分家」
-# 更隐蔽——退到数字前面就已经看不见了，行首行尾都像正常文本。PowerPoint 不在数字
-# 内部断行，预览断了就与真实排版是两回事（实测：标题「回收期从 2.6 年拉到 3.9 年」
-# 在 440px 预览里被断成「2.」/「6 年」，同一行文本在产物里不会这样排）。
-_NUMBER_TOKEN = re.compile(r"\d+(?:[.,]\d+)*[%％]?")
-
-
-def _cjk_break_fix(seg: str, lo: int) -> int:
-    """在二分断点上按中文禁则回退（只减不增，不会溢出）。
-
-    断在空格上时真正相邻的是左端的末字与右端的首字（「6.4 ｜天之间」），
-    所以判据看 rstrip/lstrip 之后的邻字，而不是断口那一个字符。
-    """
-    if not (0 < lo < len(seg)):
-        return max(1, lo)
-
-    def sides(at: int) -> tuple[str, str]:
-        return seg[:at].rstrip(), seg[at:].lstrip()
-
-    left, right = sides(lo)
-    while lo > 1 and right[:1] and right[0] in _NO_LINE_START:
-        lo -= 1                                    # 标点不领行：连同前一字推下
-        left, right = sides(lo)
-    if lo > 1 and left[-1:] and left[-1] in _NO_LINE_END:
-        lo -= 1                                    # 开引号/括号不收尾
-        left, right = sides(lo)
-    while lo > 1 and left[-1:] and right[:1] and (left[-1] + right[0]) in _UNIT_INNER:
-        lo -= 1                                    # 计量短语不腰斩：一路退到短语之前
-        left, right = sides(lo)                    #（「万美元」「个百分点」有三字，单次
-                                                   #  回退仍停在短语内部），随后由数字
-                                                   #  规则把整个数一起推下
-    if lo >= 1 and left[-1:].isdigit() and _UNIT_HEAD.match(right):
-        start = len(left) - 1                      # 数字不与单位拆开：整个数推下
-        while start > 1 and (left[start - 1].isdigit() or left[start - 1] in ".,"):
-            start -= 1
-        lo = start
-    # 数字内部不是断点：断口落在同一个数字 token 中间时，整个 token 一起推下。
-    for token in _NUMBER_TOKEN.finditer(seg):
-        if token.start() < lo < token.end():
-            lo = max(1, token.start())
-            break
-    return max(1, lo)
+# 禁则 / 单位表 / 数字 token / 折行算法的唯一实现在 primitives：guard 与预览共用它，
+# 预览只提供「一个字有多宽」这一件事。
+from primitives import (wrap_lines as _shared_wrap,      # noqa: E402
+                        script_gaps as _script_gaps,
+                        SCRIPT_GAP_EM as _SCRIPT_GAP_EM)
 
 
 def _wrap_lines(text: str, font, width: int, tracking: float = 0) -> list[str]:
-    """按可见字宽折行；显式 tracking 与编译器字距同量纲（px）。"""
-    limit = max(1, width)
-    def visible_width(value):
-        return font.getlength(value) + max(0, len(value) - 1) * tracking
-    result: list[str] = []
-    for raw in str(text).split("\n"):
-        if not raw:
-            result.append("")
-            continue
-        if not _has_cjk(raw):
-            words = raw.split()
-            line = ""
-            for word in words:
-                candidate = word if not line else f"{line} {word}"
-                if line and visible_width(candidate) > limit:
-                    result.append(line)
-                    line = ""
-                if not line and visible_width(word) > limit:
-                    # 前面即使有普通单词，后一个长词也必须逐字切。
-                    for ch in word:
-                        if line and visible_width(line + ch) > limit:
-                            result.append(line)
-                            line = ch
-                        else:
-                            line += ch
-                else:
-                    line = word if not line else f"{line} {word}"
-            result.append(line)
-            continue
-        # CJK 逐字贪心与二分拟合同断点：visible_width 随前缀长度单调不减
-        #（字形步进与 tracking 都非负），「最长的可容纳前缀」唯一存在，
-        # 线性扫描与二分找到的是同一个 L——被度量的字符串集合不同，
-        # 但每个判定输入上的谓词值相同，输出逐字符一致（自检对拍）。
-        # 线性扫描每行 O(L) 次 getlength、每次 O(L) 字符，是预览文本段的
-        # 第一热点；二分把测量调用数降到 O(log L)。
-        pos = 0
-        n = len(raw)
-        while pos < n:
-            seg = raw[pos:]
-            if visible_width(seg) <= limit:
-                result.append(seg)          # 末行整段可容纳：原样追加（不 rstrip）
-                break
-            if len(seg) == 1:
-                result.append(seg)          # 放不下的末单字：与扫描末行一致（不 rstrip）
-                break
-            lo, hi = 1, len(seg)            # seg[:lo] 可容纳；seg[:hi]（=seg）放不下
-            while hi - lo > 1:
-                mid = (lo + hi) // 2
-                if visible_width(seg[:mid]) <= limit:
-                    lo = mid
-                else:
-                    hi = mid
-            lo = _cjk_break_fix(seg, lo)   # 中文禁则：只回退，不重新定义断点
-            result.append(seg[:lo].rstrip())  # 中间行：rstrip，与扫描 emit 一致
-            pos += lo
-    return result or [""]
+    """按可见字宽折行；显式 tracking 与编译器字距同量纲（px）。
+
+    折行判据在 primitives（与 guard 共用），这里只提供「一个字有多宽」：
+    PIL 真字面 + 字距，再加上渲染器在西文↔中文边界上多让出的间距
+    （SCRIPT_GAP_EM，实测校准），否则预览会比产物多塞进几个字。
+    """
+    size_px = float(getattr(font, "size", 0) or 0)
+    def measure(value: str) -> float:
+        return (font.getlength(value) + max(0, len(value) - 1) * tracking
+                + _SCRIPT_GAP_EM * size_px * _script_gaps(value))
+    # 预览与产物一样允许行尾句读点悬挂半个字（否则预览比产物多断开一行）
+    return _shared_wrap(text, width, measure, hanging=0.5 * size_px)
 
 
 def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> None:
@@ -442,9 +370,10 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     from primitives import insert_script_gaps
     text = insert_script_gaps(text)
     pad = int(round(float(e.get("padding", 0) or 0) * scale))
-    size = float(e.get("size", 18) or 18) * scale
+    size = float(e.get("size", TYPE_SCALE["body"]) or TYPE_SCALE["body"]) * scale
+    bucket, declared_family = _font_family(e, ctx)
     font = _font(size, cjk=_has_cjk(text), bold=bool(e.get("bold")),
-                 family=_font_family(e, ctx))
+                 family=bucket, family_name=declared_family)
     color = _rgba(ctx, e.get("color") or "ink", e.get("opacity"), fallback=(24, 24, 24))
     # 段距与产物同义（compiler 写 p.space_before/space_after，guard 计入容量）：
     # 预览曾忽略它——多段落文本在预览里比产物排得紧，作者按预览判断的留白是错的。
@@ -604,7 +533,7 @@ def _draw_shape(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 形状内文字有自己的原生属性名（compiler.shape_text）：不要继承
         # 形状填充/透明度，也不能丢掉 text_bold/line_height/wrap。
         text_e = dict(e, type="text", fill=None, color=e.get("text_color") or "ink",
-                      size=e.get("text_size", 16), padding=e.get("padding", 0),
+                      size=e.get("text_size", TYPE_SCALE["shape_text"]), padding=e.get("padding", 0),
                       anchor=e.get("text_anchor", "middle"), align=e.get("align", "center"),
                       opacity=e.get("text_opacity"), bold=e.get("text_bold", False),
                       wrap=e.get("text_wrap", True),
@@ -874,9 +803,10 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     pad = max(8, int(18 * scale))
     left, top, right, bottom = x + pad, y + pad, x + w - pad, y + h - pad
 
-    # 数字展示（kpi/executive_kpi/big_number）读的是元素级 value/label，不是 data 行。
+    # 数字展示（kpi）读的是元素级 value/label，不是 data 行；旧名
+    # executive_kpi / big_number 已在入口归一。
     # 预览必须和产物说同一件事——否则「交付证据」会显示一个空框，与 PPTX 不符。
-    if kind in ("kpi", "executive_kpi", "big_number"):
+    if kind == "kpi":
         value = str(e["value"] if e.get("value") is not None else "").strip()
         label = str(e.get("label") or "").strip()
         big = _font(px_to_pt(min(120.0, float(e.get("value_size", 56))) * scale),
@@ -938,16 +868,17 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     span = max(1e-9, hi - lo)
     groups = _series_groups(e)
     def native_font(size, text):
+        bucket, family = _font_family({**e, "text": text}, ctx)
         return _font(float(size) * scale, cjk=_has_cjk(text),
-                     family=_font_family({**e, "text": text}, ctx))
+                     family=bucket, family_name=family)
     category_text = " ".join(str(r.get("label", "")) for r in rows)
-    category_font = native_font(e.get("label_size", 40 / 3), category_text)
-    value_font = native_font(e.get("value_size", 12), "0123456789")
-    native_values = bool(e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut")))
+    category_font = native_font(e.get("label_size", TYPE_SCALE["chart_label"]), category_text)
+    value_font = native_font(e.get("value_size", TYPE_SCALE["chart_value"]), "0123456789")
+    native_values = bool(e.get("show_values", kind in ("bar", "column", "donut")))
     if (len(rows) >= CHART_LABEL_MIN_COUNT and float(e.get("height", 0)) < CHART_LABEL_MIN_H
             and e.get("label_collision_policy") == "hide_redundant"):
         native_values = False
-    if kind in ("column", "line", "area", "trend", "single_trend_line"):
+    if kind in ("column", "line", "area"):
         # 原生引擎会为轴/标签留位；预览不能把更大的作者字号画到图框外。
         top += int(value_font.size * 1.4) if native_values else 0
         bottom -= int(category_font.size * 1.6)
@@ -956,7 +887,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 图例配色与图形共用同一次消歧：图例用一套色、线条用另一套，比没有图例更坏
         #（读者会照图例去认线条，认到的是错的）。点级强调存在时两边一起跳过 accent。
         names = [name for name, _ in groups]
-        font = native_font(e.get("label_size", 40 / 3), " ".join(names))
+        font = native_font(e.get("label_size", TYPE_SCALE["chart_label"]), " ".join(names))
         _gsi, _gpi = resolve_chart_highlight(e, e.get("categories") or [], names)
         palette = ctx.series_palette(len(groups), _gsi, skip_accent=_gpi >= 0)
         roles = e.get("series_roles") or []
@@ -971,7 +902,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.text((lx + font.size * 1.4, ly), name, font=font, fill=ink, anchor="lt")
             lx += tw
         top = int(ly + font.size * 2)
-    if len(groups) > 1 and kind in {"line", "area", "trend", "single_trend_line"}:
+    if len(groups) > 1 and kind in {"line", "area"}:
         # 与产物同形：每条序列一条线（产物里 <c:ser> = 序列数）。
         # 颜色也按产物同一条链取：series_roles 声明的用角色色，否则用系列色阶；
         # 高亮的那条（highlight = 序列索引/名字）走 accent + 加粗 + 末点圆点。
@@ -1023,7 +954,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
             d.text((px, bottom + 3 * scale), str(category), font=category_font, fill=ink, anchor="mt")
         img.alpha_composite(overlay)
         return
-    if kind in {"line", "area", "trend", "single_trend_line", "sparkline"}:
+    if kind in {"line", "area", "sparkline"}:
         pts = []
         for i, val in enumerate(values):
             px = left + (right - left) * (i / max(1, len(values) - 1))
@@ -1064,7 +995,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                     d.text((px, py - 3 * scale), f"{val:g}", font=value_font, fill=ink, anchor="mb")
                 d.text((px, bottom + 3 * scale), str(row.get("label", "")),
                        font=category_font, fill=ink, anchor="mt")
-    elif kind in {"donut", "pie", "donut_composition"}:
+    elif kind in {"donut", "pie"}:
         vals = [max(0, v) for v in values]
         total = sum(vals) or 1
         start = -90
@@ -1077,13 +1008,18 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 类别名直接标在扇区上：产物给构成图开了 showCatName（图例全局关闭），
         # 预览若只画色块，作者看到的就是四块没有名字的颜色——与产物不是一件事。
         # 文字色与 compiler 同源走 auto_text_for(palette[i])（深扇区反白、浅扇区深墨）。
-        label_font = native_font(e.get("value_size", 12), category_text)
+        label_font = native_font(e.get("value_size", TYPE_SCALE["chart_value"]), category_text)
         show_values = native_values
+        # 饼/环是**圆**，不是填满元素框的椭圆：PowerPoint 与 LibreOffice 都把圆
+        # 内接在绘图区里（实测 LO 对 900×400 的框渲染出 394×394 的环）。预览此前
+        # 直接把元素框当外接矩形，宽框就画成扁椭圆——作者按椭圆的留白改构图，
+        # 而产物是圆的，这是预览在几何上说谎。半径取短边，圆心不变。
         cx0, cy0 = (left + right) / 2, (top + bottom) / 2
-        radius = (right - left) / 2
+        radius = min(right - left, bottom - top) / 2
+        ring = (cx0 - radius, cy0 - radius, cx0 + radius, cy0 + radius)
         for i, val in enumerate(vals):
             end = start + 360 * val / total
-            d.pieslice((left, top, right, bottom), start=start, end=end, fill=palette[i])
+            d.pieslice(ring, start=start, end=end, fill=palette[i])
             if len(rows) <= 6:
                 mid = math.radians((start + end) / 2)
                 lx = cx0 + math.cos(mid) * radius * 0.62
@@ -1096,12 +1032,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                     d.text((lx, ly), text, font=label_font, fill=(*auto_rgb, 242), anchor="mm")
             start = end
         cx, cy = (left + right) // 2, (top + bottom) // 2
-        # 环心孔只属于 donut/donut_composition：compiler 的 pie 是实心饼，预览若
+        # 环心孔只属于 donut：compiler 的 pie 是实心饼，预览若
         # 一律挖孔，作者看到的是环、产物是饼——最显眼的几何上「预览≈产物」分叉。
         # 环心 KPI 与 compiler 同形同几何（inner = min(w,h)*0.46、值行居于孔心、
         # 标签行在其下方）：产物里它是两个可编辑文本框，预览此前把孔留空——作者
         # 无法判断环心数字是否会挤到孔外，也看不到自己写的读数是否存在。
-        if kind in ("donut", "donut_composition"):
+        if kind == "donut":
             hole = max(1, int(min(right - left, bottom - top) * 0.52))
             bg = _rgb(ctx, "background", (255, 255, 255))
             d.ellipse((cx - hole // 2, cy - hole // 2, cx + hole // 2, cy + hole // 2),
@@ -1120,7 +1056,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                                   cjk=_has_cjk(str(center_label)))
                     d.text((cx, cy + inner * 0.36), str(center_label),
                            font=lfont, fill=muted, anchor="mm")
-    elif kind in {"bar", "horizontal_bar", "comparison_bar"}:
+    elif kind == "bar":
         # OOXML 里 barChart 的 barDir="bar" 是横向条：预览必须与产物同向，
         # 否则「方向证据」给的是错的（曾经把横向条画成竖柱）。
         # 类目轴在左侧：不给它留位置，预览就只剩一串没有主人的数字，
@@ -1151,7 +1087,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         span_ext = (pos_extent + neg_extent) or 1.0
         zero_x = bar_left + int(track * (neg_extent / span_ext))
         has_neg = neg_extent > 0
-        # 多序列（comparison_bar）：条色按**序列**取，不能全体墨色——产物里每条
+        # 多序列（bar + series）：条色按**序列**取，不能全体墨色——产物里每条
         # <c:ser> 有自己的色（series_roles → series_palette），预览全涂墨色等于把
         # 「山外 vs 同业」读成一堆同色条，作者看到的证据与产物不是同一件事。
         n_groups = max(1, len(groups))

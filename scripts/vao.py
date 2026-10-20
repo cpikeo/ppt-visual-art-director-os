@@ -134,10 +134,48 @@ def bind_asset_manifest(spec, manifest_path, assets_dir=None):
                 walk(child)
 
     walk(result)
+
+    # safe_area 闭环：清单里的压字区是成图依据，也必须落成版面事实，否则版面可以
+    # 把字排到高亮上而无人发现（审计 E16）。页上没声明就继承清单；两处都写了却
+    # 不一致 = 图按 A 留白、版按 B 排字，直接 BLOCK（这比缺图更隐蔽）。
+    inherited, conflicts = [], []
+    keys = ("x", "y", "width", "height")
+
+    def _rect(value):
+        if not isinstance(value, dict):
+            return None
+        try:
+            return tuple(round(float(value[k]), 6) for k in keys)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    for slide in result.get("slides") or []:
+        if not isinstance(slide, dict):
+            continue
+        sid = str(slide.get("id") or "?")
+        for element in slide.get("elements") or []:
+            if not isinstance(element, dict) or element.get("type") != "image":
+                continue
+            item = by_id.get(str(element.get("asset_id"))) or {}
+            area = _rect(item.get("safe_area"))
+            if area is None:
+                continue                      # 空 safe_area = 不压字，版面自己保证
+            declared = _rect(slide.get("safe_area"))
+            if declared is None and slide.get("safe_area") not in (None, {}):
+                continue                      # 写坏了交给 verify 的 safe_area_schema 报
+            if declared is None:
+                slide["safe_area"] = {k: float(item["safe_area"][k]) for k in keys}
+                inherited.append(sid)
+            elif declared != area:
+                conflicts.append(
+                    f"{sid}: 页声明 {dict(zip(keys, declared))} ≠ 清单 {dict(zip(keys, area))}"
+                    "（图按清单留白，字却按页声明排）")
     report = {"manifest": str(manifest_file), "assets_dir": str(root), "bound": bound,
               "bound_count": len(bound), "missing_asset_ids": sorted(set(missing)),
               "missing_files": sorted(set(missing_files)),
-              "status": "PASS" if not missing and not missing_files else "BLOCK"}
+              "safe_area_inherited": sorted(set(inherited)),
+              "safe_area_conflicts": conflicts,
+              "status": "PASS" if not missing and not missing_files and not conflicts else "BLOCK"}
     return result, report
 
 
@@ -146,12 +184,12 @@ def bind_asset_manifest(spec, manifest_path, assets_dir=None):
 # ══════════════════════════════════════════════════════════════════
 def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = None,
              assets_out: str | None = None, assets_dir: str | None = None,
-             asset_cache: str | None = None) -> dict:
+             asset_cache: str | None = None, lean: bool = True) -> dict:
     started = time.perf_counter()
     timing: dict[str, float] = {}
 
     t = time.perf_counter()
-    from intelligence import load_brief, think, build_skeleton
+    from intelligence import build_skeleton, compact_plan, load_brief, think
     from datetime import datetime, timezone
     timing["module_import_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
@@ -230,7 +268,10 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
                 handle.write(text)
         bundle["workflow"]["skeleton_path"] = str(target.resolve())
     if out:
-        _json_write(out, bundle)
+        # 落盘的永远是给作者/模型读的那一份：默认瘦身投影（决策全留，重复的说明句
+        # 上提到 deck.legend）；`--full` 保留完整推演（被否决方案的理由、逐页说明）。
+        # 返回给调用方的 bundle 始终是完整的——CLI 打印、遥测、资产链都读它。
+        _json_write(out, compact_plan(bundle) if lean else bundle)
     timing["plan_artifact_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -494,6 +535,15 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
         print("VAO warning: 本机缺少预览字面 " + "、".join(sorted(fallbacks))
               + "；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。",
               file=sys.stderr)
+    # 声明了本机没有的家族同属一类失真：预览用的是替换字面，行宽/换行与
+    # 「装了该字体的机器」不是一回事。逐家族记账，不重复刷屏。
+    from ghost import font_substitutions
+    substitutions = font_substitutions()
+    if substitutions:
+        info["font_substitutions"] = substitutions
+        print("VAO warning: 声明的字体本机缺失，预览已替换：" + "；".join(
+            f"{declared} → {actual}" for declared, actual in sorted(substitutions.items()))
+            + "。字形与行宽只是近似，换行位置不可当作产物证据。", file=sys.stderr)
     # max_lines 截断同理：预览按声明收笔，产物（PowerPoint）不截断。页面上已有
     # 可见标记；台账让它进 meta，可按「页/元素」复核，不必逐页放大找那一行字。
     from ghost import text_truncations
@@ -678,12 +728,14 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                                     qc_result.get("report_path"), assets_dir,
                                     image_bytes=snapshots, digests=digests)
             if asset_binding and (asset_binding.get("missing_asset_ids")
-                                  or asset_binding.get("missing_files")):
+                                  or asset_binding.get("missing_files")
+                                  or asset_binding.get("safe_area_conflicts")):
                 workflow["status"] = "BLOCKED"
                 workflow.setdefault("issues", []).append(
                     "asset binding: " + "、".join(
                         asset_binding.get("missing_asset_ids", [])
-                        + asset_binding.get("missing_files", [])))
+                        + asset_binding.get("missing_files", [])
+                        + asset_binding.get("safe_area_conflicts", [])))
             asset_chain_ms = round((time.perf_counter() - t_chain) * 1000, 2)
         elif has_images and mode != "spec":
             from assets import verify_chain
@@ -854,7 +906,8 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             manifest["qa_summary"]["performance"] = dict(result["performance"])
             _json_write(manifest_path, manifest)
         binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
-                                                or asset_binding.get("missing_files")))
+                                                or asset_binding.get("missing_files")
+                                                or asset_binding.get("safe_area_conflicts")))
         passed = bool(result.get("passed") and not binding_block)
         if packet or not passed:
             _json_write(packet_path, repair_packet(result, mode, build, output_path))
@@ -953,6 +1006,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--assets-dir", help="图将被放到哪个目录（写进清单，check 据此核验）")
     p.add_argument("--asset-cache", help="提示词缓存 JSON；相同视觉需求指纹直接复用")
     p.add_argument("--json", action="store_true", help="print the compact plan")
+    p.add_argument("--full", action="store_true",
+                   help="落盘完整推演（默认瘦身：决策全留，重复说明句上提到 deck.legend）")
 
     c = sub.add_parser("check", help="VERIFY：build → normalize/guard/compile/preview → 结论")
     c.add_argument("build")
@@ -1020,7 +1075,7 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            bundle = run_plan(args.brief, args.plan_out, args.skeleton,
+            bundle = run_plan(args.brief, args.plan_out, args.skeleton, lean=not args.full,
                               assets_out=args.assets_out, assets_dir=args.assets_dir,
                               asset_cache=args.asset_cache)
             if args.json:
@@ -1035,8 +1090,7 @@ def main(argv=None) -> int:
                                .get("decision") not in (None, "none")]
                 world = bundle["deck"].get("world") or {}
                 print(f"plan: {len(pages)} 页 · 视觉世界 {world.get('name')} "
-                      f"· 质量 {bundle['deck']['quality']} · "
-                      f"规划 {bundle.get('planning_ms', 0)}ms")
+                      f"· 规划 {bundle.get('planning_ms', 0)}ms")
                 if bundle.get("warnings"):
                     for w in bundle["warnings"][:4]:
                         print(f"  ⚠ {w.get('msg') or w}")

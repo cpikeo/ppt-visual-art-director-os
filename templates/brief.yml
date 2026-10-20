@@ -21,7 +21,6 @@ tension: ""             # 观众当前最大的疑问/风险/阻力——只写�
 # ============================================================
 # visual_world: ""        # 一句话视觉世界（材质 + 光影 + 空间）；写了压过推导
 # brand_colors: ["#1A3A5C", "#C8501E"]   # [主色, 强调色, 辅色] 或 {slot: #HEX}
-# quality_level: advanced # fast（两分钟档）| advanced（判断与证据预算更高，不是更多图片）
 # background_scene: ""    # 可选：solid_world | atmospheric（整副 deck 的背景世界）
 # avoid: ["无来源数字", "装饰性图标"]     # 全 deck 明确不做的几件事
 # 注意：`design_direction` 已退役——风格不由名词决定，由内容决定（写了会被点名）。
@@ -55,7 +54,9 @@ slides:
 # medium: photography    # 按任务声明摄影/科学图解/线描等介质，不默认 3D 或细线图标
 # asset_ratio: "16:9"    # 16:9|4:3|3:2；比例不符需裁切时显式 asset_allow_crop: true
 # negative_space_anchor: left   # left|right|top|bottom|center|none；与素材构图一致
-# safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}   # 或 {} 表示不压字
+# safe_area: {x: 0.06, y: 0.08, width: 0.34, height: 0.78}   # 压字区（0–1 归一化）：
+#   # 写了就是契约——图上文字锚点必须落在区内，越界 guard 报 safe_area；
+#   # 不写则继承资产清单；{} = 本页不压字。页脚 source/method/metadata 小字自动豁免。
 # text_color: dark       # dark|light（QC 按实际亮度验证）
 # material: "rice paper ground, ink wash gradient"   # 逐字生效，压过世界推导
 # lighting: "single soft north window light from the upper left"

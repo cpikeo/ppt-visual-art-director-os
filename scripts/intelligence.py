@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -23,7 +24,7 @@ from pathlib import Path
 
 # 断行禁则与单位词与编译/预览共用 primitives 的单一来源（见 NO_LINE_START_CJK /
 # UNIT_WORDS）：判断层再抄一份，断行建议就会与产物、预览各断各的。
-from primitives import NO_LINE_END_CJK, NO_LINE_START_CJK, unit_head
+from primitives import NO_LINE_END_CJK, NO_LINE_START_CJK, unit_head, type_scale
 
 # ─────────────────────────────────────────────────────────────────────
 # 1 · Brief 加载（唯一加载器：yml / json / 定义 BRIEF|NEED 的模块）
@@ -262,9 +263,16 @@ _PART_OF_WHOLE = re.compile(
 # 加总≈100 判据看不见它（51+23=74，余量在「其余」里）。形状判据：两处以上
 # 「占…的 N%」加余量词（其余/剩余）＝作者已经把整体拆给我们看了。
 _SHARE_OF_TOTAL = re.compile(r"占[^。；%]{0,24}?\d+(?:[.,]\d+)?\s*[%％]")
-_REMAINDER_CUE = re.compile(r"其余|剩余|余下|其中")
+# 「其他 / 其它 / 杂项 / 余额」是中文构成页最高频的余量写法（「交付延迟 61%，
+# 账单错误 24%，其他 15%」）。缺了它们，相加正好 100 的构成页仍判不出 part_whole。
+_REMAINDER_CUE = re.compile(r"其余|剩余|余下|其中|其他|其它|杂项|余额")
 _STRUCTURE_WORDS = ("体系", "架构", "框架", "模型", "组织", "结构", "模块", "层级",
                     "平台", "中台", "framework", "architecture", "system")
+# 强结构词：本身就是「结构/归属」的名词。其余（模型/体系/平台/框架/中台）是
+# 业务里最常见的复合名词——「单店模型」「风控体系」「数据平台」都不是结构图，
+# 一个词就把页面判成 structure，等于让关键词替读者决定版面。弱词要两个以上
+# 同时出现，或与强词/显式关系同现，才升 structure。
+_STRUCTURE_STRONG = ("组织", "结构", "架构", "模块", "层级")
 # 「结构性增长 / 结构化数据」里的「结构」是形容词，「结构性增长」是一个东西的
 # 名字、不是一条时间序列。不剥掉它，一句封面主张（「唯一还能拿到结构性增长的
 # 战场」）会先被判成结构说明页、再被判成数据序列页，焦点与构图随之落到一张
@@ -586,15 +594,24 @@ def evidence_numerals(text: str) -> list[dict]:
 # 不能只靠「三个以上数字 + 同单位」推断（旧写法就是这么误判的：规格列举被读成一条
 # 曲线，构图落到曲线上，而页面上根本没有序列）。
 _QUANT_RUN = re.compile(r"\d[^，,、；;。\n]{0,10}$")
+# 规格行的形状：每个片段**就是**一个量（可带单位），片段内部没有指标名/主体名。
+# 旧判据用 `_QUANT_RUN`（以数字结尾）兜底，于是「昆山 18.4 元、成都 16.9 元、
+# 越南 15.2 元」这类**并列比较**也被当成规格枚举，`parallel_units` 被关掉，
+# 整页落到 evidence=none——中文经营稿里最常见的并列写法反而判不出来。
+_QUANT_PART = re.compile(r"^[\d+\-−]\d*(?:[.,]\d+)?\s*[^\d\s]{0,6}$")
 
 
 def _is_quantile_row(body: str) -> bool:
-    """同一连接符隔开的同构数字行：至少 3 个片段、每段都以数字开头、分隔符一致。"""
+    """规格行：同一连接符隔开、**每段都以数字开头**的裸量枚举（1280℃、1450℃）。
+
+    有主体名的并列（「昆山 18.4 元…」）不是规格行：它是有名字的可比项，
+    应当进 parallel_units / comparison，而不是被丢掉。
+    """
     for sep in ("、", "；", ";"):
         parts = [p.strip() for p in body.split(sep) if p.strip()]
         if len(parts) < 3:
             continue
-        if all(_QUANT_RUN.search(p) or p[:1].isdigit() for p in parts):
+        if all(_QUANT_PART.match(p) for p in parts):
             return True
     return False
 
@@ -1212,7 +1229,9 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
-    if _hit(evidence_body, _STRUCTURE_WORDS) \
+    structure_hits = sum(1 for w in _STRUCTURE_WORDS if _hit(evidence_body, (w,)))
+    structure_strong = any(_hit(evidence_body, (w,)) for w in _STRUCTURE_STRONG)
+    if structure_strong or structure_hits >= 2 \
             or (not ev and _ENUM_LIST.search(body) and _TAXONOMY_CUE.search(body)) \
             or threshold_list:
         modes["structure"] = 0.65
@@ -1244,9 +1263,20 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         # 「分期」要成为一条可排的承诺轴，每一期得各自带着**同单位**的量
         # （一期 1,200 万；二期 1,800 万；三期 1,800 万）。一期写时长、二期写目标，
         # 或只有一期带数，都只是项目名，不足以把页面判成时间轴。
-        phase_clauses = [c for c in _CLAUSE_SPLIT.split(body) if _PHASE_MARKERS.search(c)]
-        phase_amounts = [n for c in phase_clauses for n in numerals(c) if not n["year"]]
-        quantified_phases = (len({c for c in phase_clauses if _NUM.search(c)}) >= 2
+        clauses = _CLAUSE_SPLIT.split(body)
+        phase_idx = [i for i, c in enumerate(clauses) if _PHASE_MARKERS.search(c)]
+
+        def _phase_amounts_at(i: int) -> list:
+            """某一期的承诺量：本期子句没有量时，并入紧随其后的子句（同一句话被
+            逗号切开：「二期 2028 年，投资 1.8 亿元」——量在后半句）。"""
+            vals = [n for n in numerals(clauses[i]) if not n["year"]]
+            if not vals and i + 1 < len(clauses) and not _PHASE_MARKERS.search(clauses[i + 1]):
+                vals = [n for n in numerals(clauses[i + 1]) if not n["year"]]
+            return vals
+
+        phase_amounts = [n for i in phase_idx for n in _phase_amounts_at(i)]
+        quantified_phases = (sum(1 for i in phase_idx if _NUM.search(clauses[i])
+                                 or (i + 1 < len(clauses) and _phase_amounts_at(i))) >= 2
                              and len({n.get("unit") or "" for n in phase_amounts}) == 1)
         explicit_phase = bool(_PHASE_SPLIT.search(body)) or seq_strong or quantified_phases
         modes["sequence"] = max(modes.get("sequence", 0.0), 0.9 if explicit_phase else 0.7)
@@ -1837,6 +1867,45 @@ def _numbers_are_support(claim_text: str, u: dict, carried: list[dict],
     return _metric_concentration(text, carried) < 0.5
 
 
+def chart_kind_of(u: dict, element_role: str) -> tuple[str, str] | None:
+    """焦点是图表时，给出**可落地的 kind** 与一句理由；判断不出就不猜（返回 None）。
+
+    没有这一步，plan 只说「type=chart」，chart_kind 留给落稿时即兴决定——
+    同一份判断在不同轮次会漂成条形/饼/折线，产物不稳定。这里只做**由证据形状
+    推出的最小选择**，四个约束都来自阅读本身：
+      · 构成（部分/整体）→ 扇区 ≤5 才配环形；更多扇区用横条（角度比长度难比）
+      · 两端同口径对比 → 成对横条；口径不同 → 并置大数字，绝不共用刻度
+      · 时间序列（同一单位 ≥3 点）→ 折线；只有两点 → 柱，不画一条假趋势
+      · 单一量 → kpi
+    结构/顺序页不在此列：它们的形状由层级本身决定，交给作者按关系落点。
+    """
+    n = int(u.get("distinct_numerals") or 0)
+    same_unit = bool(u.get("same_unit"))
+    ev = u.get("evidence")
+    if element_role not in ("comparison_field", "kpi_main", "ratio_main"):
+        return None
+    if u.get("part_whole"):
+        if 2 <= n <= 5:
+            return "donut", f"{n} 个部分相加成整体：扇区数在可读范围内，环形让构成先被看见"
+        if n > 5:
+            return "bar", f"{n} 个部分用环形会把扇区压成细条：横条按长度可比"
+    if u.get("comparison") or ev == "comparison":
+        if n == 2 and same_unit:
+            return "bar", "两端同一口径：成对横条让差值落在同一基线上"
+        if n > 2 and same_unit:
+            return "bar", "多端同口径比较：横条共用一条基线，顺序按值排"
+        if not same_unit:
+            return "big_number_row", "量纲不同，不共用刻度：并置大数字，把口径写在数字旁边"
+    if ev == "series" and same_unit:
+        if n >= 3:
+            return "line", f"同一单位的 {n} 个时间点：折线的斜率就是变化本身"
+        if n == 2:
+            return "column", "只有两个时间点：两根柱说清前后，不画一条假装有趋势的线"
+    if ev == "number" and n <= 1:
+        return "kpi", "单一量：数字本身就是结论，不需要图"
+    return None
+
+
 def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
              number_anchor: tuple[list[dict], dict | None] | None = None,
              page_text: str = "") -> dict:
@@ -1869,9 +1938,13 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
     elif u.get("part_whole") and carried:
         part = (primary or carried[-1])["raw"]
         whole = next((n["raw"] for n in carried if n is not primary), "总体")
-        choice = {"element_role": "ratio_main", "type": "text",
-                  "why": f"「{part}」是已经发生的子集；同屏写清「{whole}」的总体，"
-                         "不把整体→子集误画成下降，也不让比例脱离分母。"}
+        # 作者已声明图表数据时，构成就该由图承担（图是证据，不是装饰）；否则文字
+        # 并写分子/分母更省地方。kind 由扇区数决定，见 chart_kind_of。
+        choice = {"element_role": "ratio_main",
+                  "type": "chart" if u.get("has_chart") else "text",
+                  "why": f"「{part}」是已经发生的子集；"
+                         + (f"同屏写清「{whole}」这个整体，" if whole != "总体" else "同屏写清它所属的整体，")
+                         + "不把整体→子集误画成下降，也不让比例脱离分母。"}
         rejected = [["trend_line", "总量和子集不是先后两个时间点：折线会虚构下降"],
                     ["card_grid_4", "一个分子与分母不需要四张等权卡片"]]
     elif (u.get("comparison") or u.get("evidence") == "comparison") \
@@ -1931,6 +2004,10 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                   "why": "这一页以陈述为主，标题即焦点（标题写结论，不写字段名）。"}
         rejected = [["subtitle_heavy", "副标题抢主标题：层级变成装饰"],
                     ["kpi_row", "无证据支撑地摆一排数字：数字成了布景"]]
+    if choice.get("type") == "chart":
+        derived = chart_kind_of(u, choice["element_role"])
+        if derived:
+            choice = {**choice, "chart_kind": derived[0], "chart_kind_why": derived[1]}
     return {**choice, "rejected": [{"option": o, "why_not": w} for o, w in rejected]}
 
 
@@ -2283,6 +2360,18 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
         rule = BASE_DISCIPLINE
     scale = {"lead_break": suggest_break(str(claim.get("text") or "")),
              **measure_of(int(text_len or 0))}
+    # 字阶只给**档位与像素值**，不给坐标：作者按这一档落字，页与页之间才同一套语气。
+    # 表在 primitives.TYPE_SCALE（编译器与预览的默认值同源），这里只选档。
+    _focal_len = len(str(focal or ""))
+    _role = focus.get("element_role")
+    if _role in ("kpi_main", "ratio_main"):
+        _step = "stat" if _focal_len <= 6 else "display"
+    elif role == "establish":
+        _step = "display"
+    else:
+        _step = "title"
+    scale["step"] = _step
+    scale["size"] = type_scale()[_step]
     if len(str(claim.get("text") or "").strip()) > 2 * _LEAD_MAX_CJK:
         # 断行救不了一句两行装不下的主张：先改写，再谈断行（SKILL §2：删除比添加重要）。
         scale["lead_rewrite"] = "主张超过两行：先改写成一句更短的可复述结论，而不是缩小字阶硬排。"
@@ -3017,14 +3106,6 @@ def _coherence_pass(pages: list) -> dict:
             "notes": notes or None}
 
 
-# ─────────────────────────────────────────────────────────────────────
-ADVANCED_TRIGGERS = ("发布会", "品牌", "年报", "旗舰", "形象", "高端", "launch", "brand",
-                     "keynote", "manifesto", "premium", "campaign")
-QUALITY_ALIASES = {"fast": "fast", "quick": "fast", "standard": "fast",
-                   "advanced": "advanced", "premium": "advanced", "keynote": "advanced",
-                   "benchmark": "advanced"}
-
-
 def think(brief: dict) -> dict:
     """唯一规划入口：一次计算，产出判断面（含理由）与单份页事实。确定性、零写入。"""
     brief = brief if isinstance(brief, dict) else {}
@@ -3044,14 +3125,13 @@ def think(brief: dict) -> dict:
         warnings.append({"rule": "deck_contract", "scope": "deck",
                          "msg": "brief 缺 " + missing + "：" + "；".join(parts)})
 
-    occasion = f"{brief.get('occasion','')} {brief.get('subject','')} {brief.get('brief','')}"
-    quality_input = brief.get("quality_level")
-    quality = QUALITY_ALIASES.get(str(quality_input or "").strip().lower()) if quality_input else (
-        "advanced" if any(k in occasion.lower() or k in occasion for k in ADVANCED_TRIGGERS)
-        else "fast")
-    if quality_input and str(quality_input).strip().lower() not in QUALITY_ALIASES:
-        warnings.append({"input": quality_input, "canonical": quality,
-                         "rule": "quality_fallback"})
+    # 「质量档」已退役：它只改一个标签，不改任何判断或预算——写着 advanced 的 brief
+    # 与 fast 产出的 plan 逐字节相同。真正的深度旋钮在 check（--speed/--deadline）。
+    if str(brief.get("quality_level") or "").strip():
+        warnings.append({"rule": "quality_retired", "scope": "deck",
+                         "input": str(brief["quality_level"]),
+                         "msg": "quality_level 已退役：它不影响任何判断，删掉即可；"
+                                "证据深度与时限由 check --speed strict / --deadline 控制"})
 
     raw = brief.get("slides")
     if raw is None:
@@ -3118,7 +3198,8 @@ def think(brief: dict) -> dict:
             "audience": audience or None,
             "decision": decision or None,
             "tension": tension or None,
-            "quality": quality,
+            # 一张字阶表，deck 级给一次：作者不必在每页凭手感挑字号
+            "type_scale": type_scale(float((brief.get("canvas") or {}).get("width") or 1280)),
             "world": world,
             "theme": _theme_seed(world, brief.get("brand_colors")),
             "coherence": coherence,
@@ -3228,6 +3309,179 @@ def _weight_brief(items, limit=2) -> str:
     return _fmt_items([_weight_label(item) for item in (items or [])], limit)
 
 
+_SCALE_STEPS = ("stat", "display", "title", "lead", "subtitle", "body", "caption", "source")
+
+
+def _scale_line(bundle: dict) -> str:
+    """骨架里的字阶行：同一张表（primitives.TYPE_SCALE）在 deck 级算好后的样子。"""
+    scale = (bundle.get("deck") or {}).get("type_scale") or {}
+    shown = " · ".join(f"{k} {scale[k]:g}" for k in _SCALE_STEPS if k in scale)
+    return f"字阶（px，1280 宽画布；其它宽度等比换算）: {shown}"
+
+
+# ── 瘦身投影（plan 的体积是作者要付的上下文成本）──────────────────────────────
+# 判断本身一个字都不删：决策字段（claim/focus/composition/role/lead/production…）
+# 全量保留。删的是三类**可推导或重复**的内容：
+#   1) 派生值：numerals 的 value/unit/year 可由 raw 推出；understanding 的 8 个布尔
+#      里没被置真的那些（false 是默认态，列出来只占位置）；
+#   2) 同一条规则在每页重复一遍：全稿唯一取值的说明句上提到 deck.legend，页内不再抄；
+#   3) 页面级重复的 deck 事实（audience/decision 已在 deck 上）。
+# 想要完整推演（含被否决方案的理由、每页的张力说明）用 --full。
+_LEAN_BOOL_FLAGS = ("comparison", "part_whole", "same_unit", "has_chart",
+                    "human", "scene", "individual")
+_LEAN_HOIST_MIN_CHARS = 16
+
+
+def _lean_understanding(u):
+    if not isinstance(u, dict):
+        return u
+    out: dict = {"evidence": u.get("evidence")}
+    raws = [str(n["raw"]) for n in (u.get("numerals") or [])
+            if isinstance(n, dict) and n.get("raw") is not None]
+    if raws:
+        out["numerals"] = raws
+    flags = [f for f in _LEAN_BOOL_FLAGS if u.get(f)]
+    if flags:
+        out["flags"] = flags
+    if u.get("subjects"):
+        out["subjects"] = u["subjects"]
+    return out
+
+
+def _lean_alternatives(items):
+    if not isinstance(items, list):
+        return items
+    names = [str(i[0]) for i in items if isinstance(i, (list, tuple)) and i]
+    return names or items
+
+
+def _lean_rejected(items):
+    """被否决方案 → 只留名字。
+
+    「为什么否决」是写给人看的复盘（--full 里有）；模型拿到的决策已经定了，
+    再抄一遍六条否决理由不会让它落稿更准，只会让它更慢。
+    """
+    if not isinstance(items, list):
+        return items
+    return [str(i.get("option")) for i in items if isinstance(i, dict) and i.get("option")] or items
+
+
+def _lean_must_place(items):
+    """[{role, type}] → ["role:type"]：同一个信息，省掉每项两个键名。"""
+    if not isinstance(items, list):
+        return items
+    out = [f"{i.get('role')}:{i.get('type')}" for i in items
+           if isinstance(i, dict) and i.get("role")]
+    return out or items
+
+
+def _lean_list_tails(items, notes, path):
+    """「元素 — 通用说明」的列表：把**重复出现的同一句说明**抽出来只说一次。
+
+    只抽同一列表里出现 ≥2 次的尾巴（那才是重复）；只出现一次的是这一项特有的
+    判断，原样保留。抽出来的句子进 deck.legend，一个不丢。
+    """
+    if not isinstance(items, list) or len(items) < 2:
+        return items
+    heads, tails = [], []
+    for item in items:
+        if isinstance(item, str) and " — " in item:
+            head, tail = item.split(" — ", 1)
+            heads.append(head)
+            tails.append(tail)
+        else:
+            return items
+    generic = {t for t in tails if tails.count(t) >= 2}
+    if not generic or any(len(t) < 8 for t in generic):
+        return items
+    for tail in generic:
+        notes[f"{path}#通用说明" if len(generic) == 1 else f"{path}#{tail[:12]}"] = tail
+    return [h if t in generic else f"{h} — {t}" for h, t in zip(heads, tails)]
+
+
+def _walk_strings(node, path=()):
+    """(path, value) —— 只下钻 dict/list[str]，遇到非字符串叶子就停。"""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield from _walk_strings(v, path + (k,))
+    elif isinstance(node, str) and path:
+        yield path, node
+
+
+def _drop_path(node, path):
+    """按路径删键（保留空 dict 结构，避免改变同层其它字段的分组）。"""
+    cur = node
+    for key in path[:-1]:
+        if not isinstance(cur, dict) or key not in cur:
+            return
+        cur = cur[key]
+    if isinstance(cur, dict):
+        cur.pop(path[-1], None)
+
+
+def compact_plan(bundle: dict) -> dict:
+    """plan 的瘦身投影：决策全留，推导与重复句压缩。返回新对象，不改入参。"""
+    if not isinstance(bundle, dict):
+        return bundle
+    pages_out = []
+    page_notes: dict = {}
+    for page in bundle.get("pages") or []:
+        if not isinstance(page, dict):
+            pages_out.append(page)
+            continue
+        light = {k: v for k, v in page.items() if k not in ("judgment",)}
+        j = page.get("judgment") if isinstance(page.get("judgment"), dict) else {}
+        # 深拷贝：下面的删句/换形都在改 dict，共享引用会把调用方那份 plan 也改掉
+        # （瘦身投影必须是纯函数，否则「投影前后对比」测的是自己被改过的输入）。
+        jl = {k: copy.deepcopy(v) for k, v in j.items()
+              if k not in ("audience", "decision")}
+        if "understanding" in jl:
+            jl["understanding"] = _lean_understanding(jl["understanding"])
+        for key in ("visual_role", "focus", "composition"):
+            block = jl.get(key)
+            if isinstance(block, dict):
+                if "alternatives" in block:
+                    block["alternatives"] = _lean_alternatives(block["alternatives"])
+                if "rejected" in block:
+                    block["rejected"] = _lean_rejected(block["rejected"])
+        weight = jl.get("information_weight")
+        if isinstance(weight, dict):
+            for bucket in ("maximize", "weaken", "delete"):
+                if bucket in weight:
+                    weight[bucket] = _lean_list_tails(
+                        weight[bucket], page_notes, f"information_weight/{bucket}")
+        prod = jl.get("production")
+        if isinstance(prod, dict) and "must_place" in prod:
+            prod["must_place"] = _lean_must_place(prod["must_place"])
+        light["judgment"] = jl
+        pages_out.append(light)
+
+    # 全稿唯一取值的说明句上提到 deck.legend（页内不再重复）。
+    counts: dict[tuple, set] = {}
+    for page in pages_out:
+        for path, value in _walk_strings(page.get("judgment") or {}):
+            if len(value) >= _LEAN_HOIST_MIN_CHARS:
+                counts.setdefault(path, set()).add(value)
+    legend = {"/".join(path): next(iter(vals))
+              for path, vals in counts.items()
+              if len(vals) == 1 and len(path) >= 2 and path[-1] in
+              ("why", "necessity", "limit", "discipline", "whitespace_duty")}
+    for page in pages_out:
+        j = page.get("judgment") or {}
+        for path, value in list(_walk_strings(j)):
+            if legend.get("/".join(path)) == value:
+                _drop_path(j, path)
+
+    out = {k: v for k, v in bundle.items() if k != "pages"}
+    out["pages"] = pages_out
+    legend.update(page_notes)
+    if legend:
+        deck = dict(out.get("deck") or {})
+        deck["legend"] = legend
+        out["deck"] = deck
+    return out
+
+
 def build_skeleton(bundle: dict) -> str:
     """plan bundle → 构图作业稿：简短行动摘要；完整竞争理由只住 plan.json。
 
@@ -3275,7 +3529,9 @@ def build_skeleton(bundle: dict) -> str:
          '字段契约 → references/contract.md（一次）；判断有真实缺口才回看 SKILL.md §2–3。',
          '落稿写法：build.py 是 Python 模块（.json 亦可）；重复信封（id/type/role/几何/字号字段）',
          '  可用局部函数压缩，判断（构图/焦点/权重/断行/出处）仍逐页显式给值——判断进 helper 即模板化。',
-         f'质量档: {deck.get("quality")} · 页数: {len(pages)}']
+         f'页数: {len(pages)}',
+         # 字阶给一次（全稿共用），作者不必在页内凭手感挑字号，也不必读源码找默认值。
+         _scale_line(bundle)]
     L += [f'  {line}' for line in facts]
     has_media = any((p.get("judgment") or {}).get("media", {}).get("decision")
                     in ("required", "reuse") for p in pages)

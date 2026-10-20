@@ -2,6 +2,118 @@
 
 仅记录行为差异、迁移事项与验证边界。已提交的详细历史见 Git；本次压缩前工作树副本随审计交付保存。
 
+## 10.3.0 — 2026-10-20（safe_area 从提示词变成版面契约）
+
+### 声明的字段必须有人执行
+
+- **问题**：`safe_area` 一路只喂给成图 QC 的亮度采样（「这块区域要留白」），**版面侧无人校验**。实测：把标题从左侧压字区整体挪到右半区、压在高亮上，`--mode release` 依然 PASS（审计 E16）。更糟的是，仓库自带的资产样例自己就差了 4.8px 才进压字区（`x: 72` vs 左边界 76.8）——声明写了三个月，一次也没被执行过。
+- **guard 新增 `safe_area` 规则**：页上声明 `safe_area`（0–1 归一化矩形，相对整幅背景图）后，图上每个文字元素的**锚点**必须落在区内——横向按 `align`（左/中/右）、纵向按 `anchor`（上/中/下），缺省左/上。判锚点不判外框：短文字配宽框是常态，用外框判会误杀左对齐标题，而锚点越界就是真把字放到了别处。越界报出「横向锚点 760px 在压字区 77–512px 之外」这种可直接修的量。
+- **清单继承**：`--assets-manifest` 绑图时，页上没写 `safe_area` 就从清单条目继承（图是照着它留白的）；页上写了却和清单不一致 → **BLOCK**，因为那不是笔误而是「图按 A 留白、字按 B 排」。
+- **两处豁免，都写进 contract**：`role ∈ {source, method, metadata}` 的页脚小字（它们本就压在页脚带上），以及显式 `safe_area_exempt: true` 的装饰性文字。`{}` 仍表示本页不压字。
+- **实测**：审计 E16 的错位稿 `build_asset_shift.py` 现在 `BLOCKED`（`s01_t / s01_s` 两条 `safe_area`），修正到 `x: 88` 的对照稿 `PASS`；`audit/sm` 8 页 release 产物 **sha256 不变**（`cca264ae2bb1…`，54,940B）——没声明压字区的稿子零影响。
+- **新增钉 6 个**（selftest 775 → **781**）：越界必拦 / 区内不误拦 / 页脚小字豁免 / 像素值报 schema / 清单继承 / 页-清单冲突 BLOCK。
+
+## 10.2.0 — 2026-10-20（渲染冒烟进 CI：三度量对拍变成本地/CI 都能跑的门槛）
+
+### 对拍不该只跑一次
+
+- **新增 `tools/metrics_calibration.py --smoke`**：固定 8 段文本 × 4 档栏宽 = **32 探针**，一次编译一次渲染，**0.8 s** 跑完。选样不是均匀抽样，是「曾经出过事的形状」：混排百分比、数字+单位、长句、极窄栏（160px）。
+- **门槛只有两条，都对准危险方向**：
+  - `guard 低估 == 0`：guard 报的行数少于真排 = 放行一个会溢出的框，是这类错误里最坏的；高估（多报一行）只是让作者删一句能排下的话，属安全方向，只报告不拦。
+  - `ghost 不一致 ≤ 2`（`--max-ghost-mismatch`，棘轮）：已知的两处都在 ≤9 字/行的极窄栏，真值只有 PowerPoint 能给；多一个就红——那说明预览开始说谎。
+- **新增 workflow `.github/workflows/render-smoke.yml`**：nightly（03:00 JST）+ 手动 + 只在 `scripts/**`、`tools/metrics_calibration.py`、本文件变更时触发。装 `libreoffice-impress`/`poppler-utils`/`fonts-noto-cjk`，把 `soffice --version`、`pdftotext -v`、`fc-list | grep -c "CJK SC"` 打进日志（换渲染器 = 换仲裁者，数字必须能对上版本），探针明细作为 artifact 留 30 天。`ci.yml` 的必跑矩阵仍然零外部渲染器——冒烟是另一条更慢的线。
+- **顺手修掉一个让 CI 直接跑不起来的坑**：`metrics_calibration.py` 的 `--scripts` 默认值写死成 `/home/user/repo/scripts`，换目录/换机器就找不到模块。改为按工具自身位置解析，并加钉禁止 `tools/` 下再出现写死的绝对路径。
+- **实测（本地，LibreOffice 25.2 + Noto CJK）**：32 探针 · guard 一致 30/32（**低估 0**、2 处高估）· ghost 一致 30/32（2 处：`deck_s07_body_160` 少算一行、`mix_pct_160` 多算一行）· 退出码 0。
+- **新增钉 2 个**（selftest 774 → **775**）：工具无写死绝对路径。
+
+## 10.1.0 — 2026-10-20（plan.json 默认瘦身：决策全留，重复句上提）
+
+### 体积是作者要付的上下文成本
+
+- **默认瘦身，`--full` 保留完整推演**：`vao plan` 落盘的是 `intelligence.compact_plan()` 的投影；完整 bundle 仍原样返回给 CLI/遥测/资产链（判断没有第二套）。
+- **删的都是「可推导或重复」**，判断一个字不删：
+  - `understanding.numerals` 只留原文（`value/unit/year` 由 raw 推出）；8 个布尔只列被置真的（false 是默认态）。
+  - `visual_role.alternatives` / `focus.rejected` / `composition.rejected` 只留名字（否决理由属复盘，`--full` 里看）。
+  - `production.must_place` 压成 `"role:type"` 字符串。
+  - 同一列表里**重复出现**的说明句（如每条 `weaken` 尾巴上的「支撑证据：与结论同屏但小一档…」）抽出来只说一次，进 `deck.legend["information_weight/weaken#通用说明"]`；只出现一次的是这一项特有的判断，原样保留。
+  - 全稿唯一取值的规则句（`typography.scale.limit` 的「22–45 汉字/行…」等）上提到 `deck.legend`，页内不再抄。
+- **实测体积**（`json.dumps(ensure_ascii=False)` 字符数）：
+  | 样本 | 完整 | 瘦身 | 降幅 |
+  |---|---|---|---|
+  | 8 页（东京开店 brief） | 26,072 | 18,602 | **−28.7%**（≈11.8k → 8.5k tok） |
+  | 40 页（big.yml） | 117,680 | 67,666 | **−42.5%**（≈53.5k → 30.8k tok） |
+  省下来的主要是「同一句说明在多页重复」，所以页越多省得越多——这也是为什么判据不用魔数，而是「≥15% 且随页数单调更省」。
+- **纯函数**：投影深拷贝要改的块，输入 bundle 不被修改、结果幂等（首版忘了深拷贝，`compact_plan(bundle)` 会把调用方的 plan 一起改掉，测「前后对比」时量的是被改过的输入——已修并加钉）。
+- **逃生口有证据**：`--full` 产出的 `composition.rejected` 每项都带 `why_not`，且文件比默认版大（selftest 直接跑两条命令比大小）。
+- **新增钉 4 个**（selftest 770 → **774**）：瘦身 ≥15% 且随页数更省 + 纯函数幂等；14 个决策位 × 全页逐位相等（含 numerals 原文与 must_place 角色序列）；`deck.legend` 的每句话逐字来自完整版；`--full` 保留 `why_not` 且体积更大。
+
+## 10.0.0 — 2026-10-20（删除 chart_kind 别名表 · 旧名不再是合法输入）
+
+### 破坏性变更：旧名从「兼容」变成「错误」
+
+- **别名表删除**：`primitives` 不再有 `CHART_ALIASES` / `resolve_chart_kind` / `apply_chart_alias`，`CHART_KINDS` 就是 `CHART_SPEC` 的 19 条。编译器、预览、guard 三处入口的归一步骤同时删除——名字只剩一种，就没有「归一」这件事。
+- **旧名一律报错**：`horizontal_bar` 等 7 个退役名在 **draft 也拦**（此前只在 release 拦）。失败码仍是 `CHART_KIND_ALIAS`，报错给出 canonical、该名当年隐含的默认值（`show_values: false`）与改名命令；未知 kind 仍走 `CHART_TYPE_FAIL`，两类错误不再混在一起。
+- **只留一张退役表**：`RETIRED_CHART_KINDS`（7 条）+ `retired_chart_kind()`，只服务报错文案与迁移工具，**不参与任何渲染**。9.37 的 `reject_chart_kind_alias` 规则开关随之删除——门已经是硬的，不需要旋钮。
+- **迁移证据（可执行）**：`tools/rename_chart_kinds.py --audit <dir>` 扫描输入文件（.py/.json/.yml/.yaml）里的退役名，逐条给「文件:行 → canonical」，有残留退出码 1。仓库自身与三份样本稿均为 0 处（`--audit .` 输出「迁移完成」）。
+- **仓库内自测随之迁移**：3 处 fixture 仍写着 `comparison_bar` / `donut_composition`，被新门一一拦下后改为 canonical——门咬住了才会发现它们。
+- **selftest 775 → 770**：删掉 4 条「旧名仍可编译」的断言（前提已不存在），新增 4 条：别名表确实不存在、旧名在任何档位都拦且报错可执行、未知 kind 与退役名分属两个失败码、`--audit` 能看见旧名并给出文件:行。
+
+### 升级方式
+
+```bash
+python3 tools/rename_chart_kinds.py <你的 build.py 或 plan.json> --audit .   # 先看有没有
+python3 tools/rename_chart_kinds.py . --write                              # 一次改完（含默认值）
+```
+
+## 9.37.0 — 2026-10-20（旧 chart_kind 名在 release 档成为硬门 · 批量改名工具）
+
+### 合并只有配上期限才算合并
+
+- **release 档拒绝旧名**：`release_guard_rules("release")` 现在置 `reject_chart_kind_alias: True`，`chart_kind_alias` 由 warn 升为 **error**，规则映射到失败码 `CHART_KIND_ALIAS`（进 `BLOCKING_CODES`，修复包给一句话的改法）。draft 档行为不变（仍是 warn）：旧稿还能跑，但交付环节必须写 canonical。默认值仍是 False，库内直接调 `check_spec` 的调用方零变化。
+- **批量改名工具 `tools/rename_chart_kinds.py`**：把 plan/build 里的旧名一次换成 canonical，并**原子补齐该名隐含的默认值**（`horizontal_bar / donut_composition → show_values: false`）。少了这半步，只改名会让横条图突然长出数值标签——那是改图，不是改名。
+  - `.py` 走 `ast`（dict 字面量与 `dict(chart_kind=...)` kwargs 两种语法都覆盖），`.json` 走自带的只记偏移扫描器（stdlib json 不给位置）；两者都按 **UTF-8 字节偏移**做精确替换，不重排、不重新序列化，注释与缩进原样保留。
+  - 语法细节分档处理：`.py` 补 `show_values: False`（Python 字面量），`.json` 补 `"show_values": false`——写混了不是格式问题，是 NameError / 非法 JSON。
+  - 默认干跑打印 unified diff，`--write` 落盘；退出码 0 = 无需改/已写入、1 = 干跑有待改、2 = 输入不可读，或改完仍有非字面量写法（f-string、变量拼接）没改干净。后者会逐条打印但**不改文件、不假装成功**。二次运行输出「没有旧名」，天然幂等。
+  - 实测：同一份 spec 改名前后编译产物**逐字节相同**（`.json` 与 `.py` 各一例）；`audit/charts/chart_build.py` 的 `horizontal_bar → bar` 迁移后产物仍 `09c5b74a…`，预览逐像素不变。
+- **仓库自测同步迁移**：`selftest` 里一处 release 正向样例原本写着 `comparison_bar`，被新门拦下——这正好证明门真的咬住，已改成 `bar`。
+- **新增钉 3 个**（selftest 772 → **775**）：draft warn / release error + 失败码在 `BLOCKING_CODES`；改名工具干跑不落盘、`--write` 改名补默认、二次运行幂等；改名后产物与改名前逐字节相同。
+
+## 9.36.1 — 2026-10-20（饼/环预览按短边取圆：不再把宽框拉成椭圆）
+
+### 由 chart_kind 普查顺手抓到的预览谎报
+
+- 基准：900×400 的元素框里画 donut。`soffice --convert-to pdf` + `pdftoppm` 实测真实产物的环外接为 **394×394**（圆内接于绘图区），而 `ghost.py` 直接把 `(left, top, right, bottom)` 当外接矩形传给 `pieslice`，预览画出 **900×400 的扁椭圆**，环心孔却按短边算成了圆——同一张图里几何自相矛盾。作者按椭圆的留白改构图，产物却是圆的。
+- 修法：半径取 `min(宽, 高) / 2`，圆心不变；扇区颜色、文字反色、环心 KPI 全部不动。**只改预览，不改产物**：8 页样本 `out13.pptx` 仍为 `cca264ae…`，LibreOffice 渲染逐像素未变。
+- 影响面：donut / pie 两类（含旧名 donut_composition）的预览；基准方框（宽=高）的页逐像素不变。
+- **发布清单标注**：`release_manifest` 的 notes 标签新增「图种别名」（此前旧名告警会落到泛化的「非阻断」，作者读完不知道动哪里）。实测含 `horizontal_bar` 的 2 页样张：产物 `09c5b74a…` 未变，notes 出现 `[图种别名] chart_kind='horizontal_bar' 已并入 'bar'（默认 show_values=False）…`。
+- **新增钉 1 个**（selftest 771 → **772**）：宽框里的 donut 环外接必须近正方形且直径不超过短边。
+
+## 9.36.0 — 2026-10-20（26 个 chart_kind 合并为 19 条渲染路径 · 旧名走别名表）
+
+### 一个 kind 一条渲染路径，同图异名的写法不再各留一份分支
+
+- **先证伪再合并**：新增 `tools/chart_kind_survey.py`——同一份载荷（`rows/points/layers/value`）逐 kind 编译 + `ghost_page`，对 **PPTX 字节**与**预览 PNG 字节**双取 sha。结果：`kpi = executive_kpi = big_number`、`bar = comparison_bar`、`line = trend = single_trend_line` 是**字节级同义词**；`horizontal_bar` 与 `donut_composition` 只是**缺省值**不同（`show_values` 默认关），显式同参时字节全同。其余 19 种（column、area、pie、waterfall、ranked_bar、progress_bar、stacked_bar、bubble、process_flow、timeline、steps、matrix、architecture、sparkline、big_number_row…）产物各不相同，**不是别名，不合并**。
+- **`primitives.CHART_SPEC` 只留 canonical（26 → 19）**，旧名进 `CHART_ALIASES: 旧名 → (canonical, 该名隐含的默认值)`；`CHART_KINDS` 仍等于「可写的全部名字」（19 + 7 = 26），所以旧稿不被拒。
+- **归一函数只有一处**：`resolve_chart_kind()` / `apply_chart_alias()`。compiler 的 `add_chart`、`add_native_chart`、ghost 的图表分支、verify 的 `_check_chart` 与 `_check_metric_units` 在**读 kind 之前**统一归一，下游代码里的 `kind in ("line", "trend", "single_trend_line")` 这类三合一判断全部消失。`apply_chart_alias` 返回新字典，不覆盖作者显式写的字段。
+- **旧名隐含默认值落成显式字段**：`horizontal_bar` → `show_values=False`、`donut_composition` → `show_values=False`；缺省名单因此只剩 `bar / column / donut` 一处。合并前后 **26 个写法的 PPTX 逐字节未变**（`tools/chart_kind_survey.py --compare`），LibreOffice 渲染逐像素一致。
+- **guard 对旧名出声**：新增告警 `chart_kind_alias`（warn，不阻断），提示 canonical 名与该名隐含的默认值——否则「为什么这张横条图没有数值」又要靠猜。
+- **判断层同步**：`intelligence` 的成对比较建议从 `comparison_bar` 改为 canonical `bar`。
+- **工具可跑基线**：`chart_kind_survey.py --scripts <旧工作树> --outdir <目录> --compare <基线 json>`，缺 `CHART_ALIASES` 的旧检出会退化成恒等映射，保证「合并前」由同一份代码路径生成。
+- **新增钉 3 个**（selftest 768 → **771**）：旧名归一 + 隐含默认只补缺 / 旧名产物与 canonical 逐字节相同（编译四次比 sha）/ guard 旧名只告警不拦。
+
+## 9.35.0 — 2026-10-20（三度量统一：guard / ghost / PPTX 一套折行与度量 · 字阶表单一来源）
+
+### 同一段文字不再由三套判据各算一遍
+
+- **折行只有一份实现**：`ghost._wrap_lines` 与 `verify.estimate_lines` 此前各自成篇（一个逐字贪心 + PIL，一个是「总宽 ÷ 栏宽」的估算）。现在折行核心在 `primitives.wrap_lines`，guard 与预览只提供「一个字有多宽」的度量函数（`primitives.measure_text`：能解析到主题字体就用真字面，解析不到回落宽度表）。
+- **混排边界间距计入度量**：CJK↔拉丁每个边界渲染器会多让 0.22 em（实测 LibreOffice 25.2 + Noto CJK：单边界 +0.217 em、双边界 +0.450 em，与方向无关）。漏掉它，`11.8%` 这类混排会少算一行。
+- **行首空白不计宽 · 行尾句读点可悬挂半个字**：前者曾把 `7,100 万日元` 拆成两行；后者曾把「一行差一个句号」的 26 字句判成两行，逼作者白删内容。
+- **数字与单位退无可退时的紧急断行**：窄栏里「数字+单位」在本行怎么都放不下时，旧逻辑回退到行首 1 个字（实测 `7,100 万日元` 被拆成 9 行）；现在数字自占一行、单位下行，与 Office 一致。
+- **guard 的余量只加在窄栏**：对拍 128 个探针（`tools/metrics_calibration.py`），不留余量时有 1 个探针比真实排版少算一行（会放行溢出，发生在 8.9 字/行）；按比例留 1% 虽把低估压到 0，却让 11 个框被多算一行。最终取「每行不足 12 字时让出 0.1 个字宽」（`verify.GUARD_NARROW_*`）：低估 0、多算 6，且判据有物理解释。
+- **对齐结果**（`tools/metrics_calibration.py`：编译 → LibreOffice → `pdftotext -bbox` 逐行读词框；LibreOffice 缩字自适配的页自动剔除）：guard 122/128、ghost 126/128 行数一致；guard 的 6 个偏差全部是「多算一行」方向。
+- **字阶一张表**：`primitives.TYPE_SCALE`（1280 宽画布）合并了散在 compiler 的 18/16/14/12/40÷3 与 ghost 的同名默认值；plan 的 `deck.type_scale` 与骨架里的字阶行都由它派生，逐页只给档位（`stat/display/title/...`）与像素值，不给坐标。
+- **新增钉 8 个**（selftest 760 → **768**）：guard/ghost 逐宽度行数一致 / 字面缺失时宽度表只高估不低估 / 行首空白不占位 / 余量只加在窄栏 / 编译器缺省字号取自 TYPE_SCALE / 画布变宽整套等比放大 / deck 级字阶表 + 逐页档位 / 封面走 display 档。
+
 ## 9.34.0 — 2026-10-20（PPT_CASE_004 实测回流 · 瀑布桥小计死代码 / 柱顶值契约 / 构成图扇区反色）
 
 ### 真实案例（PPT_CASE_004 · 15 页高端静奢红酒融资路演）逐页跨渲染器对拍抓出的三处静默分歧

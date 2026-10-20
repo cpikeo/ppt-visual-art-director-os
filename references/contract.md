@@ -37,15 +37,15 @@ spec = {
 | `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/pie/line/arrow) `fill stroke stroke_width fill_role text padding text_size text_color text_bold text_wrap text_line_height text_opacity text_anchor` |
 | `image` | `asset_id`（必需）`fit`(cover/contain) `crop asset_function overlay layer` |
 
-**编辑级文字纪律**：`size / width / height / padding / space_before / space_after` 按画布 px 填，`line_height` 是相对倍数，`char_spacing` 以 pt 填。`theme.fonts.cn`（别名 `body`）决定中文字体，`latin`（别名 `display`）决定拉丁字体；`font` token 与 `family` 元素字段只覆盖拉丁字体。PIL 是结构取证，字形与换行须在 PowerPoint 上另行校验。
+**编辑级文字纪律**：`size / width / height / padding / space_before / space_after` 按画布 px 填，`line_height` 是相对倍数，`char_spacing` 以 pt 填。字阶只有一张表（`primitives.TYPE_SCALE`，1280 宽画布；plan 的 `deck.type_scale` 与骨架注释都由它派生），编译器与预览的缺省字号也取自该表——不要在页内另造档位。`theme.fonts.cn`（别名 `body`）决定中文字体，`latin`（别名 `display`）决定拉丁字体；`font` token 与 `family` 元素字段只覆盖拉丁字体。PIL 是结构取证，字形与换行须在 PowerPoint 上另行校验。
 
-`chart_kind` 的合法值、编译路由、载荷形态、数值属性、截断上限与预览口径只在 `primitives.CHART_SPEC` 定义一次，本文不抄录。`kpi / executive_kpi / big_number` 读元素级 `value`，数值 `0` 是有效内容；`pie / donut / donut_composition` 的数值须非负且总和 > 0，`pie` 只接受一个序列。数值图表齐 `source / unit / period / basis`（release 硬门），同 `metric` 跨页必须同单位。`label_size` 控原生轴标签、`value_size` 控数值标签（画布 px，写入 PPTX 乘 0.75 转 pt）；多序列 `name` 必须非空且唯一。
+`chart_kind` 的合法值、编译路由、载荷形态、数值属性、截断上限与预览口径只在 `primitives.CHART_SPEC` 定义一次，本文不抄录。kpi 读元素级 `value`，数值 `0` 是有效内容；pie / donut 的数值须非负且总和 > 0，pie 只接受一个序列。9.36 合并掉的七个旧名（executive_kpi / big_number / trend / single_trend_line / comparison_bar / horizontal_bar / donut_composition）**在 9.38 起不再可写**：guard 在任何档位都报 error（失败码 CHART_KIND_ALIAS），报错给出 canonical、该名当年隐含的默认值与改名命令。它们只留在退役表里供报错与迁移使用，不参与编译。批量改名：`python3 tools/rename_chart_kinds.py <plan.json|build.py> --write`（改名与补默认值一次原子完成，产物逐字节不变）；全量迁移审计：`python3 tools/rename_chart_kinds.py --audit .`（有旧名退出码 1）。数值图表齐 `source / unit / period / basis`（release 硬门），同 `metric` 跨页必须同单位。`label_size` 控原生轴标签、`value_size` 控数值标签（画布 px，写入 PPTX 乘 0.75 转 pt）；多序列 `name` 必须非空且唯一。
 
 **载荷两式**：数值图表用 `categories + series[].values`；复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）用 `data: [{label, value, desc?}]`（matrix 用 `points`、architecture 用 `layers`，`matrix` 每点为 `{x, y, label}`，x/y 须为有限数字）。两式不得同时声明。**目标线**只由 `ranked_bar` 渲染：`target` 为有限数字 + 可选 `target_label`，超出数据范围按端点夹紧；其他 kind 写这两个字段得到 `chart_field_unconsumed` 告警。**`highlight`**（`primitives.resolve_chart_highlight`）：写序列名 = 整条序列，写类别名 = 该数据点，写整数时多序列按序列索引、单序列按类别索引；不命中则不猜（guard 告警）。
 
 **跨页锚**：`anchor.eyebrow` 由本页结论派生 3–6 字短标，作者可逐页声明压过。**首 / 末页是陈述位**：没有 content 也按作者写下的主张成立。
 
-**来源区**：`source_zone` 内只放 `role ∈ {source, method, metadata}` 的文字，其他对象与之相交即 `SOURCE_COLLISION`。**全幅影像上叠字**：图元素声明 `layer: "background"` 且覆盖 ≥60% 画布（伪背景仍拦），其上文字按正常容量与安全区纪律落位。
+**来源区**：`source_zone` 内只放 `role ∈ {source, method, metadata}` 的文字，其他对象与之相交即 `SOURCE_COLLISION`。**全幅影像上叠字**：图元素声明 `layer: "background"` 且覆盖 ≥60% 画布（伪背景仍拦），其上文字按正常容量与安全区纪律落位。**`safe_area` 是执行项，不是提示词**：页上写 `safe_area: {x, y, width, height}`（0–1 归一化，相对整幅背景图）即视为压字区契约——其上每个文字元素的锚点（横向按 `align`、纵向按 `anchor`，缺省左/上）必须落在区内，越界报 `safe_area`；页上不写则由资产清单同名字段继承，两处都写却不一致直接 BLOCK（图按 A 留白、字按 B 排）。`{}` = 本页不压字；`role ∈ {source, method, metadata}` 的页脚小字与显式 `safe_area_exempt: true` 的元素不在此列。
 
 ## 作者逃生口
 
@@ -76,4 +76,8 @@ spec = {
 
 ## 文本测量边界
 
-Guard 的字号、折行、字距与段距是**粗估**，不是目标字体真实排版；中文禁则回退只在 ghost 折行模型里生效，编译器写的是原生文本，实际断行由目标 PowerPoint 与字体决定。ghost 无违例也不证明 PPTX 正确（SKILL §6）。
+Guard 与 ghost 共用**同一套**折行与度量（`primitives.wrap_lines` / `measure_text`）：能解析到主题字体时用真字面宽度，解析不到才回落到宽度表（只高估不低估）。两边只差「一个字有多宽」这一件事，不再各写一份判据。禁则（行首标点、数字与单位、行尾句读点悬挂半个字）与行首空白不计宽都在这一处生效。
+
+与 LibreOffice 回放对拍 128 个探针（`tools/metrics_calibration.py`，逐行读 PDF 词框）：ghost 126/128 行数一致；guard 122/128，**不留低估**，6 个偏差全部是「多算一行」。guard 的余量只加在窄栏（每行不足 12 字时让出 0.1 个字宽，见 `verify.GUARD_NARROW_*`）：窄栏里 ±0.1 em 的字形误差就足以跨过换行阈值，宽栏里同样的绝对误差被摊薄，再加余量只会把能排下的句子判成溢出。剩余分歧集中在极窄栏（≤9 字/行）与 Office 的标点压缩细则。
+
+编译器写的是原生文本，最终断行仍由目标 PowerPoint 与字体决定；ghost 无违例不证明 PPTX 正确（SKILL §6）。

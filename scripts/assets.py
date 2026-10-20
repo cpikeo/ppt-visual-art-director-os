@@ -1934,7 +1934,6 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     return {
         "schema": "vao-assets-v1",
         "visual_world": (plan_deck.get("world") or {}).get("name"),
-        "quality_level": str(plan_deck.get("quality") or "fast"),
         "cap": cap,
         "assets": assets,
         "skipped_pages": skipped_pages,
