@@ -109,7 +109,9 @@ _NUM = re.compile(
     # 而页面写的是「个点/个百分点/个季度」）；无名词跟随时仍是计数（「5 个」）。
     r"%|％|pp|倍|万|亿|元|家|人|个百分点|百分点|"
     r"个(?:季度|星期|周|点|小时|分钟|名|位|件|家|次|台|套|箱|份|笔|张|页|股|手|元|分|秒|人)?"
-    r"|名|位|件|次|天|月|年|分|秒)?")
+    # 计量分类词里最常出现在经营/工程稿里的计数单位：「27 处/12 项/3 条/2 起」
+    # 是带单位的量。缺了它们，缺陷清单、整改台账这类页面会整页落到「无证据」。
+    r"|名|位|件|次|天|月|年|分|秒|处|项|条|起|所|栋|册|辆|架|艘|门|款)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
 _NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|不得超[过越]|[不未]超[过越]")
@@ -587,6 +589,40 @@ def _is_quantile_row(body: str) -> bool:
             continue
         if all(_QUANT_RUN.search(p) or p[:1].isdigit() for p in parts):
             return True
+    return False
+
+
+_PARENTHETICAL = re.compile(r"[（(][^（）()]*[）)]")
+
+
+def _strip_parenthetical(text: str) -> str:
+    """去掉括号注记（（−80 度）（来源：台账）（口径：可比门店））。
+
+    括号里的量是注记/增减量，不是与主量并列的第三项；把它们算进并列集合，
+    拆项行「电力 1,240 度（−80 度）」会被读成四个可比的取值。
+    """
+    return _PARENTHETICAL.sub(" ", text)
+
+
+def _sums_to_total(values: list[float]) -> bool:
+    """这一组同单位取值里，是否有几个加起来正好等于其中另一个值（分解）。
+
+    纯算术，不猜语义：3200＋1100＋500＝4800、21＋12＋5＝38 是作者写下的分解关系，
+    不是设计偏好。取整容差 0.5% 吸收四舍五入，并排除全部取值相同的重复列举。
+    """
+    uniq = sorted(v for v in set(values) if v > 0)
+    if len(uniq) < 4 or len(values) > 8:
+        return False
+    from itertools import combinations
+    for total in uniq:
+        parts = [v for v in uniq if v != total]
+        # 三个以上的部分才算分解：两项相加恰好等于第三项在比率/日期里太常见
+        # （缩短 1.8 天 ＋ 现值 6.6 天 ＝ 原值 8.4 天；0.8% ＋ 1.1% ≈ 2%），
+        # 那不是作者写下的构成，是算术巧合。两项分解通常写成「其中/其余/占」。
+        for size in range(3, min(4, len(parts)) + 1):
+            for combo in combinations(parts, size):
+                if abs(sum(combo) - total) <= abs(total) * 0.005 + 1e-9:
+                    return True
     return False
 
 
@@ -1076,7 +1112,52 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
                       # 但作者的分解动作必须看得见（占×2 + 其余/其中/剩余）。
                       or (len(_SHARE_OF_TOTAL.findall(body)) >= 2
                           and bool(_REMAINDER_CUE.search(body)))))
-    is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole
+    # 同一单位的一组取值：分解（可加总 / 「其余」）与并列（同一指标落在多个并列项上）
+    # 都不需要比较措辞才成立。中文经营稿里最常见的写法恰恰没有「相比 / 高于」：
+    # 「实训课 82%，直播课 61%，录播课 44%」「支座脱空 27 处，裂缝 64 处」。
+    # 缺了这两条，一页数据会被判成观点页（role=establish / focus=statement_text），
+    # 作者拿到的是「立一句话」而不是「把可比的量排齐」。
+    groups: dict[str, list[float]] = {}
+    for n in compared or ev:
+        groups.setdefault(n.get("unit") or "", []).append(round(n["value"], 6))
+    sum_decomposition = any(_sums_to_total(vals) for vals in groups.values())
+    remainder_decomposition = bool(_REMAINDER_CUE.search(body)) and any(
+        len(vals) >= 2 for vals in groups.values())
+    # 序列的坐标只有一种——时间（同比/环比这类期间词，或年份/期间轴）。并列量的
+    # 分句要先排除：括号里的（−80 度）是相对增减注记，不是第三个并列项。
+    quantile_row = _is_quantile_row(body)
+    time_axis = (years >= 2 or len(axis_tokens) >= 2
+                 or len(_PERIOD_LABEL.findall(body)) >= 2
+                 or bool(_hit(_evidence_body(body), _TEMPORAL_SERIES_CUE)))
+    plain_groups: dict[str, list[float]] = {}
+    for n in numerals(_strip_parenthetical(body)):
+        if not n["year"]:
+            plain_groups.setdefault(n.get("unit") or "", []).append(round(n["value"], 6))
+    # 并列可比量：同一单位（单位必须真的写出来——裸数「能耗 132；排放 41；良率 96」
+    # 不可比，不许替作者补单位）的 ≥3 个不同取值。它成立的是**证据形态**，
+    # 不是「两端对照」：三档报价并排不等于两端有胜负，`comparison` 标志留给两端。
+    # 单位相同只是必要条件：同一页上的「1.9 元利润 / 6.2 元履约成本 / 58 元客单价」
+    # 单位相同却是三个指标，不是三个并列项。并列要求整页证据只有一个单位（same_unit），
+    # 且有 ≥3 个不同取值——同一指标落在多个并列项上。
+    # 并列可比量：同一单位（裸数不计——标题里的「3 类病害」是分类词）的 ≥3 个不同取值。
+    # 多量纲页要再验一次指标名：「1.9 元利润 / 6.2 元履约成本 / 58 元客单价」同单位
+    # 却是三个指标，那是多指标面板，不是并列项比较。
+    measured = {u: v for u, v in plain_groups.items() if u}
+    attributed = _metric_attribution(body, ev)
+
+    def _parallel_group(unit: str, vals: list[float]) -> bool:
+        if len(set(vals)) < 3:
+            return False
+        if len(measured) == 1:
+            return True
+        names = {m for n, m in attributed if (n.get("unit") or "") == unit and m}
+        return len(names) <= 1
+
+    parallel_units = (distinct >= 3 and not time_axis and not quantile_row
+                      and not phased and not _FROM_TO_QUANTITY.search(body)
+                      and any(_parallel_group(u, v) for u, v in measured.items()))
+    is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole \
+        or sum_decomposition or remainder_decomposition
     # 阈值列举：多个子句各带一个数、且单位互不相容（「连续两月低于 15 万元；退货率高于 8%；
     # 流失超过 2 人」）是并列条件，没有两端可比的量。「高于/低于/超过」在这里只是阈值词，
     # 不能单独构成比较；只有明确的比较措辞（相比/优于/对标…）仍按比较处理。
@@ -1103,10 +1184,13 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         relations = []
     evidence_body = _evidence_body(body)  # 复合名词过滤一次，下游共用
     modes: dict[str, float] = {}
-    if is_comparison or (distinct >= 2 and has_chart and years < 2):
+    if is_comparison or parallel_units or (distinct >= 2 and has_chart and years < 2):
+        # 并列量进同一形态，但不改 `comparison` 标志：并列是「可比的量排在一起」，
+        # 两端对照才是有胜负的比较。
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
     if is_subset:
-        modes["part_whole"] = 0.84
+        # 分解压过并列：能加总/有「其余」的一组量是一个整体，不是几个待比较的选项。
+        modes["part_whole"] = 0.92 if (sum_decomposition or remainder_decomposition) else 0.84
     # 序列至少两个数据点：「增长/趋势」这类词只有配上两个以上的量才是曲线；
     # 单独出现在封面或收尾的措辞里（「接管增长」「内容增长负责人」）不是证据。
     # 「三个以上同单位数字」不是序列的充分条件：规格行/并列量同样满足它，
@@ -1114,10 +1198,6 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 变动动词与同单位也都不是序列的充分条件（F3 实测）：拆项成本行「采购 31 元
     # （−1.2 元）；物流 24 元（+2.8 元）」全同单位、带「涨」字，仍是并列拆项。
     # 序列的坐标只有一种——**时间**（同比/环比/逐年这类期间词，或年份/期间轴）。
-    quantile_row = _is_quantile_row(body)
-    time_axis = (years >= 2 or len(axis_tokens) >= 2
-                 or len(_PERIOD_LABEL.findall(body)) >= 2
-                 or bool(_hit(evidence_body, _TEMPORAL_SERIES_CUE)))
     words_series = _hit(evidence_body, _SERIES_WORDS) and time_axis
     if (distinct >= 2 and words_series) \
             or (distinct >= 2 and same_unit and time_axis and not quantile_row) \
@@ -1150,7 +1230,19 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         else:
             modes["sequence"] = 0.75
     if phased:
-        modes["sequence"] = max(modes.get("sequence", 0.0), 0.9)  # 分期结构压过数值形态（series 上限 0.87）
+        # 分期只是「同一承诺的先后」：没有流程名、也不是「分三期」这种显式排期时，
+        # 它压不过数据形状。「一期投产 14 个月，损失由 26% 降至 18%」「一期投入 4800
+        # 万元（设备 3200／改造 1100／数字化 500）」曾被判成时间轴，作者因此把投资
+        # 拆解页画成流程图——一期/二期在这里只是项目名，不是页面结构。
+        # 「分期」要成为一条可排的承诺轴，每一期得各自带着**同单位**的量
+        # （一期 1,200 万；二期 1,800 万；三期 1,800 万）。一期写时长、二期写目标，
+        # 或只有一期带数，都只是项目名，不足以把页面判成时间轴。
+        phase_clauses = [c for c in _CLAUSE_SPLIT.split(body) if _PHASE_MARKERS.search(c)]
+        phase_amounts = [n for c in phase_clauses for n in numerals(c) if not n["year"]]
+        quantified_phases = (len({c for c in phase_clauses if _NUM.search(c)}) >= 2
+                             and len({n.get("unit") or "" for n in phase_amounts}) == 1)
+        explicit_phase = bool(_PHASE_SPLIT.search(body)) or seq_strong or quantified_phases
+        modes["sequence"] = max(modes.get("sequence", 0.0), 0.9 if explicit_phase else 0.7)
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
     if relations:

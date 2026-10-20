@@ -31,9 +31,93 @@ RULE_SHAPES = frozenset({"line", "arrow"})
 _COLOR_ROLE_FIELDS = ("color", "fill", "stroke", "border_color", "track_color",
                       "label_color", "background")
 
-# ──────────────────────────────────────────────────────────────────────
-# 几何与容量（物理事实，不是审美判断）
-# ──────────────────────────────────────────────────────────────────────
+
+# ── 元素字段表（同源推导，不手抄）─────────────────────────────────────────
+_CONSUMED_FIELDS_CACHE: set | None = None
+
+
+# 经**动态键**读取的字段（`for field in ("source","unit",…)` + `e.get(field)`），
+# 正则扫不到名字，只能显式列出；除此之外一律由源码推导，不手抄第二份表。
+_DYNAMIC_FIELDS = frozenset({
+    "source", "unit", "period", "basis", "metric",            # 图表出处硬门
+    "color", "fill", "stroke", "border_color", "track_color",  # _COLOR_ROLE_FIELDS
+    "label_color", "background", "accent", "fill_color",
+})
+
+
+def consumed_fields() -> frozenset:
+    """渲染/校验链**实际读取**的元素字段名，从同目录模块源码扫出来。
+
+    契约为「未消费字段会静默丢弃，所以必拦」，但把 300 多个字段手抄一份清单
+    必然与渲染器漂移（多写一个字段 → 作者被误拦；少写一个 → 静默丢弃复活）。
+    这里在首次调用时扫一遍 compiler / ghost / verify / primitives / assets 的
+    `.get("x")` 与 `["x"]`，得到"渲染器真的会读的名字"集合；读不到文件时返回
+    空集（该项检查自动跳过，绝不假拦）。扫描只做一次，缓存复用。
+    """
+    global _CONSUMED_FIELDS_CACHE
+    if _CONSUMED_FIELDS_CACHE is not None:
+        return frozenset(_CONSUMED_FIELDS_CACHE)
+    import re as _re
+    from pathlib import Path as _Path
+    found: set = set()
+    try:
+        here = _Path(__file__).resolve().parent
+        for name in ("compiler.py", "ghost.py", "verify.py", "primitives.py", "assets.py"):
+            src = (here / name).read_text(encoding="utf-8")
+            found |= set(_re.findall(r'\.get\(\s*["\'](\w+)["\']', src))
+            found |= set(_re.findall(r'\[\s*["\'](\w+)["\']\s*\]', src))
+    except OSError:
+        found = set()
+    _CONSUMED_FIELDS_CACHE = {k for k in found if k.isidentifier()} | set(_DYNAMIC_FIELDS)
+    return frozenset(_CONSUMED_FIELDS_CACHE)
+
+
+def _closest_fields(name: str, known: frozenset) -> list[str] | None:
+    """近似字段名：拼写 / 下划线 / 词序写错时，给出作者可能想写的名字（至多两个）。
+
+    给列表而不是单个名字：`font_size` 的候选是 `size` 与 `fonts`，`align_left` 的
+    候选是 `align` 与 `left`——两条都合理时替作者拍板只会拍错。
+
+    只认强信号，按强度取最优（不是第一个命中）：
+      1 归一化后完全相等（maxlines ↔ max_lines）
+      2 一个是另一个的复合词（align_left ↔ align、bold_weight ↔ bold）
+      3 一方是另一方的词尾（font_size ↔ size、spacing ↔ char_spacing）
+      4 字符相似度 ≥0.86（colour ↔ color）
+    其余未知字段不当拼写错误——「没有这个功能」和「名字写错」要给两种诊断。
+    内部键（下划线开头）不作为建议对象：那是实现细节，不是作者该写的名字。
+    """
+    import difflib
+    flat = name.replace("_", "").lower()
+    # 复合写法 `modifier_head`（text_size / char_spacing / space_before）里，作者
+    # 想要的是**词头**那个字段：`font_size` 应指向 `size`，不是同名的 `fonts` 容器。
+    head = name.split("_")[-1].lower()
+    head_hit = [c for c in known if c == head and not c.startswith("_")]
+    scored: list[tuple[float, str]] = []
+    for cand in known:
+        if cand.startswith("_"):
+            continue
+        cflat = cand.replace("_", "").lower()
+        if not cflat:
+            continue
+        if cflat == flat:
+            return [cand]
+        score = 0.0
+        if (flat.startswith(cflat) or cflat.startswith(flat)) and min(len(flat), len(cflat)) >= 3:
+            score = 0.90 + 0.4 * len(cflat) / max(len(flat), len(cflat))
+        elif (flat.endswith(cflat) or cflat.endswith(flat)) and min(len(flat), len(cflat)) >= 4:
+            score = 0.88 + 0.4 * len(cflat) / max(len(flat), len(cflat))
+        else:
+            # 纯相似度分支才按长度接近度打折：复合词（bold_weight ↔ bold）是强信号，
+            # 不该因为长短差被压到阈值以下；拼写错误（colour ↔ color）则越等长越可信。
+            score = difflib.SequenceMatcher(None, flat, cflat).ratio() \
+                - 0.04 * abs(len(cflat) - len(flat))
+        if score >= 0.86:
+            scored.append((score, cand))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    picks = [cand for _, cand in scored if cand not in head_hit][:max(0, 2 - len(head_hit))]
+    return (head_hit + picks) or None
+
+
 def _text_box_capacity(e: dict) -> dict | None:
     """文本是否装得下：物理容量只在这里判断，错误字段不许静默放行。
 
@@ -337,6 +421,22 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
     # 定位符带上页面 id：「focus」在全稿多页重复，修复包必须能指到具体哪一页。
     # 约定 `页面:元素`，修复包的 affected_slides 按此前缀归页。
     eid = f"{sid}:{e.get('id', f'[{si}]')}"
+    # 未消费字段：作者写错的字段名会被渲染器静默丢弃（`font_size` 写了但标题还是
+    # 默认字号，全部硬门照样 PASS）。契约把这一类列为必拦，判据分两档：
+    #   近似已有字段（拼写/下划线/复合）→ error，并给出候选名（可修诊断）
+    #   完全对不上的未知字段 → warn（可能是作者自己的注解，不该假拦）
+    known = consumed_fields()
+    if known:
+        for key in sorted(set(e) - known):
+            near = _closest_fields(key, known)
+            if near:
+                add("element_field_unknown", eid, "error",
+                    f"字段 {key!r} 不被渲染器消费，疑似写错（可能是 {' / '.join(near)}）；"
+                    "写错的字段会被静默丢弃，产物里看不到任何效果")
+            else:
+                add("element_field_unknown", eid, "warn",
+                    f"字段 {key!r} 不被渲染器消费（会静默忽略）；"
+                    "如需自定义注解请移出 elements，否则请对照 references/contract.md 的字段表")
     typ = str(e.get("type", "text"))
     if typ not in ELEMENT_TYPES:
         add("element_type", eid, "error",
@@ -415,6 +515,14 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
                 add("element_schema", eid, "error",
                     f"渐变 angle 须为 ±360 内的有限数，收到 {ang!r}"
                     "（越界值会写出非法 OOXML ang）")
+            # 契约的填充四写法要求 stops≥2；只有一个 stop 的「渐变」不是渐变，
+            # 编译器会抛 COMPILE_FAIL。同一判定在 guard 提前给出可修诊断：
+            # 作者看到的是「补第二个 stop」，而不是一句编译异常。
+            stops = fill.get("stops")
+            if not isinstance(stops, list) or len(stops) < 2:
+                add("element_schema", eid, "error",
+                    f"渐变 stops 须为数组且至少 2 个（收到 {stops!r}）；"
+                    "单一 stop 不是渐变，请补第二个 stop 或改用 {type: solid}")
             for s_i, stop in enumerate(fill.get("stops") or []):
                 if isinstance(stop, dict):
                     sop = stop.get("opacity", stop.get("alpha"))
@@ -824,6 +932,11 @@ def _snap_pos(value: float, grid: int) -> int:
     return int(round(value / grid)) * grid
 
 
+def _on_grid(value: float, grid: int) -> bool:
+    """是否已落在网格线上（浮点容差：中心常常是 x.5）。"""
+    return abs(value / grid - round(value / grid)) < 1e-9
+
+
 def _snap_size(value: float, grid: int) -> float:
     """尺寸落网格——但**亚网格厚度按原值保留**。
 
@@ -859,6 +972,14 @@ def _snap_span(pos: float, size: float, grid: int) -> tuple:
     if size_n != size or 0 < size_n < grid:
         center = _snap_pos(pos + size / 2.0, grid)
         return center - size_n / 2.0, size_n
+    if _on_grid(pos, grid):
+        return pos, size_n
+    # 边不在网格上、中心却在网格上：这是上一趟按中心吸附留下的几何（同心优先）。
+    # 再按边吸附会挪走 ≤grid/2，把「归一化幂等」打破——而幂等是编译、预览与复验
+    # 共用同一份几何的前提（随机 400 例实测：旧写法 307 例二次归一漂移，单次不动
+    # 看不出来，但一旦有第二个消费者重新归一，对象就与 guard 认证的位置差 2px）。
+    if _on_grid(pos + size_n / 2.0, grid):
+        return pos, size_n
     return _snap_pos(pos, grid), size_n
 
 

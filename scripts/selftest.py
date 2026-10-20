@@ -814,6 +814,7 @@ def test_intelligence(tmp: Path):
 
 # ── 2 · verify（硬门）────────────────────────────────────────────────
 def test_verify(tmp: Path):
+    import verify
     from verify import check_spec, normalize_spec
     from primitives import spec_fingerprint
 
@@ -949,6 +950,85 @@ def test_verify(tmp: Path):
     twice_c, _ = normalize_spec(norm_c)
     check("normalize: 同心吸附幂等（二次归一不再漂移）",
           spec_fingerprint(twice_c) == spec_fingerprint(norm_c))
+
+    # 幂等对任意输入成立（不只是网格上的夹具）：位置不在网格、中心在网格的几何是
+    # 上一趟「按中心吸附」的结果，再按边吸附会挪 ≤grid/2。随机 400 例实测旧写法
+    # 307 例漂移——单次归一不动看不出来，但只要有第二个消费者重新归一（编译 / 预览 /
+    # 复验共用同一份几何），对象就与 guard 认证的位置差 2px。
+    import random as _rand_norm
+    _rng_norm = _rand_norm.Random(20261020)
+    _drift = None
+    for _ in range(400):
+        _e = {"type": "text", "id": "t", "x": _rng_norm.uniform(0, 600),
+              "y": _rng_norm.uniform(0, 400), "width": _rng_norm.uniform(4, 600),
+              "height": _rng_norm.uniform(4, 300), "size": 20, "text": "x", "max_lines": 2}
+        _s = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}},
+              "slides": [{"id": "s01", "elements": [_e]}]}
+        _a, _ = normalize_spec(copy.deepcopy(_s))
+        _b, _ = normalize_spec(copy.deepcopy(_a))
+        _ea = _a["slides"][0]["elements"][0]
+        _eb = _b["slides"][0]["elements"][0]
+        if any(_ea[k] != _eb[k] for k in ("x", "y", "width", "height")):
+            _drift = (_e, _ea, _eb)
+            break
+    check("normalize: 任意几何下幂等（二次归一不再位移）",
+          _drift is None, str(_drift)[:180])
+
+    # 未消费字段：作者写错的字段名被渲染器静默丢弃（`font_size` 写了但标题还是默认
+    # 字号），而契约把这一类列为必拦。判据两档：近似已有字段 → error + 候选名；
+    # 完全对不上的未知字段 → warn（可能是作者自己的注解，不假拦）。
+    _u_base = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}}}
+    _u_text = {"type": "text", "id": "t", "x": 100, "y": 100, "width": 600, "height": 120,
+               "size": 32, "text": "结论一句话", "max_lines": 2, "line_height": 1.3}
+
+    def _field_report(**extra):
+        spec = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}},
+                "slides": [{"id": "s01", "elements": [dict(_u_text, **extra)]}]}
+        rep = check_spec(spec)
+        return ([c for c in rep["checks"] if c["rule"] == "element_field_unknown"
+                 and c["level"] == "error"],
+                [c for c in rep["checks"] if c["rule"] == "element_field_unknown"
+                 and c["level"] == "warn"])
+
+    _typo_errs, _ = _field_report(font_size=40)
+    check("guard: 疑似写错的字段名拦下并给候选（font_size → size）",
+          bool(_typo_errs) and "size" in _typo_errs[0]["msg"], str(_typo_errs[:1])[:160])
+    _typo_errs2, _ = _field_report(maxlines=3)
+    check("guard: 下划线写错同样拦下（maxlines → max_lines）",
+          bool(_typo_errs2) and "max_lines" in _typo_errs2[0]["msg"],
+          str(_typo_errs2[:1])[:160])
+    _far_errs, _far_warns = _field_report(note_for_me="作者自己的注解")
+    check("guard: 对不上的未知字段只告警、不假拦（作者注解可留）",
+          not _far_errs and bool(_far_warns), str(_far_warns[:1])[:160])
+    _clean_errs, _clean_warns = _field_report()
+    check("guard: 合法字段不产生未消费告警（零噪音）",
+          not _clean_errs and not _clean_warns, str(_clean_warns[:1])[:160])
+
+    # 文档↔代码：contract.md 里点名的字段，渲染器必须真的消费（否则作者照文档写却被拦，
+    # 或者写了被静默丢弃）。这条钉把「规范说了、代码没做到」变成可执行的回归。
+    import re as _re_doc
+    _doc = (ROOT / "references" / "contract.md").read_text(encoding="utf-8")
+    _known = verify.consumed_fields()
+    _not_element = {"spec", "slides", "plan_path", "fix_plan", "draft", "release",
+                    "matrix", "pie", "ranked_bar", "arrow", "image", "shape", "text",
+                    "type", "id", "role", "name", "value", "display", "points", "layers",
+                    "chart_field_unconsumed", "body", "latin", "family"}
+    _doc_fields = set(_re_doc.findall(r"`([a-z_][a-z0-9_]*)`", _doc))
+    _doc_missing = sorted(f for f in _doc_fields - _not_element if f not in _known)
+    check("docs↔code: contract.md 点名的字段都在渲染器消费集里",
+          not _doc_missing, str(_doc_missing))
+
+    # 契约的填充四写法要求渐变 stops≥2。编译器会抛 COMPILE_FAIL，但 guard 应给出
+    # 可修诊断（同一判定，更早、更省一次编译）。
+    _grad = check_spec({"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}},
+                        "slides": [{"id": "s", "elements": [
+                            {"type": "shape", "id": "r", "shape": "rect", "x": 100, "y": 100,
+                             "width": 400, "height": 200,
+                             "fill": {"type": "gradient", "angle": 45,
+                                      "stops": [{"color": "#112233"}]}}]}]})
+    check("guard: 渐变 stops<2 在编译前拦下（契约四写法）",
+          any(c["rule"] == "element_schema" and c["level"] == "error" for c in _grad["checks"]),
+          str(_grad["checks"][:1])[:140])
 
     # 回归（v9.6.1）：LINE / ARROW 的零厚度轴必须保留为真正的横线/竖线。
     # 否则零宽竖线会被扩成网格宽度，PPT connector 从左上连到右下，出现轻微斜线。
@@ -1860,6 +1940,25 @@ def test_production(tmp: Path):
             break
     check("ghost: 双字单位内部不断行（个月/万元/分钟/小时不读成两个词）",
           _du_bad is None, str(_du_bad)[:160])
+
+    # 数字内部不是断点：「回收期从 2.6 年拉到 3.9 年」曾被断成「2.」/「6 年」，
+    # 「压到 18%」曾被断成「1」/「8%」。行首行尾都像正常文本，靠读行发现不了——
+    # 而 PowerPoint 不在数字内部断行，预览断了就在替真实排版说谎（实测 E2E 发现）。
+    _num_font = _font(18, cjk=True)
+    _num_text = "订单波动超过 ±20%，回收期从 2.6 年拉到 3.9 年，投入 4,800 万元。"
+    _num_bad = None
+    for _w in range(120, 620, 2):
+        _ls = _wrap(_num_text, _num_font, _w)
+        for _a, _b in zip(_ls, _ls[1:]):
+            _l, _r = _a.rstrip(), _b.lstrip()
+            if _l[-1:] in (".", ",") and _r[:1].isdigit():
+                _num_bad = ("小数被断成两行", _w, _a, _b); break
+            if _l[-1:].isdigit() and _r[:1] in ("%", "％"):
+                _num_bad = ("百分号与数字拆行", _w, _a, _b); break
+        if _num_bad:
+            break
+    check("ghost: 数字内部不断行（2.6 / 18% / 4,800 不被拆到两行）",
+          _num_bad is None, str(_num_bad)[:160])
 
     import random as _random
     _rng = _random.Random(20261013)

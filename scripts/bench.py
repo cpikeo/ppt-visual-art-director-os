@@ -481,10 +481,19 @@ def main(argv=None) -> int:
         f = result["full"]
         print(f"完整基准：通过 {f['cases_passed']}/{f['cases']} · 准确率 {f['accuracy']:.1%} · "
               f"严重缺陷率 {f['critical_defect_rate']:.0%}")
+        blind = []
         for name, a in result["ablations"].items():
             m = a["metrics"]
             ch = ", ".join(f"{k}→{v}" for k, v in a["changed_to"].items()) or "无变化"
+            if not a["changed_cases"]:
+                blind.append(name)
             print(f"  去掉 {name:20} 通过 {m['cases_passed']}/{m['cases']} · 准确率 {m['accuracy']:.1%} · 变化：{ch}")
+        # 消融无变化不是「这个词表没用」，而是**这 57 例不判别这条路径**。
+        # 把覆盖缺口直接打出来，避免把 100% 当成全路径验证。
+        if blind:
+            print(f"\n覆盖缺口：{len(blind)}/{len(result['ablations'])} 组语义词表消融后指标不变 "
+                  f"（{', '.join(blind)}）——本案例集不判别这些路径，"
+                  f"不得把它们计入「判断已被验证」。")
         if args.out:
             json_write(args.out, result)
         return 0

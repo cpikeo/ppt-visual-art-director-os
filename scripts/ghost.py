@@ -317,6 +317,11 @@ _UNIT_HEAD = re.compile(
 # 手抄版漏过「方米」「瓦时」以及「个百分点/个点/个季度」的内部对，词表一扩就漂移。
 _UNIT_INNER = {u[i:i + 2] for u in _UNIT_WORDS if len(u) >= 2
                for i in range(len(u) - 1)}
+# 数字本身也是不可拆的：断在数字内部（「2.｜6 年」「1｜8%」）比「数字与单位分家」
+# 更隐蔽——退到数字前面就已经看不见了，行首行尾都像正常文本。PowerPoint 不在数字
+# 内部断行，预览断了就与真实排版是两回事（实测：标题「回收期从 2.6 年拉到 3.9 年」
+# 在 440px 预览里被断成「2.」/「6 年」，同一行文本在产物里不会这样排）。
+_NUMBER_TOKEN = re.compile(r"\d+(?:[.,]\d+)*[%％]?")
 
 
 def _cjk_break_fix(seg: str, lo: int) -> int:
@@ -348,6 +353,11 @@ def _cjk_break_fix(seg: str, lo: int) -> int:
         while start > 1 and (left[start - 1].isdigit() or left[start - 1] in ".,"):
             start -= 1
         lo = start
+    # 数字内部不是断点：断口落在同一个数字 token 中间时，整个 token 一起推下。
+    for token in _NUMBER_TOKEN.finditer(seg):
+        if token.start() < lo < token.end():
+            lo = max(1, token.start())
+            break
     return max(1, lo)
 
 
