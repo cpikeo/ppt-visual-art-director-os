@@ -159,3 +159,15 @@ vao.py check ├─ verify (normalize → guard)    硬错误拦截
 
 > 一句话：**能删的是「没人再需要它的证据」；不能删的是「还有人靠它作证」。**
 > 「行数变少」不是成就，「同样的证据用更少的重复产出」才是。
+
+## 8 · 技能包作为交付物的三条边界（2026-10-21 补）
+
+| 层 | 唯一来源 | 谁在读 | 谁在守 | 已知边界 |
+|---|---|---|---|---|
+| **触发** | `SKILL.md` frontmatter 的 `description`（702 字，含 when-to-use 与不做边界） | 装载技能的运行时；它决定「会不会被调起」 | `quick_validate`（长度/字符/键白名单）+ `test_docs`（版本一致） | **触发率未测量**：本环境无 `claude` CLI，`run_loop` 跑不了。只声明「描述里有 when」，不声明「更容易被调起」 |
+| **任务级评测** | `evals/evals.json`（7 条 prompt + 机器断言） | `evals/run_eval.py` → `evals/grade.py`；统计交给 skill-creator 的 `aggregate_benchmark` | `test_evals`（形状/词汇/断言会红）+ CI 步骤（with_skill 必须全绿，naive 必须更低） | 对照是 **engine-baseline**（无判断直排），**不是 model-baseline**；无模型就没有 token 结论 |
+| **分发** | `tools/package_skill_staging.py` 的白名单 | 收件人的 `quick_validate` / 解压 | 脚本自带 `.git` 混入检查 + 体积/条目数对比 | 包里没有 `evals/`、`tools/`、`scripts/json/`：它们是仓库资产，不是运行资产 |
+
+**断言的自我要求**（来自 `skill-creator/agents/grader.md`）：一条永远为真的断言比没有断言更糟，
+因为它制造假信心。因此 `test_evals` 里有一条反向检查——把同一批断言喂给**伪造的坏产物**，
+必须变红；`evals/run_eval.py` 的两种配置也必须拉开分差，否则 CI 失败。

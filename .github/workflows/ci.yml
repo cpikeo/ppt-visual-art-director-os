@@ -81,6 +81,48 @@ jobs:
         # 这也是删案例前的必查项：只有零守卫的案例才可能被合并。
         run: python scripts/bench.py --guard-audit --cases scripts/json/generalization_cases_r6.json
 
+      - name: 任务级评测（evals/ · 断言必须能区分判断层与无判断直排）
+        run: |
+          python evals/run_eval.py --config both
+          python - <<'PYEVAL'
+          import json, pathlib
+          s = json.loads(pathlib.Path("evals-workspace/iteration-1/run_summary.json")
+                         .read_text(encoding="utf-8"))
+          ws, nv = s["summary"]["with_skill"], s["summary"]["naive"]
+          assert ws["pass_rate"] == 1.0, ws
+          # 断言如果不能区分「有判断」与「只是把字排开」，这层就是装饰。
+          assert nv["pass_rate"] < ws["pass_rate"], (ws, nv)
+          aligned = s["aligned_release_layer"]
+          assert aligned["with_skill"]["pass_rate"] > aligned["naive"]["pass_rate"], aligned
+          print("evals ok", ws, nv, aligned)
+          PYEVAL
+        shell: bash
+
+      - name: 盲评管道冒烟（合成分数，只验管道，不产出版本结论）
+        # 这里评的是 evals/fixtures/blind 里手写的分数，任何「谁更好」的结论都无效。
+        # 会挂掉的只有管道本身：打包是否泄露身份、评分能否汇总、能否翻译成人评页读的字段。
+        run: |
+          python - <<'PYBLIND'
+          import sys, pathlib, subprocess
+          sys.path.insert(0, "scripts")
+          import bench
+          out = pathlib.Path("evals-workspace/blind-smoke")
+          key = out.parent / (out.name + ".key.json")
+          for p in (out, key):
+              if p.exists():
+                  import shutil; shutil.rmtree(p) if p.is_dir() else p.unlink()
+          # 必须两个版本：评分表按 V01/V02 两版填，少一个版本统计会直接拒绝。
+          packed = bench.blind_pack(["evals/fixtures/data-deck", "evals/fixtures/chart-page"],
+                                    out, seed=1, scrub_previews=True)
+          assert (out / "README.txt").is_file() and (out / "score_sheet.csv").is_file()
+          assert not list(out.rglob("plan.json")), "流水线工件泄露进评审目录"
+          sheets = [str(p) for p in sorted(pathlib.Path("evals/fixtures/blind").glob("r*.csv"))]
+          subprocess.run([sys.executable, "tools/blind_to_comparison.py", "--key", packed["key"],
+                          "--scores", *sheets, "--out", str(out / "comparison.json"),
+                          "--analysis", str(out / "analysis.json")], check=True)
+          print("blind pipeline ok")
+          PYBLIND
+
       - name: Whitespace check
         if: matrix.os == 'ubuntu-latest'
         run: git diff --check

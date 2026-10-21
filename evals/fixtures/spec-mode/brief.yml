@@ -1,0 +1,8 @@
+# eval 05 · spec 档：零渲染、零 python-pptx 也要能出判断与骨架
+audience: "内部技术评审"
+decision: "认可 spec 档可以在无渲染依赖的环境中产出判断"
+tension: "担心少了预览就少了判断依据"
+slides:
+  - id: s01
+    title: "没有渲染器时，判断仍然必须完整"
+    content: "spec 档只做判断与骨架，不生成 pptx、不加载 references。（来源：README）"

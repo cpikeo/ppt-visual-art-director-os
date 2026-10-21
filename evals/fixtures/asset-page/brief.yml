@@ -1,0 +1,15 @@
+# eval 03 · 需图页：素材必要性 → 出图判断（不实际出图）
+audience: "品牌市场部，内部评审"
+decision: "确认秋季产品主视觉的摄影方向"
+tension: "上一版主视觉被指像电商详情页，缺少材质感"
+slides:
+  - id: s01
+    title: "茶杯的釉面开片要在近景里看清"
+    content: "青瓷杯口径 8.2 厘米，开片纹路 0.3 毫米级；上一版远景里完全看不见。"
+    asset: required
+    asset_role: illustration
+    asset_function: proof
+    asset_subject: "a celadon tea bowl at right, close view of the crackle glaze, empty space at left for text"
+    medium: photography
+    safe_area: {x: 0.06, y: 0.12, width: 0.38, height: 0.72}
+    text_color: dark

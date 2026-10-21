@@ -6522,6 +6522,13 @@ def test_docs():
     release = re.search(r'^## (\d+\.\d+\.\d+)', changelog, re.M)
     check("docs: 包版本与最新变更记录一致",
           bool(version and release and version[1] == release[1]))
+    # 技能包的 frontmatter 里也有版本（skill-creator 的 metadata）；三处必须一致，
+    # 否则「分发出去的包是什么版本」就成了第三个答案。
+    meta = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+version:\s*\"?([0-9.]+)\"?",
+                     (ROOT / "SKILL.md").read_text(encoding="utf-8"), re.M)
+    check("docs: SKILL.md frontmatter 的 metadata.version 与包版本一致",
+          bool(meta and version and meta.group(1) == version[1]),
+          f"{meta.group(1) if meta else '缺失'} vs {version[1] if version else '?'}")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     refs = sorted(p.name for p in (ROOT / "references").glob("*.md"))
     check("docs: SKILL.md 只保留六节（身份/哲学/判断/Context/执行/QA）",
@@ -6551,6 +6558,227 @@ def test_guard_audit(tmp: Path):
     check("guards: r6 提供了判断基准集没有的判据守卫（不是重复建设）",
           len(old["unguarded"]) > len(result["unguarded"]),
           f"judgment={len(old['unguarded'])} r6={len(result['unguarded'])}")
+
+
+def test_evals(tmp: Path):
+    """任务级评测层：用例形状、断言词汇、以及「断言真的会红」。
+
+    这一层的存在理由是**轴不同**：`scripts/json` 钉「这一页判成什么」，
+    `evals/` 测「给一份 brief，整条链产出了什么」。两者的失败含义不同，
+    所以不许互相替代（判断单测全绿不代表任务能交付，反之亦然）。
+    """
+    import json as _json
+    import re as _re
+    sys.path.insert(0, str(ROOT / "evals"))
+    import grade as _grade
+
+    data = _json.loads((ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
+    skill_md = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    name = _re.search(r"^name:\s*(\S+)\s*$", skill_md, _re.M).group(1)
+    check("evals: skill_name 与 SKILL.md frontmatter 一致", data.get("skill_name") == name,
+          f"{data.get('skill_name')} vs {name}")
+
+    cases = data.get("evals") or []
+    check("evals: 至少 5 条任务级用例（覆盖判断/执行/资产/边界/整册）",
+          len(cases) >= 5, str(len(cases)))
+
+    unknown, unlabeled, missing = [], [], []
+    for case in cases:
+        if not (case.get("prompt") and case.get("expected_output")):
+            missing.append(f"{case.get('name')}: 缺 prompt/expected_output")
+        if not (ROOT / (case.get("brief") or "")).is_file():
+            missing.append(f"{case.get('name')}: brief 不存在")
+        if case.get("build") and not (ROOT / case["build"]).is_file():
+            missing.append(f"{case.get('name')}: build 夹具不存在")
+        for check_spec in case.get("checks") or []:
+            if check_spec["kind"] not in _grade.CHECK_KINDS:
+                unknown.append(f"{case['name']}.{check_spec['kind']}")
+            if not check_spec.get("label"):
+                unlabeled.append(f"{case['name']}.{check_spec['kind']}")
+    check("evals: 每条用例的 brief/build 夹具都在仓库里", not missing, "；".join(missing[:3]))
+    check("evals: 断言种类都在 grade.py 的词汇表里（写错就是永远真/永远假）",
+          not unknown, str(unknown[:4]))
+    check("evals: 每条断言都有人话标签（评分表要被人读懂）", not unlabeled, str(unlabeled[:4]))
+
+    # 断言必须**会红**：拿伪造事实喂进去，能变红的才是断言，永远绿的是装饰。
+    good = {"plan": {"pages": [{"id": "s01", "visual_role": {"role": "compare"},
+                                "understanding": {"evidence": "comparison"},
+                                "media": {"decision": "none"},
+                                "claim": {"source": "extracted", "text": "结论"},
+                                "composition": {"chosen": "data_field"}}]},
+            "plan_returncode": 0, "verdict": {"status": "PASS"},
+            "pptx": {"bytes": 44000, "native_charts": 1},
+            "spec": {"roles": ["source"]}, "ghost": {"truncations": {}, "out_of_canvas": {}}}
+    red, green = [], []
+    probes = [("release_pass", {}), ("native_charts", {"min": 1}), ("source_lines", {"min": 1}),
+              ("ghost_truncations", {"max": 0}), ("claim_present", {"page": "s01"}),
+              ("page_role", {"page": "s01", "in": ["compare"]})]
+    for kind, spec_ in probes:
+        ok, _, _ = _grade.judge(kind, spec_, good)
+        green.append((kind, ok))
+    doctored = _json.loads(_json.dumps(good))
+    # 判断层也要被污染：只弄坏产物层的话，plan 类断言仍然是绿的——
+    # 上一版就是只弄了产物层，于是这条「断言会红」的检查自己先红了。
+    page = doctored["plan"]["pages"][0]
+    page["visual_role"]["role"] = "persuade"
+    page["understanding"]["evidence"] = "none"
+    page["claim"] = {"source": "absent", "text": None}
+    doctored["verdict"]["status"] = "BLOCK"
+    doctored["pptx"]["native_charts"] = 0
+    doctored["spec"]["roles"] = []
+    doctored["ghost"]["truncations"] = {"s01/t": 2}
+    for kind, spec_ in probes:
+        ok, _, _ = _grade.judge(kind, spec_, doctored)
+        red.append((kind, ok))
+    check("evals: 断言在好产物上为真", all(v for _, v in green), str(green))
+    check("evals: 同一批断言在坏产物上为假（断言不是装饰）",
+          not any(v for _, v in red), str(red))
+
+    # 负向控制：真跑一次「删掉出处行」的产物，评分必须掉下来。
+    facts_mod_path = ROOT / "evals" / "facts.py"
+    check("evals: facts/grade/run_eval 三个文件都在位",
+          all((ROOT / "evals" / n).is_file()
+              for n in ("facts.py", "grade.py", "run_eval.py", "baseline_build.py")),
+          str(facts_mod_path))
+
+
+def test_blind_review(tmp: Path):
+    """盲评回路：预览不泄露身份、统计能翻译成 comparison.json、人评回执能落成待办。
+
+    三段各有各的失败方式，所以要分开钉：
+    ① 打包阶段泄露身份（PNG 文本块、plan.json 里的作者路径）；
+    ② 翻译阶段把「评审不足三位」写成结论（低置信度必须写在 reasoning 里）；
+    ③ 回执阶段把「无意见」算成「已验证」。
+    """
+    import importlib.util
+    import json as _json
+    import pathlib
+    import bench as _bench
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+
+    def _tool(name):
+        spec = importlib.util.spec_from_file_location(f"_tool_{name}", ROOT / "tools" / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    b2c = _tool("blind_to_comparison")
+    intake = _tool("feedback_intake")
+
+    # ① 打包含预览：PNG 文本块被重建清除，流水线工件不进评审目录
+    src = tmp / "blind_src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "plan.json").write_text("{\"author\": \"/home/someone/secret\"}", encoding="utf-8")
+    image = Image.new("RGB", (32, 18), (240, 240, 235))
+    info = PngInfo()
+    info.add_text("Author", "internal-reviewer-name")
+    info.add_text("Software", "vao-ghost")
+    image.save(src / "preview-ghost-01.png", pnginfo=info)
+    peer = tmp / "blind_peer"
+    peer.mkdir(parents=True, exist_ok=True)
+    (peer / "note.txt").write_text("peer", encoding="utf-8")
+    packed = _bench.blind_pack([str(src), str(peer)], tmp / "blind_out", seed=7,
+                               scrub_previews=True)
+    code = next(c for c in packed["items"]
+                if (tmp / "blind_out" / c / "preview-ghost-01.png").is_file())
+    names = [p.name for p in (tmp / "blind_out" / code).rglob("*")]
+    raw = (tmp / "blind_out" / code / "preview-ghost-01.png").read_bytes()
+    key = _json.loads(pathlib.Path(packed["key"]).read_text(encoding="utf-8"))
+    check("blind: 预览图进了评审目录且 PNG 文本块被清除（作者/工具指纹不随图外泄）",
+          names.count("preview-ghost-01.png") == 1
+          and not any(tag in raw for tag in (b"tEXt", b"iTXt", b"zTXt"))
+          and b"internal-reviewer-name" not in raw)
+    check("blind: 流水线工件（plan.json）不进评审目录，key 记录已清洗的预览清单",
+          "plan.json" not in names
+          and key["sha256"][code].get("previews_scrubbed") == ["preview-ghost-01.png"])
+    check("blind: 清洗只动元数据不动像素（同尺寸同像素）",
+          Image.open(tmp / "blind_out" / code / "preview-ghost-01.png").size == (32, 18))
+    check("blind: key 落在评审目录之外，且自身写明「可反推身份、只给组织者」",
+          not pathlib.Path(packed["key"]).is_relative_to(tmp / "blind_out")
+          and "只给组织者" in key.get("identity_warning", ""))
+
+    # ② 翻译：三份合成评分表 → comparison.json
+    sheets = [str(ROOT / "evals" / "fixtures" / "blind" / f"r{i}.csv") for i in (1, 2, 3)]
+    result = b2c.build(packed["key"], sheets)
+    check("blind: 三份完整评审 → winner=A、confidence=normal、带共识状态",
+          result["winner"] == "A" and result["confidence"] == "normal"
+          and result["consensus"] == "CONSENSUS_SUPPORTED",
+          f"{result['winner']}/{result['confidence']}/{result['consensus']}")
+    check("blind: rubric 保留 1–7 原尺度（不重标到 10 分，不发明精度）",
+          result["scale"].startswith("1-7")
+          and all(1 <= result["rubric"][side]["overall_score"] <= 7 for side in ("A", "B")))
+    check("blind: 评审原话逐字进 reviewer_notes（不改写不摘要）",
+          any("出处行" in note for notes in result["reviewer_notes"].values() for note in notes))
+    check("blind: 默认不写 identity（盲就盲到底），没有断言就不写 expectation_results",
+          "identity" not in result and "expectation_results" not in result)
+    check("blind: 维度差 ≥ 半档才写进 strengths/weaknesses",
+          result["output_quality"]["A"]["strengths"] != ["无显著领先维度（差距 < 半档）"]
+          and all("+" in item for item in result["output_quality"]["A"]["strengths"]))
+
+    # 人评页只读 benchmark.json / analysis.json，不读 comparison.json；
+    # 所以搬运这一步必须自己验：能进页面、幂等、低置信度要被写出来。
+    bench_doc = tmp / "bench.json"
+    bench_doc.write_text(_json.dumps({"notes": ["原有分析结论"], "runs": []}, ensure_ascii=False),
+                         encoding="utf-8")
+    b2c.annotate(result, str(bench_doc), str(tmp / "analysis.json"))
+    first_notes = _json.loads(bench_doc.read_text(encoding="utf-8"))["notes"]
+    b2c.annotate(result, str(bench_doc), str(tmp / "analysis.json"))
+    second_notes = _json.loads(bench_doc.read_text(encoding="utf-8"))["notes"]
+    analysis = _json.loads((tmp / "analysis.json").read_text(encoding="utf-8"))
+    check("blind: 盲评要点进 benchmark.json 的 notes（人评页读的就是这份），原有结论不被覆盖",
+          sum(n.startswith(b2c.NOTE_PREFIX) for n in second_notes) == 3
+          and "原有分析结论" in second_notes)
+    check("blind: 重复搬运是替换不是追加（人评页不会越跑越长）", first_notes == second_notes)
+    check("blind: analysis.json 写 winner 与评审原话，未揭盲时不伪造身份",
+          analysis["comparison_summary"]["winner"] == "A"
+          and analysis["comparison_summary"]["winner_skill"] == "未揭盲"
+          and analysis["reviewer_notes"])
+
+
+    # 评审不足三位：必须降级为低置信度并把「不能当结论」写进 reasoning
+    thin = b2c.build(packed["key"], sheets[:1])
+    check("blind: 不足三位评审 → confidence=low 且 reasoning 明说不能当结论",
+          thin["confidence"] == "low" and "证据不足" in thin["reasoning"])
+    low_doc = tmp / "bench_low.json"
+    b2c.annotate(thin, str(low_doc), None)
+    low_notes = _json.loads(low_doc.read_text(encoding="utf-8"))["notes"]
+    check("blind: 低置信度会写进人评页 notes（不让人在页面上误读成定论）",
+          any("不能当版本优劣结论" in n for n in low_notes)
+          and any("置信度=low" in n for n in low_notes))
+
+    # 版本数 ≠ 2 且没给 --pair：拒绝猜
+    three = tmp / "three.key.json"
+    three.write_text(_json.dumps({"items": {"V01": "a", "V02": "b", "V03": "c"}}), encoding="utf-8")
+    rejected = False
+    try:
+        b2c.build(str(three), sheets)
+    except SystemExit:
+        rejected = True
+    check("blind: 多版本且未指定 --pair 时拒绝自动挑选", rejected)
+
+    # ③ 人评回执：对齐 run_id、空反馈单列、未知 run_id 报警、日志去重
+    iteration = tmp / "iteration-1"
+    run_dir = iteration / "eval-0-demo" / "with_skill" / "run-1"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "eval_metadata.json").write_text(
+        _json.dumps({"eval_id": 0, "eval_name": "demo", "prompt": "p"}), encoding="utf-8")
+    (iteration / "feedback.json").write_text(_json.dumps({"status": "complete", "reviews": [
+        {"run_id": "eval-0-demo-with_skill-run-1", "feedback": "末页主语不够大", "timestamp": "t1"},
+        {"run_id": "eval-0-demo-with_skill-run-1-again", "feedback": "", "timestamp": "t2"}]}),
+        encoding="utf-8")
+    first = intake.intake(iteration)
+    md = pathlib.Path(first["markdown"]).read_text(encoding="utf-8")
+    check("blind: 人评回执按 run_id 对齐用例与配置，并把原话抄进待办表",
+          first["status"] == "OK" and "| demo | with_skill | 末页主语不够大 |" in md)
+    check("blind: 未知 run_id 显式报警（不静默丢弃）",
+          first["unknown_run_ids"] == ["eval-0-demo-with_skill-run-1-again"]
+          and "找不到对应运行" in md)
+    second = intake.intake(iteration)
+    check("blind: 同一条回执重复收口不重复记账（按 run_id+时间戳去重）", second["added"] == 0)
+    missing = intake.intake(tmp / "iteration-none")
+    check("blind: 没收到反馈文件时状态是 NO_FEEDBACK_FILE（不当成通过）",
+          missing["status"] == "NO_FEEDBACK_FILE")
 
 
 def main():
@@ -6601,7 +6829,9 @@ def main():
                          ("brief_contract", test_brief_contract),
                          ("docs_policy", test_docs_policy_drift),
                          ("tool_portability", test_tool_portability),
-                         ("guard_audit", test_guard_audit)):
+                         ("guard_audit", test_guard_audit),
+                         ("evals", test_evals),
+                         ("blind_review", test_blind_review)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

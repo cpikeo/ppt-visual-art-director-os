@@ -1,7 +1,20 @@
 ---
 name: ppt-visual-art-director-os
 description: >-
-  视觉艺术总监工作框架：内容 → 逐页判断 → 原生可编辑 PPTX。
+  视觉艺术总监工作框架：把内容变成逐页判断，再落成原生可编辑 PPTX（判断协议 + 可调策略 + 确定性执行 + 回归证据四层）。
+  当用户要做、要改、要审一份演示稿时用本技能：把笔记/文档/数据变成 PPT，为某页选图表或配图，
+  修"信息太满 / 排版很丑 / 每页都一样"，判断"这页该让观众记住什么"，或在一份稿子送评审前做结构体检——
+  即使用户没有明说要"设计"或"艺术指导"。
+  Use this skill whenever the user is building, revising or reviewing a slide deck: turning notes or data
+  into a presentation, choosing a chart or an image for a page, fixing cramped, template-looking or
+  repetitive slides, deciding what a page must be remembered for, or auditing an existing deck before a
+  review. Trigger even if they only say "make me a PPT" or "this deck looks bad", and even if they never
+  use the word design. Not for prose writing, non-slide graphics, or layout requests unrelated to decks.
+license: MIT
+compatibility: Python 3.10+；判断层零依赖；check/qc 需要 python-pptx>=1.0.2、Pillow>=10、numpy>=1.24、PyYAML>=6
+metadata:
+  version: "10.8.0"
+  entrypoint: scripts/vao.py
 ---
 
 # PPT Visual Art Director OS

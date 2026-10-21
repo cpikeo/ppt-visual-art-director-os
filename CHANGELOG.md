@@ -2,6 +2,109 @@
 
 仅记录行为差异、迁移事项与验证边界。已提交的详细历史见 Git；本次压缩前工作树副本随审计交付保存。
 
+## 10.8.0 — 2026-10-21（盲评闭环 + 人评回执：从「能打分」到「分数能进页面、意见能落成待办」）
+
+### 盲评包不再顺手把身份带出去
+
+- `blind_pack` 的剔除清单扩到流水线工件：`plan.json` / `facts.json` / `grading.json` /
+  `timing.json` / `eval_metadata.json` / `baseline-spec.json` / `run_summary.json` / `*.skill`。
+  `plan.json` 尤其要紧：它逐页写着判定与作者路径，评审只要 `cat` 一下就知道哪版是谁。
+- 新增 `--scrub-previews`：ghost 结构预览 PNG 的 `tEXt/iTXt/zTXt` 文本块被重建清除
+  （像素不动）。此前预览图带着生成工具的文本元数据进评审目录。
+- key 文件里写明 `identity_warning`：key 按设计能反推配置，只给组织者。**边界没变**：
+  作者写进画面、备注或文件名里的身份仍无法自动清除，README 要求送评人自查。
+
+### 盲评统计 → `comparison.json` → **同一个人评页**
+
+- 新增 `tools/blind_to_comparison.py`：唯一翻译入口。`rubric.content` = 叙事 + 完成度，
+  `rubric.structure` = 焦点 + 构图 + 中文排版，`overall_score` **保留 1–7 原尺度不缩放**；
+  `strengths/weaknesses` 只在维度差 ≥0.5 时出现；`identity` 只有 `--unblind` 才写；
+  `expectation_results` 只从 `--grading` 搬，没有断言就不编断言。
+- 关键事实（此前被想当然）：`generate_review.py` **不读** `comparison.json`——它只读
+  `grading.json` 与 `benchmark.json`。所以新增 `annotate()` / `--benchmark` / `--analysis`：
+  把要点按固定前缀并进 `benchmark.json` 的 notes（幂等，重跑替换不追加），并把
+  `comparison_summary` 写进 `analysis.json`。两步都是确定性搬运，**没有模型参与**。
+- 已验证：渲染后的人评页 Benchmark 页出现三条盲评 note（`evals-workspace/blind-demo/`）。
+  该目录用的是手写夹具分数，**不是评审证据**，README 首行已写明。
+
+### 人评回执有落点了
+
+- 新增 `tools/feedback_intake.py`：读 skill-creator 的 `feedback.json`，按 run_id 对齐用例与配置
+  （`/`→`-`，与 viewer 同规则），写 `feedback_intake.md`（含只有人能填的「归属层」列）
+  并追加 `feedback_log.json`（按 `run_id+timestamp` 去重）。
+- 纪律落成代码：空反馈记「无意见」，**不进通过数**；未知 run_id 显式报警，不静默丢弃；
+  没有 `feedback.json` 时状态是 `NO_FEEDBACK_FILE`（退 2），不当成通过。
+
+### 自检与 CI
+
+- `selftest` **853 → 872**：新增 `test_blind_review` 19 条，覆盖 PNG 文本块清除、
+  `plan.json` 不进评审目录、key 落在目录外、翻译的尺度与置信度降级、
+  `annotate` 的幂等与人评页可见性、回执的去重与未知 run_id。
+- CI 增「盲评管道冒烟」：用合成分数跑通打包→统计→翻译，**明确标注不产出版本结论**。
+
+### 仍然是「未验证」
+
+- **没有人看过 `review.html`**：页面能生成、能渲染出盲评 note，但视觉质量仍无真人评审。
+- 触发率仍未测量（无 `claude` CLI），model-baseline 仍缺。
+- 评审 <3 位或无共识时，翻译层写 `confidence: "low"` 并在 reasoning 里说「不能当版本结论」；
+  这不是措辞，是必须照做的读法。
+
+## 10.7.0 — 2026-10-21（用 skill-creator 的尺子量自己：触发层、任务级评测、可分发包）
+
+这一版的输入是外部技能框架 `skill-creator` 的三层标准：**触发（description）**、
+**任务级效果（evals + 基准）**、**可分发（`.skill`）**。三轮优化把引擎与判断证据做到了
+远超通用技能包的水准，但这三层此前几乎是空白。
+
+### 触发层：description 从 34 字变成一份「什么时候用」的声明
+
+- 原文只有一句 what（「视觉艺术总监工作框架：内容 → 逐页判断 → 原生可编辑 PPTX」），
+  既没说何时该调起，也没覆盖用户真实说法（做 PPT / 改排版 / 选图表 / 送审前体检）。
+- 现在：中文主体 + 英文触发语境 + 明确的「即使用户没说要设计」+ 不做边界（散文写作、
+  非演示图形），702 字（上限 1024），无尖括号；`quick_validate.py` 通过。
+- **未验证**：触发率没有测量（本环境无 `claude` CLI，跑不了 `run_loop`）。
+  因此这一项只声明「描述里现在有了 when」，不声明「更容易被调起」。
+
+### 分发层：打包不再把 `.git` 一起装走
+
+- 实测直接打包仓库根：**8.77 MB / 109 条目，其中 70 条是 `.git/`**（解压 9.87 MB，
+  真实内容约 1.5 MB），包名还是目录名 `repo`。
+- 新增 `tools/package_skill_staging.py`：只装技能运行与复核需要的 23 个文件，
+  剥掉 `.git`/`.github`/`tools/`/`scripts/json/`/`CHANGELOG.md`，目录名取 frontmatter 的
+  `name`。产物 **0.50 MB / 23 条目**，`quick_validate` 通过。
+- frontmatter 补 `license: MIT`、`compatibility`（Python 3.10+ / 依赖说明）、
+  `metadata.version`（新增漂移检查：三处版本必须一致）。
+
+### 任务级评测层：`evals/`（7 条用例，50 条确定性断言）
+
+- 与 `scripts/json` 的判断单测**不同轴**：那边钉「这一页判成什么」，这边测
+  「给一份 brief，整条链产出了什么」。新增 7 条真实任务 prompt（双指标页 / 六页叙事 /
+  需图页 / 中文边界 / spec 档 / 原生图表页 / 四页整册）。
+- `evals/facts.py` 采事实（墙钟、verdict、产物字节、原生图表数、预览四类事实、编排里的
+  出处行），`evals/grade.py` 做**确定性评分**（不引入 LLM grader），`evals/run_eval.py`
+  产出 skill-creator 的目录契约（`iteration-N/eval-*/<config>/run-1/{grading,timing}.json`）。
+- 结果（iteration-1）：**with_skill 50/50**；对照配置 `naive`（无判断直排，
+  **engine-baseline，不是 model-baseline**）在两份有产物的用例上 **8/11**。
+  对齐到 release 层：**11/11 vs 8/11**；naive 失在「原生图表数」与「出处行」——
+  这正是判断层的产出，不是排版层的产出。
+- 生成的静态人评页 `review.html`（1.2 MB，内嵌 14 张 ghost 预览图）可直接给人看。
+- 生成物（`evals-workspace/`）进 `.gitignore`：它是跑出来的证据，不是源码。
+
+### 用评测层抓到的第一个真缺陷：brief 里声明的 `text_color` 根本用不了
+
+`templates/brief.yml` 一直写着 `text_color: dark   # dark|light`，但
+`schemas/brief.schema.json` 只接受 `#RRGGBB`——照文档写就被契约闸门以退出码 2 挡回。
+写 eval 夹具时撞上的。修法取最保守的一侧：**放宽契约**到 `#HEX | dark | light`
+（文档里的可用键从此真的可用），模板注释同步说明两种写法各自的作用；
+`assets.safe_area_phrase` 对 `#HEX` 仍按深色文字处理——这一条作为已知缺口记在
+`MAINTENANCE.md`，没有顺手改行为。
+
+### 验证边界
+
+- `selftest` 841 → **853**（+12：评测层形状/词汇/断言会红 9 条、frontmatter 版本漂移 1 条、
+  其余为改动的连带检查）；`bench` 57/57；r1–r6 全过；差分快照 0 差异。
+- **仍未跑**：`claude` 驱动的触发率优化（`run_loop`）、with/without **model** 对照、
+  目标 PowerPoint 实测、独立盲评、LibreOffice 渲染对拍。
+
 ## 10.6.0 — 2026-10-21（存废取证：先证明「没人再需要它」，再删）
 
 这一版不删功能，只把「什么该删」从印象变成可复跑的证据，并顺手删掉第一批量刑确定的死重。

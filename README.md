@@ -124,3 +124,17 @@ CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 
 版本差异与验证边界见 [CHANGELOG.md](CHANGELOG.md)。历史数据与被删除的旧模块可从 Git 历史恢复。
 
 License: MIT（见 [LICENSE.txt](LICENSE.txt)）
+
+## 作为技能包分发 / 评测
+
+```
+python tools/package_skill_staging.py                       # → dist/ppt-visual-art-director-os.skill（0.50 MB / 23 文件）
+python tools/package_skill_staging.py --skill-creator ~/skill-creator   # 同时跑 quick_validate
+python evals/run_eval.py                                    # 任务级评测 → evals-workspace/iteration-1/
+```
+
+- **不是一个仓库打一个包**：`.git`、`.github`、`tools/`（取证仪器）、`scripts/json/`（冻结案例）、
+  `CHANGELOG.md` 属于仓库资产，不进包。直接打包仓库根会得到 8.77 MB、其中 70 个条目是 `.git/`。
+- **评测分两层**：`scripts/json/` 测「这一页判成什么」，`evals/` 测「给一份 brief 整条链产出了什么」。
+  两层不许互相替代，理由见 `evals/README.md`。
+- 评测的人评页由 skill-creator 的 `eval-viewer` 生成（单文件 HTML，ghost 预览图内联）。

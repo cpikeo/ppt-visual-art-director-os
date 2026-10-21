@@ -1,0 +1,395 @@
+{
+  "skill_name": "ppt-visual-art-director-os",
+  "note": [
+    "任务级用例（与 scripts/json 的判断单测不同轴）：一条 prompt = 一份 brief = 一次从判断到产物的完整任务。",
+    "checks 是给确定性评分器（grade.py）的机器断言；断言的人话文本由 checks.label 生成，避免期望与实现各写一份。",
+    "每条断言在写入前都先在当前代码上跑过一次并核对过实际值（冻结后才纳入回归）；不通过就改断言或改代码，不留「先写着看」。",
+    "layer=plan 的断言在 naive 基线配置下跳过（基线不产判断层），因此配置间比较只在 release 层对齐。"
+  ],
+  "evals": [
+    {
+      "id": 0,
+      "name": "two-metric-page",
+      "prompt": "帮我把这页做出来：给区域运营负责人周会用，目的是让他们同意把华东的履约资源调一部分给华南。数据是华东复购率 62%、华南 44%，华东履约次日达 91%、华南 68%，都来自区域台账 2024 全年。一页就够。",
+      "expected_output": "一页两端对照的证据页：判成 compare/prove，证据形态是两端可比量，主张可复述，无配图，构图有落点。",
+      "brief": "evals/fixtures/two-metric-page/brief.yml",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "pages",
+          "min": 1,
+          "max": 1,
+          "label": "页数"
+        },
+        {
+          "kind": "page_role",
+          "page": "s01",
+          "in": [
+            "compare",
+            "prove"
+          ],
+          "label": "页面角色"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s01",
+          "in": [
+            "comparison",
+            "part_whole"
+          ],
+          "label": "证据形态"
+        },
+        {
+          "kind": "page_media",
+          "page": "s01",
+          "in": [
+            "none"
+          ],
+          "label": "媒体决策"
+        },
+        {
+          "kind": "claim_present",
+          "page": "s01",
+          "label": "主张"
+        },
+        {
+          "kind": "composition_present",
+          "page": "s01",
+          "label": "构图落点"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "name": "narrative-six",
+      "prompt": "董事会季度经营会要用，六页。核心诉求：批准下一财年把补贴预算的三成转投履约能力。他们最大的疑问是「过去两年靠补贴拉新，停补贴会不会掉量」。内容我按页写好了，见 brief。",
+      "expected_output": "六页叙事：首建立、中段证据（序列/结构各一页）、末页收束到决定；每页有可复述主张；无配图。",
+      "brief": "evals/fixtures/narrative-six/brief.yml",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "pages",
+          "min": 6,
+          "max": 6,
+          "label": "页数"
+        },
+        {
+          "kind": "page_role",
+          "page": "s01",
+          "in": [
+            "establish"
+          ],
+          "label": "首屏角色"
+        },
+        {
+          "kind": "page_role",
+          "page": "s02",
+          "in": [
+            "prove",
+            "compare"
+          ],
+          "label": "证据页角色"
+        },
+        {
+          "kind": "page_role",
+          "page": "s06",
+          "in": [
+            "summarize",
+            "persuade"
+          ],
+          "label": "末屏角色"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s02",
+          "in": [
+            "series"
+          ],
+          "label": "序列证据"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s04",
+          "in": [
+            "structure",
+            "sequence"
+          ],
+          "label": "结构证据"
+        },
+        {
+          "kind": "claim_present",
+          "page": "s01",
+          "label": "首屏主张"
+        },
+        {
+          "kind": "claim_present",
+          "page": "s06",
+          "label": "末屏主张"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "asset-page",
+      "prompt": "秋季产品主视觉评审用。上一版被说像电商详情页、没有材质感，这次想强调釉面开片要在近景里看清。杯口 8.2 厘米、开片 0.3 毫米级，这些数字得出现在页面上。",
+      "expected_output": "需要出图的插图页：媒体决策为 required，并给出素材职责与压字区；标题只到话题、没有可复述结论时必须留 warning，不许静默放过。",
+      "brief": "evals/fixtures/asset-page/brief.yml",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "page_media",
+          "page": "s01",
+          "in": [
+            "required",
+            "suggested"
+          ],
+          "label": "媒体必要性"
+        },
+        {
+          "kind": "warning_rule",
+          "rule": "unresolved_content",
+          "min": 1,
+          "label": "无结论必须报警"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "cjk-boundary",
+      "prompt": "设计与法务联席评审。标题我们已经删过两轮了，法务还是觉得「行业领先」没依据。你把实际口径讲清楚，别为了好看把数字改小。两页：一页讲事实，一页讲两版文案的对比。",
+      "expected_output": "中文边界页：自营仓配口径的数字被如实保留，长标题不被截成话题标签；第二页缺结论时必须报 unresolved_content。",
+      "brief": "evals/fixtures/cjk-boundary/brief.yml",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "pages",
+          "min": 2,
+          "max": 2,
+          "label": "页数"
+        },
+        {
+          "kind": "claim_present",
+          "page": "s01",
+          "label": "事实页主张"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s01",
+          "in": [
+            "sequence",
+            "series",
+            "comparison"
+          ],
+          "label": "事实页证据形态"
+        },
+        {
+          "kind": "warning_rule",
+          "rule": "unresolved_content",
+          "min": 1,
+          "label": "缺结论必须报警"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "spec-mode",
+      "prompt": "我们这边是纯 Python 环境，装不了 python-pptx，也起不了渲染器。这种情况下还能不能出判断和落稿骨架？我要给技术评审看这个能力。",
+      "expected_output": "spec 档：只出判断与骨架，不生成 pptx、不加载 references；判断仍然完整（角色/证据/构图都有落点）。",
+      "brief": "evals/fixtures/spec-mode/brief.yml",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "pages",
+          "min": 1,
+          "max": 1,
+          "label": "页数"
+        },
+        {
+          "kind": "page_role",
+          "page": "s01",
+          "in": [
+            "establish",
+            "explain"
+          ],
+          "label": "页面角色"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s01",
+          "in": [
+            "proposition",
+            "none"
+          ],
+          "label": "证据形态"
+        },
+        {
+          "kind": "composition_present",
+          "page": "s01",
+          "label": "构图落点"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "chart-page",
+      "prompt": "四城次日达占比要出一页，深圳 91、杭州 84、武汉 73、成都 62，口径是自营仓配、2024 全年，来源运营月报。图必须是 PowerPoint 里能改的那种，不要截图。要能一眼看出成都掉队，结论是「差距不在仓，在末端站点密度」。",
+      "expected_output": "一页原生图表：产物里有可编辑图表（不是图片），release 档 PASS，预览无截断无出画布，页码与出处齐备。",
+      "brief": "evals/fixtures/chart-page/brief.yml",
+      "build": "evals/fixtures/chart-page/build.py",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "page_role",
+          "page": "s01",
+          "in": [
+            "compare",
+            "prove"
+          ],
+          "label": "页面角色"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s01",
+          "in": [
+            "comparison",
+            "series"
+          ],
+          "label": "证据形态"
+        },
+        {
+          "kind": "claim_present",
+          "page": "s01",
+          "label": "主张"
+        },
+        {
+          "kind": "release_pass",
+          "label": "release 结论"
+        },
+        {
+          "kind": "native_charts",
+          "min": 1,
+          "label": "原生图表数"
+        },
+        {
+          "kind": "ghost_truncations",
+          "max": 0,
+          "label": "预览截断"
+        },
+        {
+          "kind": "ghost_out_of_canvas",
+          "max": 0,
+          "label": "出画布元素"
+        },
+        {
+          "kind": "source_lines",
+          "min": 1,
+          "label": "出处行"
+        },
+        {
+          "kind": "compiled_pages",
+          "min": 1,
+          "label": "编译页数"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "data-deck",
+      "prompt": "路演用的一份四页稿子，投资人会问「复购是不是补贴堆出来的」。数字都在 brief 里：2022 年 21%、2023 年 33%、2024 年 44%，补贴率 8% 降到 3%；履约成本 11.2 元、营销 4.1 元；走访 12 家门店 36 单。最后一页是请批 800 万做长三角仓配扩容。",
+      "expected_output": "四页整册：首屏建立、中段证据（序列与构成）、末页收束到决定；release PASS，预览无截断，产物在合理体积内。",
+      "brief": "evals/fixtures/data-deck/brief.yml",
+      "build": "evals/fixtures/data-deck/build.py",
+      "checks": [
+        {
+          "kind": "plan_contract_clean",
+          "label": "plan 通过数据契约"
+        },
+        {
+          "kind": "pages",
+          "min": 4,
+          "max": 4,
+          "label": "页数"
+        },
+        {
+          "kind": "page_role",
+          "page": "s01",
+          "in": [
+            "prove",
+            "establish"
+          ],
+          "label": "首屏角色"
+        },
+        {
+          "kind": "page_role",
+          "page": "s04",
+          "in": [
+            "summarize",
+            "persuade"
+          ],
+          "label": "末屏角色"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s01",
+          "in": [
+            "series",
+            "comparison"
+          ],
+          "label": "序列证据"
+        },
+        {
+          "kind": "page_evidence",
+          "page": "s03",
+          "in": [
+            "part_whole",
+            "comparison"
+          ],
+          "label": "构成证据"
+        },
+        {
+          "kind": "release_pass",
+          "label": "release 结论"
+        },
+        {
+          "kind": "ghost_truncations",
+          "max": 0,
+          "label": "预览截断"
+        },
+        {
+          "kind": "pptx_bytes",
+          "min": 20000,
+          "max": 200000,
+          "label": "产物体积"
+        },
+        {
+          "kind": "compiled_pages",
+          "min": 4,
+          "label": "编译页数"
+        },
+        {
+          "kind": "source_lines",
+          "min": 4,
+          "label": "每页出处行"
+        }
+      ]
+    }
+  ]
+}

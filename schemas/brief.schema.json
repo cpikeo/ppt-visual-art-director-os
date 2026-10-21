@@ -223,7 +223,9 @@
           "type": "string"
         },
         "text_color": {
-          "$ref": "#/$defs/hexColor"
+          "type": "string",
+          "pattern": "^(#[0-9A-Fa-f]{6}|dark|light)$",
+          "description": "深色/浅色文字意图（dark|light）或直接给 #HEX；dark|light 进提示词，HEX 当前按深色文字处理"
         },
         "negative_space_anchor": {
           "type": "string"

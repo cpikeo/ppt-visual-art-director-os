@@ -174,7 +174,12 @@ HOW_TO_READ_BLIND = ("ICC 衡量评审者之间的一致性，不衡量设计质
                      "mean 键为真实来源路径（含映射信息），本报告勿直接外发。")
 # vao/bench 生成的流程工件：带着它们进评审目录，等于把作者/版本线索递给评审者。
 _BLIND_STRIP_PATTERNS = (".git", "__pycache__", "*.pyc", "pages",   # pages = ghost 页缓存
-                         "*manifest*.json", "ghost.meta.json", "*.key.json", "score_sheet.csv")
+                         "*manifest*.json", "ghost.meta.json", "*.key.json", "score_sheet.csv",
+                         # 流水线工件同样会泄露身份：plan.json 写着逐页判断与作者路径，
+                         # facts/grading 写着期望与配置名。评审目录里只留产物与预览。
+                         "plan.json", "facts.json", "grading.json", "timing.json",
+                         "eval_metadata.json", "baseline-spec.json", "run_summary.json",
+                         "*.skill")
 
 
 def _scrub_pptx_identity(path: Path) -> None:
@@ -203,7 +208,23 @@ def _scrub_pptx_identity(path: Path) -> None:
             zout.writestr(info, data)
 
 
-def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict:
+def _scrub_png_identity(path: Path) -> None:
+    """重建像素，丢掉 PNG 的文本块（tEXt/iTXt/EXIF）——图像也会带作者与工具指纹。
+
+    只抹元数据，不动像素：预览图是给人看结构的证据，改一个像素就等于改了证据。
+    PIL 保存时会把 `im.info` 里的文本块一起写回，所以显式清空 info 再存。
+    """
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+    with Image.open(path) as im:
+        im.load()
+        clean = im.copy()
+        clean.info.clear()
+        clean.save(path, format="PNG", pnginfo=PngInfo())
+
+
+def blind_pack(items: list[str], out_dir: Path, seed: int | None = None,
+               *, scrub_previews: bool = False) -> dict:
     """打乱并改名待评版本；评审目录只留匿名件、空白评分表与评审须知，映射与溯源写进目录外的 key。
 
     匿名化的边界（诚实声明，不伪装彻底）：pptx 的「谁/何时」文件属性被抹去，
@@ -246,8 +267,14 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict
                             ignore=shutil.ignore_patterns(*_BLIND_STRIP_PATTERNS))
             for pptx in sorted((out_dir / code).rglob("*.pptx")):
                 _scrub_pptx_identity(pptx)
+            scrubbed = []
+            if scrub_previews:
+                for png in sorted((out_dir / code).rglob("*.png")):
+                    _scrub_png_identity(png)
+                    scrubbed.append(png.relative_to(out_dir / code).as_posix())
             digest[code] = {"type": "dir",
-                            "packed_files": sum(1 for p in (out_dir / code).rglob("*") if p.is_file())}
+                            "packed_files": sum(1 for p in (out_dir / code).rglob("*") if p.is_file()),
+                            "previews_scrubbed": scrubbed}
         else:
             dst = out_dir / f"{code}{src.suffix}"
             shutil.copyfile(src, dst)
@@ -259,7 +286,12 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict
         rows.append(code)
     key = {"version_format": 2, "tool": "vao-bench-blind-pack/2",
            "packed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-           "seed": seed, "items": mapping, "sha256": digest}
+           "seed": seed, "items": mapping, "sha256": digest,
+           # key 按设计能反推身份（它就是为了揭盲而存在的），所以要把「别外发」写进文件本身，
+           # 而不是只写在文档里——文件会被单独转发，文档不会。
+           "identity_warning": ("本文件含代号→原路径映射（可反推配置），只给组织者；"
+                                "发给评审者的只有评审目录内容（评分表 + README），"
+                                "不含本文件。")}
     json_write(key_path, key)
     sheet = out_dir / "score_sheet.csv"
     header = ["reviewer", "item"] + list(BLIND_DIMS) + ["reason", "review_time"]
@@ -279,7 +311,10 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict
         "\n"
         "匿名化边界：已抹去 pptx 文件属性里的作者/时间（docProps/core.xml），已剔除 vao/bench\n"
         "流程工件（manifest/meta/key/页缓存）；作者写进画面、备注或文件名里的身份无法自动清除，\n"
-        "送评前请自行检查。若需核验材料未被调包，key 文件记录了各版本的 sha256。\n",
+        "送评前请自行检查。若需核验材料未被调包，key 文件记录了各版本的 sha256。\n"
+        + ("\n预览图：各版本附 ghost 结构预览（preview-*.png），可先看结构再打开 pptx。\n"
+           "预览图的文本块（tEXt/iTXt）已重建清除，像素未改——它是证据，不是成品。\n"
+           if scrub_previews else ""),
         encoding="utf-8")
     return {"items": rows, "sheet": str(sheet), "key": str(key_path),
             "readme": str(readme), "scale": "1-7"}
@@ -514,7 +549,9 @@ def main(argv=None) -> int:
     if argv[:1] == ["blind"]:
         if len(argv) >= 3 and argv[1] == "pack":
             try:
-                result = blind_pack(argv[3:], Path(argv[2]))
+                items = [a for a in argv[3:] if not a.startswith("--")]
+                result = blind_pack(items, Path(argv[2]),
+                                    scrub_previews="--scrub-previews" in argv[3:])
             except (ValueError, OSError) as exc:
                 print(f"bench error: {exc}", file=sys.stderr)
                 return 2
