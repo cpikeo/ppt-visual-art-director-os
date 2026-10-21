@@ -1,0 +1,153 @@
+{
+ "freeze": {
+  "frozen_at": "2026-10-21",
+  "frozen_by": "round-6 audit regression freeze: expectations judged manually from SKILL.md §3 (focal number is the claim's current value / largest part of an arithmetic decomposition / the decision ask itself); the engine measurably violated all three before the fix. This set is a frozen regression set, not a blind holdout, and must not be cited as unseen-generalization evidence.",
+  "sha256_of_payload": "24aac41c0e16599f7680408b6342748205aafa6335ffa6040983c432444aa857"
+ },
+ "cases": [
+  {
+   "id": "T01",
+   "group": "series_current",
+   "severity": "critical",
+   "title": "三年复购率一路走低",
+   "content": "2023 年 31%，2024 年 27%，2025 年 22%。（来源：会员台账）",
+   "expect": {
+    "role": [
+     "prove"
+    ],
+    "evidence": "series",
+    "claim": "extracted",
+    "primary_contains": [
+     "22"
+    ],
+    "focus": "kpi_main"
+   },
+   "why": "时间形状（逐年同单位取值）决定当前值是末值 22%；主张措辞「一路走低」不在变化词表时也不能退回基期 31%。"
+  },
+  {
+   "id": "T02",
+   "group": "series_current",
+   "severity": "high",
+   "title": "客单价一路走高",
+   "content": "2023 年 68 元，2024 年 76 元，2025 年 83 元。（来源：门店台账）",
+   "expect": {
+    "role": [
+     "prove"
+    ],
+    "evidence": "series",
+    "primary_contains": [
+     "83"
+    ]
+   },
+   "why": "同 T01 的反向：走高说的当前值是 83 元，不是首年的 68 元。"
+  },
+  {
+   "id": "T03",
+   "group": "part_whole_max",
+   "severity": "critical",
+   "title": "改造钱花在哪",
+   "content": "设备 3200 万元，产线改造 1100 万元，数字化 500 万元，合计 4800 万元。（来源：财务概算）",
+   "expect": {
+    "evidence": "part_whole",
+    "part_whole": true,
+    "primary_contains": [
+     "3200"
+    ],
+    "focus": "ratio_main"
+   },
+   "why": "算术分解 3200+1100+500=4800：焦点是最大部分，合计是分母；页面主题词「改造」与指标名「产线改造」的弱片段重合不能把 1100 顶成主数。"
+  },
+  {
+   "id": "T04",
+   "group": "part_whole_max",
+   "severity": "high",
+   "title": "改造钱花在哪",
+   "content": "数字化 500 万元，设备 3200 万元，产线改造 1100 万元，合计 4800 万元。（来源：财务概算）",
+   "expect": {
+    "evidence": "part_whole",
+    "part_whole": true,
+    "primary_contains": [
+     "3200"
+    ]
+   },
+   "why": "同 T03 换书写顺序：主数由分解形状决定，不由第一个或片段命中的数字决定。"
+  },
+  {
+   "id": "T05",
+   "group": "media_hint",
+   "severity": "high",
+   "title": "一位染匠守着染缸四十年",
+   "content": "染匠每天天不亮就起缸看色，四十年没离开过作坊；一块布要过九道水。（来源：作坊记录）",
+   "expect": {
+    "media": "none",
+    "media_source": "hint",
+    "media_suggested": "witness"
+   },
+   "why": "具体的人是证词线索，但词表只提示不出图：decision 仍为 none，是否配图由作者声明。"
+  },
+  {
+   "id": "T06",
+   "group": "part_whole_nested",
+   "severity": "high",
+   "title": "二次搬运是仓内成本的大头",
+   "content": "二次搬运占仓内成本 38%，跨区拣选占其中的 24%。（来源：仓内作业审计）",
+   "expect": {
+    "evidence": "part_whole",
+    "part_whole": true,
+    "primary_contains": [
+     "38"
+    ]
+   },
+   "why": "嵌套份额：38% 是被主张点名的那一层，24% 是它内部的子集，不能反客为主。"
+  }
+ ],
+ "narratives": [
+  {
+   "id": "N02",
+   "group": "narrative",
+   "severity": "critical",
+   "note": "仓网投决：建立→序列证据→请求收束（分期词只是支撑）",
+   "brief": {
+    "audience": "投资委员会，现场评审加异步阅读",
+    "decision": "批准仓网改造二期 1,800 万元",
+    "tension": "一期效果是否可复制，投入回收是否有把握",
+    "slides": [
+     {
+      "id": "s01",
+      "title": "改造一期只动了三个可复制的仓",
+      "content": "11 仓改 3 仓，单均成本降 0.42 元，时效没有变差。"
+     },
+     {
+      "id": "s02",
+      "title": "三年复购率一路走低",
+      "content": "2023 年 31%，2024 年 27%，2025 年 22%。（来源：会员台账）"
+     },
+     {
+      "id": "s03",
+      "title": "请委员会批准二期仓网改造",
+      "content": "一期 3 仓跑通，单均成本降 0.42 元；二期需 1,800 万元。"
+     }
+    ]
+   },
+   "expect": {
+    "first_role": "establish",
+    "media_all": "none",
+    "pages": {
+     "s02": {
+      "evidence": "series",
+      "primary_contains": [
+       "22"
+      ]
+     },
+     "s03": {
+      "role": [
+       "summarize"
+      ],
+      "focus": "decision_ask"
+     }
+    }
+   },
+   "why": "收束页的落点是待批的请求本身；正文的「一期/二期」是已跑通证据与待批对象的项目名，不是这一页要画的流程，焦点不得落到 structure_map。"
+  }
+ ]
+}

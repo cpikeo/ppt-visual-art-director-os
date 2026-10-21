@@ -536,6 +536,10 @@ def chart_rows(element: dict) -> list[dict]:
             rows.append({"label": str(it["label"]), "value": num,
                          "display": display, "desc": it.get("desc"),
                          "subtotal": bool(it.get("subtotal") or it.get("is_total") or it.get("total")),
+                         # 行级 max 是 progress_bar 的刻度（verify 的 ROW_RENDERED_KEYS
+                         # 已把它列为渲染键）：丢掉它，compiler 的 per-row ceiling
+                         # 分支就成了死代码，行刻度被静默当作不存在。
+                         **({"max": it["max"]} if "max" in it else {}),
                          "_index": i,
                          "missing": missing, "invalid": invalid})
         elif (isinstance(it, (int, float)) and not isinstance(it, bool)
@@ -543,6 +547,28 @@ def chart_rows(element: dict) -> list[dict]:
             rows.append({"label": str(i), "value": float(it), "display": it,
                          "_index": i, "missing": False, "invalid": False})
     return rows
+
+
+def progress_ratio(row: dict, element: dict) -> float:
+    """progress_bar 填充比例（compiler 与 ghost 的唯一口径）。
+
+    刻度 = 行级 `max`，缺省元素级 `max`，再缺省 100；比例夹紧到 [0, 1]。
+    此前 ghost 硬编码 100：声明 `max: 200` 时产物画 75%、预览冲出轨道到
+    150%——同一张图两套证据（实测）。无效刻度回落 100，上线由 guard 拦。
+    """
+    ceiling_raw = (row or {}).get("max", (element or {}).get("max", 100))
+    try:
+        ceiling = float(ceiling_raw)
+    except (TypeError, ValueError, OverflowError):
+        ceiling = 100.0
+    if isinstance(ceiling_raw, bool) or not math.isfinite(ceiling) or ceiling <= 0:
+        ceiling = 100.0
+    try:
+        value = float((row or {}).get("value") or 0.0)
+    except (TypeError, ValueError, OverflowError):
+        value = 0.0
+    return max(0.0, min(1.0, value / ceiling))
+
 
 def highlight_index(element, rows, default: int = -1) -> int:
     """强调项解析：整数索引，或直接写类别名。

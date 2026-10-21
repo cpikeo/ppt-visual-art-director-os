@@ -1,7 +1,11 @@
 ---
 name: ppt-visual-art-director-os
 description: >-
-  视觉艺术总监工作框架：内容 → 逐页判断 → 原生可编辑 PPTX。
+  以 Visual Art Director 的设计判断做演示：内容 → 逐页判断 → 原生可编辑 PPTX。
+  当用户要制作、改稿或评审演示文稿时使用，包括 PPT/PPTX、幻灯片、slides、pitch deck、
+  融资路演、投决/立项/汇报/复盘/发布演示，或只给了主题、大纲、文案、数据、brief 却要成稿，
+  即使没有点名本技能或 PowerPoint。适用于需要先判断每页主张、证据、焦点、构图与节奏再落版，
+  以及检查现有 deck 的视觉层级、中文排版、复杂图表、素材职责与交付质量的任务。
 ---
 
 # PPT Visual Art Director OS

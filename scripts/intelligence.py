@@ -611,26 +611,50 @@ def _strip_parenthetical(text: str) -> str:
     return _PARENTHETICAL.sub(" ", text)
 
 
-def _sums_to_total(values: list[float]) -> bool:
-    """这一组同单位取值里，是否有几个加起来正好等于其中另一个值（分解）。
+def _sums_parts(values: list[float]) -> tuple[float, tuple[float, ...]] | None:
+    """同单位取值里的算术分解：返回 (总计, ≥3 个部分)，无分解返回 None。
 
     纯算术，不猜语义：3200＋1100＋500＝4800、21＋12＋5＝38 是作者写下的分解关系，
     不是设计偏好。取整容差 0.5% 吸收四舍五入，并排除全部取值相同的重复列举。
+    三个以上的部分才算分解：两项相加恰好等于第三项在比率/日期里太常见
+    （缩短 1.8 天 ＋ 现值 6.6 天 ＝ 原值 8.4 天；0.8% ＋ 1.1% ≈ 2%），
+    那不是作者写下的构成，是算术巧合。两项分解通常写成「其中/其余/占」。
     """
     uniq = sorted(v for v in set(values) if v > 0)
     if len(uniq) < 4 or len(values) > 8:
-        return False
+        return None
     from itertools import combinations
     for total in uniq:
         parts = [v for v in uniq if v != total]
-        # 三个以上的部分才算分解：两项相加恰好等于第三项在比率/日期里太常见
-        # （缩短 1.8 天 ＋ 现值 6.6 天 ＝ 原值 8.4 天；0.8% ＋ 1.1% ≈ 2%），
-        # 那不是作者写下的构成，是算术巧合。两项分解通常写成「其中/其余/占」。
         for size in range(3, min(4, len(parts)) + 1):
             for combo in combinations(parts, size):
                 if abs(sum(combo) - total) <= abs(total) * 0.005 + 1e-9:
-                    return True
-    return False
+                    return total, combo
+    return None
+
+
+def _sums_to_total(values: list[float]) -> bool:
+    return _sums_parts(values) is not None
+
+
+def _decomposition(nums: list[dict]) -> tuple[dict, list[dict]] | None:
+    """数字对象版的分解：按单位分组，返回 (总计对象, 部分对象列表)。"""
+    by_unit: dict[str, list[dict]] = {}
+    for n in nums or []:
+        if not n.get("year"):
+            by_unit.setdefault(n.get("unit") or "", []).append(n)
+    for group in by_unit.values():
+        found = _sums_parts([float(n["value"]) for n in group])
+        if not found:
+            continue
+        total_value, part_values = found
+        total = next((n for n in group
+                      if abs(float(n["value"]) - total_value) < 1e-9), None)
+        parts = [n for n in group
+                 if any(abs(float(n["value"]) - v) < 1e-9 for v in part_values)]
+        if total is not None and len(parts) >= 3 and total not in parts:
+            return total, parts
+    return None
 
 
 _ARRIVAL_CUE = re.compile(
@@ -977,10 +1001,36 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
     nums = evidence_numerals(text)
     if not nums:
         return nums, None
+    anchored = None
     if claim:
         anchored = _attributed_primary(text, nums, str(claim))
-        if anchored is not None:
-            return nums, anchored
+    # 算术分解（≥3 个部分加总等于总计）是内容的形状，不是措辞：主张没有
+    # **全名**点名某个部分时，焦点是最大的那个部分，总计是分母不是主语。
+    # 只靠 2 字片段「命中」的主张（如页面主题词「改造」碰上指标名「产线改造」）
+    # 不算全名点名——它曾把 1,100 万元顶成主数、把真正的最大部分 3,200 万元
+    # 写成「总体/分母」（实测）。主张全名点名了某个部分（如「采后损耗 47%」
+    # 的嵌套分解）时仍由主张锚定，见 suites 的冻结期望。
+    decomp = _decomposition(nums)
+    if decomp:
+        _total, parts = decomp
+        owns = False
+        if anchored is not None and claim:
+            own_metric = {id(n): m for n, m in _metric_attribution(text, nums)}.get(id(anchored))
+            clean = str(own_metric or "").rstrip("占为达")
+            # 全名 (或 3 字片段) 点名才算主张真正点名了这个量；2 字弱片段不算。
+            owns = bool(clean and (clean in str(claim) or (
+                len(clean) >= 3
+                and any(clean[i:i + 3] in str(claim) for i in range(len(clean) - 2)))))
+            if anchored is _total and clean not in (
+                    "合计", "总计", "共计", "总和", "总额", "全部", "总"):
+                # 嵌套分解的总计本身是有名字的构成项（「采后损耗 47%＝运输+
+                # 分拣+仓储」）：它就是主张的那个子集，不是无名分母。只有写成
+                # 「合计/总计」的量才是分母，焦点落到它最大的部分上。
+                owns = True
+        if not owns:
+            return nums, max(parts, key=lambda n: float(n["value"]))
+    if anchored is not None:
+        return nums, anchored
     subset = _PART_OF_WHOLE.search(text)
     if subset:
         part = evidence_numerals(subset.group("part"))
@@ -1000,8 +1050,11 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
                 return nums, primary
     # 主张点名了指标、正文没写标签、取值各自带时间坐标（「准点率连续四个季度下滑：
     # Q1 87.2%，Q2 85.1%…」）：这一列就是该指标的序列，答案是**当前状态**（末值），
-    # 不是序列开头的基期。判据要求序列信号在主张里（下滑/收窄/增长…）且每个取值都
-    # 落在时间点上——实体并置（「早班 62 人，晚班 12 人」）没有时间坐标，仍走原回退。
+    # 不是序列开头的基期。判据是形状（每个取值都落在时间点上 + 同单位），不是
+    # 主张的措辞——「一路走低／走高／攀升」这类同义词不在词表里，靠词表把关只会
+    # 让没收录的说法退回首值、再被 focus 误称为「序列的当前值」（实测：三年复购率
+    # 一路走低，主数落在 2023 年的 31%）。实体并置（「早班 62 人，晚班 12 人」）
+    # 没有时间坐标，仍走原回退；主张序数点年/全名点名指标已由上方锚定处理。
     claim_nums_ok = claim and any(_claim_mentions(str(claim), m)
                                   for m in _metric_of_clause(str(claim)))
     ev_nums = [n for n in nums if not n["year"]]
@@ -1016,9 +1069,7 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
         timed_flags.append(bool(_TIME_POINT.search(text[start:pos])))
     ev_nums = current
     if (claim_nums_ok and timed_flags and all(timed_flags) and len(ev_nums) >= 2
-            and len({n.get("unit") or "" for n in ev_nums}) == 1
-            and (_hit(str(claim), _CHANGE_WORDS + _SERIES_WORDS)
-                 or _SERIES_MORPH.search(str(claim)))):
+            and len({n.get("unit") or "" for n in ev_nums}) == 1):
         return nums, ev_nums[-1]
     return nums, nums[0]
 
@@ -1647,9 +1698,13 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
         else:
             why = "主证据量：让观众看见可核验的量，不替它编造变化"
         maxi.append(f"{primary['raw']} — {why}")
+    _decomp = _decomposition(claim_nums) if u.get("part_whole") else None
     for n in [n for n in claim_nums if n is not primary][:2]:
-        if u.get("part_whole") and primary and n["unit"] == primary["unit"]:
+        if u.get("part_whole") and primary and n["unit"] == primary["unit"] \
+                and _decomp and n is _decomp[0]:
             why = "总体/分母：和子集同屏，但不是变化前的基期"
+        elif u.get("part_whole") and primary and n["unit"] == primary["unit"]:
+            why = "另一构成项：同屏参照，不是总体，也不是主数"
         elif comparing:
             why = "另一比较对象：注明各自定义，口径不同不得直接相减"
         elif u.get("evidence") == "series" and primary and n["unit"] == primary["unit"]:
@@ -1663,7 +1718,10 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
         maxi.append(f"「{claim_text[:26]}」— 结论句，本页第一落点必须落在它身上")
     if comparing:
         maxi.append("比较对象与口径 — 两端要能辨认；只有分母一致时才画差值")
-    if u.get("evidence") in ("structure", "sequence"):
+    if u.get("evidence") in ("structure", "sequence") \
+            and not _hit(claim_text, _ASK_WORDS):
+        # 请求页的顺序只是支撑形状：把它列为「必须最大化」，会和 decision_ask
+        # 焦点互相打架（实测批准页权重同时要求画结构与立请求）。
         maxi.append("关系的形状（层级/顺序）— 结构本身就是这一页的视觉对象")
 
     for n in [x for x in (u.get("numerals") or [])
@@ -1881,7 +1939,20 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                     ["kpi_row", "把数字排成一行＝观众先看数字后看主张，顺序反了"]]
     elif u.get("part_whole") and carried:
         part = (primary or carried[-1])["raw"]
-        whole = next((n["raw"] for n in carried if n is not primary), "总体")
+        _primary = primary or carried[-1]
+        _decomp = _decomposition(carried)
+        # 总体只能是：算术分解的总计（主数是它的部分时），或同单位且大于主数的
+        # 那个量（「12 家中 9 家」的 12）。其余候选是另一部分/子集（如「占 38%，
+        # 其中的 24%」的 24% 小于主数），写成总体就是把分母说错（实测）。
+        _whole = None
+        if _decomp and any(n is _primary for n in _decomp[1]):
+            _whole = _decomp[0]
+        if _whole is None:
+            _larger = [n for n in carried if n is not _primary
+                       and (n.get("unit") or "") == (_primary.get("unit") or "")
+                       and float(n["value"]) > float(_primary["value"])]
+            _whole = max(_larger, key=lambda n: float(n["value"])) if _larger else None
+        whole = _whole["raw"] if _whole else "总体"
         choice = {"element_role": "ratio_main", "type": "text",
                   "why": f"「{part}」是已经发生的子集；同屏写清「{whole}」的总体，"
                          "不把整体→子集误画成下降，也不让比例脱离分母。"}
@@ -1925,6 +1996,17 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
         rejected = [["card_grid_4", "四张等权卡片：等权＝没有结论，观众平均用力后什么都没记住"],
                     ["donut", "把一句话画成一圈：环形图要求读者心算比例，结论被稀释"],
                     ["gauge", "仪表盘指针只表达「好/不好」，不表达「多少」"]]
+    elif _hit(claim_text, _ASK_WORDS) and u.get("evidence") in ("structure", "sequence"):
+        # 收束请求自己就是焦点（_closing_ask 同一条纪律）：正文里偶然出现的
+        # 分期/阶段词是支撑证据的项目名，不是这一页要画的流程图。请求量已由
+        # 上方 carried 分支处理；走到这里说明没有可锚定的量，落点回到请求本身。
+        # 只拦截 structure/sequence 的误落：无证据形态的请求页仍走下方陈述
+        # 分支（R2 钉：主张已点名请求时不另换 brief 决定派生的落点）。
+        choice = {"element_role": "decision_ask", "type": "text",
+                  "why": "这一页要观众做的决定就是焦点：请求与对象同屏，"
+                         "证据退一层——把请求画成流程图，决定就被推迟了。"}
+        rejected = [["structure_map", "把支撑证据的项目分期画成流程：顺序成了主角，请求反而退场"],
+                    ["kpi_row", "数字先排成一行：数字在前，决定在后"]]
     elif u.get("evidence") in ("structure", "sequence"):
         choice = {"element_role": "structure_map", "type": "chart",
                   "why": "层级/顺序是内容本身的形状，画出来比写出来短。"}
@@ -2001,6 +2083,11 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
         s["big_whitespace"] += 1.0
     s["linear_structure"] = (4.5 if u.get("relations") else
                              3.0 if ev in ("sequence", "structure") else 0.0)
+    if _hit(str((claim or {}).get("text") or ""), _ASK_WORDS) and not u.get("relations"):
+        # 请求页同 focus 的纪律：分期词带来的 sequence 只是支撑形状，把页面
+        # 排成线性流程会让「起点→终点」冒充收束落点（实测：批准页构图
+        # linear_structure、空间读法「轴线上第一个节点」）。明示关系不受此限。
+        s["linear_structure"] = 0.0
     s["asymmetric_tension"] = (2.5 if u.get("comparison") else 0.0) \
         + (1.5 if role == "compare" else 0.0) \
         + (1.0 if n >= 2 and u.get("comparison") else 0.0)
@@ -2640,6 +2727,11 @@ def section_label(item: dict, claim: dict, role: str) -> str:
         return declared[:16]
     text = str((claim or {}).get("text") or (item or {}).get("title") or "").strip()
     if text.startswith(_LABEL_HYPOTHETICAL_OPENERS):
+        return ""
+    if text.startswith("请") and _hit(text, _ASK_WORDS):
+        # 请求句没有可定位的主题短语（既有钉的口径）：「请委员会批准…」里
+        # 受请对象（委员会）不是本页主题，按边界切只会留下「委员」这种
+        # 被「会」字劈开的半截机构名（实测）。宁可缺省，不输出错位名词。
         return ""
     for prefix in _LABEL_CONDITIONAL_PREFIX + _LABEL_HEAD_PREFIX:
         if text.startswith(prefix):

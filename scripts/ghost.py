@@ -24,7 +24,7 @@ from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGH
                         highlight_index, resolve_chart_highlight, color_to_hex,
                         CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS,
                         CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows,
-                        default_show_values)
+                        default_show_values, progress_ratio)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -1405,7 +1405,8 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         for i, row in enumerate(data):
             cy = y + row_h * (i + 0.5)
             span = max(track_right - bar_x, 10)
-            filled = span * max(0.0, _value(row)) / (top_value if kind == "ranked_bar" else 100.0)
+            filled = span * (max(0.0, _value(row)) / top_value if kind == "ranked_bar"
+                             else progress_ratio(row, e))
             if kind == "progress_bar":
                 d.rounded_rectangle((int(bar_x), int(cy - bar_h / 2), int(track_right), int(cy + bar_h / 2)),
                                     radius=max(1, int(bar_h / 2)), fill=_rgba(ctx, "muted", 0.22))

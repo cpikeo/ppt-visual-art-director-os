@@ -782,6 +782,13 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                         f"{kind} 不接受负值；请改用可表达正负关系的图表")
             if kind == "progress_bar" and not _positive_num(e.get("max", 100)):
                 add("data_integrity", eid, "error", "progress_bar 的 max 必须是正数")
+            if kind == "progress_bar":
+                for di, row in enumerate(data):
+                    if isinstance(row, dict) and "max" in row \
+                            and not _positive_num(row.get("max")):
+                        add("data_integrity", f"{eid}[{di}]", "error",
+                            "progress_bar 行级 max 必须是正数；它决定这一行的刻度，"
+                            "写错会被渲染层静默回落到 100")
             # 目标线（`target`/`target_label`）只有 ranked_bar 渲染：竖直参考线表达
             # 「门槛/要到哪」。它是被消费的字段，非数字会让线**静默消失**——声明了
             # 就必须画得出来；其余 kind 不消费它，写在那里等于没写，得留痕。

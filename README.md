@@ -40,7 +40,7 @@ scripts/
   primitives.py       最小原语（身份 / 字节 / 几何 / 颜色 / 文本测量 / 图表单一规范 CHART_SPEC）
   ghost.py            PIL 结构预览（关键页取证）
   bench.py            判断基准与盲评通道（不进生产入口）
-  json/               judgment_cases.json（57 例判断回归）及四组冻结泛化 JSON（不进生产入口）
+  json/               judgment_cases.json（57 例判断回归）及五组冻结 JSON（不进生产入口）
   selftest.py         核心自检
 references/           contract.md（字段与失败码）、assets.md（资产链）
 ```
@@ -102,7 +102,7 @@ python scripts/selftest.py   # 退出码即门槛；数量以实际输出为准
 `plan` 只输出设计判断与**空元素骨架**，作者须完成 BUILD；不得以本地自测通过宣称自主落版或目标 PowerPoint 视觉终验。
 
 CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 / 3.13 自检、57 例判断回归、
-四组冻结泛化评测及 spec 档冒烟；另有 ubuntu / Python 3.10 的声明依赖下限组合。**配置变更不代表远端已运行。**
+五组冻结评测及 spec 档冒烟；另有 ubuntu / Python 3.10 的声明依赖下限组合。**配置变更不代表远端已运行。**
 工作树中若有未推送的改动（见 [CHANGELOG](CHANGELOG.md) 最新条目），只能按本地结果报告。
 
 ## 版本与历史

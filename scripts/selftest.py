@@ -5376,6 +5376,11 @@ def test_docs():
     check("docs: 文档里没有退役模块名与旧概念",
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
+    _front = skill.split("---", 2)[1] if skill.startswith("---") else ""
+    check("docs: SKILL 描述可被演示任务触发（不止框架口号）",
+          all(k in _front for k in ("PPTX", "pitch deck", "路演", "汇报", "中文排版",
+                                     "PowerPoint"))
+          and len(_front) < 1200, _front[:120])
 
 
 def main():
@@ -5414,7 +5419,8 @@ def main():
                          ("art_direction_linkage", test_art_direction_linkage),
                          ("ghost_chart_color", test_ghost_chart_color_single_source),
                          ("case004_regressions", test_case004_regressions),
-                         ("audit_fixes", test_audit_fixes)):
+                         ("audit_fixes", test_audit_fixes),
+                         ("design_intelligence_r6", test_design_intelligence_r6)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()
@@ -5543,6 +5549,132 @@ def test_audit_fixes(tmp: Path):
     check("asset: 未声明主体时仍保留空场纪律（不丢判据）",
           "not a picture of a thing" in bare_prompt or "no dominant" in bare_prompt,
           bare_prompt[:160])
+
+
+def test_design_intelligence_r6(tmp: Path):
+    """第六轮审计：判断主数、收束落点与 progress 刻度的回归钉。
+
+    每条都对应一份真实 brief 的实测失效（仓网投决 6 页稿）：
+      1. 序列主数落在基期——「一路走低」不在变化词表里，形状判据本已成立；
+      2. 构成主数被弱片段顶掉——页面主题词碰上指标名，把最大部分写成分母；
+      3. 收束请求页被分期词画成流程——焦点、构图、权重、眉标四处互相打架；
+      4. progress 的 max 只在产物生效——行级键在归一化被丢、预览硬编码 100。
+    """
+    import intelligence as intel
+    from primitives import chart_rows, progress_ratio
+    from verify import check_spec
+
+    # ── 1 · 序列当前值靠时间形状，不靠主张措辞是否进了词表 ──────────
+    _, low = intel.number_roles("2023 年 31%，2024 年 27%，2025 年 22%。",
+                                "三年复购率一路走低")
+    check("r6 series: 「一路走低」的当前值是末值 22%，不是基期 31%",
+          low and low["raw"] == "22%", str(low))
+    _, high = intel.number_roles("2023 年 68 元，2024 年 76 元，2025 年 83 元。",
+                                 "客单价一路走高")
+    check("r6 series: 「一路走高」的当前值是末值 83 元",
+          high and high["raw"] == "83 元", str(high))
+
+    # ── 2 · 算术分解：焦点是最大部分，总计是分母（与书写顺序无关）────
+    for text in ("设备 3200 万元，产线改造 1100 万元，数字化 500 万元，合计 4800 万元。",
+                 "数字化 500 万元，设备 3200 万元，产线改造 1100 万元，合计 4800 万元。"):
+        _, main_part = intel.number_roles(text, "改造钱花在哪")
+        check("r6 part_whole: 分解页主数是最大部分 3200 万元，不是弱片段命中的 1100",
+              main_part and main_part["raw"] == "3200 万元", str(main_part))
+    _nested = intel.number_roles(
+        "采后损耗占 47%，其中运输 21%、分拣 14%、仓储 12%；田间损耗占 23%。",
+        "采后损耗是温室草莓的最大损耗项")[1]
+    check("r6 part_whole: 嵌套分解里有名字的构成项仍是主数（47% 不被拆成 21%）",
+          _nested and _nested["raw"] == "47%", str(_nested))
+    _u = intel.understand("改造钱花在哪 设备 3200 万元，产线改造 1100 万元，"
+                          "数字化 500 万元，合计 4800 万元。")
+    _anchor = intel.number_roles(
+        "设备 3200 万元，产线改造 1100 万元，数字化 500 万元，合计 4800 万元。",
+        "改造钱花在哪")
+    _focus = intel.focus_of("prove", _u, {"text": "改造钱花在哪", "source": "extracted"},
+                            number_anchor=_anchor, page_text="")
+    check("r6 part_whole: 焦点理由把总计 4800 写成分母（不是次一个部分）",
+          "4800 万元" in _focus["why"] and "3200 万元" in _focus["why"], _focus["why"])
+    _weight = intel.information_weight(
+        _u, {"text": "改造钱花在哪", "source": "extracted"},
+        "设备 3200 万元，产线改造 1100 万元，数字化 500 万元，合计 4800 万元。",
+        number_anchor=_anchor)
+    check("r6 part_whole: 权重不把普通构成项写成总体/分母",
+          not any("总体/分母" in w and not w.startswith("4800") for w in _weight["weaken"]),
+          str(_weight["weaken"]))
+
+    # ── 3 · 收束请求：落点是请求本身，不是支撑证据的项目分期 ─────────
+    _brief = {"audience": "投资委员会", "decision": "批准仓网改造二期 1,800 万元"}
+    _world = intel.derive_world(_brief, [])
+    _page = intel.page_judgment(
+        {"id": "s06", "title": "请委员会批准二期仓网改造",
+         "content": "一期 3 仓跑通，单均成本降 0.42 元；二期需 1,800 万元。"},
+        index=2, total=3, brief=_brief, world=_world, warnings=[])
+    check("r6 closing: 请求页焦点是 decision_ask，不是 structure_map",
+          _page["focus"]["element_role"] == "decision_ask",
+          str(_page["focus"]["element_role"]))
+    check("r6 closing: 请求页构图不被分期词拖成 linear_structure",
+          _page["composition"]["chosen"] != "linear_structure",
+          str(_page["composition"]["chosen"]))
+    check("r6 closing: 请求页权重不把顺序形状列为必须最大化",
+          not any("关系的形状" in m for m in _page["information_weight"]["maximize"]),
+          str(_page["information_weight"]["maximize"]))
+    check("r6 closing: 请求句眉标缺省（不输出被「会」劈开的「委员」）",
+          intel.section_label({}, {"text": "请委员会批准二期仓网改造"}, "prove") == "",
+          repr(intel.section_label({}, {"text": "请委员会批准二期仓网改造"}, "prove")))
+
+    # ── 4 · progress 刻度：行级键不丢、产物与预览同一比例 ────────────
+    _rows = chart_rows({"data": [{"label": "A", "value": 150, "max": 200},
+                                  {"label": "B", "value": 50}]})
+    check("r6 progress: chart_rows 保留行级 max（不再静默丢弃渲染键）",
+          _rows[0].get("max") == 200, str(_rows[0]))
+    check("r6 progress: progress_ratio 行级优先、元素级回落、超刻度夹紧",
+          progress_ratio(_rows[0], {"max": 100}) == 0.75
+          and progress_ratio(_rows[1], {"max": 200}) == 0.25
+          and progress_ratio({"value": 250}, {"max": 200}) == 1.0)
+    _spec = {"canvas": {"width": 1280, "height": 720},
+             "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                  "muted": "#777777", "primary": "#222222",
+                                  "secondary": "#333333", "accent": "#AA0000"}},
+             "slides": [{"id": "s1", "elements": [
+                 {"id": "c1", "type": "chart", "role": "evidence",
+                  "x": 80, "y": 100, "width": 1000, "height": 400,
+                  "chart_kind": "progress_bar", "max": 200,
+                  "source": "s", "unit": "%", "period": "p", "basis": "b",
+                  "data": [{"label": "A", "value": 150},
+                           {"label": "B", "value": 50}]}]}]}
+    _bad = dict(_spec["slides"][0]["elements"][0])
+    _bad["data"] = [{"label": "A", "value": 10, "max": -1}]
+    _bad_spec = {**_spec, "slides": [{"id": "s1", "elements": [_bad]}]}
+    check("r6 progress: 行级 max 非正数被 guard 拦下（不静默回落）",
+          any(c["rule"] == "data_integrity" for c in check_spec(_bad_spec)["checks"]
+              if c.get("level") == "error"),
+          str([c["rule"] for c in check_spec(_bad_spec)["checks"]]))
+    import compiler
+    from pptx import Presentation
+    _out = tmp / "progress.pptx"
+    _rep = compiler.compile_deck(_spec, str(_out))
+    _shapes = {s.name: s for s in Presentation(str(_out)).slides[0].shapes} \
+        if _rep.get("passed") else {}
+    _fill_ratio = (_shapes["c1__fill_0"].width / _shapes["c1__track_0"].width) \
+        if _shapes else 0
+    check("r6 progress: 产物填充 = 150/200 = 75% 轨道宽",
+          _rep.get("passed") and abs(_fill_ratio - 0.75) < 0.02,
+          f"ratio={_fill_ratio}")
+    import ghost as _ghost
+    _img = _ghost.ghost_page(_spec["slides"][0], _spec, scale=1,
+                             supersample=1).convert("RGB")
+    # 第一行中心 y≈元素 y+行高/2；扫这一行上强调色像素的最右端对轨道的相对位置
+    _cy = 100 + 100
+    _accent_xs = [x for x in range(_img.width)
+                  if (lambda c: c[0] > 150 and c[1] < 60 and c[2] < 60)(
+                      tuple(_img.getpixel((x, _cy))))]
+    _track_left = 80 + int(1000 * 0.24) + 24
+    _track_right = 80 + 1000 - 78
+    _ghost_ratio = (max(_accent_xs) - _track_left) / max(_track_right - _track_left, 1) \
+        if _accent_xs else 0
+    check("r6 progress: 预览填充与产物同一刻度（75%，不冲出轨道到 150%）",
+          bool(_accent_xs) and abs(_ghost_ratio - 0.75) < 0.05,
+          f"ghost_ratio={_ghost_ratio:.3f}")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ from primitives import (
     RenderContext, emu, pt, px_to_pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
     CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS, CHART_SPEC,
     ELEMENT_PAYLOAD_KINDS, NUMERIC_CHART_KINDS, chart_rows, default_show_values,
-    highlight_index, resolve_chart_highlight,
+    highlight_index, progress_ratio, resolve_chart_highlight,
     split_runs, is_cjk,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
@@ -1488,10 +1488,9 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             track.name = f"{eid}__track_{i}"
             solid_fill(track.fill, track_c or ctx.color("faint"), track_a)
             track.line.fill.background()
-            ceiling = float(r.get("max", element.get("max", 100))) or 100
             if r["value"] < 0:
                 ctx.warn(f"chart '{element.get('id')}': progress_bar 第 {i + 1} 行为负值，已按 0% 绘制")
-            ratio = max(0.0, min(1.0, r["value"] / ceiling))
+            ratio = progress_ratio(r, element)
             if ratio > 0:
                 fill = slide.shapes.add_shape(
                     MSO_SHAPE.ROUNDED_RECTANGLE, Emu(emu(bar_x)), Emu(emu(top)),
