@@ -584,8 +584,6 @@ ELEMENT_VALUE_KINDS = tuple(k for k, v in CHART_SPEC.items() if v["payload"] == 
 ELEMENT_PAYLOAD_KINDS = frozenset(k for k, v in CHART_SPEC.items()
                                   if v["payload"] in ("points", "layers"))
 CHART_LIMITS = {k: v["limit"] for k, v in CHART_SPEC.items() if v["limit"] is not None}
-PREVIEW_ABSTRACT_KINDS = frozenset(k for k, v in CHART_SPEC.items()
-                                   if v["preview"] == "abstract")
 
 # 合法 kind 只有一张表：CHART_SPEC。名字多一个，「这张图怎么画」就多一个答案。
 CHART_KINDS = frozenset(CHART_SPEC)
@@ -1314,6 +1312,11 @@ NO_BREAK_SPACE = "\u00a0"
 # 「个百分点/百分点/个点/个季度/个星期」是分类词＋名词的完整计量短语：不进来的话，
 # 「3.4 个｜百分点」「2.1 个｜点」会在单位内部被断开（数字与单位不拆开的判据只认
 # 开头匹配，词组内部断点另由 ghost 的 _UNIT_INNER 按本表派生，见下）。
+# **单一来源**：判断层（intelligence 的数字量词）、Guard（数字与单位不拆行）、
+# 编译器（写不断行空格）与预览（禁则）都从这一份取。此前判断层认「27 处 / 12 项 /
+# 3 条」，断行侧却不认识这三个词：同一份稿件里判断把它们当带单位的量，排版却可能
+# 断成「27｜处」。词表因此按「判断层已认的量词」补齐（`selftest` 双向锁定：
+# UNIT_WORDS ⊆ 判断量词，且判断量词 ⊆ UNIT_WORDS ∪ 复合词名词）。
 UNIT_WORDS = (
     "亿美元", "万美元", "亿元", "万元", "万户", "万单", "万人", "万家", "万次",
     "个月", "个百分点", "百分点", "个季度", "个星期", "个点", "分钟", "小时",
@@ -1321,6 +1324,10 @@ UNIT_WORDS = (
     "千瓦时", "千瓦", "公斤", "千克", "毫米", "厘米", "毫升", "美元",
     "吨", "克", "米", "升", "元", "万", "亿", "家", "人", "个", "台", "名",
     "位", "件", "次", "天", "月", "年", "分", "秒", "倍", "万元",
+    # 判断层（intelligence 的数字量词）早就认的量词，断行侧此前不认识：
+    # 「27 处 / 12 项 / 3 条」在判断里是带单位的量，排版却可能断成「27｜处」。
+    "万吨", "处", "项", "条", "起", "所", "栋", "册", "辆", "架", "艘",
+    "门", "款", "箱", "份", "笔", "张", "页", "股", "手", "套",
     "%", "％", "pp",
 )
 _UNIT_HEAD_RE = re.compile("^(?:" + "|".join(

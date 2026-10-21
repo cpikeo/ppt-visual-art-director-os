@@ -71,6 +71,8 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 
 判断读法：每项都能回答「输入证据 → 依据 → 决策 → 回退」。判断只在 `plan.json` 存一次：默认是**瘦身版**（决策全留；同一句说明在多页重复时上提到 `deck.legend`，被否决项只留名字），要复盘完整推演用 `plan --full`。骨架把原文与行动摘要贴在对应页旁。作者声明压过推导；页上几何由作者决定。
 
+**谁定的，必须看得出来**：每页 `judgment.provenance` 把 claim / evidence / role / focus / composition / media 各自标成 `author`（作者声明，不必复核）、`judgment`（算法推导，按证据核对）、`hint`（词表提示，**未决**，必须由作者裁决后才能进成稿）或 `decision`（由 deck 的决定类型推导）。`pending_author` 就是「还不算判断」的那几项——把提示当结论用，就是把素材堆砌和风格套用重新请回来。
+
 ### 素材导演：先职责与构图，后选材
 
 图片、文字、图表、色块与留白是同一个构图系统，各自为政即失败。每项素材说明：帮观众理解什么、在构图中承担什么、删掉损失什么；只在有真实选择时解释取舍。
@@ -103,7 +105,7 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 | 需要解决的问题 | 读取 |
 |---|---|
 | 判断校准 | 本文件 §2–3（唯一基准） |
-| 字段、元素契约、失败码 | `references/contract.md`（BUILD 时一次） |
+| 字段、元素契约、失败码、**plan 数据契约与策略覆盖** | `references/contract.md`（BUILD 时一次） |
 | 资产提示词、QC、裁切 | `references/assets.md`（plan 判定需要图时才读） |
 
 `vao.py plan` 不调用模型、不读 `references/`。依据骨架的逐页行动摘要与原文即可，不为同一页重复读取 brief / plan / 文档。没有图位就不读 `assets.md`。
@@ -120,6 +122,10 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 ```
 
 - 正常路径 **1 次 plan + 1 次 release check**；确定性任务不调用模型。
+- 阈值不适合这一份稿时用 `plan --policy my_policy.json` 覆盖（只写要改的键；写错键名直接报错）。
+  判断协议（为什么）不随策略变——变的只是「多少算多」。
+- brief 写错字段名（`audiance` / `conten`）会在 plan 阶段退出 2 并给出候选：输入契约是
+  `schemas/brief.schema.json`，判断不会替一场笔误兜底。作者自己的注解键照留，只告警。
 - 判断与编排在 BUILD 中一次落完，执行后由 check 一次收口。
 - 终稿用 `--speed strict` 全页取证；迭代可用 `fast`（只取关键页，不等于全页视觉验收）。
 - `BLOCK` 后读修复包，按根因组一次批量修复，再复跑同一条 check；不逐页重试。

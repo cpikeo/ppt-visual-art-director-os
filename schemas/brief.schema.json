@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema#",
+  "$id": "vao://schemas/brief.schema.json",
+  "title": "brief 输入契约",
+  "description": "作者输入的边界。只声明结构与类型；页码/证据/构图的**判断**仍由 intelligence 推导。未知键由 intelligence.validate_brief 区分「疑似写错」（报错）与「作者注解」（告警）。",
+  "type": "object",
+  "required": [
+    "slides"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "audience": {
+      "type": "string",
+      "description": "受众（不写则页面判断里为空，收束页无法按决定类型推导）"
+    },
+    "decision": {
+      "type": "string",
+      "description": "要观众做的决定"
+    },
+    "tension": {
+      "type": "string",
+      "description": "阻力/疑虑；作者写下的张力优先于推导"
+    },
+    "brand_colors": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      ],
+      "description": "[主色, 强调色, 辅色] 或 {slot: #HEX}（两种写法模板里都写了，契约必须都收）"
+    },
+    "canvas": {
+      "type": "object",
+      "description": "画布尺寸覆盖",
+      "properties": {
+        "width": {
+          "type": "number",
+          "minimum": 1
+        },
+        "height": {
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
+    "visual_world": {
+      "type": [
+        "string",
+        "object"
+      ],
+      "description": "一句话视觉世界或结构化覆盖；写了压过推导"
+    },
+    "design_direction": {
+      "type": "string",
+      "description": "**已退役**：写了不影响判断，只在 plan.warnings 里被点名（视觉世界由内容推导）"
+    },
+    "quality_level": {
+      "type": "string",
+      "description": "**已退役**：写着 advanced 与 fast 产出的 plan 逐字节相同，只在 warnings 里被点名；执行深度用 check --speed strict / --deadline"
+    },
+    "background_scene": {
+      "type": "string",
+      "description": "背景场景声明"
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/slide"
+      }
+    },
+    "avoid": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "全 deck 明确不做的几件事：进资产链的负向清单（assets.py 消费），不参与页面判断"
+    },
+    "asset_medium": {
+      "type": "string",
+      "description": "deck 级资产媒介（assets.py 消费）"
+    },
+    "asset_ratio": {
+      "type": "string",
+      "description": "deck 级资产比例（assets.py 消费；页级可覆盖）"
+    }
+  },
+  "$defs": {
+    "hexColor": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+    },
+    "slide": {
+      "type": "object",
+      "required": [
+        "id",
+        "title"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "页 ID，全稿唯一"
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string",
+          "description": "正文原文（判断的唯一证据来源）"
+        },
+        "role": {
+          "enum": [
+            "establish",
+            "explain",
+            "compare",
+            "prove",
+            "persuade",
+            "summarize"
+          ],
+          "description": "作者声明页面角色（合法即原样生效）"
+        },
+        "evidence": {
+          "enum": [
+            "comparison",
+            "series",
+            "part_whole",
+            "number",
+            "structure",
+            "sequence",
+            "proposition",
+            "none"
+          ],
+          "description": "作者声明证据形态（合法即原样生效）"
+        },
+        "chart": {
+          "type": [
+            "boolean",
+            "object"
+          ],
+          "description": "本页已有图表：true 或内联图表 spec（{type, value…}，原样透传给落稿）"
+        },
+        "insight": {
+          "type": "string",
+          "description": "本页洞察（作者语言，进 plan 原文旁）"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "tension": {
+          "type": "string"
+        },
+        "density": {
+          "type": "string"
+        },
+        "energy": {
+          "type": "string"
+        },
+        "asset": {
+          "type": "string",
+          "description": "required / reuse / none：出图决策的唯一作者入口"
+        },
+        "asset_role": {
+          "type": "string"
+        },
+        "asset_function": {
+          "type": "string"
+        },
+        "asset_subject": {
+          "type": "string",
+          "description": "画面里究竟出现什么（缺省回落标题与正文）"
+        },
+        "asset_reason": {
+          "type": "string"
+        },
+        "asset_composition": {
+          "type": "string"
+        },
+        "asset_ratio": {
+          "type": "string"
+        },
+        "asset_allow_crop": {
+          "type": "boolean"
+        },
+        "asset_source": {
+          "type": "object"
+        },
+        "asset_color": {
+          "$ref": "#/$defs/hexColor"
+        },
+        "medium": {
+          "type": "string"
+        },
+        "material": {
+          "type": "string"
+        },
+        "lighting": {
+          "type": "string"
+        },
+        "texture": {
+          "type": "string"
+        },
+        "fusion_enabled": {
+          "type": "boolean"
+        },
+        "negative": {
+          "type": "string"
+        },
+        "light_direction": {
+          "type": "string"
+        },
+        "text_color": {
+          "$ref": "#/$defs/hexColor"
+        },
+        "negative_space_anchor": {
+          "type": "string"
+        },
+        "safe_area": {
+          "type": "object",
+          "description": "压字区（0–1 归一化，相对整幅背景图）"
+        },
+        "composition": {
+          "type": "string",
+          "description": "作者指定构图算子"
+        },
+        "focus": {
+          "type": "string",
+          "description": "作者指定第一落点"
+        },
+        "background": {
+          "$ref": "#/$defs/hexColor"
+        },
+        "eyebrow": {
+          "type": "string",
+          "description": "眉标（覆盖推导的跨页锚）"
+        }
+      }
+    }
+  }
+}

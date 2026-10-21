@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ppt-visual-art-director-os"
-version = "10.3.0"
+version = "10.6.0"
 description = "设计智能优先的 PPT 技能包：内容 → 逐页判断 → 原生可编辑 PPTX，单入口、一次判断、一次收口"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,9 +36,11 @@ Source = "https://github.com/cpikeo/ppt-visual-art-director-os"
 [tool.setuptools]
 package-dir = { "" = "scripts" }
 py-modules = [
-  "assets", "compiler", "ghost", "intelligence", "primitives",
+  "assets", "compiler", "ghost", "intelligence", "primitives", "policy", "schema",
   "selftest", "vao", "verify",
 ]
 
-# 参考文档与模板是「随仓库分发」的生产资料，不作为 site-packages 数据安装：
-# 包内文档之间按相对路径互相引用，复制进 site-packages 会破坏这些引用。
+# 参考文档、模板与 schemas/ 是「随仓库分发」的生产资料，不作为 site-packages
+# 数据安装：包内文档之间按相对路径互相引用，复制进 site-packages 会破坏这些引用。
+# `schemas/plan.schema.json` 的解析顺序见 vao._plan_schema_path()：仓库布局优先，
+# 找不到时结构校验降级为显式警告（语义校验照跑），不会假装校验过。

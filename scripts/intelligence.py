@@ -26,6 +26,12 @@ from pathlib import Path
 # UNIT_WORDS）：判断层再抄一份，断行建议就会与产物、预览各断各的。
 from primitives import NO_LINE_END_CJK, NO_LINE_START_CJK, unit_head, type_scale
 
+# 可调策略（权重/阈值/枚举/映射）只有一个结构化来源：policy.POLICY。
+# 本模块**不放**这些数值——放进来就会与文档、与 schema 各分叉一份。
+# 读取一律在调用点现读（`policy.group(...)`），因此 `--policy` 覆盖对已 import
+# 的模块同样生效，不会出现「一半用新策略、一半用旧常量」。
+import policy
+
 # ─────────────────────────────────────────────────────────────────────
 # 1 · Brief 加载（唯一加载器：yml / json / 定义 BRIEF|NEED 的模块）
 # ─────────────────────────────────────────────────────────────────────
@@ -87,8 +93,10 @@ def load_brief(path, *, with_digest: bool = False):
 # 2 · 内容理解（Content Understanding）
 # ─────────────────────────────────────────────────────────────────────
 # 证据形态：结论由哪一种承担，决定了后面的焦点与构图。
-EVIDENCE_MODES = ("comparison", "series", "part_whole", "number", "structure",
-                  "sequence", "proposition", "none")
+# 取值与**同分顺序**（打平时靠前的一方胜出）住在 policy.enums.evidence：判断协议
+# 写「为什么比」，可调顺序写策略，本模块只做排序计算。此处保留同名元组供
+# 外部消费者（bench / 测试 / 文档）按稳定顺序引用，判定处一律现读 policy。
+EVIDENCE_MODES = tuple(policy.enum("evidence"))
 
 # 单位表按「长单位在前」排：先匹配「公里」再轮到「分」，否则「186 公里」
 # 会被读成无单位数字 186，判断卡与骨架里就这么丢了量纲（实测：主语写成
@@ -102,7 +110,7 @@ _CONDITION_RESULT = re.compile(
     r"(?:则|就|便|才|就能|将会|就会|即可|可以)")
 _NUM = re.compile(
     r"(?<![A-Za-z])(-?\d+(?:[.,]\d+)?)\s*"
-    r"(亿美元|万美元|亿元|万元|万家|万人|万次|个月|分钟|小时|美元|公里|千米|"
+    r"(亿美元|万美元|亿元|万元|万家|万人|万户|万单|万次|个月|分钟|小时|美元|公里|千米|"
     r"万吨|吨|公斤|千克|克|厘米|毫米|米|升|毫升|千瓦时|千瓦|平方米|平米|立方米|"
     r"台|套|箱|份|笔|张|页|股|手|"
     # 「个」是分类词，不是量：它必须与后面的计量名词同进同出。「5 个百分点」
@@ -263,6 +271,11 @@ _PART_OF_WHOLE = re.compile(
 # 加总≈100 判据看不见它（51+23=74，余量在「其余」里）。形状判据：两处以上
 # 「占…的 N%」加余量词（其余/剩余）＝作者已经把整体拆给我们看了。
 _SHARE_OF_TOTAL = re.compile(r"占[^。；%]{0,24}?\d+(?:[.,]\d+)?\s*[%％]")
+# 份额陈述带**分母标签**的版本：「履约成本占**总成本** 61%」——分子、分母、比例三样
+# 都在正文里，是最典型的构成，也是最容易被判成「结构」的一种写法（「三类成本结构」）。
+# 标签只取「占」与数字之间的汉字，且不允许以数字开头（避免把「占比 61%」当分母）。
+_SHARE_LABEL = re.compile(
+    r"占(?P<whole>[^。；%，,0-9]{0,16}?)\s*(?P<pct>\d+(?:[.,]\d+)?)\s*[%％]")
 # 「其他 / 其它 / 杂项 / 余额」是中文构成页最高频的余量写法（「交付延迟 61%，
 # 账单错误 24%，其他 15%」）。缺了它们，相加正好 100 的构成页仍判不出 part_whole。
 _REMAINDER_CUE = re.compile(r"其余|剩余|余下|其中|其他|其它|杂项|余额")
@@ -428,6 +441,8 @@ _ENUM_LIST = re.compile(r"[^、，,：:。；;\s]+、[^、，,：:。；;\s]+、
 # 量词「位/名」本身指人。Chinese 数词或指示词（一、某、这、那、该）+ 位/名 个体化一个具体的人
 # （「一位釉工」「这位店长」），这是证人线索；阿拉伯数字 + 位（「12 位客户」）是计数，不是个体。
 # 这是语法信号，不是职业词表：没见过的职业（窑工、染匠）同样生效。
+# 纯否定谓语（「靠的是履约不是补贴」）：不跟随「而是」时，右侧是被排除的一侧。
+_CONTRAST_NEGATION = re.compile(r"不是|并非|而非")
 _INDIVIDUAL_PERSON = re.compile(r"[一某这那该](?:位|名)(?!(?:置|称|单|字|额|义|数|于|列|次|份|版))[\u4e00-\u9fff]{1,6}")
 # 「位/名」的非人复合头（位置/名称/名单…）：只挡误报，不列职业。
 
@@ -479,6 +494,36 @@ def _sentences(text: str) -> list[str]:
 # 纯函数记忆化：同一页的主张锚定、权重与删除清单会反复解析同一段文本。
 # 缓存只去掉重复解析，返回值仍是独立副本，不改变任何判断结果。
 _NUMERALS_CACHE: dict[str, list] = {}
+
+
+_PAREN_SEG = re.compile(r"[（(]([^（）()]{2,80})[)）]")
+
+
+def _inherit_parenthetical_units(body: str, nums: list[dict]) -> list[dict]:
+    """括号里的裸数继承紧邻带单位量的单位（就地补，不新增数字）。
+
+    中文经营稿最常见的拆解写法是**只给总量写单位**：「一期投入 4800 万元（设备
+    3200／改造 1100／数字化 500）」。三个裸数按单位分组各成一组，4800 万元孤零零，
+    分解判不出来——于是这一页被判成「三个互不同源的量」。括号是结构信号：紧跟在
+    一个带单位的量之后、且括号内全是裸数时，它们说的是同一个量纲下的子项。
+    只补单位，不动取值、不改 raw；带 % 的量不做继承（比例不是量纲）。
+    """
+    if not nums:
+        return nums
+    for m in _PAREN_SEG.finditer(body):
+        inner = m.group(1)
+        bare = [n for n in nums if n.get("unit") in ("", None) and n["raw"] in inner]
+        if len(bare) < 2:
+            continue
+        before = nums[:]
+        prev = [n for n in before if body.find(n["raw"]) < m.start()
+                and (n.get("unit") or "") not in ("", None, "%", "％")]
+        if not prev:
+            continue
+        unit = prev[-1]["unit"]
+        for n in bare:
+            n["unit"] = unit
+    return nums
 
 
 def numerals(text: str) -> list[dict]:
@@ -534,10 +579,9 @@ def numerals(text: str) -> list[dict]:
         # 设备代号/编号里的数字不是量（A-01/X2/B-02）：数字前是字母+连字符/字母直连时为编号零件
         if m.start() >= 2 and raw_text[m.start() - 1] == "-" and raw_text[m.start() - 2].isalnum():
             continue                                   # A-01 / X-2 的编号后段
-        if m.start() >= 1 and raw_text[m.start() - 1].isalpha() and not unit:
-            # 紧贴字母的无单位数字是代号零件（Q1/V2/3C 但 220V 例外已由后缀分支处理）
-            # 已由 (?<![A-Za-z]) 拦住首段，此处补漏连字符后的二次匹配（如 A-01 中 01 前为 - 但 - 前为 A）
-            pass
+        # 紧贴**ASCII 字母**的无单位数字是代号零件（Q1/V2/3C），已由正则的
+        # (?<![A-Za-z]) 在匹配处拦住，这里不需要再判一次：中文汉字 .isalpha() 也为真，
+        # 若在这里 continue，会把「由7增至12」「缓解率6」这类正常量一起拒掉。
         if token[:1] in ("-", "+") and prev_char.isdigit():
             continue                                   # 2026-09 / 38-92 的后半段
         if re.search(r"\d{4}\s*[-/.]$", before):
@@ -565,8 +609,18 @@ def numerals(text: str) -> list[dict]:
         # 判据：数字后面紧跟 ）)、.．:：或全角右括号/顿号/点，且数字无单位，且
         # 前面非小数点/数位（不是 3.14 这种数）。
         after_chars = raw_text[m.end():m.end() + 2]
+        # 枚举前缀只可能是**小序号**（1–99 位的一到两位整数），不可能是业务量：
+        # 「（设备 3200／改造 1100／数字化 500）」的 500 紧贴右括号，旧规则把它当
+        # 「500）…」这样的序号吞掉，分解于是只剩两个子项（3200＋1100＝4300≠4800），
+        # 一页真分解被判成「三个互不同源的量」。加一条规模上限，序号照旧剥，
+        # 三位以上的量一律保留。
+        # 「1,2401.8 倍」这类粘连（千分位后面直接接小数）是**同一个碎片的续写**，
+        # 不是序号：点后紧跟数字时一律丢弃，与序号规则无关。
+        if not unit and re.match(r"^\.\d", after_chars):
+            continue
         if not unit and re.match(r"^[）)、\.．:：\)\s]", after_chars) \
-                and not prev_char.isdigit() and prev_char != ".":
+                and not prev_char.isdigit() and prev_char != "." \
+                and len(m.group(1).replace(",", "").split(".")[0]) <= 2:
             # 允许「1.5」「0.8」这种真正的小数：只有整数后直接跟枚举分隔符才算编号。
             if "." not in m.group(1):
                 continue
@@ -628,26 +682,55 @@ def _strip_parenthetical(text: str) -> str:
     return _PARENTHETICAL.sub(" ", text)
 
 
-def _sums_to_total(values: list[float]) -> bool:
+def _decomp_total(values: list[float], notes: dict | None = None) -> float | None:
+    """这一组同单位取值里，若几个之和正好等于另一个值，返回那个**整体值**。
+
+    与 `_sums_to_total` 共用同一套算术与语义约束（后者是它的布尔投影）：
+    返回整体值是为了让判断理由说得出「谁是整体」——只返回 True 时，下游只能
+    猜「最近的那个数字是整体」，于是「单均成本 6.6 元」这种真分解会被写成
+    「「6.6 元」是已经发生的子集」——分子与整体说反，读者按它排版就是错的。
+    """
     """这一组同单位取值里，是否有几个加起来正好等于其中另一个值（分解）。
 
     纯算术，不猜语义：3200＋1100＋500＝4800、21＋12＋5＝38 是作者写下的分解关系，
     不是设计偏好。取整容差 0.5% 吸收四舍五入，并排除全部取值相同的重复列举。
+
+    `notes`（值 → {metric: 指标名, time: 是否时间点}）加一条**语义约束**：同一指标的
+    另一个**时间点**取值不可能是该指标的组成部分。实测反例：21% / 33% / 44%（复购率
+    三年）＋ 8% / 3%（补贴率）里 33% ＋ 8% ＋ 3% ＝ 44% 算术成立，但 33% 与 44% 是
+    同一指标的两个时间点——把时间点说成另一个时间点的组成部分，等于把序列读成构成，
+    焦点与信息权重会跟着错（「3% 是已发生的子集，同屏写清 21% 这个整体」）。
+    只按「同名」拒绝会误伤真分解：拆项行「履约 2.1 元，营销 3.4 元，仓配 1.1 元，
+    单均成本 6.6 元」里，续句继承的指标名会与总数同族，但它们不是时间点，是子项。
     """
+    dc = policy.group("decomposition")
     uniq = sorted(v for v in set(values) if v > 0)
-    if len(uniq) < 4 or len(values) > 8:
-        return False
+    if len(uniq) < dc["min_unique_values"] or len(values) > dc["max_values"]:
+        return None
+    notes = notes or {}
     from itertools import combinations
     for total in uniq:
         parts = [v for v in uniq if v != total]
+        total_note = notes.get(total) or {}
+        total_metric = str(total_note.get("metric") or "")
         # 三个以上的部分才算分解：两项相加恰好等于第三项在比率/日期里太常见
         # （缩短 1.8 天 ＋ 现值 6.6 天 ＝ 原值 8.4 天；0.8% ＋ 1.1% ≈ 2%），
         # 那不是作者写下的构成，是算术巧合。两项分解通常写成「其中/其余/占」。
-        for size in range(3, min(4, len(parts)) + 1):
+        for size in range(dc["min_parts"], min(dc["max_parts"], len(parts)) + 1):
             for combo in combinations(parts, size):
-                if abs(sum(combo) - total) <= abs(total) * 0.005 + 1e-9:
-                    return True
-    return False
+                if abs(sum(combo) - total) > abs(total) * dc["sum_tolerance"] + 1e-9:
+                    continue
+                if total_metric and any(
+                        str((notes.get(v) or {}).get("metric") or "") == total_metric
+                        and bool((notes.get(v) or {}).get("time")) for v in combo):
+                    continue      # 同指标的另一个时间点不是它的组成部分
+                return total
+    return None
+
+
+def _sums_to_total(values: list[float], notes: dict | None = None) -> bool:
+    """`_decomp_total` 的布尔投影（同一套判据，只有一份实现）。"""
+    return _decomp_total(values, notes) is not None
 
 
 _ARRIVAL_CUE = re.compile(
@@ -692,6 +775,11 @@ _SERIES_MORPH = re.compile(r"逐(?:日|周|月|季|年)|连续\s*[0-9一二三�
 # 比较谓语：主张「A 超过/低于 B」「A 而非 B」按谓语切成主语侧与宾语侧，
 # 宾语侧是比较的另一端/被否定侧。
 _CLAIM_END_VERB = re.compile(r"超过|超越|高于|低于|优于|落后于|领先于|而不是|而非")
+# 「靠的是履约不是补贴」：`不是` 同样是**对比谓语**——被否定的一侧是作者明确
+# 排除的对象，它的取值不该成为这一页的主语。旧判据只认「而不是/而非」，于是
+# 「复购率三年翻倍，靠的是履约不是补贴」把终值落在了补贴率的 3% 上（焦点、
+# 信息权重、字阶三处一起错）。`A 不是 B，而是 C` 里的 C 才是主语，因此当右侧
+# 出现 `而是` 时不切分。
 # 序数→序列下标：主张说「第二年」，证据按年份分句时，焦点属于那一年。
 _ORDINAL_INDEX = {"第一": 0, "首年": 0, "次年": 1,
                   "末年": -1, "第一年": 0, "第二年": 1, "第三年": 2, "第四年": 3,
@@ -863,6 +951,25 @@ def _locate_numbers(text: str, nums: list[dict]):
         yield n, pos
 
 
+def _numeral_metrics(text: str, nums: list[dict]) -> dict:
+    """每个数字的指标名 → {id(numeral): metric}（唯一来源）。
+
+    两级归属：先看**离它最近的指标名**（`_metric_attribution`），没有就退到本句
+    继承的指标（`_metric_by_clause` 会把上一个指标名带进没有指标名的续句——
+    「2022 年复购率 21%，2023 年 33%，2024 年 44%」的后两个取值属于同一条序列）。
+    只做最近归属时，续句里的取值没有指标名：主张锚定、并列判据与分解判据会分别
+    得到「无指标」的假象（实测：主语落到序列开头、跨指标的和被当成构成）。
+    """
+    spans = _clause_spans(text)
+    by_clause = _metric_by_clause(text)
+    own = {id(n): m for n, m in _metric_attribution(text, nums)}
+    out: dict = {}
+    for n, pos in _locate_numbers(text, nums):
+        idx = next((i for i, (a, b) in enumerate(spans) if a <= pos < b), 0)
+        out[id(n)] = own.get(id(n)) or (by_clause.get(idx) or [None])[-1] or ""
+    return out
+
+
 def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     """焦点数字＝**主张所指的那个量**，不是第一个或最后一个数字。
 
@@ -881,7 +988,7 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     spans = _clause_spans(text)
     years = _year_by_clause(text)
     metrics = _metric_by_clause(text)
-    own_metric = {id(n): m for n, m in _metric_attribution(text, nums)}
+    own_metric = _numeral_metrics(text, nums)
     year = _ordinal_year(text, claim)
     cond_spans = [m.span() for m in _CONDITIONAL_CLAUSE.finditer(text)]
     intent_spans = [sp for sp in spans if _INTENTION_MARK.search(text[sp[0]:sp[1]])]
@@ -889,6 +996,11 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     # （「退货率超过行业均值」的主语是我们的 8.4%，不是行业均值 5.9%）。
     # 端点只按谓语切分，不认行业词；归属到宾语侧而未归属主语侧的数字出局。
     end = _CLAIM_END_VERB.search(claim)
+    if end is None:
+        negation = _CONTRAST_NEGATION.search(claim)
+        # 「不是 A，而是 B」：B 是主语，不能切；只有纯否定（没有后续「而是」）才切。
+        if negation and not re.search(r"而是", claim[negation.end():]):
+            end = negation
     other_end = claim[end.end():] if end else ""
     subject_end = claim[:end.start()] if end else claim
     # 「12 家试点门店中，9 家续约」：总体是分母（信息权重的弱化位），子集才是
@@ -910,6 +1022,9 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         # 逐数字归因（F2 实测）：「客诉率 8.4% 高于行业均值 5.9%」里主张把两个度量
         # 都点了名，从句级归属把「客诉率」同时绑给两个数，主语漂到比较的另一端。
         # 数字只继承**自己**的度量（_metric_attribution 最近归属，逐数字重算）。
+        # 指标归属走唯一来源 `_numeral_metrics`（最近归属 + 续句继承）：
+        # 只有最近归属时，序列后半段的取值拿不到主张点名的加分，主语会落到
+        # 序列开头那一年的基期上（CASE 复购率页：主语成了 21%）。
         own = own_metric.get(id(n))
         named = [own] if own and _claim_mentions(claim, own) else []
         if named:
@@ -1106,7 +1221,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 证据量只从**内容本体**扫描：出处标注里的台账编号与日期（「来源：投放台账
     # 2026Q2」）是档案坐标，不是这一页的证据——把它算进去会让证据数量、
     # 密度与权重一起虚高。
-    nums = numerals(body)
+    nums = _inherit_parenthetical_units(body, numerals(body))
     # 按年份排列的同一指标是时间序列，不是并置比较；分期（一期/第二阶段）是同一承诺的先后。
     years = sum(1 for n in nums if n["year"])
     phased = bool(_PHASE_SPLIT.search(body)) or len(_PHASE_MARKERS.findall(body)) >= 2
@@ -1124,11 +1239,12 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
                 if (round(n["value"], 6), n.get("unit") or "") not in axis_tokens]
     same_unit = len({n.get("unit") or "" for n in (compared or ev)}) <= 1
     chars = max(len(text), 1)
+    es = policy.group("evidence_shapes")
     pct = [n["value"] for n in ev if (n.get("unit") or "") in ("%", "％")]
     # 算术相加不能证明共同分母或互斥；必须有作者的分解语义。
     pct_clauses = [c for c in _CLAUSE_SPLIT.split(body) if re.search(r"\d\s*[%％]", c)]
-    pct_whole = (len(pct) >= 2 and all(0 <= p <= 100 for p in pct)
-                 and ((abs(sum(pct) - 100) < 0.5
+    pct_whole = (len(pct) >= es["share_min_numerals"] and all(0 <= p <= 100 for p in pct)
+                 and ((abs(sum(pct) - es["pct_whole_sum"]) < es["pct_whole_tolerance"]
                        and (_hit(body, ("其中", "构成", "分配", "份额"))
                             or (pct_clauses and all("占比" in c for c in pct_clauses))))
                       # 份额陈述＋分解语义：加总不必是 100（余量写在「其余」里，
@@ -1144,7 +1260,23 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     groups: dict[str, list[float]] = {}
     for n in compared or ev:
         groups.setdefault(n.get("unit") or "", []).append(round(n["value"], 6))
-    sum_decomposition = any(_sums_to_total(vals) for vals in groups.values())
+    # 相加是否构成分解，由 _sums_to_total 的算术 + 「同指标不得互为主体与部分」
+    # 语义共同判（见该函数注释）。这里只按单位把取值与它的指标归属整理好。
+    value_metric: dict[str, dict[float, dict]] = {}
+    decomp_nums = compared or ev
+    decomp_metric = _numeral_metrics(body, decomp_nums)
+    decomp_spans = _clause_spans(body)
+    for n, pos in _locate_numbers(body, decomp_nums):
+        start = next((a for a, b in decomp_spans if a <= pos < b), 0)
+        note = {"metric": decomp_metric.get(id(n)) or "",
+                # 时间点 = 带年份/期间坐标的取值（序列的位置，不是构成的子项）
+                "time": bool(n.get("year") or _TIME_POINT.search(body[start:pos]))}
+        value_metric.setdefault(n.get("unit") or "", {}).setdefault(
+            round(n["value"], 6), note)
+    decomp_totals = [_decomp_total(vals, value_metric.get(unit))
+                     for unit, vals in groups.items()]
+    decomp_totals = [t for t in decomp_totals if t is not None]
+    sum_decomposition = bool(decomp_totals)
     remainder_decomposition = bool(_REMAINDER_CUE.search(body)) and any(
         len(vals) >= 2 for vals in groups.values())
     # 序列的坐标只有一种——时间（同比/环比这类期间词，或年份/期间轴）。并列量的
@@ -1170,18 +1302,42 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     attributed = _metric_attribution(body, ev)
 
     def _parallel_group(unit: str, vals: list[float]) -> bool:
-        if len(set(vals)) < 3:
+        if len(set(vals)) < es["parallel_min_values"]:
             return False
         if len(measured) == 1:
             return True
         names = {m for n, m in attributed if (n.get("unit") or "") == unit and m}
         return len(names) <= 1
 
-    parallel_units = (distinct >= 3 and not time_axis and not quantile_row
+    parallel_units = (distinct >= es["parallel_min_values"] and not time_axis and not quantile_row
                       and not phased and not _FROM_TO_QUANTITY.search(body)
                       and any(_parallel_group(u, v) for u, v in measured.items()))
+    # 单句份额陈述（「履约成本占**总成本** 61%」）：分母在正文里被点名时，分子与分母
+    # 同屏就是构成——不需要第二条份额句或「其余」。分母没被点名的「占比 61%」不在此列
+    # （_SHARE_LABEL 的标签段拒绝以数字开头）。
+    share_hits = list(_SHARE_LABEL.finditer(body))
+    # 同一句份额陈述在标题与正文里各写一遍（作者最常见的写法）不是「两个分母」：
+    # 只有**互相矛盾**的分母才必须放弃判定（实测：标题写「履约成本占总成本 61%」、
+    # 正文再写一遍，旧写法「只认唯一一处」把这页降成 none，构成页被判成观点页）。
+    share_hit = share_hits[0] if share_hits else None
+    if share_hits:
+        labels = {(h.group("whole").strip().rstrip("的"), h.group("pct")) for h in share_hits}
+        if len(labels) > 1:
+            share_hit = None
+    share_of = None
+    if share_hit:
+        label = share_hit.group("whole").strip().rstrip("的")
+        # 「占比 25%」里的「比」不是分母名：份额陈述要求**分母被写出来**，
+        # 一个字的「比」和「比例」都只是「占…多少」的句式外壳（实测反例 T02：
+        # 「研发占比25%，客户满意度75%」被判成构成，两个不相干的百分比被说成整体）。
+        label = re.sub(r"^(?:比|比例)", "", label)
+        label = re.sub(r"(?:比例|占比)$", "", label).strip()
+        if len(label) >= 2:
+            share_of = {"whole_label": label,
+                        "pct": share_hit.group("pct").replace(",", "")}
+    share_subset = bool(share_of) and distinct >= es["share_min_numerals"]
     is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole \
-        or sum_decomposition or remainder_decomposition
+        or sum_decomposition or remainder_decomposition or share_subset
     # 阈值列举：多个子句各带一个数、且单位互不相容（「连续两月低于 15 万元；退货率高于 8%；
     # 流失超过 2 人」）是并列条件，没有两端可比的量。「高于/低于/超过」在这里只是阈值词，
     # 不能单独构成比较；只有明确的比较措辞（相比/优于/对标…）仍按比较处理。
@@ -1208,13 +1364,18 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         relations = []
     evidence_body = _evidence_body(body)  # 复合名词过滤一次，下游共用
     modes: dict[str, float] = {}
-    if is_comparison or parallel_units or (distinct >= 2 and has_chart and years < 2):
+    if is_comparison or parallel_units or (
+            distinct >= es["points_min"] and has_chart
+            and years < es["chart_comparison_max_years"]):
         # 并列量进同一形态，但不改 `comparison` 标志：并列是「可比的量排在一起」，
         # 两端对照才是有胜负的比较。
-        modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
+        modes["comparison"] = es["comparison_base"] + es["comparison_step"] * min(
+            distinct, es["comparison_step_cap"])
     if is_subset:
         # 分解压过并列：能加总/有「其余」的一组量是一个整体，不是几个待比较的选项。
-        modes["part_whole"] = 0.92 if (sum_decomposition or remainder_decomposition) else 0.84
+        modes["part_whole"] = (es["part_whole_decomposed"]
+                               if (sum_decomposition or remainder_decomposition)
+                               else es["part_whole_implied"])
     # 序列至少两个数据点：「增长/趋势」这类词只有配上两个以上的量才是曲线；
     # 单独出现在封面或收尾的措辞里（「接管增长」「内容增长负责人」）不是证据。
     # 「三个以上同单位数字」不是序列的充分条件：规格行/并列量同样满足它，
@@ -1223,38 +1384,40 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # （−1.2 元）；物流 24 元（+2.8 元）」全同单位、带「涨」字，仍是并列拆项。
     # 序列的坐标只有一种——**时间**（同比/环比/逐年这类期间词，或年份/期间轴）。
     words_series = _hit(evidence_body, _SERIES_WORDS) and time_axis
-    if (distinct >= 2 and words_series) \
-            or (distinct >= 2 and same_unit and time_axis and not quantile_row) \
+    if (distinct >= es["points_min"] and words_series) \
+            or (distinct >= es["points_min"] and same_unit and time_axis and not quantile_row) \
             or _FROM_TO_QUANTITY.search(body):
-        modes["series"] = 0.55 + 0.08 * min(distinct, 4)
+        modes["series"] = es["series_base"] + es["series_step"] * min(
+            distinct, es["series_step_cap"])
     if distinct == 1:
-        modes["number"] = 0.7
+        modes["number"] = es["number"]
     structure_hits = sum(1 for w in _STRUCTURE_WORDS if _hit(evidence_body, (w,)))
     structure_strong = any(_hit(evidence_body, (w,)) for w in _STRUCTURE_STRONG)
-    if structure_strong or structure_hits >= 2 \
+    if structure_strong or structure_hits >= es["structure_hits_min"] \
             or (not ev and _ENUM_LIST.search(body) and _TAXONOMY_CUE.search(body)) \
             or threshold_list:
-        modes["structure"] = 0.65
+        modes["structure"] = es["structure"]
     # 否定某种表达形态不构成该形态的证据；与比较/显式关系共用同一口径。
     # 状态/归因句（「处于征求意见阶段」「差异来自口岸流程」）里的流程名不是形状。
     sequence_body = _STATUS_OR_CREDIT.sub("", affirmed)
     seq_strong = _hit(sequence_body, _SEQUENCE_STRONG)
     seq_hits = sum(1 for w in _SEQUENCE_WORDS if w in sequence_body)
-    if seq_strong or seq_hits >= 2:
+    if seq_strong or seq_hits >= es["sequence_hits_min"]:
         # 顺序词出现得越多，形状越是「有步骤的行动」，越不该被一个孤立的时长数字
         # 压成 number（实测：三段里程碑 + 总计 18 个月的排期页被判成 number）。
         # 单个「先」不算顺序：它是中文里最高频的副词之一（「先把周期压回去，再谈
         # 扩张」是优先级，不是流程）。只有流程名（步骤/流程/里程碑…）或两个以上
         # 顺序标记才构成序列形状，否则决策页会被派成时间轴。
-        modes["sequence"] = 0.6 + 0.05 * min(seq_hits or 1, 4)
+        modes["sequence"] = es["sequence_base"] + es["sequence_step"] * min(
+            seq_hits or 1, es["sequence_step_cap"])
     if any(mark in body for mark in SEQUENCE_MARKERS):
         # 两个可比较的量由箭头连起来是变化，不是『步骤模板』；有明确阶段词
         # 则仍由真实流程承担形状。无数字的箭头链维持原先的顺序判定。
         phases = _hit(body, ("阶段", "步骤", "流程", "里程碑", "phase", "step"))
         if distinct >= 2 and not phases and _QUANTIFIED_ARROW.search(body):
-            modes["series"] = max(modes.get("series", 0.0), 0.81)
+            modes["series"] = max(modes.get("series", 0.0), es["series_from_arrow"])
         else:
-            modes["sequence"] = 0.75
+            modes["sequence"] = es["sequence_from_marker"]
     if phased:
         # 分期只是「同一承诺的先后」：没有流程名、也不是「分三期」这种显式排期时，
         # 它压不过数据形状。「一期投产 14 个月，损失由 26% 降至 18%」「一期投入 4800
@@ -1279,12 +1442,20 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
                                  or (i + 1 < len(clauses) and _phase_amounts_at(i))) >= 2
                              and len({n.get("unit") or "" for n in phase_amounts}) == 1)
         explicit_phase = bool(_PHASE_SPLIT.search(body)) or seq_strong or quantified_phases
-        modes["sequence"] = max(modes.get("sequence", 0.0), 0.9 if explicit_phase else 0.7)
+        modes["sequence"] = max(modes.get("sequence", 0.0),
+                                es["sequence_phased_explicit"] if explicit_phase
+                                else es["sequence_phased_implicit"])
     if _hit(body, _CONCLUSION_WORDS):
-        modes["proposition"] = 0.55
+        modes["proposition"] = es["proposition"]
     if relations:
-        modes["structure"] = 0.9  # 多个可核对的关系强于一句“决定/必须”的观点信号
-    dominant = max(modes, key=lambda k: (modes[k], -EVIDENCE_MODES.index(k))) if modes else "none"
+        modes["structure"] = es["structure_from_relations"]  # 可核对的关系强于一句观点信号
+    order = policy.enum("evidence")
+    dominant = max(modes, key=lambda k: (modes[k], -order.index(k))) if modes else "none"
+    # 页上有量、却认不出任何一种形状（不是序列、不是两端、不是构成、也不是并列）：
+    # 这不是「没有证据」，而是**多个量并置、关系没写明**。旧行为把它记成 none，
+    # 于是角色退到 persuade、焦点退到那句话，两个可核对的数静默变成氛围。
+    # 记成事实、由判断层要求作者补关系，比假装这页没有证据诚实。
+    mixed_metrics = bool(dominant == "none" and len(ev) >= 2 and distinct >= 2)
     # 主题实体也走复合名词过滤：「结构性增长」里的「结构」不是建筑实体，
     # 否则一句抽象封面主张会推导出一个石头与混凝土的世界，并给封面派一张图。
     subjects = [name for name, spec in _MATERIAL_LEXICON.items()
@@ -1303,7 +1474,106 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         "part_whole": is_subset,
         "same_unit": same_unit,
         "has_chart": bool(has_chart),
+        "mixed_metrics": mixed_metrics,
+        **({"share_of": share_of} if share_subset else {}),
+        **({"total_value": decomp_totals[0]} if decomp_totals else {}),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2b · brief 输入契约（结构 + 拼写 + 语义缺口）
+# ─────────────────────────────────────────────────────────────────────
+# brief 是作者唯一的手写输入，也是**最贵的一次笔误**：把 `audience` 写成 `audiance`
+# 不会报错，只会让整份稿的受众变成 None——收束页、张力、媒介必要性全部跟着失准，
+# 而作者会以为「我明明写了」。plan 有契约、元素字段有 guard 的「疑似写错」提示，
+# 唯独输入边界此前没有。这里补上，规则与 guard 一致：
+#   · 结构/类型/枚举错 → **拦**（作者必须改，否则判断输入本身不成立）
+#   · 未知键 → 与已知键**编辑距离 ≤2** 判为「疑似写错」→ 拦；
+#     否则当作作者注解 → 只告警（与 verify.py 对未知元素字段的口径一致）
+def _brief_key_sets() -> tuple[set, set]:
+    """已知键：来自 schema 的声明（单一来源），不在代码里再抄一份。"""
+    import schema as schema_mod
+    path = schema_mod.contract_path("brief.schema.json")
+    if path is None:
+        return set(), set()
+    doc = schema_mod.load(path)
+    top = set((doc.get("properties") or {}).keys())
+    slide = set(((doc.get("$defs") or {}).get("slide", {}).get("properties") or {}).keys())
+    return top, slide
+
+
+def _near_miss(key: str, known: set) -> str:
+    """最接近的已知键（编辑距离 ≤2 才算「疑似写错」）。"""
+    import difflib
+    best = difflib.get_close_matches(key, sorted(known), n=1, cutoff=0.0)
+    if not best:
+        return ""
+    ratio = difflib.SequenceMatcher(None, key, best[0]).ratio()
+    return best[0] if ratio >= 0.75 else ""
+
+
+def validate_brief(brief: dict) -> dict:
+    """校验 brief 的结构与拼写；返回 {errors, warnings}（都是人话，可直接打印）。
+
+    只做**输入合法性**：这里不判断页面该怎么设计。页码/证据/构图的判断仍在
+    `think()`——契约管「输入的形状对不对」，判断管「内容该怎么做」。
+    """
+    import schema as schema_mod
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not isinstance(brief, dict):
+        return {"errors": [f"brief 必须是对象，实际 {type(brief).__name__}"], "warnings": []}
+    path = schema_mod.contract_path("brief.schema.json")
+    if path is None:
+        return {"errors": [], "warnings": ["brief 契约文件缺失（schemas/brief.schema.json）："
+                                          "结构校验未执行，仅做语义检查"]}
+    doc = schema_mod.load(path)
+    for problem in schema_mod.validate(brief, doc):
+        # 未知键由下面的拼写检查统一处理（疑似写错 → 拦；作者注解 → 只告警），
+        # 这里不再重复报一次「未知字段」——同一条错误说两遍会让作者以为有两处问题。
+        if "未知字段" in problem:
+            continue
+        errors.append(f"brief {problem}")
+
+    top_known, slide_known = _brief_key_sets()
+    for key in brief:
+        if key in top_known:
+            continue
+        near = _near_miss(key, top_known)
+        if near:
+            errors.append(f"brief 疑似写错：{key!r} → {near!r}（不写对的键名等于没写）")
+        else:
+            warnings.append(f"brief 未知键 {key!r}：不参与判断，按作者注解保留")
+    for index, slide in enumerate(brief.get("slides") or []):
+        label = (slide or {}).get("id") or f"slides[{index}]"
+        if not isinstance(slide, dict):
+            continue
+        for key in slide:
+            if key in slide_known:
+                continue
+            near = _near_miss(key, slide_known)
+            if near:
+                errors.append(f"{label} 疑似写错：{key!r} → {near!r}"
+                              "（不写对的键名等于没写）")
+            else:
+                warnings.append(f"{label} 未知键 {key!r}：不参与判断，按作者注解保留")
+        # 语义缺口：能说清楚的「输入不足」，交给作者补一句，而不是由算法猜。
+        if not str(slide.get("content") or "").strip() and str(slide.get("title") or "").strip():
+            continue        # 主张页（只有标题）是合法形态，由判断层决定证据是否足够
+        if not str(slide.get("title") or "").strip():
+            warnings.append(f"{label} 没有标题：判断只能从正文里找结论，成功率更低")
+
+    ids = [str((s or {}).get("id") or "") for s in brief.get("slides") or []]
+    dupes = sorted({i for i in ids if i and ids.count(i) > 1})
+    if dupes:
+        errors.append(f"页 id 重复：{'、'.join(dupes)}（全稿唯一，否则取证与跨页锚会串）")
+    if not (brief.get("slides") or []):
+        errors.append("brief 没有任何页：slides 至少一页")
+    if not str(brief.get("audience") or "").strip():
+        warnings.append("brief 未声明 audience：受众不可推导，收束页与张力判断会退到默认")
+    if not str(brief.get("decision") or "").strip():
+        warnings.append("brief 未声明 decision：末页无法按决定类型推导收束焦点")
+    return {"errors": errors, "warnings": warnings}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1604,10 +1874,8 @@ _FILLERS = ("赋能", "助力", "打造", "全方位", "闭环", "抓手", "生�
             "引领", "加持", "焕新", "新高度")
 
 
-# 高密度页：正文超过此字数，或不同数字超过 _DENSE_NUMERALS 个。阈值只决定「是否需要裁决」，
-# 不决定删什么——删什么由句子对主张的贡献排序给出。
-_DENSE_CHARS = 110
-_DENSE_NUMERALS = 5
+# 高密度页阈值与删除候选的贡献权重都在 policy.information_weight：阈值只决定
+# 「是否需要作者裁决」，不决定删什么——删什么由句子对主张的贡献排序给出。
 
 
 def _cjk_bigrams(s: str) -> set:
@@ -1622,7 +1890,9 @@ def _delete_candidates(text: str, claim_text: str, carried: list, u: dict) -> li
     携带主张数字的句子永远不是候选（它就是证据）。
     """
     distinct = int(u.get("distinct_numerals") or 0)
-    if len(re.findall(r"[一-鿿]", str(text or ""))) < _DENSE_CHARS and distinct < _DENSE_NUMERALS:
+    iw = policy.group("information_weight")
+    if len(re.findall(r"[一-鿿]", str(text or ""))) < iw["dense_chars"] \
+            and distinct < iw["dense_numerals"]:
         return []
     claim_grams = _cjk_bigrams(claim_text)
     carried_raw = {n["raw"] for n in carried}
@@ -1635,11 +1905,12 @@ def _delete_candidates(text: str, claim_text: str, carried: list, u: dict) -> li
             continue
         grams = _cjk_bigrams(sent)
         overlap = len(grams & claim_grams) / max(len(grams), 1)
-        contribution = 2.0 * overlap - 0.25 * len(nums)
+        contribution = iw["overlap_weight"] * overlap - iw["number_penalty"] * len(nums)
         scored.append((contribution, overlap, len(nums), sent))
     scored.sort(key=lambda t: t[0])
-    return [f"「{sent[:28]}」— 删除候选（与主张重合 {ov:.0%}，非主张数字 {k} 个，贡献 {c:.2f}）：作者裁决保留、移到备注或删除"
-            for c, ov, k, sent in scored[:3]]
+    return [f"「{sent[:iw['delete_candidate_excerpt']]}」— 删除候选"
+            f"（与主张重合 {ov:.0%}，非主张数字 {k} 个，贡献 {c:.2f}）：作者裁决保留、移到备注或删除"
+            for c, ov, k, sent in scored[:iw["delete_candidates_max"]]]
 
 
 def information_weight(u: dict, claim: dict, text: str = "", *,
@@ -1648,6 +1919,7 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
     text = str(text or "")
     claim_text = str(claim.get("text") or "")
     maxi, weak, kill = [], [], []
+    iw = policy.group("information_weight")
 
     claim_nums, primary = number_anchor if number_anchor is not None else number_roles(claim_text)
     carried = [n["raw"] for n in claim_nums]
@@ -1664,7 +1936,7 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
         else:
             why = "主证据量：让观众看见可核验的量，不替它编造变化"
         maxi.append(f"{primary['raw']} — {why}")
-    for n in [n for n in claim_nums if n is not primary][:2]:
+    for n in [n for n in claim_nums if n is not primary][:iw["maximize_secondary_max"]]:
         if u.get("part_whole") and primary and n["unit"] == primary["unit"]:
             why = "总体/分母：和子集同屏，但不是变化前的基期"
         elif comparing:
@@ -1677,14 +1949,14 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
             why = "支撑条件：不与主数字强行比较，不称作基期"
         weak.append(f"{n['raw']} — {why}")
     if claim_text and not primary:
-        maxi.append(f"「{claim_text[:26]}」— 结论句，本页第一落点必须落在它身上")
+        maxi.append(f"「{claim_text[:iw['excerpt_max']]}」— 结论句，本页第一落点必须落在它身上")
     if comparing:
         maxi.append("比较对象与口径 — 两端要能辨认；只有分母一致时才画差值")
     if u.get("evidence") in ("structure", "sequence"):
         maxi.append("关系的形状（层级/顺序）— 结构本身就是这一页的视觉对象")
 
     for n in [x for x in (u.get("numerals") or [])
-              if not x["year"] and x["raw"] not in carried][:4]:
+              if not x["year"] and x["raw"] not in carried][:iw["support_numerals_max"]]:
         weak.append(f"{n['raw']} — 支撑证据：与结论同屏但小一档，读者需要时能找到")
     if _hit(text, ("来源", "口径", "期间", "统计", "抽样", "估算", "source", "basis")):
         weak.append("来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）")
@@ -1709,7 +1981,7 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
     # 真正要删的是同一句话里的数字重复，不是结论与证据之间必要的那一次呼应。
     axis_values = {(round(float(m.group(1).replace(",", "")), 6), m.group(2))
                    for m in _AXIS_TIME_TOKEN.finditer(text)}
-    dupes = [raw for raw, c in counts.items() if c >= 2 and not any(
+    dupes = [raw for raw, c in counts.items() if c >= iw["duplicate_min"] and not any(
         (round(n["value"], 6), n.get("unit") or "") in axis_values
         for n in (u.get("numerals") or []) if n["raw"] == raw)]
     if dupes:
@@ -1730,6 +2002,9 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
     这个叙事位置决定 establish / summarize。
     """
     ev = str(u.get("evidence") or "none")
+    # 多指标面板的门槛（≥N 个可核验的量 = 证据页）进策略：它是「多少算多」，
+    # 不是「怎么判」——判据（哪些数字算证据、主张是否自带数字）仍在本文件里。
+    panel_min = policy.group("evidence_shapes")["panel_min_numerals"]
     # 群体名词（患者/老师等）不是可指认的人物证词；只有具体个体或
     # 可指认现场才允许以「确有其事」判 prove，避免泛称夺走页面主张。
     witness = bool(u.get("individual") or u.get("scene"))
@@ -1777,7 +2052,7 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
         role = "summarize"
         why = "收尾页把主张收成一句可执行的话（做什么、谁来做、什么时候）。"
         alts = [["prove", "收尾再补证据＝把决定推迟到最后一次提问之后"]]
-    elif int(u.get("distinct_numerals") or 0) >= 3 \
+    elif int(u.get("distinct_numerals") or 0) >= panel_min \
             and not evidence_numerals(str(claim.get("text") or "")):
         # 多指标并列面板（「单均利润 1.9 元、月订单 8.4 万单、客单价 58 元」）：
         # 没有单一形状（序列/比较/结构），但这一页靠**一组可核验的量**成立——
@@ -1861,10 +2136,11 @@ def _numbers_are_support(claim_text: str, u: dict, carried: list[dict],
     """
     if not claim_text or evidence_numerals(claim_text):
         return False
+    focus_policy = policy.group("focus")
     units = {str(n.get("unit") or "").strip() for n in carried}
-    if len(units) < 3:
+    if len(units) < focus_policy["support_only_units_min"]:
         return False
-    return _metric_concentration(text, carried) < 0.5
+    return _metric_concentration(text, carried) < focus_policy["support_only_concentration_max"]
 
 
 def chart_kind_of(u: dict, element_role: str) -> tuple[str, str] | None:
@@ -1882,12 +2158,13 @@ def chart_kind_of(u: dict, element_role: str) -> tuple[str, str] | None:
     n = int(u.get("distinct_numerals") or 0)
     same_unit = bool(u.get("same_unit"))
     ev = u.get("evidence")
+    ck = policy.group("chart_kind")
     if element_role not in ("comparison_field", "kpi_main", "ratio_main"):
         return None
     if u.get("part_whole"):
-        if 2 <= n <= 5:
+        if 2 <= n <= ck["part_whole_donut_max"]:
             return "donut", f"{n} 个部分相加成整体：扇区数在可读范围内，环形让构成先被看见"
-        if n > 5:
+        if n > ck["part_whole_donut_max"]:
             return "bar", f"{n} 个部分用环形会把扇区压成细条：横条按长度可比"
     if u.get("comparison") or ev == "comparison":
         if n == 2 and same_unit:
@@ -1897,11 +2174,11 @@ def chart_kind_of(u: dict, element_role: str) -> tuple[str, str] | None:
         if not same_unit:
             return "big_number_row", "量纲不同，不共用刻度：并置大数字，把口径写在数字旁边"
     if ev == "series" and same_unit:
-        if n >= 3:
-            return "line", f"同一单位的 {n} 个时间点：折线的斜率就是变化本身"
+        if n >= ck["series_line_min_points"]:
+            return "line", f"同一单位的 {n} 个取值：折线的斜率就是变化本身"
         if n == 2:
             return "column", "只有两个时间点：两根柱说清前后，不画一条假装有趋势的线"
-    if ev == "number" and n <= 1:
+    if ev == "number" and n <= ck["single_number_max"]:
         return "kpi", "单一量：数字本身就是结论，不需要图"
     return None
 
@@ -1935,23 +2212,58 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                          "文字退到解说位——否则图像就只是背景花纹。"}
         rejected = [["hero_statement", "用一句话当第一落点＝把已经赢得的现场感再退回文字"],
                     ["kpi_row", "把数字排成一行＝观众先看数字后看主张，顺序反了"]]
+    elif u.get("mixed_metrics") and not carried \
+            and role in ("prove", "explain", "compare") \
+            and not (u.get("human") or u.get("scene")):
+        # 两个（以上）互不同源的量：挑谁当主语都是替作者下判断（「18.6 万单」比
+        # 「1.2 万单」大，但大不等于重要）。并置、各写口径，把关系留给作者。
+        # 有人/有场所的页面不在此列：现场回访里的「走访 12 家门店、复购在收货后
+        # 48–72 小时」是证词里的坐标，主题仍是那句发现，不是几个量的比较。
+        raws = [n["raw"] for n in (u.get("numerals") or []) if not n.get("year")][:3]
+        choice = {"element_role": "comparison_field", "type": "text",
+                  "why": f"本页的 {len(raws)} 个量（{' / '.join(raws)}）互不同源，也不共用一个"
+                         "刻度：并置、各写口径，不替作者挑主语，也不画共用轴线的图。"}
+        rejected = [["trend_line", "互不同源的量连成一条线＝凭空造出先后与趋势"],
+                    ["donut", "没有共同分母却画成一圈：读者会以为它们相加是整体"],
+                    ["kpi_row", "只放大其中一个＝替作者决定了哪个量重要"]]
     elif u.get("part_whole") and carried:
-        part = (primary or carried[-1])["raw"]
-        whole = next((n["raw"] for n in carried if n is not primary), "总体")
+        part_n = primary or carried[-1]
+        part = part_n["raw"]
+        share = u.get("share_of") or {}
+        # 「整体」只能由**非百分比**的量或正文里的分母标签承担：旧写法把下一个
+        # 数字直接当整体，于是「占…51%」的页面被写成「「51%」这个整体」——分子
+        # 与分母的位置对调，读者按它排出来的就是一张说反了的图。
+        others = [n for n in carried if n is not part_n
+                  and (n.get("unit") or "") not in ("%", "％")]
+        whole = others[0]["raw"] if others else ""
+        total = u.get("total_value")
+        total_n = (next((n for n in carried if abs(float(n["value"]) - float(total)) < 1e-6),
+                        None) if total is not None else None)
+        if total_n is not None:
+            is_total = total_n is part_n
+            why = (f"「{part}」是几个子项相加得到的整体：先写整体，再把子项排齐；"
+                   "子项相加对不上时构成不成立。" if is_total else
+                   f"「{part}」是「{total_n['raw']}」的一个子项：先写整体，再把子项排齐；"
+                   "子项相加对不上时构成不成立。")
+        elif share.get("whole_label") and share.get("pct"):
+            why = (f"「{part}」是「{share['whole_label']}」的 {share['pct']}%：分子与分母同屏，"
+                   "比例才有意义；不把整体→子集误画成下降。")
+        else:
+            why = f"「{part}」是已经发生的子集；" \
+                  + (f"同屏写清「{whole}」这个整体，" if whole else "同屏写清它所属的整体，") \
+                  + "不把整体→子集误画成下降，也不让比例脱离分母。"
         # 作者已声明图表数据时，构成就该由图承担（图是证据，不是装饰）；否则文字
         # 并写分子/分母更省地方。kind 由扇区数决定，见 chart_kind_of。
         choice = {"element_role": "ratio_main",
                   "type": "chart" if u.get("has_chart") else "text",
-                  "why": f"「{part}」是已经发生的子集；"
-                         + (f"同屏写清「{whole}」这个整体，" if whole != "总体" else "同屏写清它所属的整体，")
-                         + "不把整体→子集误画成下降，也不让比例脱离分母。"}
+                  "why": why}
         rejected = [["trend_line", "总量和子集不是先后两个时间点：折线会虚构下降"],
                     ["card_grid_4", "一个分子与分母不需要四张等权卡片"]]
     elif (u.get("comparison") or u.get("evidence") == "comparison") \
             and int(u.get("distinct_numerals") or 0) >= 2:
         # 六个以上的数字是**一条序列**，不是两端对照：同屏排成数字墙会丢掉形状，
         # 交给图表（同一基线 + 单一高亮终值）才读得出趋势。
-        many = int(u.get("distinct_numerals") or 0) >= 6
+        many = int(u.get("distinct_numerals") or 0) >= policy.group("focus")["chart_many_numbers_min"]
         choice = {"element_role": "comparison_field",
                   "type": "chart" if (u.get("has_chart") or many) else "text",
                   "why": ("这一页有 %d 个数字：把它们排进文本框读者要自己连点成线，"
@@ -1990,7 +2302,8 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                   "why": "层级/顺序是内容本身的形状，画出来比写出来短。"}
         rejected = [["icon_row", "一排图标：图标不承载关系，只承载「我们有很多模块」"],
                     ["card_stack", "卡片堆叠把结构压成清单，关系丢失"]]
-    elif role == "persuade" or (role == "establish" and len(claim_text) <= 42) \
+    elif role == "persuade" or (role == "establish"
+                                and len(claim_text) <= policy.group("focus")["short_claim_max"]) \
             or (support_only and claim_text):
         why = ("焦点是这一页要立住的那句话：字阶与留白负责它的分量。"
                if not support_only else
@@ -2020,15 +2333,9 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
 
 # 构图算子：每个算子只在**内容的形状**合适时成立。没有「页面类型 → 构图」的查表；
 # 同一类内容因为数字个数、证据形态、是否存在通过测试的图像而落到不同算子上。
-# 并列时的次序：空间优先（留白 → 数据场 → 线性 → 张力 → 编辑 → 图像）。
-# 它只在分数打平时生效，不能盖过内容判断。
-_COMPOSITION_TIEBREAK = ("big_whitespace", "data_field", "linear_structure",
-                         "asymmetric_tension", "editorial", "image_narrative")
-_GRAMMAR_PREFERENCE = {
-    "evidence_field": "data_field", "soft_asymmetry": "asymmetric_tension",
-    "grid": "editorial", "quiet": "big_whitespace", "spotlight": "image_narrative",
-    "linear": "linear_structure",
-}
+# 平局次序（policy.enums.composition：空间优先）与世界构图纪律的同分倾向
+# （policy.enums.composition_grammar_preference）都是可调策略；它们只在分数打平
+# 或相近时生效，不能盖过内容判断。
 
 
 def _composition_scores(u: dict, role: str, media: dict, text_len: int,
@@ -2043,43 +2350,56 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
     n = int(u.get("distinct_numerals") or 0)
     dense = float(u.get("numeric_density") or 0.0)
     has_image = media.get("decision") in ("required", "reuse")
+    cp = policy.group("composition")
+    t = cp["terms"]                 # 评分项：权重可调，加法与判据在下面这段代码里
+    absent = cp["absent"]           # 「内容不成立」的算子：连候选都不是
     s: dict[str, float] = {}
     # 图像叙事只在图像通过必要性测试时存在（否则它连候选都不是）
     # 图像一旦通过必要性测试，它就是这一页的第一落点——构图必须承载它，
     # 否则「焦点是图、构图是留白」自相矛盾。
-    s["image_narrative"] = (4.5 if has_image else -99.0) + (1.5 if role == "establish" else 0.0)
+    s["image_narrative"] = (t["image_present"] if has_image else absent) \
+        + (t["image_establish_bonus"] if role == "establish" else 0.0)
     # 同一数量轴不能把不一致的单位并成两端；另有图表声明也不替它捏造同口径。
     # 数据场要有**可对齐的同量纲数字**：一个数字都没有的页（纯层级/纯陈述）
     # 不被「数据场」接住——否则四层架构页会被判成数据网格，网格里却没有数据。
-    s["data_field"] = (3.0 if ev in ("series", "comparison") and n >= 2
-                       and u.get("same_unit", True) else 0.0) \
-        + (2.0 if n >= 3 and u.get("same_unit", True) else 0.0) \
-        + (1.0 if dense >= 6 and u.get("same_unit", True) else 0.0) \
-        + (0.5 if u.get("comparison") and n >= 2 else 0.0)
-    s["big_whitespace"] = (3.0 if (n == 1 and ev in ("number", "series")) else 0.0) \
-        + (3.25 if ev == "part_whole" else 0.0) \
-        + (2.0 if role == "persuade" else 0.0) + (1.0 if text_len <= 40 else 0.0) \
-        - (1.5 if n >= 3 else 0.0)
+    same_unit = bool(u.get("same_unit", True))
+    s["data_field"] = (t["data_evidence_aligned"]
+                       if ev in ("series", "comparison")
+                       and n >= cp["evidence_field_min_numbers"] and same_unit else 0.0) \
+        + (t["data_multi_numbers"] if n >= cp["evidence_field_multi_numbers"] and same_unit else 0.0) \
+        + (t["data_density"] if dense >= cp["evidence_field_density_min"] and same_unit else 0.0) \
+        + (t["data_comparison"] if u.get("comparison")
+           and n >= cp["evidence_field_min_numbers"] else 0.0)
+    s["big_whitespace"] = (t["whitespace_single_number"]
+                           if n == cp["single_number"] and ev in ("number", "series") else 0.0) \
+        + (t["whitespace_part_whole"] if ev == "part_whole" else 0.0) \
+        + (t["whitespace_persuade"] if role == "persuade" else 0.0) \
+        + (t["whitespace_short_text"] if text_len <= cp["short_text_max"] else 0.0) \
+        + (t["whitespace_many_numbers"] if n >= cp["many_numbers_min"] else 0.0)
     if not claim.get("text") and ev in ("none", "proposition"):
         # 无结论页用最少结构：结论没落定之前铺开，只会把缺席藏起来。
-        s["big_whitespace"] += 1.0
-    s["linear_structure"] = (4.5 if u.get("relations") else
-                             3.0 if ev in ("sequence", "structure") else 0.0)
-    s["asymmetric_tension"] = (2.5 if u.get("comparison") else 0.0) \
-        + (1.5 if role == "compare" else 0.0) \
-        + (1.0 if n >= 2 and u.get("comparison") else 0.0)
+        s["big_whitespace"] += t["whitespace_no_claim"]
+    s["linear_structure"] = (t["linear_relations"] if u.get("relations") else
+                             t["linear_evidence"] if ev in ("sequence", "structure") else 0.0)
+    s["asymmetric_tension"] = (t["asymmetric_comparison"] if u.get("comparison") else 0.0) \
+        + (t["asymmetric_role"] if role == "compare" else 0.0) \
+        + (t["asymmetric_numbers"] if n >= cp["evidence_field_min_numbers"]
+           and u.get("comparison") else 0.0)
     # 末项随 comparison 走：两端张力算子自己的落选理由就是「等权时不制造倾向」——
     # 没有比较内容的页面（多指标面板、拆项行）不该只因数字 ≥2 就漂进张力构图。
-    s["editorial"] = (2.0 if text_len > 60 else 0.0) \
-        + (1.5 if role == "summarize" else 0.0) + (1.0 if n == 0 else 0.0) \
-        + (0.5 if text_len > 120 else 0.0)
+    s["editorial"] = (t["editorial_long_text"] if text_len > cp["long_text_min"] else 0.0) \
+        + (t["editorial_summarize"] if role == "summarize" else 0.0) \
+        + (t["editorial_no_numbers"] if n == 0 else 0.0) \
+        + (t["editorial_very_long_text"] if text_len > cp["very_long_text_min"] else 0.0)
     if role == "establish" and not has_image:
-        s["big_whitespace"] += 1.5               # 开场建立权威靠空间，不靠铺陈
-    if role == "summarize" and n == 0 and text_len <= 40:
-        s["big_whitespace"] += 1.5               # 一句话收束（致谢/问答）：空间替它把话停住
-    preferred = _GRAMMAR_PREFERENCE.get(str(grammar or "").strip())
-    if preferred and s.get(preferred, -99) > 0:
-        s[preferred] += 0.75                     # 世界的构图纪律只做同分倾向
+        # 开场建立权威靠空间，不靠铺陈
+        s["big_whitespace"] += t["whitespace_establish"]
+    if role == "summarize" and n == 0 and text_len <= cp["short_text_max"]:
+        # 一句话收束（致谢/问答）：空间替它把话停住
+        s["big_whitespace"] += t["whitespace_summarize"]
+    preferred = policy.enum("composition_grammar_preference").get(str(grammar or "").strip())
+    if preferred and s.get(preferred, absent) > 0:
+        s[preferred] += cp["grammar_preference_bonus"]   # 世界纪律只做同分倾向
     return s
 
 
@@ -2087,7 +2407,7 @@ def _composition_choice(u: dict, role: str, media: dict, text_len: int,
                         grammar: str, claim: dict | None = None) -> dict:
     """一次算完：适配分 → 选中的算子 + 为什么 + 落选的为什么落选。"""
     s = _composition_scores(u, role, media, text_len, grammar, claim)
-    order = {name: i for i, name in enumerate(_COMPOSITION_TIEBREAK)}
+    order = {name: i for i, name in enumerate(policy.enum("composition"))}
     chosen = max(s, key=lambda k: (s[k], -order[k]))
     return {"chosen": chosen, "rejected": _composition_rejections(chosen, s)}
 
@@ -2163,10 +2483,13 @@ def composition_of(role: str, u: dict, *, composition_grammar: str = "",
     stated = _hit(str(claim.get("text") or ""), _ASK_WORDS + _CONCLUSION_WORDS)
     if avoid and chosen == avoid and u.get("evidence") == "none" and not stated:
         s = _composition_scores(u, role, media, text_len, composition_grammar, claim)
-        alts = [k for k in s if k != avoid and s[k] > -50 and s[k] >= s[avoid] - 0.5]
+        tiebreak = policy.enum("composition")
+        floor = policy.group("composition")["absent"] / 2      # 「不是候选」的算子在更下面
+        tolerance = policy.group("composition")["avoid_tolerance"]
+        alts = [k for k in s if k != avoid and s[k] > floor and s[k] >= s[avoid] - tolerance]
         if alts:
-            chosen = max(alts, key=lambda k: (s[k], -_COMPOSITION_TIEBREAK.index(k)
-                                              if k in _COMPOSITION_TIEBREAK else -99))
+            chosen = max(alts, key=lambda k: (s[k], -tiebreak.index(k)
+                                              if k in tiebreak else -99))
             why = (f"与前一页同构且分数接近：改选{chosen}以保持节奏；"
                    + _composition_why(chosen, u, media))
     return {"chosen": chosen, "why": why, "rejected": picked["rejected"]}
@@ -2230,9 +2553,8 @@ def _weight_label(value) -> str:
 # 一行超过 45 个汉字，投影尺度下读者的回扫会丢行；少于 22 个则每行都在半句处
 # 折断。此前骨架只给一句散文纪律，作者凭手感定栏宽——实测同一份内容里出现
 # 60–68 汉字/行的正文块（CASE_006 s07/s08/s10）。
-_MEASURE_MAX_CJK = 45          # 行长上限（超过即回扫丢行）
-_MEASURE_MIN_CJK = 22          # 行长下限（低于即断句破碎）
-_LEAD_MAX_CJK = 20             # 主张/标题每行上限（大字阶，靠行数不靠缩放）
+# 具体数值住 policy.measure（可读域是可调策略，不是风格）：45 字上限、22 字下限、
+# 标题 20 字上限，以及长/中/短文本的栏宽起点。
 # 断行候选，按**语义强度**排序；(token 组, 断在 token 前还是后)。
 # 只收「断在这里不会割裂词」的位置：停顿标点 > 系词/转折连词 > 时间数量短语 > 的。
 # 介词与助动词（在/把/让/能…）一律不收——实测会把「用工」切成「与用｜工」。
@@ -2252,12 +2574,13 @@ _NO_LINE_START_CJK = NO_LINE_START_CJK
 _NO_LINE_END_CJK = NO_LINE_END_CJK
 
 
-def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
+def suggest_break(sentence: str, max_line: int | None = None) -> str | None:
     """给主张一句**断行建议**：在语义边界处断，不在数字与单位之间断。
 
     断行决定中文标题的视觉形状：机械按框宽折行会把「11.2 元」拆成两行、
     把「，」甩到行首。这里只给一处断口（两行），用「｜」标出；作者仍可改写。
     """
+    max_line = int(max_line or policy.group("measure")["lead_max_cjk"])
     text = str(sentence or "").strip()
     # 超过两行能容纳的长度：两行断行建议本身不成立（每行都会超出行宽预算），
     # 此时给一个「一头长一头短」的断点只会骗作者把字号缩到可读域之外——
@@ -2294,14 +2617,15 @@ def suggest_break(sentence: str, max_line: int = _LEAD_MAX_CJK) -> str | None:
 
 def measure_of(text_len: int) -> dict:
     """按内容长度给栏宽起点；不是实测字体容量或固定排版配额。"""
-    if text_len >= 220:
-        cjk, note = 30, "长文窄栏：信息密度高，窄栏换取回扫可靠"
-    elif text_len >= 120:
-        cjk, note = 34, "中长文本：两栏或窄单栏，避免一行横跨整页"
+    m = policy.group("measure")
+    if text_len >= m["long_text_chars"]:
+        cjk, note = m["cjk_long"], "长文窄栏：信息密度高，窄栏换取回扫可靠"
+    elif text_len >= m["mid_text_chars"]:
+        cjk, note = m["cjk_mid"], "中长文本：两栏或窄单栏，避免一行横跨整页"
     else:
-        cjk, note = 38, "短文本：栏宽可以放开，但仍不横跨整页"
+        cjk, note = m["cjk_short"], "短文本：栏宽可以放开，但仍不横跨整页"
     return {"body_measure_cjk": cjk, "why": note,
-            "limit": f"{_MEASURE_MIN_CJK}–{_MEASURE_MAX_CJK} 汉字/行（启发式建议，实际字体与投影须另验）"}
+            "limit": f"{m['min_cjk']}–{m['max_cjk']} 汉字/行（启发式建议，实际字体与投影须另验）"}
 
 
 BASE_DISCIPLINE = ("结论按语义停顿断行，动词与对象相连、数字不与单位拆开；"
@@ -2372,7 +2696,8 @@ def typography_of(claim: dict, weight: dict, focus: dict, role: str,
         _step = "title"
     scale["step"] = _step
     scale["size"] = type_scale()[_step]
-    if len(str(claim.get("text") or "").strip()) > 2 * _LEAD_MAX_CJK:
+    if len(str(claim.get("text") or "").strip()) \
+            > policy.group("measure")["rewrite_over_lead_lines"] * policy.group("measure")["lead_max_cjk"]:
         # 断行救不了一句两行装不下的主张：先改写，再谈断行（SKILL §2：删除比添加重要）。
         scale["lead_rewrite"] = "主张超过两行：先改写成一句更短的可复述结论，而不是缩小字阶硬排。"
     return {"lead": focal, "support": secondary, "discipline": rule, "scale": scale}
@@ -2457,15 +2782,13 @@ def production_spec(focus: dict, comp: dict, media: dict, u: dict,
     # must_not 只收真正独立的硬约束（信息权重的删除清单）：focus/comp 的
     # rejected 是 Intelligence 的竞争证据，canonical owner 是它们自己——
     # 生产规格只引用结论（删什么），不复制「为什么不是别的」。
-    must_not = [f"删：{doomed}" for doomed in ((weight or {}).get("delete") or [])[:2]]
+    must_not = [f"删：{doomed}" for doomed in
+                ((weight or {}).get("delete") or [])[:policy.group("production")["must_not_max"]]]
     return {
         "must_place": must,
         "must_not": must_not,
-        "density_target": {"big_whitespace": "sparse", "editorial": "balanced",
-                           "data_field": "dense", "image_narrative": "sparse",
-                           "linear_structure": "balanced",
-                           "asymmetric_tension": "balanced"}.get(comp.get("chosen"),
-                                                                "balanced"),
+        "density_target": policy.enum("density_target_of_composition").get(
+            comp.get("chosen"), "balanced"),
     }
 
 
@@ -2572,7 +2895,8 @@ def derive_world(brief: dict, understanding: list) -> dict:
             mode = u.get("evidence") or "none"
             if mode != "none":
                 freq[mode] = freq.get(mode, 0) + 1
-        evidence_top = max(freq, key=lambda m: (freq[m], -EVIDENCE_MODES.index(m))) if freq else "none"
+        ev_order = policy.enum("evidence")
+        evidence_top = max(freq, key=lambda m: (freq[m], -ev_order.index(m))) if freq else "none"
     else:
         evidence_top = "none"
     chart_style = {"comparison": "shared baseline, two-tone delta, direct labels",
@@ -2973,6 +3297,10 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                       "声明 asset_subject——未声明时主体回落为标题与正文，观点句当画面会跑偏")
     if media["source"] == "hint":
         open_q.append("图像：内容提到人物或场所，但未声明是否配图；需要时声明 asset: required")
+    if u.get("mixed_metrics"):
+        raws = [n["raw"] for n in (u.get("numerals") or []) if not n.get("year")][:3]
+        open_q.append(f"本页有 {len(raws)} 个量（{' / '.join(raws)}）但判断不出它们的关系："
+                      "补一句关系（比率／差值／先后），或说明它们只是并置的量。")
     if u.get("evidence") == "part_whole":
         open_q.append("构成候选：核对共同分母、期间与类别互斥性；合计 100% 本身不证明整体。")
     if u.get("evidence") == "comparison" and not u.get("same_unit", True) \
@@ -2986,6 +3314,49 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
             "visual_role": role, "focus": focus, "composition": comp, "spatial": spatial,
             "typography": typography, "media": media, "production": prod,
             "understanding": u, "open_questions": open_q or None}
+
+
+_PROVENANCE_FIELDS = ("claim", "evidence", "role", "focus", "composition", "media")
+
+
+def provenance_of(judgment: dict) -> dict:
+    """每条决策的**来源**：作者声明 / 算法推导 / 词表提示（SKILL §3 三态）。
+
+    为什么需要它：作者与审阅者必须一眼分清「这句话是谁定的」。词表提示（hint）
+    不是判断，只是待确认问题；把它读成推导，就会把「可能配图」当成「该配图」。
+    这里是**读**来源，不重新推导：每个 block 的 `source` 是判定时写下的唯一事实，
+    本函数只把它投影成一张可审计的表，并标出作者真正覆盖了几项。
+    """
+    claim = judgment.get("claim") or {}
+    evidence_src = (judgment.get("understanding") or {}).get("evidence_source")
+    blocks = {
+        "claim": claim.get("source"),
+        "evidence": evidence_src or "judgment",
+        "role": (judgment.get("visual_role") or {}).get("source"),
+        "focus": (judgment.get("focus") or {}).get("source"),
+        "composition": (judgment.get("composition") or {}).get("source"),
+        "media": (judgment.get("media") or {}).get("source"),
+    }
+    # 词表提示是「未决」而不是「已定」：它与算法的产物在审计里必须分开计数。
+    out = {}
+    for field in _PROVENANCE_FIELDS:
+        raw = str(blocks.get(field) or "judgment")
+        if raw in ("extracted", "absent", "frame"):     # 结论的来源就是结论的抽取方式
+            out[field] = "judgment" if raw == "extracted" else raw
+        elif raw in ("author", "hint", "decision"):
+            out[field] = raw
+        elif raw.startswith("subject:"):                # 世界推导：仍是算法推导
+            out[field] = "judgment"
+        else:
+            out[field] = "judgment"
+    out["rhythm"] = "judgment"      # 节奏与视觉分量来自整套回看（算法推导）
+    out["emphasis"] = "judgment"
+    overridden = [f for f in _PROVENANCE_FIELDS if out[f] == "author"]
+    pending = [f for f in _PROVENANCE_FIELDS if out[f] == "hint"]
+    return {"decided_by": out,
+            "author_declared": overridden or None,
+            "pending_author": pending or None,
+            "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"}
 
 
 def _coherence_pass(pages: list) -> dict:
@@ -3193,11 +3564,18 @@ def think(brief: dict) -> dict:
 
     # 图像清单只收作者声明的出图：词表命中只产生 hint，不自动占图位，因此没有额度需要分配。
     coherence = _coherence_pass(pages)
+    # 节奏/视觉分量写完后，逐页投影一次「谁定的」——作者与审阅者据此判断
+    # 哪些结论需要自己复核（作者声明不必复核，词表提示必须复核）。
+    for page in pages:
+        page["judgment"]["provenance"] = provenance_of(page["judgment"])
     return {
         "deck": {
             "audience": audience or None,
             "decision": decision or None,
             "tension": tension or None,
+            # 生效策略的摘要（版本 + 键序无关 SHA-256 + 覆盖键）：判断可追溯到
+            # 「这份 plan 用的是哪一版阈值」，否则调参后的复现无法对账。
+            "policy": policy.summary(),
             # 一张字阶表，deck 级给一次：作者不必在每页凭手感挑字号
             "type_scale": type_scale(float((brief.get("canvas") or {}).get("width") or 1280)),
             "world": world,
@@ -3328,8 +3706,10 @@ def _scale_line(bundle: dict) -> str:
 #   3) 页面级重复的 deck 事实（audience/decision 已在 deck 上）。
 # 想要完整推演（含被否决方案的理由、每页的张力说明）用 --full。
 _LEAN_BOOL_FLAGS = ("comparison", "part_whole", "same_unit", "has_chart",
-                    "human", "scene", "individual")
-_LEAN_HOIST_MIN_CHARS = 16
+                    "human", "scene", "individual", "mixed_metrics")
+def _lean_hoist_min_chars() -> int:
+    """重复说明句上提到 deck.legend 的最短长度（输出体积策略，见 policy.output）。"""
+    return policy.group("output")["legend_hoist_min_chars"]
 
 
 def _lean_understanding(u):
@@ -3460,7 +3840,7 @@ def compact_plan(bundle: dict) -> dict:
     counts: dict[tuple, set] = {}
     for page in pages_out:
         for path, value in _walk_strings(page.get("judgment") or {}):
-            if len(value) >= _LEAN_HOIST_MIN_CHARS:
+            if len(value) >= _lean_hoist_min_chars():
                 counts.setdefault(path, set()).add(value)
     legend = {"/".join(path): next(iter(vals))
               for path, vals in counts.items()
@@ -3480,6 +3860,84 @@ def compact_plan(bundle: dict) -> dict:
         deck["legend"] = legend
         out["deck"] = deck
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 跨字段语义校验（schema 管形状，这里管含义）
+# ─────────────────────────────────────────────────────────────────────
+def validate_plan(bundle: dict) -> list[str]:
+    """plan 的**语义**契约：结构由 schemas/plan.schema.json 查，这里查一致性。
+
+    分开的理由：schema 只能查单个字段的类型与枚举；「页数与 coherence 三条序列
+    是否对齐」「chart_kind 是否还在 CHART_SPEC 里」「同一页的 numerals 是否混用了
+    lean/full 两种形状」都要看多个字段的关系。这些检查留在 Python，schema 不抄。
+    """
+    from primitives import CHART_KINDS
+
+    problems: list[str] = []
+    pages = bundle.get("pages") or []
+    ids = [str(p.get("id") or "") for p in pages]
+    if len(set(ids)) != len(ids):
+        problems.append("页面 id 必须唯一：" + "、".join(sorted({i for i in ids if ids.count(i) > 1})))
+    if any(not i.strip() for i in ids):
+        problems.append("页面 id 不得为空")
+    legend = (bundle.get("deck") or {}).get("legend") or {}
+    # 瘦身投影可以把「全稿唯一取值」的说明句上提到 deck.legend（页内不再抄）。
+    # 于是「这一页为什么这么判」有两种合法落点：页内，或 legend 里同名路径。
+    # 两边都没有 = 判断理由被投影吃掉了，必须拦——否则作者拿到的是「有结论没理由」。
+    hoistable = (("claim", "why"), ("tension", "why"), ("visual_role", "why"),
+                 ("focus", "why"), ("composition", "why"), ("rhythm", "why"),
+                 ("emphasis", "why"), ("media", "necessity"),
+                 ("spatial", "whitespace_duty"), ("typography", "discipline"),
+                 ("typography", "scale", "why"), ("typography", "scale", "limit"))
+    for page in pages:
+        j = page.get("judgment") or {}
+        for path in hoistable:
+            node = j
+            for key in path[:-1]:
+                node = node.get(key) if isinstance(node, dict) else None
+            if not isinstance(node, dict) or path[-1] in node:
+                continue
+            if "/".join(path) not in legend:
+                problems.append(f"{page.get('id')}.judgment.{'.'.join(path)} 既不在页内"
+                                "也不在 deck.legend（判断理由被投影丢失）")
+    coherence = (bundle.get("deck") or {}).get("coherence") or {}
+    for key in ("compositions", "densities", "roles", "media"):
+        seq = coherence.get(key)
+        if isinstance(seq, list) and len(seq) != len(pages):
+            problems.append(f"coherence.{key} 有 {len(seq)} 项，与 {len(pages)} 页不对齐")
+    climax = (coherence.get("climax") or {}).get("page")
+    if climax is not None and climax not in ids:
+        problems.append(f"coherence.climax.page={climax!r} 不在页面 id 里")
+    for page in pages:
+        pid = page.get("id")
+        j = page.get("judgment") or {}
+        focus = j.get("focus") or {}
+        kind = focus.get("chart_kind")
+        if kind is not None and kind not in CHART_KINDS:
+            problems.append(f"{pid}.focus.chart_kind={kind!r} 不是合法图表类型"
+                            f"（见 primitives.CHART_SPEC）")
+        if focus.get("type") == "image" and (j.get("media") or {}).get("decision") == "none":
+            problems.append(f"{pid}: 焦点是图像但媒体决策是 none（图像不存在却当主语）")
+        ev = (j.get("understanding") or {}).get("evidence")
+        if ev not in EVIDENCE_MODES:
+            problems.append(f"{pid}.understanding.evidence={ev!r} 不在合法证据形态里")
+        prod = j.get("production") or {}
+        must = prod.get("must_place") or []
+        shapes = {"str" if isinstance(x, str) else "dict" for x in must}
+        if len(shapes) > 1:
+            problems.append(f"{pid}.production.must_place 混用了字符串与对象两种形状")
+        nums = (j.get("understanding") or {}).get("numerals") or []
+        shapes = {"str" if isinstance(x, str) else "dict" for x in nums}
+        if len(shapes) > 1:
+            problems.append(f"{pid}.understanding.numerals 混用了 raw 字符串与完整对象")
+        prov = (j.get("provenance") or {}).get("decided_by") or {}
+        if prov and (j.get("visual_role") or {}).get("source") != prov.get("role"):
+            problems.append(f"{pid}: provenance.role 与 visual_role.source 不一致")
+        density = prod.get("density_target")
+        if density is not None and density not in policy.enum("density"):
+            problems.append(f"{pid}.production.density_target={density!r} 不在合法密度里")
+    return problems
 
 
 def build_skeleton(bundle: dict) -> str:
@@ -3602,10 +4060,20 @@ def build_skeleton(bundle: dict) -> str:
         L.append(f'        #    权重: 主 {_weight_brief(weight.get("maximize"))}；'
                  f'次 {_weight_brief(weight.get("weaken"))}；'
                  f'删除 {_weight_brief(weight.get("delete"))}')
+        # 焦点是图表时，图表类型与「为什么是这个类型」必须跟着走：判断在 plan.json 里
+        # 存了 chart_kind/chart_kind_why，但骨架是作者唯一的施工面——只写「（chart）」
+        # 等于让作者自己再判一次，判断就分裂成两份。
+        chart_bit = ""
+        if focus.get("chart_kind"):
+            chart_bit = f' · 图表: {focus["chart_kind"]}（{focus.get("chart_kind_why") or ""}）'
+        elif focus.get("type") == "chart":
+            # 结构/顺序页的图表类型由层级形状决定，判断刻意不预设——但必须**说出来**，
+            # 否则作者读到的「（chart）」既像遗漏又像授权，两轮落稿就会漂成不同图形。
+            chart_bit = ' · 图表: 不预设（结构/顺序按层级关系落点）'
         L.append(_action(
             "焦点/构图/主区", pg.get("id"),
-            f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）· '
-            f'构图: {comp.get("chosen")} · 主区: {spatial.get("primary_zone")}'))
+            f'        #    焦点: {focus.get("element_role")}（{focus.get("type")}）'
+            f'{chart_bit} · 构图: {comp.get("chosen")} · 主区: {spatial.get("primary_zone")}'))
         head = f'        #    排版: 主语 {typ.get("lead")} · 退后 {typ.get("support") or "无"}'
         if sc.get("body_measure_cjk"):
             head += f' · 行长≈{sc.get("body_measure_cjk")}字'

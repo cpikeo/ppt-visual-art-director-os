@@ -41,11 +41,19 @@ def _actual(case: dict) -> dict:
     judged = intel.page_judgment(item, index=case["index"], total=case["total"],
                                  brief=BRIEF, world=world, warnings=[])
     u = judged["understanding"]
+    # 观测面要与案例能断言的面一致：过去只管角色/证据/媒体，于是一整类「构图与主语」
+    # 的判据在 bench 里根本没有量具（断言比到 None 永远红，或永远绿）。这里补采，
+    # 断言语义仍由 _checks 一处实现，unseen_bench 与本函数共用同一批字段名。
     return {"role": judged["visual_role"]["role"], "evidence": u.get("evidence"),
-            "comparison": bool(u.get("comparison")), "claim": judged["claim"]["source"],
-            "claim_text": judged["claim"].get("text"),
+            "comparison": bool(u.get("comparison")), "part_whole": bool(u.get("part_whole")),
+            "claim": judged["claim"]["source"], "claim_text": judged["claim"].get("text"),
             "media": judged["media"]["decision"], "media_source": judged["media"]["source"],
-            "media_suggested": judged["media"].get("suggested")}
+            "media_suggested": judged["media"].get("suggested"),
+            "focus": judged["focus"].get("element_role"),
+            "composition": judged["composition"].get("chosen"),
+            "primary": judged["typography"].get("lead"),
+            "distinct": u.get("distinct_numerals"),
+            "open_questions": judged.get("open_questions")}
 
 
 def _checks(expect: dict, actual: dict) -> list[dict]:
@@ -54,6 +62,24 @@ def _checks(expect: dict, actual: dict) -> list[dict]:
         if key == "evidence_not":
             ok, shown = actual["evidence"] not in want, actual["evidence"]
             want_s = f"不是 {want}"
+        elif key == "distinct_min":
+            shown = actual.get("distinct") or 0
+            ok, want_s = shown >= want, f"≥ {want}"
+        elif key in ("claim_contains", "claim_not_contains", "primary_contains"):
+            field = {"primary_contains": "primary"}.get(key, "claim_text")
+            shown = str(actual.get(field) or "")
+            hit = all(s in shown for s in want) if key == "primary_contains" \
+                else all(s in shown for s in want)
+            ok = (not hit) if key == "claim_not_contains" else hit
+            want_s = ("不含 " if key == "claim_not_contains" else "含 ") + str(want)
+        elif key == "claim_soft":
+            shown = actual.get("claim")
+            ok = shown in ("absent", "frame", None) or \
+                any(s in str(actual.get("claim_text") or "") for s in want)
+            want_s = f"absent/frame 或文本含 {want}"
+        elif key == "claim_text":
+            shown = actual.get("claim_text")
+            ok, want_s = shown in want, f"∈ {want}"
         else:
             shown = actual[key]
             if isinstance(want, bool):
@@ -438,6 +464,47 @@ def _print(report: dict) -> None:
               f"新修复 {g['fixed_cases'] or '无'}")
 
 
+# ── 判据守门审计（测试的测试） ────────────────────────────────────────────
+# 把 policy 里的一条判据**故意调坏**，看案例集会不会有人变红。
+# 一个判据调坏却零案例报警 = 这条判据没有任何证据在守（覆盖缺口，不是「没问题」）。
+# 反过来说：这也是删案例前必须查的一栏——只有「零守卫 + 零独有行 + 零独有期望」才可合并。
+GUARD_MUTATIONS = {
+    "份额判据关": {"evidence_shapes": {"share_min_numerals": 99}},
+    "并列判据关": {"evidence_shapes": {"parallel_min_values": 9}},
+    "面板判据关": {"evidence_shapes": {"panel_min_numerals": 99}},
+    "比较降级": {"evidence_shapes": {"comparison_base": 0.1}},
+    "结构失效": {"evidence_shapes": {"structure": 0.1}},
+    "世界倾向关": {"composition": {"grammar_preference_bonus": 0.0}},
+}
+
+
+def _suite_cases(path: Path) -> list[dict]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [{"index": 1, "total": 3, **c} for c in data.get("cases") or []]
+
+
+def guard_audit(cases_path: Path, mutations: dict | None = None) -> dict:
+    import policy
+    cases = _suite_cases(cases_path)
+    baseline_red = {c["id"] for c in cases
+                    if any(not r["ok"] for r in _checks(c.get("expect") or {}, _actual(c)))}
+    rows = {}
+    for name, patch in (mutations or GUARD_MUTATIONS).items():
+        policy.configure(patch)
+        try:
+            caught = [c["id"] for c in cases
+                      if c["id"] not in baseline_red
+                      and any(not r["ok"] for r in _checks(c.get("expect") or {}, _actual(c)))]
+        finally:
+            policy.reset()
+        rows[name] = caught
+    unguarded = [n for n, c in rows.items() if not c]
+    return {"cases": cases_path.as_posix(), "cases_total": len(cases),
+            "baseline_red": sorted(baseline_red), "guards": rows,
+            "unguarded": unguarded,
+            "ok": not unguarded and not baseline_red}
+
+
 def main(argv=None) -> int:
     # 与生产入口共用 UTF-8 管道契约。Windows 的 cp1252 stdout 会在打印
     # 中文 FAIL 详情前抛 UnicodeEncodeError：退出码仍是 1，却不是真实负例结果。
@@ -469,6 +536,8 @@ def main(argv=None) -> int:
     parser.add_argument("--baseline", default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--ablate", action="store_true", help="逐组消融语义词表，打印指标变化")
+    parser.add_argument("--guard-audit", action="store_true",
+                        help="把 policy 判据逐条调坏，看案例集有没有人报警（零报警＝无人守）")
     args = parser.parse_args(argv)
     from primitives import validate_io_paths, json_write
     try:
@@ -497,6 +566,18 @@ def main(argv=None) -> int:
         if args.out:
             json_write(args.out, result)
         return 0
+    if args.guard_audit:
+        result = guard_audit(Path(args.cases))
+        for name, caught in result["guards"].items():
+            mark = "守" if caught else "⚠ 无人守"
+            print(f"{name:10} {mark:8} {len(caught)} 个案例 → {caught[:6]}")
+        if result["baseline_red"]:
+            print(f"基线已红（不计入守卫）：{result['baseline_red']}")
+        print(f"\n守门审计 {'PASS' if result['ok'] else 'FAIL'} · "
+              f"{len(result['guards']) - len(result['unguarded'])}/{len(result['guards'])} 条判据有人守")
+        if args.out:
+            json_write(args.out, result)
+        return 0 if result["ok"] else 1
     report = run(Path(args.cases))
     if args.baseline:
         baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))

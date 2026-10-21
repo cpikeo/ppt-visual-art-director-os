@@ -1,0 +1,121 @@
+{
+ "freeze": {
+  "sha256_of_payload": "6a174c260ba2f7631343a2b2271575cbc9b3f3290938fcd40fdd1f190db89b3a",
+  "frozen_at": "2026-10-21",
+  "note": "holdout-7（判据守门）：每个案例钉住一个**当前没有任何案例守的**策略旋钮。选例方法不是猜，是变异矩阵（把判据调坏，看谁会红）：这三条在share_min_numerals / parallel_min_values / panel_min_numerals 被调坏时必须失败。期望先冻结，再跑。",
+  "revision": "r6.4 · V04 正文置空（见 revised）"
+ },
+ "cases": [
+  {
+   "id": "V01",
+   "group": "shape",
+   "severity": "high",
+   "title": "履约成本占总成本 61%",
+   "content": "履约成本 11.2 元，营销成本 4.1 元，履约成本占总成本 61%",
+   "expect": {
+    "part_whole": true,
+    "evidence": "part_whole",
+    "role": [
+     "prove"
+    ],
+    "focus": "ratio_main"
+   },
+   "observe": [
+    "evidence",
+    "focus",
+    "primary"
+   ],
+   "why": "份额陈述的**分母在标题里点了一次、正文里再点一次**是作者最常见的写法，不是两个互相矛盾的分母。守住 share_min_numerals：把份额判据调坏，这页必须红。"
+  },
+  {
+   "id": "V02",
+   "group": "shape",
+   "severity": "high",
+   "title": "三类课程完课率",
+   "content": "实训课 82%，直播课 61%，录播课 44%",
+   "expect": {
+    "evidence": "comparison",
+    "role": [
+     "compare"
+    ],
+    "focus": "comparison_field",
+    "comparison": false
+   },
+   "observe": [
+    "evidence",
+    "focus",
+    "composition"
+   ],
+   "why": "同一单位、三个并列项、没有时间轴：这是并列可比量。守住 parallel_min_values。",
+   "revised": "2026-10-21 · comparison 期望由 True 改为 False：协议（SKILL §3 数量陷阱）规定并列可比量不改 comparison 标志；此案例守的是 parallel_min_values，不是两端对照。改的是断言，不是代码。"
+  },
+  {
+   "id": "V03",
+   "group": "numeric",
+   "severity": "major",
+   "title": "三个指标并排",
+   "content": "客单价 58 元，月订单 8.4 万单，履约成本 6.2 元",
+   "expect": {
+    "role": [
+     "prove"
+    ],
+    "focus": "comparison_field"
+   },
+   "observe": [
+    "evidence",
+    "focus",
+    "composition"
+   ],
+   "why": "三个互不同源的量并排：是证据面板（prove），不是观点页。守住 panel_min_numerals。"
+  },
+  {
+   "id": "V04",
+   "group": "rhythm",
+   "severity": "major",
+   "title": "门店对比：旗舰店 128 万元，社区店 96 万元",
+   "content": "",
+   "expect": {
+    "role": [
+     "compare"
+    ],
+    "composition": "data_field"
+   },
+   "observe": [
+    "composition",
+    "primary"
+   ],
+   "why": "brief 把世界定成 evidence_field（重证据、字段化排版）时，两端对照页就该落到数据场，而不是靠版式张力。守住 composition.grammar_preference_bonus：把这个偏置归零，同一页会被推向 asymmetric_tension（已实测），这条必须红。",
+   "revised": "2026-10-21 · 三改：①内容不再与标题重复——正文再抄一遍会把主张通道占满，页面从 data_field 掉到 asymmetric_tension；②量具补采 composition 后才发现，过去 116 个案例里任何构图断言都只能比到 None。改的是断言与量具，不是代码。"
+  },
+  {
+   "id": "V05",
+   "group": "shape",
+   "severity": "high",
+   "title": "用户旅程四个阶段：认知、试用、付费、续费",
+   "content": "用户旅程四个阶段：认知、试用、付费、续费",
+   "expect": {
+    "evidence": "structure"
+   },
+   "observe": [
+    "evidence",
+    "focus"
+   ],
+   "why": "点名阶段名且没有时间刻度的是**结构**（并列的空间分解），不是序列。守住 evidence_shapes.structure。"
+  },
+  {
+   "id": "V06",
+   "group": "shape",
+   "severity": "high",
+   "title": "两个季度对比：Q1 128 万，Q2 156 万",
+   "content": "两个季度对比：Q1 128 万，Q2 156 万",
+   "expect": {
+    "evidence": "comparison"
+   },
+   "observe": [
+    "evidence",
+    "focus"
+   ],
+   "why": "有两个明确端点、且作者写了「对比」：这是两端对照，不是趋势序列。守住 evidence_shapes.comparison_base。"
+  }
+ ]
+}

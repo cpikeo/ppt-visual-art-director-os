@@ -1160,7 +1160,21 @@ def test_verify(tmp: Path):
                     "chart_field_unconsumed", "body", "latin", "family",
                     # 函数/参数名，不是元素字段：文档里用反引号提到它们，
                     # 不该被当成「渲染器应消费的字段」来判。
-                    "measure_text", "wrap_lines", "insert_script_gaps"}
+                    "measure_text", "wrap_lines", "insert_script_gaps",
+                    # plan 契约层键（判断卡 / deck 摘要 / 瘦身投影），不是元素字段：
+                    # 它们由 intelligence.validate_plan + schemas/plan.schema.json 守，
+                    # 不进渲染器。清单保持**显式且最小**：新增一项都要说得出为什么不渲染。
+                    "author", "hint", "judgment", "coherence", "must_place", "must_not",
+                    "numerals", "pending_author", "raw", "rejected", "provenance",
+                    "decided_by", "legend", "delete_candidates", "chosen", "option",
+                    # 策略分组名（policy.group(...) 的键）与 brief 键名：由
+                    # selftest.test_policy_contract / test_brief_contract 守，
+                    # 渲染器不消费——它们决定「怎么判」，不决定「怎么排」。
+                    "enums", "composition_grammar_preference", "information_weight",
+                    "evidence_shapes", "decomposition", "focus", "measure",
+                    "chart_kind", "production", "output",
+                    "audience", "audiance", "decision", "tension", "slides", "avoid",
+                    "content", "title", "asset", "role", "evidence", "plan"}
     _doc_fields = set(_re_doc.findall(r"`([a-z_][a-z0-9_]*)`", _doc))
     _doc_missing = sorted(f for f in _doc_fields - _not_element if f not in _known)
     check("docs↔code: contract.md 点名的字段都在渲染器消费集里",
@@ -1372,7 +1386,10 @@ def test_production(tmp: Path):
 
     from pptx import Presentation
     prs = Presentation(str(out1))
+    # 渲染层的排版间隙（U+2009 中西混排、U+00A0 数字与单位）不是文本内容：
+    # 断言的是「文字在对象模型里可改」，比较前统一抹掉这三类间隙字符。
     texts = [sh.text_frame.text.replace("\u2009", "").replace("\u200a", "")
+             .replace("\u00a0", "")
              for sl in prs.slides for sh in sl.shapes
              if sh.has_text_frame and sh.text_frame.text.strip()]
     check("compiler: 原生可编辑 PPTX（文本在对象模型里可改）",
@@ -3701,8 +3718,11 @@ def test_cjk_rhythm_regression(tmp: Path):
         "2023年订单量 1,840 万单，履约成本 11.2 亿元；2024年订单量 2,150 万单，"
         "履约成本 13.8 亿元；2025年订单量 2,490 万单，履约成本 16.1 亿元",
         "去年订单量增长与履约成本同步上升")
+    # 期望值随量词表补全而更新：旧断言写「2,490 万」是**旧词表的截断产物**
+    # （「万单」不在量词表里，单位只读到「万」）。判断本身没变（仍是 2025 年
+    # 的末值、不回 2023 年基期），变的是这个 token 现在带着完整单位。
     check("focus: 双指标系列按「指标内末值＋主张主语位」取当前量，不回基期",
-          primary is not None and primary["raw"] == "2,490 万",
+          primary is not None and primary["raw"] == "2,490 万单",
           str(primary and primary["raw"]))
 
     # 6 · 眉标断词：单字边界切在词内，碎片通过长度与首尾检查成了页眉
@@ -5810,6 +5830,673 @@ def test_plan_compact(tmp: Path):
           f"legend={list(legend)}")
 
 
+def test_policy_contract(tmp: Path):
+    """策略层（policy.py）：可调、可校验、可撤销，且**没有死键**。
+
+    分层纪律靠三条断言锁住，而不是靠文档自觉：
+      ① 覆盖必须被校验（未知键/错类型/负阈值/改枚举成员一律报错，不静默）；
+      ② 覆盖必须真的改变判断（写进去却不生效的旋钮＝假旋钮）；
+      ③ 每个可调键都必须被代码读取（死键会被当成「已经调过」的证据）。
+    """
+    import policy
+    import intelligence as intel
+
+    default = policy.POLICY["version"]
+    # ① 校验：四类非法覆盖各拦一次
+    for label, overrides in (
+            ("未知分组", {"weights": {"x": 1}}),
+            ("未知键", {"measure": {"max_cjk_typo": 40}}),
+            ("类型错", {"measure": {"max_cjk": "45"}}),
+            ("负阈值", {"information_weight": {"dense_chars": -1}}),
+            ("枚举成员被增删", {"enums": {"role": ["establish", "prove"]}})):
+        try:
+            policy.configure(overrides)
+            ok = False
+        except ValueError:
+            ok = True
+        check(f"policy: 非法覆盖被拦（{label}）", ok)
+        policy.reset()
+
+    # ② 生效：把「高密度页」阈值降到 0，删除候选必须出现（旋钮不是装饰）
+    policy.configure({"information_weight": {"dense_chars": 0, "dense_numerals": 0}})
+    dense = intel.information_weight(
+        {"numerals": [{"raw": "21%", "value": 21.0, "unit": "%", "year": False}],
+         "distinct_numerals": 1},
+        {"text": "复购率三年翻倍", "source": "extracted"},
+        "复购率三年翻倍。补贴率从 8% 降到 3%。门店回访集中在收货后 48 小时。")
+    policy.reset()
+    check("policy: 覆盖真的改变判断（dense_chars=0 → 出现删除候选）",
+          bool(dense.get("delete_candidates")),
+          str(dense.get("delete_candidates"))[:120])
+
+    # ② 生效：构图的同分次序可调（改顺序 → 平局换人），不碰算法。
+    # 这一页的分数确实是平局：无主张的命题页让 big_whitespace 与 editorial 各得 1.0，
+    # 谁胜出只由 enums.composition 的顺序决定。
+    tie_kw = dict(composition_grammar="", claim={}, content_len=50)
+    u_tie = {"evidence": "proposition", "distinct_numerals": 0, "numeric_density": 0.0}
+    base = intel.composition_of("explain", u_tie, **tie_kw)["chosen"]
+    policy.configure({"enums": {"composition": list(reversed(
+        policy.enum("composition")))}})
+    flipped = intel.composition_of("explain", u_tie, **tie_kw)["chosen"]
+    policy.reset()
+    restored = intel.composition_of("explain", u_tie, **tie_kw)["chosen"]
+    check("policy: 平局次序可调且可撤销（enums.composition 顺序生效）",
+          base == restored and base != flipped, f"{base} → {flipped} → {restored}")
+
+    # ③ 世界纪律与倾向表不得脱节：derive_world 产出的纪律必须在偏好表里
+    produced = set()
+    for brief, understand in (
+            ({"audience": "内部评审会", "decision": "批准预算"},
+             [intel.understand("复购率 21%")]),
+            ({"audience": "发布会现场", "decision": "推进发布"},
+             [intel.understand("一位釉工在车间 8 小时")] * 2),
+            ({"audience": "董事会", "decision": "批准预算"},
+             [intel.understand("复购率 21%；留存 33%；客单价 58 元；毛利 41%")] * 2)):
+        produced.add(intel.derive_world(brief, understand)["composition_grammar"])
+    missing = sorted(produced - set(policy.enum("composition_grammar_preference")))
+    check("policy: 世界纪律都有构图倾向（新增纪律必须登记，否则静默不生效）",
+          not missing, str(missing))
+
+    # ④ 无死键：每个可调键名都必须出现在读取它的代码里
+    source = "\n".join(p.read_text(encoding="utf-8")
+                        for p in sorted(SCRIPTS.glob("*.py")) if p.name != "policy.py")
+    dead = []
+    for group in policy.summary()["tunable_groups"]:
+        node = policy.group(group)
+        stack = [(group, node)]
+        while stack:
+            path, cur = stack.pop()
+            for key, value in cur.items():
+                if isinstance(value, dict):
+                    stack.append((f"{path}.{key}", value))
+                elif isinstance(value, list):
+                    continue
+                elif key not in source:
+                    dead.append(f"{path}.{key}")
+    check("policy: 没有死键（每个阈值/权重都被代码读取）", not dead, str(dead[:6]))
+
+    # ④b 策略↔契约同源：policy 的枚举与 schema 的 $defs 枚举必须逐项相同。
+    # 两处各写一份枚举是最容易分叉的地方（策略改了、契约没改 → plan 判不出来）。
+    import schema as schema_mod
+    plan_schema = schema_mod.load(ROOT / "schemas" / "plan.schema.json")
+    defs = plan_schema.get("$defs") or {}
+    pairs = (("evidence", "enumEvidence"), ("role", "enumRole"),
+             ("composition", "enumComposition"), ("density", "enumDensity"),
+             ("rhythm", "enumRhythm"), ("emphasis", "enumEmphasis"),
+             ("media", "enumMedia"), ("focus_type", "enumFocusType"),
+             ("provenance", "enumProvenance"), ("claim_source", "enumClaimSource"))
+    mismatched = []
+    for group_key, def_name in pairs:
+        want = set(policy.enum(group_key))
+        got = set((defs.get(def_name) or {}).get("enum") or [])
+        if want != got:
+            mismatched.append(f"{group_key} vs {def_name}: 策略多 {sorted(want - got)} "
+                              f"契约多 {sorted(got - want)}")
+    check("policy: 枚举与契约 $defs 同源（策略改了契约必须跟着改）",
+          not mismatched, "；".join(mismatched[:3]))
+
+    # ④b2 枚举的第二种死法：既没有代码按它排序，也没有契约引用它。
+    # 这种枚举读起来像「已生效的规则」，实际谁都不看。
+    contract_enums = {name: set((defs.get(name) or {}).get("enum") or [])
+                      for name in defs if name.startswith("enum")}
+    contract_members = {frozenset(v) for v in contract_enums.values() if v}
+    source_all = "\n".join(p.read_text(encoding="utf-8")
+                            for p in sorted(SCRIPTS.glob("*.py")) if p.name != "policy.py")
+    orphans = []
+    for name, value in policy.POLICY["enums"].items():
+        if not isinstance(value, list):
+            continue
+        consumed = f'policy.enum("{name}")' in source_all
+        in_contract = frozenset(value) in contract_members
+        if not consumed and not in_contract:
+            orphans.append(f"enums.{name}（既不被读取也不在契约里）")
+    check("policy: 每个枚举要么被代码读取、要么被契约引用（没有死词汇）",
+          not orphans, str(orphans[:4]))
+
+    # ④c 新外化的两组策略真的能改变判断（旋钮不是装饰）：
+    # 把「至少两个点才算形状」提到 4 → 三取值序列不再判 series；
+    # 把「分解至少 4 个不同取值」提到 5 → 两个子项 + 一个整体的真分解失效。
+    # （容差收到 0 不构成可测量的旋钮：实现里还有 1e-9 的浮点护栏，
+    #  「改到 0 会翻转」是伪命题；这里只写真的能翻转的那一个。）
+    seq_item = {"id": "p", "title": "复购率三年翻倍",
+                "content": "2022 年 21%；2023 年 33%；2024 年 44%"}
+    base_ev = intel.understand(f"{seq_item['title']} {seq_item['content']}")["evidence"]
+    policy.configure({"evidence_shapes": {"points_min": 4}})
+    flipped_ev = intel.understand(f"{seq_item['title']} {seq_item['content']}")["evidence"]
+    policy.reset()
+    check("policy: 证据形态阈值可调且可撤销（points_min 4 → 三点序列改判）",
+          base_ev == "series" and flipped_ev != "series", f"{base_ev} → {flipped_ev}")
+
+    decomp = {"id": "p", "title": "单均成本 6.6 元",
+              "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"}
+    base_pw = intel.understand(f"{decomp['title']} {decomp['content']}")["part_whole"]
+    policy.configure({"decomposition": {"min_unique_values": 5}})
+    flipped_pw = intel.understand(f"{decomp['title']} {decomp['content']}")["part_whole"]
+    policy.reset()
+    restored_pw = intel.understand(f"{decomp['title']} {decomp['content']}")["part_whole"]
+    check("policy: 分解判据可调且可撤销（min_unique_values 5 → 真分解失效）",
+          base_pw is True and flipped_pw is False and restored_pw is True,
+          f"{base_pw} → {flipped_pw} → {restored_pw}")
+
+    # ⑤ 策略摘要进 plan：判断可追溯到「当时用的哪一版阈值」
+    summary = policy.summary()
+    check("policy: 摘要含版本/摘要/可调分组",
+          bool(summary.get("version")) and len(str(summary.get("sha256"))) == 64
+          and bool(summary.get("tunable_groups")))
+    policy.reset()
+    check("policy: reset 回到默认摘要（覆盖可撤销）",
+          policy.POLICY["version"] == default)
+
+
+def test_plan_contract(tmp: Path):
+    """数据契约：schemas/plan.schema.json（形状）+ intelligence.validate_plan（含义）。
+
+    schema 只有被**执行**才算契约。这里既验 schema 文件本身（关键字都在校验器
+    白名单里），也验 plan 的两种投影（瘦身 / 完整）都通过，并注入违约样本确认
+    拦截生效——而不是「写了 schema 就宣称有契约」。
+    """
+    import schema as schema_mod
+    import intelligence as intel
+    from vao import run_plan
+
+    schema_path = ROOT / "schemas" / "plan.schema.json"
+    plan_schema = schema_mod.load(schema_path)
+    check("schema: 契约文件自检通过（无未被执行的校验关键字）", bool(plan_schema))
+
+    brief = tmp / "brief.yml"
+    brief.write_text(
+        "audience: 董事会\ndecision: 批准预算\ntension: 现金流\n"
+        "slides:\n"
+        "  - id: s01\n    title: 复购率三年翻倍，靠的是履约不是补贴\n"
+        "    content: 2022 年复购率 21%，2023 年 33%，2024 年 44%；同期补贴率从 8% 降到 3%\n"
+        "  - id: s02\n    title: 请批准 800 万元仓配扩容\n    content: 2025 年 Q3 前完成\n"
+        "  - id: s03\n    title: 谢谢\n    content: 汇报人：财务部\n",
+        encoding="utf-8")
+    lean_path = tmp / "lean.json"
+    full_path = tmp / "full.json"
+    run_plan(str(brief), str(lean_path))
+    run_plan(str(brief), str(full_path), lean=False)
+    for label, path in (("瘦身", lean_path), ("完整", full_path)):
+        problems = schema_mod.validate_file(path, schema_path)
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        problems += intel.validate_plan(bundle)
+        check(f"schema: 真实 plan（{label}投影）通过结构 + 语义契约", not problems,
+              str(problems[:3]))
+
+    data = json.loads(lean_path.read_text(encoding="utf-8"))
+
+    def mutate(fn):
+        copy = json.loads(json.dumps(data))
+        fn(copy)
+        return copy
+
+    samples = {
+        "缺必需字段": mutate(lambda d: d.pop("workflow")),
+        "枚举越界": mutate(lambda d: d["pages"][0]["judgment"]["composition"].update(
+            {"chosen": "masonry"})),
+        "未知字段": mutate(lambda d: d["pages"][0]["judgment"].update({"confidance": 0.9})),
+        "类型错": mutate(lambda d: d["deck"]["type_scale"].update({"title": "44"})),
+        "摘要非十六进制": mutate(lambda d: d["workflow"].update({"brief_file_sha256": "x" * 64})),
+        "页面 id 重复": mutate(lambda d: d["pages"][1].update({"id": d["pages"][0]["id"]})),
+    }
+    caught = {name: bool(schema_mod.validate(bad, plan_schema) + intel.validate_plan(bad))
+              for name, bad in samples.items()}
+    check("schema: 违约样本全部被拦（结构 5 类 + 语义 1 类）", all(caught.values()),
+          str({k: v for k, v in caught.items() if not v}))
+
+    # 语义层自己也要拦：coherence 与页数不对齐、chart_kind 不在 CHART_SPEC
+    semantic = mutate(lambda d: d["deck"]["coherence"]["roles"].pop())
+    check("schema: 语义契约拦 coherence 与页数不对齐",
+          any("不对齐" in m for m in intel.validate_plan(semantic)))
+    chart_bad = mutate(lambda d: d["pages"][0]["judgment"]["focus"].update(
+        {"chart_kind": "sunburst_radial"}))
+    check("schema: 语义契约拦不存在的 chart_kind（不抄 CHART_SPEC 进 schema）",
+          any("chart_kind" in m for m in intel.validate_plan(chart_bad)))
+
+    # 瘦身投影不得把「为什么」弄丢：页内没有就必须在 deck.legend 里
+    lost = mutate(lambda d: (d["deck"].pop("legend", None),
+                             [p["judgment"]["composition"].pop("why", None)
+                              for p in d["pages"]]))
+    check("schema: 语义契约拦「有结论没理由」（页内与 legend 都没有）",
+          any("理由" in m for m in intel.validate_plan(lost)))
+
+    # 策略枚举与 schema 枚举同源：两边各写一份时，必须锁住
+    import policy
+    mapping = {"evidence": "enumEvidence", "role": "enumRole",
+               "composition": "enumComposition", "density": "enumDensity",
+               "rhythm": "enumRhythm", "emphasis": "enumEmphasis",
+               "media": "enumMedia", "focus_type": "enumFocusType"}
+    drift = []
+    for enum_name, def_name in mapping.items():
+        want = set(policy.enum(enum_name))
+        got = set(plan_schema["$defs"][def_name]["enum"])
+        if enum_name in ("composition",):
+            continue        # 构图枚举在 schema 里是集合、在 policy 里附带平局顺序
+        if want != got:
+            drift.append(f"{enum_name}: policy-only={sorted(want - got)} "
+                         f"schema-only={sorted(got - want)}")
+    check("schema: 枚举与 policy 同源（无分叉）", not drift, str(drift))
+
+
+def test_unit_lexicon(tmp: Path):
+    """单位词表单一来源：判断层认的量词 = 断行/编译/预览认的量词。
+
+    两边各维护一份时，「27 处」在判断里是带单位的量、在排版里却可能断成
+    「27｜处」——同一份稿件两套标准。这里双向锁定：
+      a) UNIT_WORDS 里的每个词，判断层必须能把它当单位读出来；
+      b) 判断层量词表里的每个词，必须出现在 UNIT_WORDS（复合词名词除外）。
+    """
+    import primitives as prim
+    import intelligence as intel
+
+    not_read = [w for w in prim.UNIT_WORDS
+                if not (intel._NUM.search("5" + w) or [""]) or
+                not str(intel._NUM.search("5" + w).group(2) or "").startswith(w)]
+    check("units: UNIT_WORDS 里的每个量词，判断层都能读成单位", not not_read,
+          str(not_read[:6]))
+
+    # 复合词名词（「3 个季度」里的「季度」）不是独立单位，单列白名单
+    composite = {"周", "季度", "点", "星期"}
+    literals = {w for w in re.findall(r"[A-Za-z%\uff05\u4e00-\u9fff]{1,6}",
+                                      intel._NUM.pattern)
+                # 只取真正的量词字面量：含汉字，或 pp / % 这类符号单位。
+                # 纯拉丁片段（A-Za-z 字符类、正则里的 Za）不是量词。
+                if re.search(r"[\u4e00-\u9fff]", w) or w in ("pp", "%", "\uff05")}
+    unknown = sorted(w for w in literals
+                     if w not in prim.UNIT_WORDS and w not in composite)
+    check("units: 判断层量词表里的每个词都在 UNIT_WORDS（无第二份词表）",
+          not unknown, str(unknown[:8]))
+    check("units: 「27 处 / 12 项」与单位之间不再断行（绑定不断行空格）",
+          prim.bind_number_units("27 处") == "27\u00a0处"
+          and prim.bind_number_units("12 项") == "12\u00a0项")
+
+
+def test_provenance(tmp: Path):
+    """判断来源三态：作者声明 / 算法推导 / 词表提示，各自可追溯。"""
+    import intelligence as intel
+
+    def judge(item):
+        world = intel.derive_world(BRIEF, [intel.understand(
+            f"{item.get('title','')} {item.get('content','')}".strip())])
+        return intel.page_judgment(item, index=1, total=3, brief=BRIEF,
+                                   world=world, warnings=[])
+
+    plain = intel.provenance_of(judge({"id": "p", "title": "复购率三年翻倍靠履约",
+                                      "content": "2022 年 21%；2023 年 33%；2024 年 44%"}))
+    check("provenance: 推导页的来源全是 judgment",
+          set(plain["decided_by"].values()) == {"judgment"} and not plain["author_declared"])
+
+    declared = intel.provenance_of(judge({"id": "p", "title": "复购率三年翻倍靠履约",
+                                         "content": "2022 年 21%；2023 年 33%；2024 年 44%",
+                                         "role": "compare", "composition": "editorial"}))
+    check("provenance: 作者声明被标为 author 并列出覆盖项",
+          set(declared["author_declared"] or []) >= {"role", "composition"},
+          str(declared["author_declared"]))
+
+    hinted = intel.provenance_of(judge({"id": "p",
+                                       "title": "门店回访：复购发生在收货后第三天",
+                                       "content": "走访 12 家门店"}))
+    check("provenance: 词表提示标为 hint 并进 pending_author（不是判断）",
+          "media" in (hinted["pending_author"] or []) and
+          hinted["decided_by"]["media"] == "hint", str(hinted["decided_by"]))
+
+    exposed = intel.provenance_of({"claim": {"source": "frame"},
+                                   "understanding": {"evidence_source": "author"}})
+    check("provenance: 凭证帧与作者声明的证据形态如实标注",
+          exposed["decided_by"]["claim"] == "frame"
+          and exposed["decided_by"]["evidence"] == "author")
+
+
+def test_mixed_metrics(tmp: Path):
+    """多量并置（mixed_metrics）：认不出形状时说实话，不假装没证据，也不越权下判断。
+
+    这条判据来自一个真实缺口：「订单量 18.6 万单，退货 1.2 万单」两个可核对的量，
+    旧行为判 evidence=none —— 角色退到 persuade、两个数静默变成氛围，作者永远
+    不会被告知「这一页的关系你没写」。
+    """
+    import intelligence as intel
+
+    def judge(item):
+        world = intel.derive_world(BRIEF, [intel.understand(
+            f"{item.get('title','')} {item.get('content','')}".strip())])
+        return intel.page_judgment(item, index=1, total=3, brief=BRIEF,
+                                   world=world, warnings=[])
+
+    two = judge({"id": "p", "title": "订单量回升，退货压力仍在",
+                 "content": "2024 年订单量 18.6 万单，退货 1.2 万单"})
+    check("mixed: 两个不同源的量被记为并置（不是「没有证据」）",
+          two["understanding"].get("mixed_metrics") is True
+          and two["understanding"]["evidence"] == "none", str(two["understanding"]["evidence"]))
+    check("mixed: 不替作者编关系——未决里点名两个量与「补一句关系」",
+          any("18.6 万单" in q and "1.2 万单" in q and "关系" in q
+              for q in (two["open_questions"] or [])), str(two["open_questions"]))
+
+    # 反向护栏：主张本身在讨论这些数字（「相加为百不等于共同分母」）时，页面职责是
+    # 说清为什么不能相加，角色不得被改写成证据页（bench J13 的期望）。
+    caveat = judge({"id": "p", "title": "相加为百不等于共同分母",
+                    "content": "缓解率60%；不良反应40%。同一患者可同时满足两者。"})
+    check("mixed: 讨论数字本身的观点页仍是 persuade（不越权改角色）",
+          caveat["understanding"].get("mixed_metrics") is True
+          and caveat["visual_role"]["role"] == "persuade"
+          and caveat["focus"]["element_role"] == "statement_text",
+          f"{caveat['visual_role']['role']}/{caveat['focus']['element_role']}")
+
+    # 作者已把这一页定为证据页：并置量不共刻度，不给单一主语。
+    declared = judge({"id": "p", "title": "订单量回升，退货压力仍在", "role": "prove",
+                      "content": "2024 年订单量 18.6 万单，退货 1.2 万单"})
+    check("mixed: 作者声明证据页时焦点并置、不挑主语（也不画共用轴线的图）",
+          declared["focus"]["element_role"] == "comparison_field"
+          and declared["focus"]["type"] == "text"
+          and "18.6 万单" in declared["focus"]["why"]
+          and not declared["focus"].get("chart_kind"),
+          str(declared["focus"])[:160])
+
+    # 反向护栏：有形状的页不许被记成并置（时间序列 / 构成 / 两端对照）。
+    series = judge({"id": "p", "title": "复购率三年翻倍靠履约",
+                    "content": "2022 年复购率 21%；2023 年 33%；2024 年 44%"})
+    whole = judge({"id": "p", "title": "履约成本是单均成本的主体",
+                   "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"})
+    check("mixed: 已有形状的页不被记成并置（序列/构成）",
+          not series["understanding"].get("mixed_metrics")
+          and not whole["understanding"].get("mixed_metrics"),
+          f"series={series['understanding'].get('mixed_metrics')} "
+          f"whole={whole['understanding'].get('mixed_metrics')}")
+
+
+def test_share_and_total(tmp: Path):
+    """份额与分解：谁是整体、谁是子项，判断理由必须与数据一致。
+
+    这两条判据此前各有一次「说反了」的实测：
+      · 份额页把下一个数字当整体 ——「「428 万」是子集，同屏写清「51%」这个整体」；
+      · 真分解页把整体当子集 ——「「6.6 元」是已经发生的子集」。
+    读者按这类理由排版，得到的就是一张说反的图。
+    """
+    import intelligence as intel
+
+    def judge(item):
+        world = intel.derive_world(BRIEF, [intel.understand(
+            f"{item.get('title','')} {item.get('content','')}".strip())])
+        return intel.page_judgment(item, index=2, total=4, brief=BRIEF,
+                                   world=world, warnings=[])
+
+    share = judge({"id": "p", "title": "三类成本结构",
+                   "content": "履约成本 11.2 元，营销成本 4.1 元，履约成本占总成本 61%"})
+    check("share: 单句份额陈述（占+分母）判成构成，并记下分母标签",
+          share["understanding"]["evidence"] == "part_whole"
+          and (share["understanding"].get("share_of") or {}).get("whole_label") == "总成本"
+          and share["focus"]["element_role"] == "ratio_main",
+          str(share["understanding"].get("share_of")))
+    check("share: 焦点理由是「分子是分母的 61%」，不把百分比当整体",
+          "总成本" in share["focus"]["why"] and "61%" in share["focus"]["why"]
+          and "整体」" not in share["focus"]["why"].replace("不把整体→子集", ""),
+          share["focus"]["why"])
+
+    total = judge({"id": "p", "title": "单均成本可以压到 6.6 元",
+                   "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"})
+    check("total: 真分解记下整体值，理由把 6.6 元说成整体而不是子集",
+          total["understanding"].get("total_value") == 6.6
+          and "6.6 元」是几个子项相加得到的整体" in total["focus"]["why"],
+          total["focus"]["why"])
+
+    paren = judge({"id": "p", "title": "投资拆解",
+                   "content": "一期投入 4800 万元（设备 3200／改造 1100／数字化 500）"})
+    check("total: 括号内裸数继承总量单位后，分解才成立",
+          paren["understanding"]["evidence"] == "part_whole"
+          and paren["understanding"].get("total_value") == 4800.0,
+          f"{paren['understanding']['evidence']}/{paren['understanding'].get('total_value')}")
+
+    # 反向护栏：「占比」不是分母名；两个不相干的百分比不许被读成构成（bench T02）。
+    guard = intel.understand("经营指标 研发占比25%，客户满意度75%")
+    check("share: 「占比」不构成分母标签，两个百分比不判构成",
+          guard["evidence"] != "part_whole" and not guard.get("share_of"),
+          f"{guard['evidence']}/{guard.get('share_of')}")
+
+    # 数字解析：括号内的量、粘连碎片、枚举前缀三种形状各归各位。
+    parsed = {"paren": [n["raw"] for n in intel.numerals("（设备 3200／改造 1100／数字化 500）")],
+              "glue": [n["raw"] for n in intel.numerals("1,2401.8 倍")],
+              "enum": [n["raw"] for n in intel.numerals("1）汇率波动；2）现金流")],
+              "three_digit": [n["raw"] for n in intel.numerals("数字化 500）")]}
+    check("numerals: 括号内的量保留、粘连碎片与序号剔除",
+          parsed["paren"] == ["3200", "1100", "500"] and parsed["glue"] == []
+          and parsed["enum"] == [] and parsed["three_digit"] == ["500"], str(parsed))
+
+
+def test_contract_drift(tmp: Path):
+    """契约漂移：真实产出物里的每个字段，`schemas/plan.schema.json` 都必须声明。
+
+    上一轮踩过一次：`understanding` 新增 `mixed_metrics` 后瘦身投影被 `anyOf`
+    判成「形状不对」，**是 CI 才发现的**。顺序错了——应该由产出物去问契约。
+    这里用真实判断（57 个基准案例 + 全部冻结集 + 四个 brief 的瘦身/完整投影）
+    走一遍 `contract_gaps`：
+      ① 封闭对象里出现未声明字段 → 契约漏登记（红）；
+      ② 契约声明了却从来没被产出 → 死字段（红，等于给作者看的假接口）。
+    """
+    import schema as schema_mod
+    import intelligence as intel
+    from vao import run_plan
+
+    plan_schema = schema_mod.load(ROOT / "schemas" / "plan.schema.json")
+    BRIEF_LOCAL = {"audience": "内部评审会", "decision": "批准下一步预算"}
+
+    # ① 逐页判断：把基准案例与全部冻结集都当成「真实产出物」
+    pages, unders, gaps = [], [], []
+    for path in sorted((SCRIPTS / "json").glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for case in data.get("cases") or []:
+            text = f"{case.get('title', '')} {case.get('content', '')}".strip()
+            world = intel.derive_world(BRIEF_LOCAL, [intel.understand(text)])
+            judged = intel.page_judgment(
+                {"id": "p", "title": case.get("title", ""), "content": case.get("content", "")},
+                index=case.get("index", 1), total=case.get("total", 3),
+                brief=BRIEF_LOCAL, world=world, warnings=[])
+            pages.append((f"{path.stem}/{case['id']}", judged))
+            unders.append((f"{path.stem}/{case['id']}", judged["understanding"]))
+    judgment_def = plan_schema["$defs"]["judgment"]
+    for name, judged in pages:
+        for gap in schema_mod.contract_gaps(judged, judgment_def, root=plan_schema):
+            gaps.append(f"{name}: {gap}")
+    check("contract: 逐页判断没有契约未声明的字段（封闭对象不得长出野字段）",
+          not gaps, "；".join(gaps[:3]))
+
+    # ② 反向：契约声明的字段必须真的会被产出（死字段 = 假接口）。
+    # 覆盖用「真实产出物」而不是「猜」：整份 plan 的完整投影（含 think 才加的
+    # rhythm/emphasis/provenance）+ 逐页判断 + 三条只在该分支出现的探针
+    # （作者声明证据形态、单句份额陈述、分解整体值）。
+    full = tmp / "drift_cover.json"
+    run_plan(str(ROOT / "templates" / "brief.yml"), str(full), lean=False)
+    bundle = json.loads(full.read_text(encoding="utf-8"))
+    probes = [
+        # 作者声明证据形态 → understanding.evidence_source
+        {"id": "probe1", "title": "复购率三年翻倍", "evidence": "series",
+         "content": "2022 年 21%；2023 年 33%；2024 年 44%"},
+        # 单句份额陈述 → understanding.share_of
+        {"id": "probe2", "title": "三类成本结构",
+         "content": "履约成本 11.2 元，营销成本 4.1 元，履约成本占总成本 61%"},
+        # 真分解 → understanding.total_value
+        {"id": "probe3", "title": "单均成本 6.6 元",
+         "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"},
+    ]
+    for item in probes:
+        world = intel.derive_world(BRIEF_LOCAL, [intel.understand(
+            f"{item['title']} {item['content']}")])
+        judged = intel.page_judgment(item, index=2, total=4, brief=BRIEF_LOCAL,
+                                     world=world, warnings=[])
+        pages.append((item["id"], judged))
+        unders.append((item["id"], judged["understanding"]))
+
+    declared = schema_mod.declared_properties(plan_schema, "understandingFull")
+    seen = {key for _n, u in unders for key in u}
+    seen |= {key for p in bundle["pages"] for key in p["judgment"]["understanding"]}
+    check("contract: understanding 的声明字段都有真实产出（没有死字段）",
+          declared <= seen, f"从未产出：{sorted(declared - seen)}")
+    declared_j = schema_mod.declared_properties(plan_schema, "judgment")
+    seen_j = {key for _n, judged in pages for key in judged}
+    seen_j |= {key for p in bundle["pages"] for key in p["judgment"]}
+    check("contract: judgment 的声明字段都有真实产出（可选字段也至少出现过一次）",
+          declared_j <= seen_j, f"从未产出：{sorted(declared_j - seen_j)}")
+
+    # ③ 整份 plan：模板 brief 的瘦身/完整两种投影都不许有未声明字段
+    plan_gaps = []
+    for label, lean in (("瘦身", True), ("完整", False)):
+        out = tmp / f"drift_{label}.json"
+        run_plan(str(ROOT / "templates" / "brief.yml"), str(out), lean=lean)
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        plan_gaps += [f"{label}: {g}" for g in schema_mod.contract_gaps(bundle, plan_schema)]
+    check("contract: 真实 plan（两种投影）没有契约未声明的字段",
+          not plan_gaps, "；".join(plan_gaps[:3]))
+
+    # ④ 探测器本身要能报警：注入一个野字段必须被指出路径
+    bundle = json.loads((tmp / "drift_完整.json").read_text(encoding="utf-8"))
+    bundle["pages"][0]["judgment"]["understanding"]["brand_new_flag"] = True
+    caught = schema_mod.contract_gaps(bundle, plan_schema)
+    check("contract: 探测器能报警（注入野字段 → 报出完整路径）",
+          len(caught) == 1 and "brand_new_flag" in caught[0], str(caught[:2]))
+
+
+def test_docs_policy_drift(tmp: Path = None):
+    """Markdown 管判断协议，数值只住 policy.py：文档里不许再写一遍阈值。
+
+    阈值写进文档就必然与代码分叉（改了文档不改代码，或反过来）。这条钉子只看
+    **可调策略的数值**在文档正文里是否出现：出现即视为「文档在替策略发言」。
+    例外：明确标注为示例的 plan 片段（`policy.measure.max_cjk` 这类键名引用），
+    以及版本号/年份/日期。
+    """
+    import policy
+    import re
+
+    numbers: dict[str, str] = {}
+
+    def collect(node, path=""):
+        for key, value in node.items():
+            where = f"{path}.{key}" if path else key
+            if isinstance(value, dict):
+                collect(value, where)
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                numbers.setdefault(str(value).rstrip("0").rstrip(".")
+                                   if isinstance(value, float) else str(value), where)
+
+    # 允许的巧合：文档里的这个数**不是**判断阈值（算术事实 / 单位换算 / 执行规则 /
+    # 超时时限）。每一行都要写清理由——新增一条就得回答「它为什么不是策略」。
+    # 按「文件 + 同行片段」定位，不按裸数字：同一个 0.75 既是换算系数又曾是策略权重。
+    ALLOWED = (
+        ("SKILL.md", "相加 100% 不证明共同分母", "算术事实：百分比加总为 100 不是判据"),
+        ("contract.md", "乘 0.75 转 pt", "单位换算：画布 px → PPTX pt"),
+        ("contract.md", "覆盖 ≥60% 画布", "执行层：guard 的伪背景判据，不是判断阈值"),
+        ("contract.md", "`--deadline`（默认 120s）", "执行层：超时默认值"),
+        ("contract.md", "让出 0.1 个字宽", "执行层：窄栏折行余量（verify.GUARD_NARROW_*）"),
+    )
+
+    def _allowed(doc_name: str, line_text: str) -> bool:
+        return any(doc_name == f and snippet in line_text for f, snippet, _why in ALLOWED)
+
+    collect(policy.POLICY)
+    # 扫描范围：判断协议与执行契约，以及维护台账——三者都**不该**替策略发言。
+    # README / CHANGELOG 不在其列：它们是变更记录与门面，允许引用当时的数字。
+    docs = [ROOT / "SKILL.md", ROOT / "MAINTENANCE.md"] \
+        + sorted((ROOT / "references").glob("*.md"))
+    offenders = []
+    for doc in docs:
+        text = doc.read_text(encoding="utf-8")
+        for raw, where in numbers.items():
+            if not raw or len(raw) < 2:          # 单个数字（0/1/2）不作为阈值指纹
+                continue
+            # 阈值指纹要**独立成词**：`G20`（案例编号）与 `3,100`（千分位）里的数字
+            # 不是阈值，贴着字母/逗号/小数点的一律不算。
+            for match in re.finditer(
+                    rf"(?<![\d.,A-Za-z_]){re.escape(raw)}(?![\d.A-Za-z_])", text):
+                line = text.count("\n", 0, match.start()) + 1
+                context = text.splitlines()[line - 1]
+                # 键名引用（policy.measure.max_cjk）不算文档在替策略发言
+                if "policy." in context or "policy." in text[max(0, match.start() - 40):match.start()]:
+                    continue
+                if _allowed(doc.name, context):
+                    continue
+                offenders.append(f"{doc.name}:{line} 出现 {raw}（policy.{where}）")
+    check("docs: 文档正文不重复策略阈值（数值只有 policy.py 一份）",
+          not offenders, "；".join(offenders[:4]))
+
+
+def test_brief_contract(tmp: Path):
+    """brief 输入契约：作者唯一的手写输入，笔误必须当场拦下。
+
+    `audiance` 写错一个字母不会报错，只会让整份稿的受众变成 None——收束页、张力、
+    媒介必要性全部跟着失准，而作者以为「我明明写了」。plan 有契约、元素字段有
+    guard 的「疑似写错」提示，唯独输入边界此前没有。
+    """
+    import schema as schema_mod
+    import intelligence as intel
+    from vao import run_plan
+
+    path = schema_mod.contract_path("brief.schema.json", required=True)
+    doc = schema_mod.load(path)
+    check("brief: 契约文件自检通过（每个关键字都被执行）", bool(doc))
+
+    # ① 仓库自带的真实 brief 必须全部合法（契约不能把合法输入挡在门外）
+    rejected = []
+    for brief_file in sorted((ROOT / "templates").glob("*.yml")) + \
+            sorted(Path("/home/user/work").glob("*.yml")):
+        try:
+            brief = intel.load_brief(brief_file)
+        except Exception as exc:                       # noqa: BLE001 - 探针要报告原文
+            rejected.append(f"{brief_file.name}: 读取失败 {exc}")
+            continue
+        errors = intel.validate_brief(brief)["errors"]
+        if errors:
+            rejected.append(f"{brief_file.name}: {errors[0]}")
+    check("brief: 仓库自带 brief 全部通过输入契约（含 docs 里声明的可用键）",
+          not rejected, "；".join(rejected[:3]))
+
+    base = {"audience": "董事会", "decision": "批准预算",
+            "slides": [{"id": "s01", "title": "复购率三年翻倍",
+                        "content": "2022 年 21%；2023 年 33%；2024 年 44%"}]}
+    check("brief: 合法 brief 无错无警", not intel.validate_brief(base)["errors"]
+          and not intel.validate_brief(base)["warnings"], str(intel.validate_brief(base)))
+
+    # ② 结构违约要拦：缺 slides / 页缺 id / id 重复 / 类型错 / 枚举外取值
+    cases = (
+        ("缺 slides", {"audience": "董事会"}),
+        ("页缺 id", {**base, "slides": [{"title": "x"}]}),
+        ("id 重复", {**base, "slides": base["slides"] * 2}),
+        ("title 类型错", {**base, "slides": [{"id": "s01", "title": 3}]}),
+        ("role 枚举外", {**base, "slides": [{**base["slides"][0], "role": "convince"}]}),
+    )
+    for label, brief in cases:
+        got = intel.validate_brief(brief)
+        check(f"brief: 结构违约被拦（{label}）", bool(got["errors"]), str(got["errors"][:2]))
+
+    # ③ 拼写：近邻键（编辑距离很小）→ 拦；远键（作者注解）→ 只警告
+    typo = intel.validate_brief({**base, "audiance": "董事会"})
+    check("brief: 疑似写错的键名被拦并给出候选",
+          any("audiance" in e and "audience" in e for e in typo["errors"]), str(typo["errors"]))
+    annotation = intel.validate_brief({**base, "note_for_me": "先卖个关子"})
+    check("brief: 对不上的未知键只告警（作者注解可留）",
+          not annotation["errors"] and any("note_for_me" in w for w in annotation["warnings"]),
+          str(annotation["warnings"]))
+    slide_typo = intel.validate_brief({**base, "slides": [{"id": "s01", "title": "x",
+                                                           "conten": "y"}]})
+    check("brief: 页级疑似写错同样拦（conten → content）",
+          any("conten" in e and "content" in e for e in slide_typo["errors"]),
+          str(slide_typo["errors"]))
+
+    # ④ 未知键的候选表来自契约而不是代码里的第二份清单
+    top, slide = intel._brief_key_sets()
+    check("brief: 已知键取自契约（不在代码里抄第二份清单）",
+          {"audience", "decision", "slides", "avoid"} <= top
+          and {"id", "title", "content", "asset", "safe_area"} <= slide,
+          f"top={sorted(top)}")
+
+    # ⑤ 端到端：写错的 brief 在 plan 阶段退出 2，且不产出 plan.json
+    bad = tmp / "bad_brief.yml"
+    bad.write_text("audiance: 董事会\ndecision: 批准预算\nslides:\n"
+                   "- id: s01\n  title: 复购率翻倍\n  conten: 2022 年 21%\n",
+                   encoding="utf-8")
+    out = tmp / "bad_plan.json"
+    proc = run_vao("plan", str(bad), "--out", str(out))
+    text = (proc.stdout or "") + (proc.stderr or "")
+    check("brief: 写错的 brief 在 plan 阶段退出 2，且不落盘 plan.json",
+          proc.returncode == 2 and not out.exists() and "疑似写错" in text, text[-200:])
+
+
 def test_tool_portability(tmp: Path):
     """仓库自带工具不许写死绝对路径——换台机器/进 CI 就废。"""
     import re as _re
@@ -5845,6 +6532,25 @@ def test_docs():
     check("docs: 文档里没有退役模块名与旧概念",
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
+
+
+def test_guard_audit(tmp: Path):
+    """案例守不守判据：把 policy 判据一条条调坏，必须有人报警。
+
+    「57/57 通过」证明的是广度（每个案例钉住一个期望），不是深度（判据坏了有没有人管）。
+    这条检查把后者变成回归项：任何新判据只要没有案例能抓住，CI 就红。
+    """
+    import bench
+    result = bench.guard_audit(ROOT / "scripts" / "json" / "generalization_cases_r6.json")
+    check("guards: r6 判据守门集无人漏守且基线无红",
+          result["ok"], f"unguarded={result['unguarded']} red={result['baseline_red']}")
+    check("guards: 每条 policy 判据至少有一个案例抓得住",
+          not result["unguarded"], str(result["unguarded"]))
+    # 反向对照：老的 57 例判断基准集**不**守这些判据（否则 r6 是重复建设）。
+    old = bench.guard_audit(ROOT / "scripts" / "json" / "judgment_cases.json")
+    check("guards: r6 提供了判断基准集没有的判据守卫（不是重复建设）",
+          len(old["unguarded"]) > len(result["unguarded"]),
+          f"judgment={len(old['unguarded'])} r6={len(result['unguarded'])}")
 
 
 def main():
@@ -5885,7 +6591,17 @@ def main():
                          ("ghost_chart_color", test_ghost_chart_color_single_source),
                          ("case004_regressions", test_case004_regressions),
                          ("plan_compact", test_plan_compact),
-                         ("tool_portability", test_tool_portability)):
+                         ("policy_contract", test_policy_contract),
+                         ("plan_contract", test_plan_contract),
+                         ("unit_lexicon", test_unit_lexicon),
+                         ("provenance", test_provenance),
+                         ("mixed_metrics", test_mixed_metrics),
+                         ("share_and_total", test_share_and_total),
+                         ("contract_drift", test_contract_drift),
+                         ("brief_contract", test_brief_contract),
+                         ("docs_policy", test_docs_policy_drift),
+                         ("tool_portability", test_tool_portability),
+                         ("guard_audit", test_guard_audit)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

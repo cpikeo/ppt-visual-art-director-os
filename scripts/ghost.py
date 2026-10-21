@@ -71,6 +71,8 @@ def font_substitutions() -> dict:
     """声明家族 → 本机实际用来预览的字面（只记真的替换，不记精确解析）。"""
     return dict(_FONT_SUBSTITUTIONS)
 # 兼容导出：selftest 的字体身份探针按此别名覆盖候选表。
+# 这两个别名是 selftest 的注入缝：patch.dict 改的是同一份字典对象（primitives 里的
+# 那个），所以换字体候选真的会改变预览计算。不是死导入，删掉会让 6 条字体回退检查失效。
 from primitives import (PREVIEW_FONT_CANDIDATES as _FONT_CANDIDATES,  # noqa: F401
                         PREVIEW_FONT_BOLD_CANDIDATES as _FONT_BOLD_CANDIDATES,  # noqa: F401
                         preview_font_names as _font_names,
@@ -325,7 +327,6 @@ def _fill(img: Image.Image, box: tuple[int, int, int, int], ctx: RenderContext,
 # 禁则字符串的唯一来源在 primitives（与 intelligence 的断行建议共用一份）；
 # 本层只留历史名，逐字再抄一份迟早与判断层分叉。
 _NO_LINE_START = NO_LINE_START_CJK
-_NO_LINE_END = NO_LINE_END_CJK
 # 禁则 / 单位表 / 数字 token / 折行算法的唯一实现在 primitives：guard 与预览共用它，
 # 预览只提供「一个字有多宽」这一件事。
 from primitives import (wrap_lines as _shared_wrap,      # noqa: E402

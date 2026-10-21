@@ -47,6 +47,61 @@ spec = {
 
 **来源区**：`source_zone` 内只放 `role ∈ {source, method, metadata}` 的文字，其他对象与之相交即 `SOURCE_COLLISION`。**全幅影像上叠字**：图元素声明 `layer: "background"` 且覆盖 ≥60% 画布（伪背景仍拦），其上文字按正常容量与安全区纪律落位。**`safe_area` 是执行项，不是提示词**：页上写 `safe_area: {x, y, width, height}`（0–1 归一化，相对整幅背景图）即视为压字区契约——其上每个文字元素的锚点（横向按 `align`、纵向按 `anchor`，缺省左/上）必须落在区内，越界报 `safe_area`；页上不写则由资产清单同名字段继承，两处都写却不一致直接 BLOCK（图按 A 留白、字按 B 排）。`{}` = 本页不压字；`role ∈ {source, method, metadata}` 的页脚小字与显式 `safe_area_exempt: true` 的元素不在此列。
 
+## 策略与契约（P1）
+
+**两道契约闸门，一进一出**：
+
+| 边界 | 契约文件 | 管什么 | 违约表现 |
+|---|---|---|---|
+| 输入（brief） | `../schemas/brief.schema.json` | deck 级与页级字段的类型/枚举/必需；已知键清单的唯一来源 | `plan` **退出 2**，不落盘 plan.json |
+| 输出（plan.json） | `../schemas/plan.schema.json` | plan 投影的形状/类型/必需/枚举 | 「`plan`」写盘后校验，**退出 2** |
+
+- **输入边界**：`audience` 写成 `audiance` 不会报错，只会让整份稿的受众变成 None——收束页、
+  张力、媒介必要性全部跟着失准，而作者以为「我明明写了」。所以未知键按编辑距离分流：
+  与已知键足够相近（相似度阈值见 `intelligence._near_miss`）判「疑似写错」→ **拦**；否则当作作者注解 → 只告警（与 guard 对
+  未知元素字段的口径一致）。已知键清单从契约文件读，不在代码里抄第二份。
+- **契约漂移**：`schema.contract_gaps(产出物, 契约)` 拿真实产出物去问契约「你都声明了吗」。
+  上一轮的实测缺口（`understanding.mixed_metrics` 加了却没登记，瘦身投影被 `anyOf` 判成
+  形状不对）就是顺序错了——**先登记再说**。`selftest.test_contract_drift` 用 57 个基准案例
+  + 五套冻结集 + 真实 plan 两种投影跑这条，并反向验「契约声明了却从不产出」的死字段。
+- **契约路径**：`schema.contract_path(name)` 统一解析（`VAO_SCHEMA_DIR` → 仓库布局 → 当前
+  目录）。找不到时**必须把「契约没跑」说出口**（plan 打印 VAO warning），不静默通过。
+
+**三层各有唯一 owner，不许互相抄**：
+
+| 层 | 文件 | 管什么 | 怎么改 |
+|---|---|---|---|
+| 判断协议 | `../SKILL.md` §2–3 | 原则、判断链、反例、回退、验收口径 | 改散文；数值不写在这里 |
+| 可调策略 | `../scripts/policy.py` ＋ `--policy <file.json>` | 权重、阈值、枚举、同分顺序、映射 | 只写要改的键，深度合并；未知键/错类型/负阈值/改枚举成员**直接报错**（退出 2） |
+| 数据契约 | `../schemas/plan.schema.json` ＋ `scripts/schema.py` | 字段、类型、必需、合法枚举 | 改 schema 后跑 `selftest.py`（含枚举与 policy 同源校验） |
+
+- **plan 落盘即校验**：`vao.py plan` 写完 plan 后读回磁盘那份字节，先跑结构契约
+  （`schemas/plan.schema.json`，零依赖校验器），再跑语义契约（`intelligence.validate_plan`）。
+  违约即退出 2，不产生「半份合法」的 plan。语义契约查的是 schema 表达不了的东西：
+  页数与 `coherence` 三条序列对齐、`focus.chart_kind` 在 `primitives.CHART_SPEC` 里
+  （合法图表类型不抄进 schema）、`numerals`/`must_place` 的瘦身与完整形状不混用、
+  以及「每条判断理由要么在页内、要么在 `deck.legend`」。
+- **契约关键字必须被真正执行**：`schema.py` 只实现一个 JSON Schema 子集，schema 里出现
+  未支持的关键字（例如写了 `minItems` 却没实现）会**拒绝加载**，不静默忽略。
+- **可调策略的十个分组**（`scripts/policy.py`）：`enums`（合法取值与**同分顺序**）、
+  `composition`（构图评分项）、`information_weight`（密度与删除候选）、`evidence_shapes`
+  （证据形态的分数项与阈值）、`decomposition`（子项相加的算术判据）、`focus`（主语/支撑）、
+  `measure`（行长可读域）、`chart_kind`（图表类型阈值）、`production`（生产规格）、
+  `output`（plan 体积）。**算法不在这里**：判据、正则、语义、排序、决胜、理由组装都在
+  `intelligence.py`；策略只回答「多少算多」。
+- **为什么策略覆盖不再配一份 JSON Schema**：覆盖文件的合法键集合 = 默认策略的键集合，而
+  这是「键必须存在」的约束——JSON Schema 表达不了（它只能枚举键名，等于把默认策略抄第二
+  份）。运行期 `policy.validate` 逐键查存在性、类型、负值与枚举成员，比静态 schema 严格，
+  也保证只有一份事实来源。
+- **策略可追溯**：plan 的 `deck.policy` 记下 `version / sha256 / overrides / tunable_groups`。
+  要复盘「当时用的哪一版阈值」看它；`--policy` 覆盖必须整份生效，不做部分回落。
+- **瘦身与完整是两种合法投影**：`numerals` 是 `raw` 字符串或完整对象、`rejected` 是名字或
+  `{option, why_not}`、`must_place` 是 `"role:type"` 或对象。schema 用 `anyOf` 表达，
+  语义契约禁止同一页混用。
+- **判断来源**：每页 `judgment.provenance.decided_by` 标明 claim/evidence/role/focus/
+  composition/media 各自是 `author`（作者声明）／`judgment`（算法推导）／`hint`（词表提示，
+  未决）／`decision`（由决定类型推导）。`pending_author` 列出的项必须由作者裁决后才能进成稿。
+
 ## 作者逃生口
 
 - 逐页 `eyebrow: "…"` 压过派生（跨页锚位置仍须全 deck 一致）。

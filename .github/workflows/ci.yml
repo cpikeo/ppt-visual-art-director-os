@@ -62,8 +62,11 @@ jobs:
         run: |
           python - <<'PYTEST'
           import pathlib, subprocess, sys
+          # r5 是 P2 的判断回归集（跨指标凑和、真分解、时间点、否定谓语、量词完整）。
+          # 新增冻结集必须同时登记在这里：只加文件不登记 = 没人跑。
           required = {"generalization_cases.json", "generalization_cases_r2.json",
-                      "generalization_cases_r3.json", "generalization_cases_r4.json"}
+                      "generalization_cases_r3.json", "generalization_cases_r4.json",
+                      "generalization_cases_r5.json", "generalization_cases_r6.json"}
           found = {p.name for p in pathlib.Path("scripts/json").glob("generalization_cases*.json")}
           missing = required - found
           if missing:
@@ -72,6 +75,11 @@ jobs:
               subprocess.run([sys.executable, "scripts/unseen_bench.py", "--cases", str(cases)], check=True)
           PYTEST
         shell: bash
+
+      - name: 判据守门审计（每条 policy 判据都必须有案例守着）
+        # 把判据调坏 → 谁变红。零报警的判据是覆盖缺口，不能算「没问题」；
+        # 这也是删案例前的必查项：只有零守卫的案例才可能被合并。
+        run: python scripts/bench.py --guard-audit --cases scripts/json/generalization_cases_r6.json
 
       - name: Whitespace check
         if: matrix.os == 'ubuntu-latest'
@@ -92,6 +100,54 @@ jobs:
 
       - name: Plan a deck from a brief (THINK)
         run: python scripts/vao.py plan templates/brief.yml --out /tmp/plan.json
+
+      - name: 数据契约（plan.schema.json + 策略覆盖）
+        # 两条红线：plan 落盘产物必须通过结构 + 语义契约；策略覆盖写错键必须报错，
+        # 而不是静默按默认值跑。此处独立于 selftest，防止契约只在单测里被覆盖。
+        run: |
+          python - <<'PY'
+          import json, pathlib, subprocess, sys, tempfile
+          sys.path.insert(0, "scripts")
+          from schema import load, validate
+          import intelligence as intel
+          d = pathlib.Path(tempfile.mkdtemp())
+          (d / "b.yml").write_text(
+              "audience: 董事会\ndecision: 批准预算\ntension: 现金流\n"
+              "slides:\n  - id: s01\n    title: 复购率三年翻倍靠履约\n"
+              "    content: 2022 年 21%；2023 年 33%；2024 年 44%\n", encoding="utf-8")
+          out = d / "plan.json"
+          subprocess.run([sys.executable, "scripts/vao.py", "plan", str(d / "b.yml"),
+                          "--out", str(out)], check=True)
+          schema_path = pathlib.Path("schemas/plan.schema.json")
+          problems = validate(json.loads(out.read_text(encoding="utf-8")), load(schema_path))
+          problems += intel.validate_plan(json.loads(out.read_text(encoding="utf-8")))
+          assert not problems, problems
+          (d / "bad_policy.json").write_text('{"measure": {"max_cjk_typo": 40}}',
+                                             encoding="utf-8")
+          bad = subprocess.run([sys.executable, "scripts/vao.py", "plan", str(d / "b.yml"),
+                                "--out", str(d / "p2.json"),
+                                "--policy", str(d / "bad_policy.json")],
+                               capture_output=True, text=True, encoding="utf-8")
+          assert bad.returncode == 2, (bad.returncode, bad.stdout, bad.stderr)
+          # 输入契约：写错一个键名必须当场拦下（audiance → audience），
+          # 而不是让整份稿的受众静默变成 None。
+          (d / "bad_brief.yml").write_text(
+              "audiance: 董事会\\ndecision: 批准预算\\nslides:\\n"
+              "- id: s01\\n  title: 复购率翻倍\\n  conten: 2022 年 21%\\n",
+              encoding="utf-8")
+          typo = subprocess.run([sys.executable, "scripts/vao.py", "plan",
+                                 str(d / "bad_brief.yml"), "--out", str(d / "p3.json")],
+                                capture_output=True, text=True, encoding="utf-8")
+          assert typo.returncode == 2, (typo.returncode, typo.stdout, typo.stderr)
+          assert not (d / "p3.json").exists()
+          # 契约漂移：真实产出物里不得出现契约没声明的字段（本轮之前的实测缺口）
+          from schema import contract_gaps, contract_path
+          plan_doc = json.loads(out.read_text(encoding="utf-8"))
+          gaps = contract_gaps(plan_doc, __import__("schema").load(
+              contract_path("plan.schema.json", required=True)))
+          assert not gaps, gaps[:3]
+          print("contract ok")
+          PY
 
       - name: Confirm spec mode stays free of python-pptx (红线)
         # 唯一入口 vao.py check --mode spec：判定但不编译。
