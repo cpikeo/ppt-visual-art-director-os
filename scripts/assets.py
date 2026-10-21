@@ -620,6 +620,9 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
         light["ink_lines"] = list(INK_DISCIPLINE)
     if photo:
         # 介质说明不再接管光照：作者/世界的光均沿同一优先级结算。
+        # 这里取 [1:]（去掉 illumination 那句）是刻意的：既有光语（作者声明或
+        # 世界推导）一旦存在，再补一句通用光照就是同一件事说两遍，还可能与之
+        # 矛盾；只有完全无光语的摄影卡（下面的 photo_discipline 分支）才用整组。
         light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE[1:])
     if declared:
         # 作者写了光照句子：逐字赢，能量不得触碰（不着一字）；
@@ -757,7 +760,12 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
 
     # 角色纪律：背景优先判断 空间 → 光 → 材质 → 负空间；插图优先判断 对象 → 轮廓 →
     # 尺度 → 位置 → 与文字的关系。同一张图只走其中一条链。
-    has_subject = bool(str(card.get("subject") or "").strip())
+    # subject 是**列表**：`str(list)` 对任何列表都非空，`or ""` 只挡住 `[]`，
+    # 挡不住 `[""]` / `["  "]`——空串列表仍会注入「作者声明的主体坐在环境里」，
+    # 而画面上一个字的主体都没有（实测：subject=[""] 的 background 卡拿到
+    # BACKGROUND_SUBJECT_DISCIPLINE，与同一提示词里的「不设主角」自相矛盾）。
+    # 判据只能是「有没有一句非空的话」。
+    has_subject = any(str(s).strip() for s in _as_list(card.get("subject")))
     if asset_type == "background" and has_subject:
         segments.extend(BACKGROUND_SUBJECT_DISCIPLINE)
     else:
@@ -975,7 +983,7 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
     except (TypeError, ValueError):
         requested = ASSET_QC_MAX_RETRIES
     retry_cap = min(requested, ASSET_QC_MAX_RETRIES)
-    checks = qc.get("checks") or [] if isinstance(qc, dict) else []
+    checks = (qc.get("checks") or []) if isinstance(qc, dict) else []
     issues = [c for c in checks if isinstance(c, dict) and c.get("status") == "issue"]
     # 「主体贴边被裁」这条判据为**具象主体**而设：产品、人物、建筑被画框切掉一眼就是错的。
     # 而空间资产的画面边界本来就该由材质与光填满——宣纸撕边、石面颗粒、雾的过渡延伸
@@ -1027,6 +1035,17 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
 
 
 # 安全区定义：文字通常落在声明锚点的对面/一侧（留白区），按锚点取一块矩形。
+def _has_alpha(image) -> bool:
+    """这张图是否**带透明通道**（模式或 info.transparency）。
+
+    单一权威（v9.37.1）：工作域要合成底色、原生安全区纹理也要合成底色，两条
+    路径问的是同一件事，就不能各写一份内联判断——其中一条漏了，透明图的两个
+    口径立刻分叉（原生按不可见的 RGB 量纹理，工作域按合成后的亮度量）。
+    只读头部与模式，不触像素：调用点常在解码之前。
+    """
+    return image.mode in ("RGBA", "LA", "PA", "P") or "transparency" in image.info
+
+
 def _hard_seam_check(arr, alpha):
     """硬缝 / 假留白面板：满高度列均值阶跃 + 阶跃一侧整带几乎无方差。
 
@@ -1036,6 +1055,10 @@ def _hard_seam_check(arr, alpha):
     """
     import numpy as np          # 懒加载：纯组装路径不引入像素依赖（与 image_qc 同律）
     _STEP_MIN, _FLAT_MAX, _SHARE_MIN = 6.0 / 255.0, 1.2 / 255.0, 0.10
+    # 降采样不会把「全不透明」判成不透明之外的东西：箱式平均只会取块内均值，
+    # 常数 255 平均后仍是 255（实测 reduce(2/4/8) 的 min/max 都是 255），
+    # 所以快速档的 alpha 判据不会因为缩放而漏掉硬缝；只有α本身就带透明像素
+    # （本该跳过）时才会 <250。原生分辨率回退见 hard_seam_result。
     opaque = bool((alpha >= 250).all()) if alpha is not None else True
     if not opaque or arr.shape[1] <= 2:
         return True, None, None
@@ -1078,12 +1101,20 @@ def _settle(native, handed: bool) -> None:
         native.close()
 
 
-def _native_safe_area_texture(opened, w: int, h: int, normalized: dict) -> float | None:
+def _native_safe_area_texture(opened, w: int, h: int, normalized: dict,
+                              background: str | None = "#FFFFFF") -> float | None:
     """安全区纹理密度（原生分辨率，QC_BLOCK 方块口径与严格档逐字一致）。
 
     快速档的全局统计在降采样域进行，但「文字压在什么纹理上」这件事必须按原始
     像素量：箱式平均会把细密颗粒抹平，而它正是压字可读性最直接的风险。
     只裁安全区（通常 ≤1/3 画面）→ 代价有界，判据不失真。
+
+    透明画布必须先与**声明底色**合成再量亮度（v9.37.1）：工作域的 arr 就是
+    `alpha_composite(底色, rgba)` 后的亮度，原生这一路若直接 convert("L")，
+    量到的是透明像素下面的 RGB——抠图残留与蒙版导出里那是一层任意噪点。
+    实测：一张安全区完全透明、RGB 带噪点的 RGBA 插画，原生路径 busy=1.00 →
+    text_safe_area 判 issue → release 档 BLOCK；而同一块区域合成白色底后是
+    纯白平板。同一份像素、两条口径，就必须合成同一块底色。
     """
     try:
         import numpy as np
@@ -1092,7 +1123,19 @@ def _native_safe_area_texture(opened, w: int, h: int, normalized: dict) -> float
         y1 = int((normalized["y"] + normalized["height"]) * h)
         x1, y1 = max(x1, x0 + QC_BLOCK), max(y1, y0 + QC_BLOCK)
         # 先裁后转：只在安全区（≤1/3 画面）上做 L 转换，不复制整幅 4K。
-        box = opened.crop((x0, y0, min(x1, w), min(y1, h))).convert("L")
+        crop = opened.crop((x0, y0, min(x1, w), min(y1, h)))
+        if _has_alpha(crop):
+            # 底色口径与 image_qc 的 arr 同源：同一个 background 参数、同一套
+            # alpha_composite；脏色值当白色（QC 不该因底色写法崩掉一条判据）。
+            from PIL import Image as _Image
+            from PIL import ImageColor
+            try:
+                rgb = ImageColor.getrgb(str(background or "#FFFFFF"))[:3]
+            except (ValueError, TypeError):
+                rgb = (255, 255, 255)
+            base = _Image.new("RGBA", crop.size, (*rgb, 255))
+            crop = _Image.alpha_composite(base, crop.convert("RGBA"))
+        box = crop.convert("L")
         arr = np.asarray(box, dtype=np.float32) / 255.0
         bh, bw = arr.shape[0] // QC_BLOCK, arr.shape[1] // QC_BLOCK
         if bh < 1 or bw < 1:
@@ -1211,7 +1254,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         w, h = opened.size
         # 快路径：不透明图直接以 L 通道工作——RGB→RGBA 转换、alpha 通道抽取、
         # alpha_composite 三步在整幅 4K 图上都是纯开销（判据只用亮度与是否可见）。
-        transparent = opened.mode in ("RGBA", "LA", "PA", "P") or "transparency" in opened.info
+        transparent = _has_alpha(opened)
         try:
             opened.load()  # 头部可识别不代表像素完整；解码失败同样属于资产错误
         except BaseException:
@@ -1349,7 +1392,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     # 会被平均掉，而它恰是压字可读性最直接的杀手。只裁安全区一块（约占画面 1/3），
     # 成本与全图扫描不在一个量级——所以这一条快速档也不省。
     if native is not None:
-        native_busy = _native_safe_area_texture(native, w, h, normalized)
+        native_busy = _native_safe_area_texture(native, w, h, normalized, background)
         if native_busy is not None:
             busy = native_busy    # 单一口径：两档都在原生分辨率量，杜绝 fast/strict 分歧
     _add("text_safe_area", busy < 0.15,
@@ -1852,13 +1895,22 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             op = _Path(origin["path"]).expanduser()
             base = _Path((bundle.get("workflow") or {}).get("brief_path") or ".").resolve().parent
             origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
+            # 角色走与生成路径**同一个解析器**（v9.37.1）：这里原先直接抄原始字符串，
+            # 拼错的 asset_role（illustrtion）会带着 source="declared" 进清单，
+            # 下游认不出就退回 asset_function 口径——写了一个字段，它却不生效，
+            # 还顺手放宽了 subject_position 这类阻断判据。用一份文件登记的素材，
+            # 与让引擎出图的素材，对「角色写错了怎么办」必须给同一个答案。
+            # 未声明仍记 None：assumed 的角色不许冒充 declared 去改 QC 判据。
+            declared_role = str(raw.get("asset_role") or "").strip()
+            role, role_source = (resolve_asset_role(declared_role) if declared_role
+                                 else (None, None))
             entry = {"slide_ids": [sid], "decision": "existing",
                            "origin": origin,
                            # 缺省与生成路径同源（frame）：一个字段一个缺省——
                            # 审计实测旧缺省 "context" 与 asset_card/提示词的 "frame" 两套。
                            "asset_function": raw.get("asset_function", "frame"),
-                           "asset_role": str(raw.get("asset_role") or "").strip().lower() or None,
-                           "asset_role_source": ("declared" if raw.get("asset_role") else None),
+                           "asset_role": role,
+                           "asset_role_source": role_source,
                            "safe_area": normalize_safe_area(
                                raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
                            "meta": {"text_color": raw.get("text_color")},

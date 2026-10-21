@@ -28,7 +28,7 @@ MISJUDGE_FIELDS = {"media", "media_source", "comparison", "evidence", "evidence_
 
 # 语义词表：可被消融（去掉后看哪些判断会变）。数值权重是函数体内的字面量，不在此列。
 ABLATABLE = ("_HUMAN_WORDS", "_SCENE_WORDS", "_WITNESS_WORDS", "_TOPIC_TAILS", "_TITLE_ASSERTION",
-             "_CONCLUSION_WORDS", "_ASK_WORDS", "_COMPARISON_WORDS", "_SERIES_WORDS",
+             "_CONCLUSION_WORDS", "_ASK_WORDS", "_COMPARISON_WORDS",
              "_SEQUENCE_WORDS", "_STRUCTURE_WORDS", "_CHANGE_WORDS", "_TOPIC_MARKERS",
              "_CREDENTIAL_WORDS", "_PHYSICAL_SUBJECTS")
 

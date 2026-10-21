@@ -5420,7 +5420,10 @@ def main():
                          ("ghost_chart_color", test_ghost_chart_color_single_source),
                          ("case004_regressions", test_case004_regressions),
                          ("audit_fixes", test_audit_fixes),
-                         ("design_intelligence_r6", test_design_intelligence_r6)):
+                         ("design_intelligence_r6", test_design_intelligence_r6),
+                         ("judgment_linkage_r7", test_judgment_linkage_r7),
+                         ("metric_boundary_r7", test_metric_boundary_r7),
+                         ("asset_review_r8", test_asset_review_r8)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()
@@ -5675,6 +5678,243 @@ def test_design_intelligence_r6(tmp: Path):
     check("r6 progress: 预览填充与产物同一刻度（75%，不冲出轨道到 150%）",
           bool(_accent_xs) and abs(_ghost_ratio - 0.75) < 0.05,
           f"ghost_ratio={_ghost_ratio:.3f}")
+
+
+def test_judgment_linkage_r7(tmp: Path):
+    """第五轮审计（F-01…F-07）：判断字段必须真的改变执行。
+
+    每条钉对应一个已实测的失效模式，并且都带**负例对照**——修正不能把
+    「本该是序列」「本该是结构」的页面一起翻掉：
+
+      F-01 混合量纲 + 期间词 ≠ 一条曲线（作者会拿到把 万元/%/家 画进同一根轴的图）
+      F-02 标题里一个「高于」≠ 三条并列阈值（对照页被要求画层级图）
+      F-03 年份开头的年度序列 ≠ 规格行（一整页年度数据被判成「没有证据」）
+      F-04 多指标面板不是「没有证据」：至少要有一种对照形态
+      F-05 「增长 4 倍」是变化幅度，不是两端胜负
+      F-06 「开业 5 年以上」的年限是筛选门槛，不是这一页的主数
+      F-07 眉标不缝词、不吃掉下一个词的首字
+    """
+    import intelligence as intel
+
+    mixed = intel.understand(
+        "2025 年营收 1200 万元，同比增长 18%；毛利率 38%，同比提升 3 个百分点；"
+        "客户数 240 家，同比增长 12%。")
+    check("F-01 混合量纲 + 期间词判为多指标面板，不是单条序列",
+          mixed["evidence"] != "series" and mixed["same_unit"] is False,
+          f"{mixed['evidence']} same_unit={mixed['same_unit']}")
+    panel = intel.understand("2022 年营收 800 万元；2023 年毛利率 31%；2024 年客户数 180 家。")
+    check("F-04 多指标面板不落到「没有证据」",
+          panel["evidence"] not in ("none", "series"), str(panel["evidence"]))
+    # 负例对照：同量纲的年度序列必须仍是 series（修正不能把真序列一起翻掉）
+    yearly = intel.understand(
+        "2023 年人均产值 42 万元；2024 年人均产值 48 万元；2025 年人均产值 55 万元。")
+    check("F-03 年份开头的同量纲年度序列仍是 series（规格行判据不压过时间轴）",
+          yearly["evidence"] == "series", str(yearly["evidence"]))
+
+    benchmark = intel.understand(
+        "会员复购率 34%，高于同业 8 个百分点 会员数 860 万，月活 210 万，"
+        "复购率 34%，同业均值 26%，会员客单价 88 元。")
+    check("F-02 标题里的「高于」不把基准对照判成层级/结构",
+          benchmark["evidence"] != "structure" and benchmark["comparison"] is True,
+          f"{benchmark['evidence']} cmp={benchmark['comparison']}")
+    # 负例对照：每个条件各带阈值的真阈值列举仍是结构
+    thresholds = intel.understand("连续两月低于 15 万元；退货率高于 8%；流失超过 2 人。")
+    check("F-02 负例：多条各自带阈值的条件仍是结构（修正不吞真列举）",
+          thresholds["evidence"] == "structure", str(thresholds["evidence"]))
+
+    growth = intel.understand("出货量三年增长 4 倍 2023 年出货 28 台；2024 年出货 62 台；"
+                              "2025 年出货 120 台。")
+    check("F-05 「增长 4 倍」不让同单位年度序列变成两端对照",
+          growth["evidence"] == "series" and growth["comparison"] is False,
+          f"{growth['evidence']} cmp={growth['comparison']}")
+
+    cohort = ("开业 5 年以上门店 640 家，营收贡献 52%，同比下降 9.4%；"
+              "新开门店 210 家，贡献 18%。")
+    title = "下滑集中在开业 5 年以上门店"
+    claim_nums, claim_primary = intel.number_roles(title, title)
+    check("F-06 主张里的数字全是门槛时不立主语（交给正文锚定）",
+          claim_nums and claim_primary is None, str(claim_primary))
+    check("F-06 正文主数是 640 家，不是「5 年」年限",
+          (intel.number_roles(cohort, title)[1] or {}).get("raw") == "640 家",
+          str((intel.number_roles(cohort, title)[1] or {}).get("raw")))
+
+    for text, want, why in (
+            ("下滑集中在三类老店", "下滑集中", "两端的 strip 曾把「下滑集中」缝成「滑集」"),
+            ("会员复购率 34%，高于同业 8 个百分点", "", "段首被边界字劈开时宁可缺省"),
+            ("建议批准 3.2 亿元改造预算，分三期执行，2026 年完成一期 4800 万元",
+             "改造预算", "数字修饰语只吞单位，不吞下一个词的首字"),
+            ("为什么门店改造的回本周期是 4.7 年", "回本周期", "数量说明语之后的真正主语")):
+        got = intel.section_label({}, {"text": text}, "prove")
+        check(f"F-07 眉标：{why}", got == want, repr(got))
+    # 负例对照：干净主语与处所短语照旧派得出来
+    check("F-07 负例：处所短语仍收到名词",
+          intel.section_label({}, {"text": "三个市场里只有印尼跑通了单位经济"}, "prove")
+          == "三个市场",
+          intel.section_label({}, {"text": "三个市场里只有印尼跑通了单位经济"}, "prove"))
+
+
+def test_metric_boundary_r7(tmp: Path):
+    """F-08（指标名词边界归一）与「删表」的单元钉。
+
+    页级可观测的效果在冻结集 r7；这里钉的是**边界本身**，包括过度切除的负例：
+    修正把一个指标名切坏，页级往往只是「主语没命中」而不报错，必须单元级钉住。
+
+      1. 紧跟数字的时间单位字不进指标名（「2027 年漏损率」→ 漏损率）；
+      2. 但「月活 / 年度营收」这类以时间字开头的真指标名不得被切断；
+      3. 结尾单字变化动词剥掉（「漏损率降」→ 漏损率），但「回升 / 下降」这类词不剥；
+      4. 同一句里省略主语时，指标名沿用上一个写出来的指标（_metric_attribution
+         与 _metric_by_clause 必须一致，否则焦点与集中度各说各话）；
+      5. `bench.ABLATABLE` 里每个名字都必须真实存在——删表后忘了同步清单，
+         `--ablate` 会直接崩，而这件事不该只在手动跑基准时才被发现。
+    """
+    import intelligence as intel
+    import bench
+
+    def metrics(text: str) -> list[str]:
+        return [m for names in intel._metric_by_clause(text).values() for m in names]
+
+    check("F-08 紧跟数字的时间单位字不进指标名（年内 → 漏损率）",
+          metrics("2027 年漏损率 8.5%") and set(metrics("2027 年漏损率 8.5%")) == {"漏损率"},
+          str(metrics("2027 年漏损率 8.5%")))
+    check("F-08 负例：月活/年度营收里的时间字是词的一部分，不得切断",
+          set(metrics("月活 210 万，年度营收 12 亿元")) >= {"月活", "年度营收"},
+          str(metrics("月活 210 万，年度营收 12 亿元")))
+    check("F-08 结尾单字变化动词剥掉（毛利率升 → 毛利率）",
+          "毛利率" in metrics("2025 年毛利率升到 38%"),
+          str(metrics("2025 年毛利率升到 38%")))
+    check("F-08 负例：回升/下降是词，不得剥成「增速回」",
+          all(not m.endswith("回") or len(m) <= 2 for m in metrics("增速回升 8%")),
+          str(metrics("增速回升 8%")))
+
+    text = "2027 年漏损率降至 8.5%，2028 年降至 7.2%；年节水 2100 万吨。"
+    pairs = intel._metric_attribution(text, intel.evidence_numerals(text))
+    check("F-08 省略主语的第二段沿用同一指标名（两段都是漏损率）",
+          [m for n, m in pairs[:2]] == ["漏损率", "漏损率"],
+          str([(n["raw"], m) for n, m in pairs]))
+    check("F-08 主语取当前值 7.2%，不退回基期 8.5%",
+          (intel.number_roles(text, "漏损率两年下降")[1] or {}).get("raw") == "7.2%",
+          str((intel.number_roles(text, "漏损率两年下降")[1] or {}).get("raw")))
+
+    missing = [n for n in bench.ABLATABLE if not hasattr(intel, n)]
+    check("bench: ABLATABLE 里每个词表都真实存在（删表必须同步消融清单）",
+          not missing, str(missing))
+
+    # 定性工具本身也要有证据：它必须在至少一半的词表上观测到页级差异，且
+    # 对已删除的 `_SERIES_WORDS` 不再声称有判别力。否则「12 组都有判别力」这句话
+    # 只是工具自己说的，没人替它证明。
+    import wordlist_ablation as wla
+    verdicts = wla.run()
+    discriminating = sum(1 for v in verdicts.values() if v["verdict"] == "DISCRIMINATING")
+    check("wordlist: 探测句能观测到多数词表的页级影响（≥ 词表数的 2/3）",
+          discriminating >= len(verdicts) * 2 / 3,
+          f"{discriminating}/{len(verdicts)}")
+    check("wordlist: 已删除的 _SERIES_WORDS 不再声称有判别力",
+          verdicts.get("_SERIES_WORDS", {}).get("verdict") == "DELETED",
+          str(verdicts.get("_SERIES_WORDS", {}).get("verdict")))
+
+    # 判断输出的两个字段各有自己的含义：evidence 说「这一页靠什么形状成立」，
+    # comparison 说「有没有一个被比较的另一端」。多指标面板会有前者而没有后者，
+    # 两者不是同义词——口径写在 references/contract.md（唯一 owner）。
+    contract = (ROOT / "references" / "contract.md").read_text(encoding="utf-8")
+    check("docs: contract 说明 evidence 与 comparison 不是同一个字段",
+          "evidence" in contract and "comparison" in contract
+          and "不是同一个判断" in contract)
+
+
+def test_asset_review_r8(tmp: Path):
+    """第二轮素材审查的单元钉（每条都配一个负例：修正不许把本该判对的一起翻掉）。
+
+      1. `has_subject` 判的是「有没有一句非空的话」，不是「列表非空」——`str(list)`
+         恒非空，`[""]` 这种空串列表曾照样注入「作者声明的主体坐在环境里」；
+      2. 原生分辨率的**安全区纹理**必须与工作域合成同一块底色：透明像素下面的
+         RGB 是抠图残留，不是可见画面（否则透明安全区被判「纹理过密」→ release 阻断）；
+      3. existing（`asset_source`）分支与生成路径共用同一个角色解析器：拼错的
+         `asset_role` 必须 fail-closed，未声明仍记 None，声明合法值才记 declared。
+    """
+    import numpy as np
+    from PIL import Image
+    import assets as a
+    import intelligence as intel
+
+    page = {"ref": "s01", "safe_area": {}}
+
+    def bg_card(subject):
+        return {"apc": "APC-1", "asset_type": "background", "asset_role": "background",
+                "subject": subject, "color": ["neutral tonal range"],
+                "material": ["matte"], "lighting": ["even"],
+                "composition": ["centered"], "medium": "photography"}
+
+    blank = a.build_asset_prompt(bg_card([""]), page)["prompt"]
+    named = a.build_asset_prompt(bg_card(["a stack of paper receipts"]), page)["prompt"]
+    check("assets: subject=[''] 的背景不注入主体纪律句（空串列表不是主体）",
+          "the declared subject sits inside the environment" not in blank
+          and "not a picture of a thing" in blank)
+    check("assets: 负例——有主体的背景仍走主体纪律，不退回空场纪律",
+          "the declared subject sits inside the environment" in named
+          and "not a picture of a thing" not in named)
+
+    w = h = 240
+    safe = {"x": 0.02, "y": 0.02, "width": 0.46, "height": 0.96}
+    rng = np.random.default_rng(11)
+    noise = np.clip(128 + rng.normal(0, 60, (h, w // 2, 3)), 0, 255).astype(np.uint8)
+
+    hidden = np.zeros((h, w, 4), dtype=np.uint8)
+    hidden[:, : w // 2, :3] = noise          # 安全区：完全透明，底下带噪点
+    hidden[:, w // 2:, :3] = 200
+    hidden[:, w // 2:, 3] = 255
+    hidden_path = tmp / "hidden_rgb.png"
+    Image.fromarray(hidden, "RGBA").save(hidden_path)
+
+    visible = np.full((h, w, 3), 200, dtype=np.uint8)
+    visible[:, : w // 2] = noise             # 同一份噪点，这次真的看得见
+    visible_path = tmp / "visible_noise.png"
+    Image.fromarray(visible, "RGB").save(visible_path)
+
+    def safe_status(path):
+        qc = a.image_qc(str(path), safe_rect=safe, safe_area="left",
+                        background="#FFFFFF", max_side=240)
+        return [c for c in qc["checks"] if c["check"] == "text_safe_area"][0]
+
+    hidden_status = safe_status(hidden_path)
+    check("assets: 透明安全区按声明底色合成后量纹理（不可见 RGB 噪点不得判过密）",
+          hidden_status["status"] == "ok", str(hidden_status))
+    check("assets: 负例——同样的噪点若真的可见，安全区纹理仍必须拦",
+          safe_status(visible_path)["status"] == "issue")
+
+    img = tmp / "existing.png"
+    Image.new("RGB", (320, 180), (200, 200, 198)).save(img)
+
+    def brief_with(role=None):
+        slide = {"id": "s01", "title": "现场照片", "content": "留存证据",
+                 "asset_source": {"kind": "original", "path": str(img),
+                                  "source": "内部素材库"}}
+        if role is not None:
+            slide["asset_role"] = role
+        return {"audience": "评审", "decision": "定稿", "tension": "素材职责不清",
+                "slides": [slide]}
+
+    def raises(call):
+        try:
+            call()
+        except ValueError:
+            return True
+        return False
+
+    typo = brief_with("illustrtion")
+    check("assets: existing 分支对拼错的 asset_role fail-closed（与生成路径同答）",
+          raises(lambda: a.build_manifest(typo, intel.think(typo))))
+    ok_brief = brief_with("illustration")
+    ok_entry = (a.build_manifest(ok_brief, intel.think(ok_brief)).get("assets") or [{}])[0]
+    check("assets: existing 分支的合法角色原样生效并记 declared",
+          ok_entry.get("asset_role") == "illustration"
+          and ok_entry.get("asset_role_source") == "declared",
+          str((ok_entry.get("asset_role"), ok_entry.get("asset_role_source"))))
+    plain = brief_with()
+    plain_entry = (a.build_manifest(plain, intel.think(plain)).get("assets") or [{}])[0]
+    check("assets: existing 分支未声明角色仍记 None（assumed 不冒充 declared）",
+          plain_entry.get("asset_role") is None
+          and plain_entry.get("asset_role_source") is None,
+          str((plain_entry.get("asset_role"), plain_entry.get("asset_role_source"))))
 
 
 if __name__ == "__main__":

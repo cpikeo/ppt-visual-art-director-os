@@ -2,6 +2,17 @@
 
 落地给什么值、什么会被当场抓住。判断基准 → `../SKILL.md`；资产链 → `assets.md`。
 
+## 判断字段的读法（evidence ≠ comparison）
+
+plan.json 每页判断里这两个字段最容易被读混，它们**不是同一个判断**：
+
+- **evidence** —— 这一页靠什么形状成立：comparison（可比的量排在一起）／series（一条同量纲的时间读数）／part_whole（总体与子集）／number（单一量）／structure（层级与归属）／sequence（有先后的阶段）／proposition（只有观点）／none（没有可判定的证据）。它决定必落元素与构图。
+- **comparison** —— 这一页**有没有一个被比较的另一端**（两端胜负、基准对照）。它回答「差值有没有依据」，不回答「这一页有几种量」。
+
+所以 evidence 为 comparison、而 comparison 为 false 是合法状态：多指标面板（营收／毛利率／客户数各一个值）是「可比的量排在一起」，但没有一条可以相减的差值。把它读成两端胜负，作者就会去画一个不存在的差值轴。反过来 comparison 为 true 时，evidence 一定是 comparison。
+
+读法纪律：**执行层只看 evidence 选形态；只有要画差值、要写「高出 X」时才看 comparison**。不要用 comparison 反推形态，也不要用 evidence 声称「两端可比」。
+
 ## 判定边界
 
 QA 只回答硬约束与凭证是否通过（PASS / BLOCK），不签署视觉终验（SKILL §6）。

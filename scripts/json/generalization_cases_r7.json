@@ -1,0 +1,83 @@
+{
+ "suite": "generalization_cases_r7",
+ "note": "第七组冻结：F-08 指标名词边界归一（时间单位字 / 同句继承）在页级输出上的可观测效果；细粒度边界（月活/年度营收/回升不得被切断）由 selftest 的单元钉负责——冻结集只断言页级字段，不拿单元行为凑数。r6 的 R6-08 保持「只观测不断言」。｜R7-04 钉「目标线不当主语」。",
+ "cases": [
+  {
+   "id": "R7-01",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "漏损率两年下降，同时省下水费",
+   "content": "2027 年漏损率降至 8.5%，2028 年降至 7.2%；年节水 2100 万吨，回收水费 4300 万元。",
+   "expect": {
+    "evidence": "series",
+    "primary_contains": [
+     "7.2"
+    ]
+   },
+   "observe": [
+    "focus",
+    "primary"
+   ],
+   "why": "第二段省略了主语（「2028 年降至 7.2%」）。指标名要沿用它所在句子里上一个写出来的指标，两段取值才归到同一指标；否则主张点名不了第二个数，主语退回基期 8.5%（F-08）。"
+  },
+  {
+   "id": "R7-02",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "漏损率从 12.4% 降到 8.5%",
+   "content": "2024 年漏损率 12.4%，2028 年 8.5%。",
+   "expect": {
+    "evidence": "series",
+    "primary_contains": [
+     "8.5"
+    ]
+   },
+   "observe": [
+    "focus"
+   ],
+   "why": "时间单位字紧邻数字时不进指标名（「2024 年漏损率」→ 漏损率，不是「年漏损率」），两端才归到同一指标，按末值取当前状态。"
+  },
+  {
+   "id": "R7-03",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "下滑集中在开业 5 年以上门店",
+   "content": "开业 5 年以上门店 640 家，营收贡献 52%，同比下降 9.4%；新开门店 210 家，贡献 18%。",
+   "expect": {
+    "evidence_not": [
+     "structure"
+    ],
+    "primary_contains": [
+     "640"
+    ]
+   },
+   "observe": [
+    "focus",
+    "primary"
+   ],
+   "why": "回归钉：指标名词边界归一不得放宽门槛判据——主数仍是 640 家，不是年限 5 年。"
+  },
+  {
+   "id": "R7-04",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "改造三年，漏损率降到 8% 以下",
+   "content": "2027 年漏损率降至 8.5%，2028 年降至 7.2%；年节水 2100 万吨，回收水费 4300 万元。",
+   "expect": {
+    "evidence": "series",
+    "primary_contains": [
+     "7.2"
+    ]
+   },
+   "observe": [
+    "focus"
+   ],
+   "why": "标题里的「8% 以下」是目标线，不是已经发生的量。终值信号（降到）不区分「达到」与「目标」，这一档必须同样过门槛判据——否则主语会停在一个计划值上，而页面实际展示的是当前的 7.2%。"
+  }
+ ],
+ "narratives": [],
+ "freeze": {
+  "sha256_of_payload": "3a1913e16a6ffc54405b5bcbf30e68dfda5c12a30bd6ac9019dd11b7d556bf5d",
+  "frozen_at": "2026-10-21"
+ }
+}

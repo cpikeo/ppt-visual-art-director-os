@@ -1,0 +1,168 @@
+{
+ "suite": "generalization_cases_r6",
+ "note": "第六组冻结：F-01…F-06 修正的判别路径（序列=按指标读同量纲读数／多指标面板≠曲线／门槛不是形状）。｜R6-08 的主语字段只观测：已知未修缺陷，记录在报告里，不以期望掩盖。",
+ "cases": [
+  {
+   "id": "R6-01",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "人均产值连续三年提升",
+   "content": "2023 年人均产值 42 万元；2024 年人均产值 48 万元；2025 年人均产值 55 万元。",
+   "expect": {
+    "evidence": "series",
+    "comparison": false,
+    "primary_contains": [
+     "55"
+    ]
+   },
+   "observe": [
+    "primary",
+    "focus"
+   ],
+   "why": "年份开头的三段各自带数，是**时间轴上的同指标取值**，不是同一时刻的规格行；主数是当前值 55 万元。"
+  },
+  {
+   "id": "R6-02",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "三项指标同步改善，但结构不同",
+   "content": "2025 年营收 1200 万元，同比增长 18%；毛利率 38%，同比提升 3 个百分点；客户数 240 家，同比增长 12%。",
+   "expect": {
+    "evidence": "comparison",
+    "evidence_not": [
+     "series"
+    ],
+    "comparison": false
+   },
+   "observe": [
+    "focus"
+   ],
+   "why": "三个指标各出现一次、量纲互不相容：这是一句话里的多指标面板，不是一条曲线。量纲不同却判 series，作者会拿到一张把万元/%/家 画在同一根轴上的图。"
+  },
+  {
+   "id": "R6-03",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "口径变化三年",
+   "content": "2022 年营收 800 万元；2023 年毛利率 31%；2024 年客户数 180 家。",
+   "expect": {
+    "evidence_not": [
+     "none",
+     "series"
+    ]
+   },
+   "observe": [
+    "evidence",
+    "focus"
+   ],
+   "why": "有时间坐标、有数字、但没有任何一条同量纲读数：多指标面板，不是「没有证据」。判 none 会把一页数据降成一句标题。"
+  },
+  {
+   "id": "R6-04",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "会员复购率 34%，高于同业 8 个百分点",
+   "content": "会员数 860 万，月活 210 万，复购率 34%，同业均值 26%，会员客单价 88 元。",
+   "expect": {
+    "evidence_not": [
+     "structure"
+    ],
+    "comparison": true
+   },
+   "observe": [
+    "focus",
+    "evidence"
+   ],
+   "why": "标题里的「高于」是一条基准对照，不是三条并列阈值：证据形态不能落成层级/结构。"
+  },
+  {
+   "id": "R6-05",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "出货量三年增长 4 倍",
+   "content": "2023 年出货 28 台；2024 年出货 62 台；2025 年出货 120 台。",
+   "expect": {
+    "evidence": "series",
+    "comparison": false,
+    "primary_contains": [
+     "120"
+    ]
+   },
+   "observe": [
+    "primary"
+   ],
+   "why": "「增长 4 倍」是变化幅度不是两端胜负；它不能让一条同单位年度序列变成两端对照。"
+  },
+  {
+   "id": "R6-06",
+   "group": "numeric",
+   "severity": "major",
+   "title": "三条红线各自带阈值",
+   "content": "连续两月低于 15 万元；退货率高于 8%；流失超过 2 人。",
+   "expect": {
+    "evidence": "structure"
+   },
+   "observe": [
+    "focus"
+   ],
+   "why": "负例对照：每个条件各自带阈值词，这是并列门槛清单（结构），不是基准对照——修正不能把真阈值列举也放进 comparison。"
+  },
+  {
+   "id": "R6-07",
+   "group": "numeric",
+   "severity": "critical",
+   "title": "下滑集中在开业 5 年以上门店",
+   "content": "开业 5 年以上门店 640 家，营收贡献 52%，同比下降 9.4%；新开门店 210 家，贡献 18%。",
+   "expect": {
+    "primary_contains": [
+     "640"
+    ],
+    "evidence_not": [
+     "structure"
+    ]
+   },
+   "observe": [
+    "evidence",
+    "focus"
+   ],
+   "why": "「5 年」是筛选门槛不是被测量的量：主数是 640 家，不是年限。"
+  },
+  {
+   "id": "R6-08",
+   "group": "numeric",
+   "severity": "major",
+   "title": "漏损率两年下降，同时省下水费",
+   "content": "2027 年漏损率降至 8.5%，2028 年降至 7.2%；年节水 2100 万吨，回收水费 4300 万元。",
+   "expect": {
+    "evidence": "series"
+   },
+   "observe": [
+    "focus",
+    "primary"
+   ],
+   "why": "同量纲（%）的两个端点变化是序列；旁注的万吨/万元不构成第二条轴，也不该把序列判成面板。｜已知未修：主语取到基期 8.5% 而不是当前值 7.2%（归属标签被断词分成「年漏损率降」/「年降」，并列终值判据进不去）。本字段只观测不断言，缺陷记录在审计报告 F-08。"
+  },
+  {
+   "id": "R6-09",
+   "group": "numeric",
+   "severity": "major",
+   "title": "单店营收下滑，门店数同步扩张",
+   "content": "单店月均营收从 48.6 万元降至 37.5 万元；同期门店数从 980 家增至 1200 家。",
+   "expect": {
+    "evidence": "series",
+    "primary_contains": [
+     "37.5"
+    ]
+   },
+   "observe": [
+    "focus"
+   ],
+   "why": "两条各自同量纲的端点变化都是序列读数；主数是下滑后的当前值 37.5 万元，不是门店数。"
+  }
+ ],
+ "narratives": [],
+ "freeze": {
+  "sha256_of_payload": "63dcef5e593e9e825dc80b933240cfc43d17a3837e28398695d273e01bfc26d9",
+  "frozen_at": "2026-10-21"
+ }
+}

@@ -40,7 +40,7 @@ scripts/
   primitives.py       最小原语（身份 / 字节 / 几何 / 颜色 / 文本测量 / 图表单一规范 CHART_SPEC）
   ghost.py            PIL 结构预览（关键页取证）
   bench.py            判断基准与盲评通道（不进生产入口）
-  json/               judgment_cases.json（57 例判断回归）及五组冻结 JSON（不进生产入口）
+  json/               judgment_cases.json（57 例判断回归）及七组冻结 JSON（不进生产入口）
   selftest.py         核心自检
 references/           contract.md（字段与失败码）、assets.md（资产链）
 ```
@@ -81,7 +81,10 @@ Context 按需读取：判断校准读 `SKILL.md §2–3`；写 spec 读 `refere
 判断回归案例在 `scripts/json/judgment_cases.json`：四组共 57 个案例、各组来源说明与七页规划回归输入。
 判断基准只检查页面角色、证据形态、结论来源/文本、图像决策等字段；**不证明构图、断行或视觉美感**。
 `bench.py --ablate` 逐组去掉语义词表重跑：**消融后指标不变 = 该维度未被这 57 例覆盖**，
-报告时不得把 100% 当成全路径验证（见 CHANGELOG 第三轮审计）。
+报告时不得把 100% 当成全路径验证（见 CHANGELOG 第三轮审计与第五轮「删表」一节）。
+第五轮用针对性探测句给 14 组逐组定性（`eval/wordlist_ablation.py`）：12 组会改变
+**页级判断**（只是这 57 例没测到，已补冻结 r7 与 selftest 钉），1 组被证明是死代码
+（`_SERIES_WORDS`）并已删除。
 
 ```bash
 python scripts/bench.py             # 57 个判断案例；任一失败返回非零
@@ -102,7 +105,7 @@ python scripts/selftest.py   # 退出码即门槛；数量以实际输出为准
 `plan` 只输出设计判断与**空元素骨架**，作者须完成 BUILD；不得以本地自测通过宣称自主落版或目标 PowerPoint 视觉终验。
 
 CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 / 3.13 自检、57 例判断回归、
-五组冻结评测及 spec 档冒烟；另有 ubuntu / Python 3.10 的声明依赖下限组合。**配置变更不代表远端已运行。**
+七组冻结评测及 spec 档冒烟；另有 ubuntu / Python 3.10 的声明依赖下限组合。**配置变更不代表远端已运行。**
 工作树中若有未推送的改动（见 [CHANGELOG](CHANGELOG.md) 最新条目），只能按本地结果报告。
 
 ## 版本与历史
