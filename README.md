@@ -22,8 +22,6 @@ python scripts/vao.py plan brief.yml --out plan.json --skeleton build.py
 # 作者按骨架原文与判断落元素（骨架的 elements 为空；有图时按 asset_manifest.json 出图并写 asset_id）
 python scripts/vao.py check build.py out.pptx --mode release --speed strict
 python scripts/selftest.py               # 核心自检
-# 阈值不适合这一份稿时（只写要改的键，未知键直接报错）：
-python scripts/vao.py plan brief.yml --out plan.json --policy my_policy.json
 ```
 
 brief 模板见 [templates/brief.yml](templates/brief.yml)。素材判断与人工验收见 `SKILL.md §3 / §6`；
@@ -36,34 +34,24 @@ brief 模板见 [templates/brief.yml](templates/brief.yml)。素材判断与人�
 scripts/
   vao.py              唯一入口（plan / check / qc）
   intelligence.py     设计判断：判断链、视觉世界推导、骨架生成
-  policy.py           可调策略的唯一结构化来源（权重 / 阈值 / 枚举 / 同分顺序）
-  schema.py           数据契约校验器（零依赖 JSON Schema 子集）+ 契约文件自检
   assets.py           资产必要性 → 提示词 → 清单 → 像素 QC → 链核验
   verify.py           硬错误 Guard → PASS / BLOCK → 发布清单
   compiler.py         确定性 PPTX 编译（含编译缓存）
   primitives.py       最小原语（身份 / 字节 / 几何 / 颜色 / 文本测量 / 图表单一规范 CHART_SPEC）
   ghost.py            PIL 结构预览（关键页取证）
   bench.py            判断基准与盲评通道（不进生产入口）
-  json/               judgment_cases.json（57 例判断回归）及五组冻结泛化 JSON（r1–r5，不进生产入口）
+  json/               judgment_cases.json（57 例判断回归）及四组冻结泛化 JSON（不进生产入口）
   selftest.py         核心自检
-schemas/              brief.schema.json（输入契约）、plan.schema.json（输出契约）
-references/           contract.md（字段、失败码、策略与契约）、assets.md（资产链）
-MAINTENANCE.md        规则台账：每条规则住哪儿、谁在读、哪个测试在守、哪些是已知缺口
+references/           contract.md（字段与失败码）、assets.md（资产链）
 ```
 
 Context 按需读取：判断校准读 `SKILL.md §2–3`；写 spec 读 `references/contract.md`；
 判定需要图像时才读 `references/assets.md`。`plan` 本身不读 references，也不调用模型。
-要改阈值或查「这条规则谁负责」读 `MAINTENANCE.md`（它不是判断文档，是维护台账）。
 
 ## 质量边界
 
 - **QA 只拦硬错误**：编译失败、内容缺失、溢出、越界、重叠、无效资产 / 图表、来源缺失（release）。
   输出只有 PASS / BLOCK；设计质量由逐页判断与作者审阅负责——规则通过或预览正常不替代审美验收。
-- **分层各有闸门**：判断协议在 `SKILL.md`；可调数值在 `scripts/policy.py`（`--policy` 覆盖必须
-  逐键校验，写错键名退出 2）；brief 进来看输入契约（`schemas/brief.schema.json`，写错
-  `audiance`/`conten` 这类键名直接退出 2 并给候选），`plan.json` 落盘即过输出契约
-  （`schemas/plan.schema.json`）与语义契约（`intelligence.validate_plan`），违约退出 2。每页 `judgment.provenance` 标明哪些
-  决策是作者声明、哪些是算法推导、哪些只是词表提示（`pending_author` = 还不算判断）。
 - **验证层次不是一回事**：代码测试（selftest）→ 产物结构检查 → 结构预览（ghost，方向证据，不是真实渲染）
   → 目标 PowerPoint 打开 / 编辑 / 另存 / 重开（本仓库未验证）→ 专业视觉验收。自动化结果里后两层恒为未验证。
   本仓库不调用 PowerPoint，也不使用 LibreOffice 等替代引擎渲染。
@@ -98,9 +86,7 @@ Context 按需读取：判断校准读 `SKILL.md §2–3`；写 spec 读 `refere
 ```bash
 python scripts/bench.py             # 57 个判断案例；任一失败返回非零
 python scripts/bench.py --ablate    # 词表消融：找出「基准没测到」的判断路径
-python scripts/unseen_bench.py --cases scripts/json/generalization_cases_r5.json
-                                    # 冻结判断回归（跨指标凑和 / 真分解 / 时间点 / 否定谓语 / 量词）
-python scripts/selftest.py          # 负例退出码、缓存、素材复用、策略契约、plan 契约与结构产物
+python scripts/selftest.py          # 负例退出码、缓存、素材复用与结构产物
 ```
 
 历史分组、旧基线与已移除的样稿/审计记录可从 Git 历史恢复。
@@ -124,17 +110,3 @@ CI（`.github/workflows/ci.yml`）配置 ubuntu / windows × Python 3.10 / 3.12 
 版本差异与验证边界见 [CHANGELOG.md](CHANGELOG.md)。历史数据与被删除的旧模块可从 Git 历史恢复。
 
 License: MIT（见 [LICENSE.txt](LICENSE.txt)）
-
-## 作为技能包分发 / 评测
-
-```
-python tools/package_skill_staging.py                       # → dist/ppt-visual-art-director-os.skill（0.50 MB / 23 文件）
-python tools/package_skill_staging.py --skill-creator ~/skill-creator   # 同时跑 quick_validate
-python evals/run_eval.py                                    # 任务级评测 → evals-workspace/iteration-1/
-```
-
-- **不是一个仓库打一个包**：`.git`、`.github`、`tools/`（取证仪器）、`scripts/json/`（冻结案例）、
-  `CHANGELOG.md` 属于仓库资产，不进包。直接打包仓库根会得到 8.77 MB、其中 70 个条目是 `.git/`。
-- **评测分两层**：`scripts/json/` 测「这一页判成什么」，`evals/` 测「给一份 brief 整条链产出了什么」。
-  两层不许互相替代，理由见 `evals/README.md`。
-- 评测的人评页由 skill-creator 的 `eval-viewer` 生成（单文件 HTML，ghost 预览图内联）。

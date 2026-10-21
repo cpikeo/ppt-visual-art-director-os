@@ -1,20 +1,7 @@
 ---
 name: ppt-visual-art-director-os
 description: >-
-  视觉艺术总监工作框架：把内容变成逐页判断，再落成原生可编辑 PPTX（判断协议 + 可调策略 + 确定性执行 + 回归证据四层）。
-  当用户要做、要改、要审一份演示稿时用本技能：把笔记/文档/数据变成 PPT，为某页选图表或配图，
-  修"信息太满 / 排版很丑 / 每页都一样"，判断"这页该让观众记住什么"，或在一份稿子送评审前做结构体检——
-  即使用户没有明说要"设计"或"艺术指导"。
-  Use this skill whenever the user is building, revising or reviewing a slide deck: turning notes or data
-  into a presentation, choosing a chart or an image for a page, fixing cramped, template-looking or
-  repetitive slides, deciding what a page must be remembered for, or auditing an existing deck before a
-  review. Trigger even if they only say "make me a PPT" or "this deck looks bad", and even if they never
-  use the word design. Not for prose writing, non-slide graphics, or layout requests unrelated to decks.
-license: MIT
-compatibility: Python 3.10+；判断层零依赖；check/qc 需要 python-pptx>=1.0.2、Pillow>=10、numpy>=1.24、PyYAML>=6
-metadata:
-  version: "10.8.0"
-  entrypoint: scripts/vao.py
+  视觉艺术总监工作框架：内容 → 逐页判断 → 原生可编辑 PPTX。
 ---
 
 # PPT Visual Art Director OS
@@ -82,9 +69,7 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 - **词表只提示**：关键词命中只产生提示与一条待确认问题；作者用 `role` / `evidence` 覆盖，非法值 warning 并忽略。
 - **生成图不充当事实证词**，未知关系不补边；数字与主张必须一致。
 
-判断读法：每项都能回答「输入证据 → 依据 → 决策 → 回退」。判断只在 `plan.json` 存一次：默认是**瘦身版**（决策全留；同一句说明在多页重复时上提到 `deck.legend`，被否决项只留名字），要复盘完整推演用 `plan --full`。骨架把原文与行动摘要贴在对应页旁。作者声明压过推导；页上几何由作者决定。
-
-**谁定的，必须看得出来**：每页 `judgment.provenance` 把 claim / evidence / role / focus / composition / media 各自标成 `author`（作者声明，不必复核）、`judgment`（算法推导，按证据核对）、`hint`（词表提示，**未决**，必须由作者裁决后才能进成稿）或 `decision`（由 deck 的决定类型推导）。`pending_author` 就是「还不算判断」的那几项——把提示当结论用，就是把素材堆砌和风格套用重新请回来。
+判断读法：每项都能回答「输入证据 → 依据 → 决策 → 回退」。完整判断只在 `plan.json` 存一次，骨架把原文与行动摘要贴在对应页旁。作者声明压过推导；页上几何由作者决定。
 
 ### 素材导演：先职责与构图，后选材
 
@@ -118,7 +103,7 @@ THINK（plan：判断一次做完）→ BUILD（作者落元素）→ VERIFY（c
 | 需要解决的问题 | 读取 |
 |---|---|
 | 判断校准 | 本文件 §2–3（唯一基准） |
-| 字段、元素契约、失败码、**plan 数据契约与策略覆盖** | `references/contract.md`（BUILD 时一次） |
+| 字段、元素契约、失败码 | `references/contract.md`（BUILD 时一次） |
 | 资产提示词、QC、裁切 | `references/assets.md`（plan 判定需要图时才读） |
 
 `vao.py plan` 不调用模型、不读 `references/`。依据骨架的逐页行动摘要与原文即可，不为同一页重复读取 brief / plan / 文档。没有图位就不读 `assets.md`。
@@ -135,10 +120,6 @@ python scripts/vao.py check build.py out.pptx --mode release --speed strict
 ```
 
 - 正常路径 **1 次 plan + 1 次 release check**；确定性任务不调用模型。
-- 阈值不适合这一份稿时用 `plan --policy my_policy.json` 覆盖（只写要改的键；写错键名直接报错）。
-  判断协议（为什么）不随策略变——变的只是「多少算多」。
-- brief 写错字段名（`audiance` / `conten`）会在 plan 阶段退出 2 并给出候选：输入契约是
-  `schemas/brief.schema.json`，判断不会替一场笔误兜底。作者自己的注解键照留，只告警。
 - 判断与编排在 BUILD 中一次落完，执行后由 check 一次收口。
 - 终稿用 `--speed strict` 全页取证；迭代可用 `fast`（只取关键页，不等于全页视觉验收）。
 - `BLOCK` 后读修复包，按根因组一次批量修复，再复跑同一条 check；不逐页重试。

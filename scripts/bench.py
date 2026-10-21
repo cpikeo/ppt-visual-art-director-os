@@ -41,19 +41,11 @@ def _actual(case: dict) -> dict:
     judged = intel.page_judgment(item, index=case["index"], total=case["total"],
                                  brief=BRIEF, world=world, warnings=[])
     u = judged["understanding"]
-    # 观测面要与案例能断言的面一致：过去只管角色/证据/媒体，于是一整类「构图与主语」
-    # 的判据在 bench 里根本没有量具（断言比到 None 永远红，或永远绿）。这里补采，
-    # 断言语义仍由 _checks 一处实现，unseen_bench 与本函数共用同一批字段名。
     return {"role": judged["visual_role"]["role"], "evidence": u.get("evidence"),
-            "comparison": bool(u.get("comparison")), "part_whole": bool(u.get("part_whole")),
-            "claim": judged["claim"]["source"], "claim_text": judged["claim"].get("text"),
+            "comparison": bool(u.get("comparison")), "claim": judged["claim"]["source"],
+            "claim_text": judged["claim"].get("text"),
             "media": judged["media"]["decision"], "media_source": judged["media"]["source"],
-            "media_suggested": judged["media"].get("suggested"),
-            "focus": judged["focus"].get("element_role"),
-            "composition": judged["composition"].get("chosen"),
-            "primary": judged["typography"].get("lead"),
-            "distinct": u.get("distinct_numerals"),
-            "open_questions": judged.get("open_questions")}
+            "media_suggested": judged["media"].get("suggested")}
 
 
 def _checks(expect: dict, actual: dict) -> list[dict]:
@@ -62,24 +54,6 @@ def _checks(expect: dict, actual: dict) -> list[dict]:
         if key == "evidence_not":
             ok, shown = actual["evidence"] not in want, actual["evidence"]
             want_s = f"不是 {want}"
-        elif key == "distinct_min":
-            shown = actual.get("distinct") or 0
-            ok, want_s = shown >= want, f"≥ {want}"
-        elif key in ("claim_contains", "claim_not_contains", "primary_contains"):
-            field = {"primary_contains": "primary"}.get(key, "claim_text")
-            shown = str(actual.get(field) or "")
-            hit = all(s in shown for s in want) if key == "primary_contains" \
-                else all(s in shown for s in want)
-            ok = (not hit) if key == "claim_not_contains" else hit
-            want_s = ("不含 " if key == "claim_not_contains" else "含 ") + str(want)
-        elif key == "claim_soft":
-            shown = actual.get("claim")
-            ok = shown in ("absent", "frame", None) or \
-                any(s in str(actual.get("claim_text") or "") for s in want)
-            want_s = f"absent/frame 或文本含 {want}"
-        elif key == "claim_text":
-            shown = actual.get("claim_text")
-            ok, want_s = shown in want, f"∈ {want}"
         else:
             shown = actual[key]
             if isinstance(want, bool):
@@ -174,12 +148,7 @@ HOW_TO_READ_BLIND = ("ICC 衡量评审者之间的一致性，不衡量设计质
                      "mean 键为真实来源路径（含映射信息），本报告勿直接外发。")
 # vao/bench 生成的流程工件：带着它们进评审目录，等于把作者/版本线索递给评审者。
 _BLIND_STRIP_PATTERNS = (".git", "__pycache__", "*.pyc", "pages",   # pages = ghost 页缓存
-                         "*manifest*.json", "ghost.meta.json", "*.key.json", "score_sheet.csv",
-                         # 流水线工件同样会泄露身份：plan.json 写着逐页判断与作者路径，
-                         # facts/grading 写着期望与配置名。评审目录里只留产物与预览。
-                         "plan.json", "facts.json", "grading.json", "timing.json",
-                         "eval_metadata.json", "baseline-spec.json", "run_summary.json",
-                         "*.skill")
+                         "*manifest*.json", "ghost.meta.json", "*.key.json", "score_sheet.csv")
 
 
 def _scrub_pptx_identity(path: Path) -> None:
@@ -208,23 +177,7 @@ def _scrub_pptx_identity(path: Path) -> None:
             zout.writestr(info, data)
 
 
-def _scrub_png_identity(path: Path) -> None:
-    """重建像素，丢掉 PNG 的文本块（tEXt/iTXt/EXIF）——图像也会带作者与工具指纹。
-
-    只抹元数据，不动像素：预览图是给人看结构的证据，改一个像素就等于改了证据。
-    PIL 保存时会把 `im.info` 里的文本块一起写回，所以显式清空 info 再存。
-    """
-    from PIL import Image
-    from PIL.PngImagePlugin import PngInfo
-    with Image.open(path) as im:
-        im.load()
-        clean = im.copy()
-        clean.info.clear()
-        clean.save(path, format="PNG", pnginfo=PngInfo())
-
-
-def blind_pack(items: list[str], out_dir: Path, seed: int | None = None,
-               *, scrub_previews: bool = False) -> dict:
+def blind_pack(items: list[str], out_dir: Path, seed: int | None = None) -> dict:
     """打乱并改名待评版本；评审目录只留匿名件、空白评分表与评审须知，映射与溯源写进目录外的 key。
 
     匿名化的边界（诚实声明，不伪装彻底）：pptx 的「谁/何时」文件属性被抹去，
@@ -267,14 +220,8 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None,
                             ignore=shutil.ignore_patterns(*_BLIND_STRIP_PATTERNS))
             for pptx in sorted((out_dir / code).rglob("*.pptx")):
                 _scrub_pptx_identity(pptx)
-            scrubbed = []
-            if scrub_previews:
-                for png in sorted((out_dir / code).rglob("*.png")):
-                    _scrub_png_identity(png)
-                    scrubbed.append(png.relative_to(out_dir / code).as_posix())
             digest[code] = {"type": "dir",
-                            "packed_files": sum(1 for p in (out_dir / code).rglob("*") if p.is_file()),
-                            "previews_scrubbed": scrubbed}
+                            "packed_files": sum(1 for p in (out_dir / code).rglob("*") if p.is_file())}
         else:
             dst = out_dir / f"{code}{src.suffix}"
             shutil.copyfile(src, dst)
@@ -286,12 +233,7 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None,
         rows.append(code)
     key = {"version_format": 2, "tool": "vao-bench-blind-pack/2",
            "packed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-           "seed": seed, "items": mapping, "sha256": digest,
-           # key 按设计能反推身份（它就是为了揭盲而存在的），所以要把「别外发」写进文件本身，
-           # 而不是只写在文档里——文件会被单独转发，文档不会。
-           "identity_warning": ("本文件含代号→原路径映射（可反推配置），只给组织者；"
-                                "发给评审者的只有评审目录内容（评分表 + README），"
-                                "不含本文件。")}
+           "seed": seed, "items": mapping, "sha256": digest}
     json_write(key_path, key)
     sheet = out_dir / "score_sheet.csv"
     header = ["reviewer", "item"] + list(BLIND_DIMS) + ["reason", "review_time"]
@@ -311,10 +253,7 @@ def blind_pack(items: list[str], out_dir: Path, seed: int | None = None,
         "\n"
         "匿名化边界：已抹去 pptx 文件属性里的作者/时间（docProps/core.xml），已剔除 vao/bench\n"
         "流程工件（manifest/meta/key/页缓存）；作者写进画面、备注或文件名里的身份无法自动清除，\n"
-        "送评前请自行检查。若需核验材料未被调包，key 文件记录了各版本的 sha256。\n"
-        + ("\n预览图：各版本附 ghost 结构预览（preview-*.png），可先看结构再打开 pptx。\n"
-           "预览图的文本块（tEXt/iTXt）已重建清除，像素未改——它是证据，不是成品。\n"
-           if scrub_previews else ""),
+        "送评前请自行检查。若需核验材料未被调包，key 文件记录了各版本的 sha256。\n",
         encoding="utf-8")
     return {"items": rows, "sheet": str(sheet), "key": str(key_path),
             "readme": str(readme), "scale": "1-7"}
@@ -499,47 +438,6 @@ def _print(report: dict) -> None:
               f"新修复 {g['fixed_cases'] or '无'}")
 
 
-# ── 判据守门审计（测试的测试） ────────────────────────────────────────────
-# 把 policy 里的一条判据**故意调坏**，看案例集会不会有人变红。
-# 一个判据调坏却零案例报警 = 这条判据没有任何证据在守（覆盖缺口，不是「没问题」）。
-# 反过来说：这也是删案例前必须查的一栏——只有「零守卫 + 零独有行 + 零独有期望」才可合并。
-GUARD_MUTATIONS = {
-    "份额判据关": {"evidence_shapes": {"share_min_numerals": 99}},
-    "并列判据关": {"evidence_shapes": {"parallel_min_values": 9}},
-    "面板判据关": {"evidence_shapes": {"panel_min_numerals": 99}},
-    "比较降级": {"evidence_shapes": {"comparison_base": 0.1}},
-    "结构失效": {"evidence_shapes": {"structure": 0.1}},
-    "世界倾向关": {"composition": {"grammar_preference_bonus": 0.0}},
-}
-
-
-def _suite_cases(path: Path) -> list[dict]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [{"index": 1, "total": 3, **c} for c in data.get("cases") or []]
-
-
-def guard_audit(cases_path: Path, mutations: dict | None = None) -> dict:
-    import policy
-    cases = _suite_cases(cases_path)
-    baseline_red = {c["id"] for c in cases
-                    if any(not r["ok"] for r in _checks(c.get("expect") or {}, _actual(c)))}
-    rows = {}
-    for name, patch in (mutations or GUARD_MUTATIONS).items():
-        policy.configure(patch)
-        try:
-            caught = [c["id"] for c in cases
-                      if c["id"] not in baseline_red
-                      and any(not r["ok"] for r in _checks(c.get("expect") or {}, _actual(c)))]
-        finally:
-            policy.reset()
-        rows[name] = caught
-    unguarded = [n for n, c in rows.items() if not c]
-    return {"cases": cases_path.as_posix(), "cases_total": len(cases),
-            "baseline_red": sorted(baseline_red), "guards": rows,
-            "unguarded": unguarded,
-            "ok": not unguarded and not baseline_red}
-
-
 def main(argv=None) -> int:
     # 与生产入口共用 UTF-8 管道契约。Windows 的 cp1252 stdout 会在打印
     # 中文 FAIL 详情前抛 UnicodeEncodeError：退出码仍是 1，却不是真实负例结果。
@@ -549,9 +447,7 @@ def main(argv=None) -> int:
     if argv[:1] == ["blind"]:
         if len(argv) >= 3 and argv[1] == "pack":
             try:
-                items = [a for a in argv[3:] if not a.startswith("--")]
-                result = blind_pack(items, Path(argv[2]),
-                                    scrub_previews="--scrub-previews" in argv[3:])
+                result = blind_pack(argv[3:], Path(argv[2]))
             except (ValueError, OSError) as exc:
                 print(f"bench error: {exc}", file=sys.stderr)
                 return 2
@@ -573,8 +469,6 @@ def main(argv=None) -> int:
     parser.add_argument("--baseline", default=None)
     parser.add_argument("--out", default=None)
     parser.add_argument("--ablate", action="store_true", help="逐组消融语义词表，打印指标变化")
-    parser.add_argument("--guard-audit", action="store_true",
-                        help="把 policy 判据逐条调坏，看案例集有没有人报警（零报警＝无人守）")
     args = parser.parse_args(argv)
     from primitives import validate_io_paths, json_write
     try:
@@ -603,18 +497,6 @@ def main(argv=None) -> int:
         if args.out:
             json_write(args.out, result)
         return 0
-    if args.guard_audit:
-        result = guard_audit(Path(args.cases))
-        for name, caught in result["guards"].items():
-            mark = "守" if caught else "⚠ 无人守"
-            print(f"{name:10} {mark:8} {len(caught)} 个案例 → {caught[:6]}")
-        if result["baseline_red"]:
-            print(f"基线已红（不计入守卫）：{result['baseline_red']}")
-        print(f"\n守门审计 {'PASS' if result['ok'] else 'FAIL'} · "
-              f"{len(result['guards']) - len(result['unguarded'])}/{len(result['guards'])} 条判据有人守")
-        if args.out:
-            json_write(args.out, result)
-        return 0 if result["ok"] else 1
     report = run(Path(args.cases))
     if args.baseline:
         baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))

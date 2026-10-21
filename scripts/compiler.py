@@ -20,7 +20,7 @@ from primitives import (
     split_runs, is_cjk,
     insert_script_gaps,
     set_run_font, set_para_font, solid_fill, gradient_fill, stroke_color,
-    align_of, anchor_of, TYPE_SCALE,
+    align_of, anchor_of,
 )
 
 
@@ -159,7 +159,7 @@ def add_text(slide, element: dict, ctx: RenderContext) -> None:
     pad = float(element.get("padding", 0))
     wrap = bool(element.get("wrap", True))
     lh = float(element.get("line_height", 1.35))
-    size = float(element.get("size", TYPE_SCALE["body"]))
+    size = float(element.get("size", 18))
     size_pt = px_to_pt(size)
     bold = bool(element.get("bold", False))
     italic = bool(element.get("italic", False))
@@ -216,7 +216,7 @@ def shape_text(shape, element: dict, ctx: RenderContext) -> None:
     cn, latin = ctx.families(element)
     color = ctx.text_color(element.get("text_color"))
     alpha = element.get("text_opacity")
-    size = float(element.get("text_size", TYPE_SCALE["shape_text"]))
+    size = float(element.get("text_size", 16))
     spacing = float(element.get("char_spacing", 0) or 0)
     raw_text = element.get("text", "")
     if raw_text is None or isinstance(raw_text, bool):
@@ -596,15 +596,17 @@ def add_image(slide, element: dict, ctx: RenderContext, base_path: str | None = 
 
 # ══════════════════ Layer 2 · Charts（图表层）══════════════════
 
-# 一个 kind 一行。旧名（horizontal_bar / comparison_bar / trend /
-# single_trend_line / donut_composition）在 add_chart 入口就归一，这里不再出现——
-# 表里每多一行同类型，就多一个「两个名字画同一张图」的分支要维护。
 NATIVE_CHART_TYPES = {
     "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+    "horizontal_bar": XL_CHART_TYPE.BAR_CLUSTERED,
     "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+    "comparison_bar": XL_CHART_TYPE.BAR_CLUSTERED,
     "line": XL_CHART_TYPE.LINE,
+    "trend": XL_CHART_TYPE.LINE,
+    "single_trend_line": XL_CHART_TYPE.LINE,
     "area": XL_CHART_TYPE.AREA,
     "donut": XL_CHART_TYPE.DOUGHNUT,
+    "donut_composition": XL_CHART_TYPE.DOUGHNUT,
     "pie": XL_CHART_TYPE.PIE,
 }
 # 图表路由全部派生自 primitives.CHART_SPEC（单一权威）；本层只绑定 pptx 枚举
@@ -779,32 +781,30 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
     if chart.has_legend:
         chart.legend.position = XL_LEGEND_POSITION.BOTTOM
         chart.legend.include_in_layout = False
-        style(chart.legend.font, float(element.get("label_size", TYPE_SCALE["chart_label"])), ink)
+        style(chart.legend.font, float(element.get("label_size", 40 / 3)), ink)
 
     # 饼/环没有坐标轴；不要用 broad except 吞掉其他图的字体错误。
-    if kind not in ("pie", "donut"):
+    if kind not in ("pie", "donut", "donut_composition"):
         chart.value_axis.has_major_gridlines = False
         chart.value_axis.format.line.fill.background()
         style(chart.value_axis.tick_labels.font, float(element.get("label_size", 32 / 3)), muted)
         chart.category_axis.format.line.fill.background()
-        style(chart.category_axis.tick_labels.font, float(element.get("label_size", TYPE_SCALE["chart_label"])), ink)
-    # 数值标签的缺省只由 kind 本身决定。9.36 那两个「默认关」的旧名已退役，
-    # 曾经的差异由改名工具落成显式 show_values: false。
-    show = element.get("show_values", kind in ("bar", "column", "donut"))
+        style(chart.category_axis.tick_labels.font, float(element.get("label_size", 40 / 3)), ink)
+    show = element.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
     if show and count >= CHART_LABEL_MIN_COUNT and height < CHART_LABEL_MIN_H:
         if str(element.get("label_collision_policy", "fail")) == "hide_redundant":
             show = False  # 作者已明确授权隐藏冗余值；不是编译失败
         else:
             ctx.warn(f"chart '{element.get('id')}': 标签空间不足；请拆图/减少类别，避免数值遮挡")
     plot = chart.plots[0]
-    composition = kind in ("pie", "donut")
+    composition = kind in ("pie", "donut", "donut_composition")
     plot.has_data_labels = bool(show or composition)  # 值可隐藏，类别身份不能丢
     if show or composition:
         labels = plot.data_labels
         labels.show_value = bool(show)
         labels.show_category_name = composition
         labels.show_series_name = False
-        style(labels.font, float(element.get("value_size", TYPE_SCALE["chart_value"])), ink)
+        style(labels.font, float(element.get("value_size", 12)), ink)
         # 单位是作者声明的量纲，必须落到可见的标签上（审计：P02 声明了「元」却只显示裸数字）。
         # General 保留小数位；作者显式给的 number_format 优先。
         fmt = element.get("number_format") or _unit_number_format(element.get("unit"))
@@ -818,12 +818,13 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
         # （chart_unit_invisible 告警，进发布清单 notes）；编译器只负责渲染：
         # 数值可见时单位随 _unit_number_format 落到标签上。
         labels.position = (XL_LABEL_POSITION.OUTSIDE_END if kind in
-                           ("bar", "column") else XL_LABEL_POSITION.BEST_FIT)
-        if kind not in ("pie", "donut"):
+                           ("bar", "horizontal_bar", "comparison_bar", "column")
+                           else XL_LABEL_POSITION.BEST_FIT)
+        if kind not in ("pie", "donut", "donut_composition"):
             chart.value_axis.tick_label_position = XL_TICK_LABEL_POSITION.NONE
             # 外侧数值标签需要留白：最长柱不能顶到绘图区右缘（否则标签越出图表框）。
             single = not (isinstance(element.get("series"), list) and element.get("series"))
-            if kind in ("bar", "column") and single:
+            if kind in ("bar", "horizontal_bar", "comparison_bar", "column") and single:
                 rows_ = element.get("data") or []
                 vals = [float(r["value"]) for r in (rows_ if isinstance(rows_, list) else [])
                         if isinstance(r, dict) and isinstance(r.get("value"), (int, float))
@@ -907,7 +908,7 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
         role_color = (ctx.chart_role(str(series_roles[i]))
                       if i < len(series_roles) else None)
         color = role_color or palette[i]
-        if kind == "line":
+        if kind in ("line", "trend", "single_trend_line"):
             series.format.line.color.rgb = color
             series.format.line.width = Pt(3.0 if i == hl else 1.75)
             series.smooth = bool(element.get("smooth", False))
@@ -933,7 +934,7 @@ def _add_multi_series(slide, element: dict, ctx: RenderContext,
         if accent is not None:
             for series in chart.series:
                 try:
-                    if kind == "line":
+                    if kind in ("line", "trend", "single_trend_line"):
                         mk = series.points[hp].marker
                         mk.style = XL_MARKER_STYLE.CIRCLE
                         mk.size = 7
@@ -1004,7 +1005,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
     if 0 <= hl0 < len(rows) and primary == ctx.color("accent"):
         base = ctx.chart_role("primary") or ctx.color("primary") or primary
     try:
-        if kind == "line":
+        if kind in ("line", "trend", "single_trend_line"):
             series.format.line.color.rgb = base
             series.format.line.width = Pt(2.25)
             series.smooth = bool(element.get("smooth", False))
@@ -1047,7 +1048,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
             except Exception:
                 pass
 
-        if kind in ("donut", "pie"):
+        if kind in ("donut", "donut_composition", "pie"):
             if kind != "pie":
                 _set_donut_hole_size(chart.plots[0], int(element.get("hole_size", 62)))
             hl = int(highlight_index(element, rows, 0))
@@ -1070,7 +1071,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
                     if dl_fmt:
                         dl.number_format = str(dl_fmt)
                         dl.number_format_is_linked = False
-                    dl.font.size = pt(float(element.get("value_size", TYPE_SCALE["chart_value"])))
+                    dl.font.size = pt(float(element.get("value_size", 12)))
                     dl.font.color.rgb = ctx.auto_text_for(palette[i])
                     dl.font.name = latin
                     for tag in ("a:ea", "a:cs"):
@@ -1084,7 +1085,7 @@ def add_native_chart(slide, element: dict, ctx: RenderContext) -> None:
             # 环心 KPI：把「总数/结论」放进甜甜圈的洞（叠加可编辑文本框，
             # 不破坏原生扇区的可编辑性）。这是高端 dashboard 的标志性动作：
             # 洞不再空着，而是承担「这一图到底说了什么」的单一读数。
-            if kind == "donut":
+            if kind in ("donut", "donut_composition"):
                 center_value = element.get("center_value")
                 center_label = element.get("center_label")
                 if center_value is not None or center_label:
@@ -1195,7 +1196,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                 p = db.text_frame.paragraphs[0]
                 p.text = desc
                 p.alignment = PP_ALIGN.CENTER
-                set_para_font(p, latin, cn, px_to_pt(element.get("desc_size", TYPE_SCALE["caption"])),
+                set_para_font(p, latin, cn, px_to_pt(element.get("desc_size", 14)),
                               ctx.color("muted"), False)
         return
 
@@ -1216,7 +1217,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             tb.name = f"{eid}__t_{i}"
             p = tb.text_frame.paragraphs[0]
             p.text = row["label"]
-            set_para_font(p, latin, cn, px_to_pt(element.get("title_size", TYPE_SCALE["body"])), ink, True)
+            set_para_font(p, latin, cn, px_to_pt(element.get("title_size", 18)), ink, True)
             desc = str(row.get("desc", "") or "").strip()
             if desc:
                 db = slide.shapes.add_textbox(
@@ -1225,8 +1226,8 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                 db.name = f"{eid}__d_{i}"
                 p = db.text_frame.paragraphs[0]
                 p.text = desc
-                p.line_spacing = pt(float(element.get("desc_size", TYPE_SCALE["caption"])) * 1.3)
-                set_para_font(p, latin, cn, px_to_pt(element.get("desc_size", TYPE_SCALE["caption"])),
+                p.line_spacing = pt(float(element.get("desc_size", 14)) * 1.3)
+                set_para_font(p, latin, cn, px_to_pt(element.get("desc_size", 14)),
                               muted, False)
             if i < n - 1:
                 c = slide.shapes.add_connector(
@@ -1463,7 +1464,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
             _textbox(slide, f"{eid}__value_{i}",
                      bar_x + max(bw, 4) + dot_d / 2 + value_gap, cy - row_h / 2,
                      value_w, row_h, _display(r, element),
-                     float(element.get("value_size", TYPE_SCALE["chart_value"])), ink, ctx, element,
+                     float(element.get("value_size", 12)), ink, ctx, element,
                      align=PP_ALIGN.LEFT, bold=True)
         return
 
@@ -1504,7 +1505,7 @@ def add_shape_chart(slide, element: dict, ctx: RenderContext, kind: str) -> None
                      align=PP_ALIGN.RIGHT)
             _textbox(slide, f"{eid}__value_{i}", x + w - value_w, cy - row_h / 2,
                      value_w, row_h, _display(r, element, f"{ratio * 100:.0f}%"),
-                     float(element.get("value_size", TYPE_SCALE["chart_value"])), ink, ctx, element,
+                     float(element.get("value_size", 12)), ink, ctx, element,
                      align=PP_ALIGN.RIGHT, bold=True)
         return
 
@@ -1691,7 +1692,7 @@ def add_chart(slide, element: dict, ctx: RenderContext) -> None:
             ctx.warn(f"chart '{element.get('id')}': data 须为对象行列表且每行含非空 label，拒绝静默丢行")
             return
 
-    if kind == "kpi":
+    if kind in ("kpi", "executive_kpi", "big_number"):
         add_kpi(slide, element, ctx)
         return
     if kind in SHAPE_CHARTS:

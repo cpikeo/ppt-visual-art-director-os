@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-from functools import lru_cache
 import re
 import sys
 from pathlib import Path
@@ -339,94 +338,6 @@ PREVIEW_FONT_BOLD_CANDIDATES = {
 }
 
 
-# ── 声明字体 → 本机字面（预览同源）────────────────────────────────────
-# 预览此前只把声明家族分进 4 个桶（cjk / cjk_serif / latin / latin_serif），
-# 于是「latin 声明成中文字体」「声明 Noto Serif CJK 却拿到 DejaVu Serif」这类
-# 事实无人知道：同一段 `11.8%` 在 264px 框里，产物一行、预览两行（实测）。
-# 这里按**家族名**解析：先认已知别名，再问 fontconfig（本机若装了），
-# 解析不到才回落桶候选，并把回落记进台账（ghost.font_substitutions）。
-
-_CJK_HINTS = ("cjk", "han", "思源", "noto sans cjk", "noto serif cjk", "source han",
-              "宋", "黑", "明朝", "mincho", "song", "hei", "pingfang", "yahei",
-              "simsun", "msyh", "sarasa", "更纱", "冬青")
-_SERIF_HINTS = ("serif", "宋", "song", "明朝", "mincho", "simsun", "times",
-                "georgia", "cambria", "garamond", "baskerville")
-
-
-def family_bucket(family: str) -> str:
-    """声明家族 → 预览桶（cjk / cjk_serif / latin / latin_serif）。
-
-    `sans-serif` 含字面 "serif"，必须先把通用族按无衬线读，否则作者写的
-    「无衬线」会被画成衬线——桶判断错，整套字形就错。
-    """
-    low = str(family or "").strip().strip("'\"").lower()
-    if low in ("sans", "sans-serif", "sans serif", "system-ui", "ui-sans-serif"):
-        return "latin"
-    is_cjk = any(h in low for h in _CJK_HINTS)
-    is_serif = any(h in low for h in _SERIF_HINTS)
-    return ("cjk" if is_cjk else "latin") + ("_serif" if is_serif else "")
-
-
-@lru_cache(maxsize=64)
-def _fc_match(family: str) -> tuple[str, str] | None:
-    """fontconfig 查询 → (文件, 实际家族)；本机没装 fc-match 返回 None。
-
-    没有「家族真的匹配」这一道，fc-match 对任何名字都会给一个兜底字面
-    （DejaVu 系），于是「声明 Microsoft YaHei」会被当成「预览就用 DejaVu」——
-    那不是解析，是替换，必须由调用方记账。
-    """
-    import shutil
-    import subprocess
-    exe = shutil.which("fc-match")
-    if not exe:
-        return None
-    try:
-        out = subprocess.run([exe, "-f", "%{file}\n%{family}", str(family)],
-                             capture_output=True, text=True, timeout=1.5)
-    except Exception:
-        return None
-    lines = (out.stdout or "").strip().splitlines()
-    if len(lines) < 2:
-        return None
-    path, actual = lines[0].strip(), lines[1].strip()
-    return (path, actual) if path and Path(path).exists() else None
-
-
-def resolve_family_font(family: str, bold: bool = False) -> str | None:
-    """声明的家族名 → 本机字体文件；解析不到返回 None（调用方回落桶候选）。
-
-    只做「这个家族在本机是否存在」的解析，不做字形等价承诺；解析到别的家族时
-    由调用方记账，预览仍如实标出替换关系。
-    """
-    name = str(family or "").strip().strip("'\"")
-    if not name:
-        return None
-    bucket = family_bucket(name)
-    literal = name.lower().replace(" ", "")
-    # 已知别名：Noto / Source Han 的常见写法 → 官方文件名。
-    known = {
-        "notoserifcjksc": "NotoSerifCJK", "notoserifcjk": "NotoSerifCJK",
-        "notosanscjksc": "NotoSansCJK", "notosanscjk": "NotoSansCJK",
-        "sourcehanserifsc": "NotoSerifCJK", "sourcehanserif": "NotoSerifCJK",
-        "思源宋体": "NotoSerifCJK", "思源宋": "NotoSerifCJK",
-        "sourcehansanssc": "NotoSansCJK", "sourcehansans": "NotoSansCJK",
-        "思源黑体": "NotoSansCJK", "思源黑": "NotoSansCJK",
-    }
-    stem = known.get(literal)
-    if stem:
-        for candidate in preview_font_names(bucket, bold):
-            if stem in Path(candidate).name and Path(candidate).exists():
-                return candidate
-    matched = _fc_match(name)
-    if matched:
-        path, actual = matched
-        # 家族真的等价才用：把 fontconfig 的兜底字面当成本命字体，是替换不是解析。
-        key = literal
-        if key in actual.lower().replace(" ", ""):
-            return path
-    return None
-
-
 def preview_font_names(base: str, bold: bool) -> tuple:
     """加载与缓存身份共用同一个候选顺序；粗体失败仍可回落常规字面。"""
     return (PREVIEW_FONT_BOLD_CANDIDATES[base] if bold else ()) + PREVIEW_FONT_CANDIDATES[base]
@@ -534,20 +445,21 @@ ELEMENT_TYPES = frozenset({"text", "shape", "image", "chart", "native_chart"})
 # 截断字面量）、ghost（占位表 + 6 处截断字面量）与 contract.md（两段枚举）里，
 # 任一处漏改就出现「guard 放行但编译截尾 / 预览与产物不一致」。现在各层只派生、
 # 不再各写一份；增删 kind 只改这一张表（selftest 的 chart_spec 断言锁定派生关系）。
-# 一个 kind 一条渲染路径。同图异名的写法（kpi/executive_kpi/big_number、
-# line/trend/single_trend_line、bar/comparison_bar、donut/donut_composition、
-# bar/horizontal_bar）会让「这张图该怎么画」有两个以上合法答案，而它们产出的
-# PPTX 逐字节相同（tools/chart_kind_survey.py 实测）——名字多一个，判断就多一次
-# 无意义的选择。表里只留**行为真的不同**的 kind；合并掉的旧名见
-# RETIRED_CHART_KINDS（只用于报错与改名，不参与编译）。
 CHART_SPEC: dict[str, dict] = {
     "kpi":               {"renderer": "kpi",    "payload": "value",  "numeric": False, "limit": None, "preview": "mirrored"},
+    "executive_kpi":     {"renderer": "kpi",    "payload": "value",  "numeric": False, "limit": None, "preview": "mirrored"},
+    "big_number":        {"renderer": "kpi",    "payload": "value",  "numeric": False, "limit": None, "preview": "mirrored"},
     "big_number_row":    {"renderer": "shape",  "payload": "rows",   "numeric": False, "limit": 5,    "preview": "mirrored"},
     "bar":               {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "horizontal_bar":    {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "column":            {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "comparison_bar":    {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "line":              {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "trend":             {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "single_trend_line": {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "area":              {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "donut":             {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
+    "donut_composition": {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "pie":               {"renderer": "native", "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "waterfall":         {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
     "ranked_bar":        {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": 8,    "preview": "mirrored"},
@@ -561,41 +473,15 @@ CHART_SPEC: dict[str, dict] = {
     "architecture":      {"renderer": "shape",  "payload": "layers", "numeric": False, "limit": 3,    "preview": "abstract"},
     "sparkline":         {"renderer": "shape",  "payload": "rows",   "numeric": True,  "limit": None, "preview": "mirrored"},
 }
-
-# 9.38 起**不再有别名表**：旧名不参与编译，编译器 / 预览 / guard 都只认
-# CHART_SPEC 的 19 个 canonical。这张表只剩一个用途——报错时说清「你写的是哪个
-# 退役名、该改成什么、要不要补默认值」，以及给 tools/rename_chart_kinds.py 当数据。
-# 它不改变任何渲染行为：写旧名的稿子在 9.37 的 release 档已被拦，9.38 起连 draft
-# 也直接报错——留着别名才是真的「没合并」。
-RETIRED_CHART_KINDS: dict[str, tuple[str, dict]] = {
-    "executive_kpi": ("kpi", {}),
-    "big_number": ("kpi", {}),
-    "trend": ("line", {}),
-    "single_trend_line": ("line", {}),
-    "comparison_bar": ("bar", {}),
-    "horizontal_bar": ("bar", {"show_values": False}),
-    "donut_composition": ("donut", {"show_values": False}),
-}
-
-# 五个派生集：渲染口径只从 CHART_SPEC 派生，谁都不许再抄一份。
+CHART_KINDS = frozenset(CHART_SPEC)
 NUMERIC_CHART_KINDS = frozenset(k for k, v in CHART_SPEC.items() if v["numeric"])
 ROWS_CHART_KINDS = tuple(k for k, v in CHART_SPEC.items() if v["payload"] == "rows")
 ELEMENT_VALUE_KINDS = tuple(k for k, v in CHART_SPEC.items() if v["payload"] == "value")
 ELEMENT_PAYLOAD_KINDS = frozenset(k for k, v in CHART_SPEC.items()
                                   if v["payload"] in ("points", "layers"))
 CHART_LIMITS = {k: v["limit"] for k, v in CHART_SPEC.items() if v["limit"] is not None}
-
-# 合法 kind 只有一张表：CHART_SPEC。名字多一个，「这张图怎么画」就多一个答案。
-CHART_KINDS = frozenset(CHART_SPEC)
-
-
-def retired_chart_kind(kind) -> tuple[str, dict] | None:
-    """旧名 → (canonical, 该名当年隐含的默认值)；不是旧名则 None。
-
-    只给**报错**和改名工具用。不要再拿它做归一：真正的迁移在源文件里完成。
-    """
-    hit = RETIRED_CHART_KINDS.get(str(kind or "").strip().lower())
-    return (hit[0], dict(hit[1])) if hit else None
+PREVIEW_ABSTRACT_KINDS = frozenset(k for k, v in CHART_SPEC.items()
+                                   if v["preview"] == "abstract")
 
 
 def chart_rows(element: dict) -> list[dict]:
@@ -1312,11 +1198,6 @@ NO_BREAK_SPACE = "\u00a0"
 # 「个百分点/百分点/个点/个季度/个星期」是分类词＋名词的完整计量短语：不进来的话，
 # 「3.4 个｜百分点」「2.1 个｜点」会在单位内部被断开（数字与单位不拆开的判据只认
 # 开头匹配，词组内部断点另由 ghost 的 _UNIT_INNER 按本表派生，见下）。
-# **单一来源**：判断层（intelligence 的数字量词）、Guard（数字与单位不拆行）、
-# 编译器（写不断行空格）与预览（禁则）都从这一份取。此前判断层认「27 处 / 12 项 /
-# 3 条」，断行侧却不认识这三个词：同一份稿件里判断把它们当带单位的量，排版却可能
-# 断成「27｜处」。词表因此按「判断层已认的量词」补齐（`selftest` 双向锁定：
-# UNIT_WORDS ⊆ 判断量词，且判断量词 ⊆ UNIT_WORDS ∪ 复合词名词）。
 UNIT_WORDS = (
     "亿美元", "万美元", "亿元", "万元", "万户", "万单", "万人", "万家", "万次",
     "个月", "个百分点", "百分点", "个季度", "个星期", "个点", "分钟", "小时",
@@ -1324,10 +1205,6 @@ UNIT_WORDS = (
     "千瓦时", "千瓦", "公斤", "千克", "毫米", "厘米", "毫升", "美元",
     "吨", "克", "米", "升", "元", "万", "亿", "家", "人", "个", "台", "名",
     "位", "件", "次", "天", "月", "年", "分", "秒", "倍", "万元",
-    # 判断层（intelligence 的数字量词）早就认的量词，断行侧此前不认识：
-    # 「27 处 / 12 项 / 3 条」在判断里是带单位的量，排版却可能断成「27｜处」。
-    "万吨", "处", "项", "条", "起", "所", "栋", "册", "辆", "架", "艘",
-    "门", "款", "箱", "份", "笔", "张", "页", "股", "手", "套",
     "%", "％", "pp",
 )
 _UNIT_HEAD_RE = re.compile("^(?:" + "|".join(
@@ -1455,239 +1332,6 @@ def estimate_lines(text: str, width: float, size: float, wrap: bool = True,
     # 拉丁字形宽度表，此处取两者最大值，确保含宽字符（MW）与字距的文本不被低估。
     used = max(text_units(text) * size, text_width(text, size, spacing))
     return max(1, math.ceil(used / max(width, size)))
-
-
-# ── 字阶：编译器 / 预览 / plan 共用的一张表 ─────────────────────────────
-# 这些数字此前散落在三个文件里（compiler 的 18/16/14/12/40÷3、ghost 的同名默认、
-# 作者手感定的 44/64），谁都不是「唯一口径」——同一页在预览和产物里字号不同，
-# 或下一页比上一页高半档，都不会有人发现。这里按 1280×720 画布定义一次，
-# 其它画布按宽度等比换算（px 与 pt 的换算仍只在 px_to_pt 一处）。
-TYPE_SCALE_REF_WIDTH = 1280
-TYPE_SCALE = {
-    "stat": 88.0,         # 单页主数字（KPI 页的最高一档）
-    "display": 64.0,      # 封面 / 落点：整套第二档
-    "title": 44.0,        # 页主张
-    "lead": 32.0,         # 次级导语 / 段落主句
-    "subtitle": 28.0,     # 导语
-    "body": 18.0,         # 正文
-    "caption": 14.0,      # 注解 / 眉标 / 页码
-    "source": 12.0,       # 出处与口径
-    "chart_label": 40 / 3,
-    "chart_value": 12.0,
-    "shape_text": 16.0,
-}
-
-
-def type_scale(canvas_width: float = TYPE_SCALE_REF_WIDTH) -> dict[str, float]:
-    """画布宽度 → 一整套字阶（px）。
-
-    只做等比缩放，不改变档位关系：1280 宽的稿子换到 1920 宽时，字与几何一起
-    放大，层级不变——这正是「同一套语气」在物理上的含义。
-    """
-    try:
-        factor = float(canvas_width) / TYPE_SCALE_REF_WIDTH
-    except (TypeError, ValueError, ZeroDivisionError):
-        factor = 1.0
-    factor = factor if 0.25 <= factor <= 4 else 1.0
-    if factor == 1.0:
-        return dict(TYPE_SCALE)          # 基准画布：原值返回，不做无意义的四舍五入
-    return {step: round(value * factor, 2) for step, value in TYPE_SCALE.items()}
-
-
-# ── 折行与度量：全库唯一实现 ────────────────────────────────────────────
-# 同一段文字在三个地方被数「会排几行」：guard（估算）、ghost（预览）、
-# PowerPoint（产物）。实现分三份，判据就会分三份——所以折行只有这一份，
-# guard 与 ghost 各自只提供「一个字符有多宽」的度量函数。
-UNIT_HEAD_RE = re.compile(
-    "^(?:" + "|".join(re.escape(w) for w in
-                      sorted(set(UNIT_WORDS), key=len, reverse=True)) + ")")
-# 双字单位的内部断点：断在「个|月」「万|元」「小|时」中间，单位被读成两个词。
-# 只在**跨断口的两字正好构成单位内部相邻对**时触发，不会误并「大小｜时间」。
-UNIT_INNER = frozenset(u[i:i + 2] for u in UNIT_WORDS if len(u) >= 2
-                       for i in range(len(u) - 1))
-# 数字本身不可拆：断在数字内部（「2.｜6 年」「1｜8%」）比数字与单位分家更隐蔽。
-NUMBER_TOKEN_RE = re.compile(r"\d+(?:[.,]\d+)*[%％]?")
-
-# 中西混排：插入间隙（insert_script_gaps）之后，渲染器还会在 CJK↔拉丁边界再让出
-# 一份间距。实测 LibreOffice 25.2（Noto CJK，18px）：每个边界比 PIL 的多出
-# 0.217–0.221 em，与方向、有无空格无关（「营收11.8%」+0.217em、「11.8%门店」
-# +0.221em、「营收11.8%门店」+0.450em）。按 0.22 em 计入，三个度量才说同一件事。
-SCRIPT_GAP_EM = 0.22
-
-
-def script_gaps(text: str) -> int:
-    """CJK↔拉丁/数字的边界个数（空格不算边界：两侧取最近的非空格字符）。"""
-    count = 0
-    prev = ""
-    for ch in str(text):
-        if ch.isspace():
-            continue
-        if prev and is_cjk(prev) != is_cjk(ch):
-            count += 1
-        prev = ch
-    return count
-
-
-def cjk_break_fix(seg: str, lo: int) -> int:
-    """在断点上按中文禁则回退（只减不增，不会溢出）。
-
-    断在空格上时真正相邻的是左端末字与右端首字（「6.4 ｜天之间」），
-    所以判据看 rstrip/lstrip 之后的邻字，而不是断口那一个字符。
-    """
-    if not (0 < lo < len(seg)):
-        return max(1, lo)
-
-    def sides(at: int) -> tuple[str, str]:
-        return seg[:at].rstrip(), seg[at:].lstrip()
-
-    left, right = sides(lo)
-    while lo > 1 and right[:1] and right[0] in NO_LINE_START_CJK:
-        lo -= 1                                    # 标点不领行：连同前一字推下
-        left, right = sides(lo)
-    if lo > 1 and left[-1:] and left[-1] in NO_LINE_END_CJK:
-        lo -= 1                                    # 开引号/括号不收尾
-        left, right = sides(lo)
-    while lo > 1 and left[-1:] and right[:1] and (left[-1] + right[0]) in UNIT_INNER:
-        lo -= 1                                    # 计量短语不腰斩
-        left, right = sides(lo)
-    if lo >= 1 and left[-1:].isdigit() and UNIT_HEAD_RE.match(right):
-        start = len(left) - 1                      # 数字不与单位拆开：整个数推下
-        while start > 1 and (left[start - 1].isdigit() or left[start - 1] in ".,"):
-            start -= 1
-        # 数字就在行首、而「数字+单位」在本行宽里怎么都放不下时，回退会把整行
-        # 退成 1 个字（实测窄栏里 `7,100 万日元` 被拆成 9 行）。这种退无可退的
-        # 情形只能做紧急断行：数字自占一行，单位下行——Office 也是这么排的。
-        if start > 1:
-            lo = start
-    for token in NUMBER_TOKEN_RE.finditer(seg):
-        if token.start() < lo < token.end() and token.start() > 1:
-            lo = token.start()                     # 数字内部不是断点（行首同样退无可退）
-            break
-    return max(1, lo)
-
-
-@lru_cache(maxsize=128)
-def _measure_font(family: str, size_px: int, bold: bool = False):
-    """家族 → PIL 字面（按像素字号缓存）；本机没有这个家族就返回 None。"""
-    try:
-        from PIL import ImageFont
-    except Exception:
-        return None
-    path = resolve_family_font(family, bold)
-    if not path:
-        return None
-    try:
-        return ImageFont.truetype(path, max(1, int(round(size_px))))
-    except Exception:
-        return None
-
-
-def measure_text(text: str, size: float, cn: str, latin: str, *,
-                 spacing: float = 0.0, bold: bool = False) -> float:
-    """一段文字占多宽（px）：真字面优先，缺字面回落宽度表。
-
-    guard 与 ghost 都走这一条；差别只在 ghost 传的是**已加载的**预览字面。
-    混排边界间距（SCRIPT_GAP_EM）在这里统一计入——渲染器会在那里多让一份
-    空隙，漏掉它 guard 就会少估一行。
-    """
-    f_cn = _measure_font(str(cn or ""), size, bold) if cn else None
-    f_latin = _measure_font(str(latin or ""), size, bold) if latin else None
-    if f_cn is not None and f_latin is not None:
-        total = 0.0
-        for run, is_cjk_run in split_runs(text):
-            total += (f_cn if is_cjk_run else f_latin).getlength(run)
-        total += max(0, len(text) - 1) * max(0.0, spacing) / 0.75
-    else:
-        total = text_width(text, size, spacing)
-    return total + SCRIPT_GAP_EM * size * script_gaps(text)
-
-
-def measured_lines(text: str, width: float, size: float, cn: str, latin: str, *,
-                   spacing: float = 0.0, bold: bool = False) -> int:
-    """折行后的行数（guard 用；与预览同一套折行与度量）。"""
-    if not text:
-        return 1
-    measure = lambda s: measure_text(s, size, cn, latin, spacing=spacing, bold=bold)
-    # 半个字宽的悬挂额度：行尾句读点可以悬出行宽（与 Office 的标点悬挂同义）。
-    return len(wrap_lines(text, width, measure, hanging=0.5 * size))
-
-
-def wrap_lines(text, width, measure, hanging: float = 0.0) -> list[str]:
-    """按可见宽度折行；measure(str) -> px。CJK 逐字、拉丁按词，长词逐字切。
-
-    与预览、guard 共用：`measure` 是唯一的变量（真字面 or 宽度表），折行判据
-    （含禁则、长词切开后的再折行）不再各写一份。
-    """
-    limit = max(1.0, float(width))
-    hang = max(0.0, float(hanging or 0.0))
-    result: list[str] = []
-
-    def fits(value: str) -> bool:
-        if measure(value) <= limit:
-            return True
-        # 标点悬挂：行尾的句读点可以悬出行宽半个字（中文排版与 Office 默认行为）。
-        # 不认这一条，`……公摊。` 这种「只差一个句号」的句子会被判成两行，而实际
-        # 一行就排得下——作者会因此白删一句话。
-        return bool(hang and value[-1:] in NO_LINE_START_CJK
-                    and measure(value[:-1]) + hang <= limit)
-    for raw in str(text).split("\n"):
-        if not raw:
-            result.append("")
-            continue
-        if not any(is_cjk(c) for c in raw):
-            words = raw.split()
-            line = ""
-            for word in words:
-                candidate = word if not line else f"{line} {word}"
-                if line and measure(candidate) > limit:
-                    result.append(line)
-                    line = ""
-                if not line and measure(word) > limit:
-                    # 长词逐字切，但切点仍受禁则约束（`11.8%` 不许劈成 `11.`/`8%`）
-                    rest = word
-                    while rest:
-                        if measure(rest) <= limit:
-                            line = rest
-                            break
-                        lo, hi = 1, len(rest)
-                        while hi - lo > 1:
-                            mid = (lo + hi) // 2
-                            if measure(rest[:mid]) <= limit:
-                                lo = mid
-                            else:
-                                hi = mid
-                        cut = cjk_break_fix(rest, lo)
-                        result.append(rest[:cut].rstrip())
-                        rest = rest[cut:].lstrip()
-                else:
-                    line = word if not line else f"{line} {word}"
-            result.append(line)
-            continue
-        pos, n = 0, len(raw)
-        while pos < n:
-            seg = raw[pos:]
-            if fits(seg):
-                result.append(seg)          # 末行整段可容纳：原样追加（不 rstrip）
-                break
-            if len(seg) == 1:
-                result.append(seg)
-                break
-            lo, hi = 1, len(seg)            # 二分：最长可容纳前缀
-            while hi - lo > 1:
-                mid = (lo + hi) // 2
-                if fits(seg[:mid]):
-                    lo = mid
-                else:
-                    hi = mid
-            lo = cjk_break_fix(seg, lo)     # 禁则只回退，不重新定义断点
-            result.append(seg[:lo].rstrip())
-            pos += lo
-            # 行首空白不占位：断在空格上时，下一行开头那个空格既不该被画出，
-            # 也不该算进行宽（实测：`7,100 万日元` 因行首空格 +8.8px 被拆成两行，
-            # 而 LibreOffice 回放是一行）。
-            while pos < n and raw[pos].isspace():
-                pos += 1
-    return result or [""]
 
 
 def set_run_font(run, latin_family, cjk_family, size_pt, color, bold=False,

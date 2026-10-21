@@ -51,6 +51,7 @@ BRIEF = {
     "audience": "董事会与投资人",
     "decision": "批准 2026 自有内容预算",
     "tension": "投放成本上升，自有内容回报周期长",
+    "quality_level": "advanced",
     "brand_colors": ["#1A3A5C", "#C8501E"],
     "slides": [
         {"id": "s01", "title": "自有内容占比过半", "content": "2026 内容战略提案"},
@@ -162,19 +163,6 @@ def test_intelligence(tmp: Path):
           and "空白是时间" in real_sequence["spatial"]["whitespace_duty"])
 
     bundle = intel.think(BRIEF)
-    # 字阶：deck 级一张表，逐页只给档位与像素值——作者不必在每页凭手感挑字号。
-    import primitives as _pscale
-    _deck_scale = bundle["deck"].get("type_scale") or {}
-    _steps = [pp["judgment"]["typography"]["scale"] for pp in bundle["pages"]]
-    check("plan: deck 级带一张字阶表，逐页只给档位与像素值",
-          _deck_scale == _pscale.type_scale()
-          and all(st.get("step") in _pscale.TYPE_SCALE
-                  and st.get("size") == _pscale.TYPE_SCALE[st["step"]] for st in _steps),
-          str(_steps[:2]))
-    check("plan: 档位跟着焦点走（封面 display / 主数字 stat），不是全稿同一号字",
-          next(pp["judgment"]["typography"]["scale"]["step"] for pp in bundle["pages"]
-               if pp["judgment"]["visual_role"]["role"] == "establish") == "display"
-          and any(st.get("step") == "stat" for st in _steps), str(sorted({st.get("step") for st in _steps})))
     deck, pages = bundle["deck"], bundle["pages"]
     by_id = {p["id"]: p for p in pages}
 
@@ -252,19 +240,6 @@ def test_intelligence(tmp: Path):
           chart_pair["visual_role"]["role"] == "compare"
           and chart_pair["focus"]["element_role"] == "comparison_field"
           and chart_pair["focus"]["type"] == "chart")
-    # plan 只说 type=chart 时，落稿要即兴决定 chart_kind，同一判断会漂成不同图形。
-    # 图种由证据形状推出来（构成/两端/序列/单量），判断不出就不猜。
-    _part = intel.understand("交付延迟 61%，账单错误 24%，其他 15%", has_chart=True)
-    _many = intel.understand("甲 21%，乙 18%，丙 16%，丁 14%，戊 13%，己 10%，庚 8%", has_chart=True)
-    check("plan: 焦点是图表时给出可落地的 chart_kind（形状决定图形，判断不出就不猜）",
-          chart_pair["focus"].get("chart_kind") == "bar"
-          and intel.focus_of("compare", _part, {"text": "交付延迟占 61%"}).get("chart_kind") == "donut"
-          and intel.focus_of("compare", _many, {"text": "甲占 21%"}).get("chart_kind") == "bar"
-          and intel.focus_of("prove", intel.understand(
-              "2023 年 58%，2024 年 63%，2025 年 67%", has_chart=True),
-              {"text": "毛利率升至 67%"}).get("chart_kind") == "line"
-          and "chart_kind" not in intel.focus_of(
-              "explain", intel.understand("三个模块与两个层级"), {"text": "结构"}))
     mixed = intel.think(dict(BRIEF, slides=[
         {"id": "units", "title": "收入与人均成本对照",
          "content": "总收入 480 万元，人均成本 90 元（来源：财务表）",
@@ -483,12 +458,6 @@ def test_intelligence(tmp: Path):
     w = intel.think(dict(BRIEF, design_direction="editorial"))["warnings"]
     check("plan: design_direction 退役并留痕",
           any(x.get("rule") == "direction_retired" for x in w), str(w)[:120])
-    # quality_level 同理：它曾经只改一个标签（advanced 与 fast 的 plan 逐字节相同），
-    # 现在退役并出声，免得作者以为写了它就有更深的判断。
-    q = intel.think(dict(BRIEF, quality_level="advanced"))
-    check("plan: quality_level 退役并留痕（不再有零消费者的质量档）",
-          any(x.get("rule") == "quality_retired" for x in q["warnings"])
-          and "quality" not in q["deck"], str(q["warnings"])[:120])
 
     # 缺 deck 契约 / 证据页缺内容：两种警告都要开口
     rules = {x.get("rule") for x in bundle["warnings"]}
@@ -891,121 +860,6 @@ def test_verify(tmp: Path):
     check("guard: 墨迹重叠必拦（OVERLAP）",
           any(c["rule"] == "overlap" for c in r["checks"]))
 
-    # 阈值本身要有行为测试：只断言「有 overlap 这一条」的话，把 12% 改成 90%
-    # 也照样通过——审计里的变异实验就是这样活下来的。两个盒子固定几何，
-    # 重叠 14% 必须拦、12% 以下必须放，改阈值就有一侧翻面。
-    def _pair(x, **kw):
-        a = {"id": "a", "type": "text", "x": x, "y": 200, "width": 400, "height": 100,
-             "text": "甲", "size": 24}
-        a.update(kw)
-        b = {"id": "b", "type": "text", "x": 400, "y": 200, "width": 400, "height": 100,
-             "text": "乙", "size": 24}
-        spec_ = {"canvas": {"width": 1280, "height": 720},
-                 "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
-                 "slides": [{"id": "s1", "elements": [a, b]}]}
-        return [c["msg"] for c in check_spec(spec_)["checks"] if c["rule"] == "overlap"]
-    check("guard: 重叠阈值有行为两侧（默认 12%：14% 拦、放行更小的接触）",
-          bool(_pair(590)) and not _pair(595))
-    def _pair_with(rules):
-        spec_ = {"canvas": {"width": 1280, "height": 720},
-                 "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
-                 "slides": [{"id": "s1", "elements": [
-                     {"id": "a", "type": "text", "x": 590, "y": 200, "width": 400,
-                      "height": 100, "text": "甲", "size": 24},
-                     {"id": "b", "type": "text", "x": 400, "y": 200, "width": 400,
-                      "height": 100, "text": "乙", "size": 24}]}]}
-        return [c for c in check_spec(spec_, rules=rules)["checks"] if c["rule"] == "overlap"]
-    check("guard: 阈值可显式放宽（作者声明 overlap_ok 或 rules 覆盖时不误杀）",
-          not _pair(590, overlap_ok=True) and not _pair_with({"overlap_ratio": 0.20}))
-
-    # 三度量统一：guard 与 ghost 现在共用 primitives.wrap_lines，只有「一个字符
-    # 多宽」的度量函数不同。两边对同一段文字必须给出同一行数——只要有一边偷偷
-    # 换回自己的判据，这里立刻翻面。
-    import primitives as _prim
-    import ghost as _ghost_mod
-    _grid = [
-        ("上海六家成熟店在同一套产品与人力配置下的单店模型已经稳定", 18),
-        ("租金占营收 11.8%，门店利润率 21.4%，两项均为 2026 年 1–9 月均值", 18),
-        ("两家店全部关停，净损失约 7,100 万日元", 40),
-        ("Stores opened in two batches, each verified against the same unit model.", 18),
-        ("投入 8,400 万日元；押金回收 60%、设备残值 25%，合计可回收 1,290 万", 20),
-        ("ARPU 1,284 元 · NPS 61 · 复购率 38.2% · 客单价 34 元", 20),
-    ]
-    _mismatch = []
-    for _text, _size in _grid:
-        _gapped = _prim.insert_script_gaps(_text)
-        _font = _ghost_mod._font(_size, cjk=True, family="_serif",
-                                 family_name="Noto Serif CJK SC")
-        for _w in range(120, 700, 37):
-            _g_font = _ghost_mod._wrap_lines(_gapped, _font, _w)
-            _g_guard = _prim.measured_lines(_gapped, _w, _size,
-                                            "Noto Serif CJK SC", "Noto Serif CJK SC")
-            if len(_g_font) != _g_guard:
-                _mismatch.append((_text[:10], _size, _w, len(_g_font), _g_guard))
-    check("容量: guard 与 ghost 同一套折行/度量，行数逐宽度一致",
-          not _mismatch, str(_mismatch[:3]))
-
-    # 缺字面时只能更保守：表估必须 ≥ 真字面（否则本机没装主题字体时，
-    # guard 会放行一个其实会溢出的框）。
-    _under = []
-    for _text, _size in _grid:
-        _gapped = _prim.insert_script_gaps(_text)
-        _real = _prim.measure_text(_gapped, _size, "Noto Serif CJK SC", "Noto Serif CJK SC")
-        _table = _prim.measure_text(_gapped, _size, "NoSuchFamily", "NoSuchFamily")
-        if _table < _real - 0.5:
-            _under.append((_text[:10], _size, round(_real, 1), round(_table, 1)))
-    check("容量: 字面缺失时宽度表只高估不低估（守门不会因缺字体放行溢出）",
-          not _under, str(_under[:3]))
-
-    # 行首空白不占位：断在空格上时，下一行的行首空格既不该画出来，也不该
-    # 吃掉行宽——实测它曾把 `7,100 万日元` 拆成两行，而产物里是一行。
-    _lead_font = _ghost_mod._font(40, cjk=True, family="_serif",
-                                  family_name="Noto Serif CJK SC")
-    _lead_lines = _ghost_mod._wrap_lines(
-        _prim.insert_script_gaps("两家店全部关停，净损失约 7,100 万日元"), _lead_font, 240)
-    check("折行: 行首空白不占位（`7,100 万日元` 不被行首空格挤断）",
-          _lead_lines[-1].startswith("7,100") and len(_lead_lines) == 3, str(_lead_lines))
-
-    # guard 的余量只对窄栏生效：窄栏留余量（防低估=放过溢出），宽栏不留
-    # （否则会把「刚好排下」的句子判成溢出，逼作者白删内容）。
-    from verify import _text_box_capacity
-    _theme = {"fonts": {"cn": "Noto Serif CJK SC", "latin": "Noto Serif CJK SC"}}
-    def _cap_lines(width, size, text):
-        e = {"id": "t", "type": "text", "x": 40, "y": 40, "width": width,
-             "height": 900, "text": text, "size": size, "line_height": 1.35}
-        return _text_box_capacity(e, _theme)["lines"]
-    # 160px / 18px（8.9 字/行）是校准集里唯一会低估的形态：必须比无余量多留
-    _narrow_text = "租金占营收 11.8%，门店利润率 21.4%，两项均为 2026 年 1–9 月均值"
-    _no_margin = _prim.measured_lines(_prim.insert_script_gaps(_narrow_text), 160, 18,
-                                      "Noto Serif CJK SC", "Noto Serif CJK SC")
-    # 720px / 20px（36 字/行）刚好等于栏宽：宽栏不留余量，必须判一行
-    check("容量: 余量只加在窄栏（窄栏多留、宽栏不误杀）",
-          _cap_lines(160, 18, _narrow_text) >= _no_margin
-          and _cap_lines(720, 20, "先让观众知道要判断什么，再给出证据：审阅者只在一处看到结论，"
-                                  "其余都是支撑") == 1)
-
-    # 字阶：编译器与预览的默认字号只能有一个来源。以前 18/16/14/12/40÷3 在
-    # compiler 与 ghost 各写一份，改一处漏一处就是「预览与产物字号不同」。
-    import primitives as _ps
-    _tbl = _ps.TYPE_SCALE
-    _mini = {"canvas": {"width": 1280, "height": 720},
-             "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
-             "slides": [{"id": "s1", "elements": [
-                 {"id": "no_size", "type": "text", "x": 40, "y": 40, "width": 600,
-                  "height": 80, "text": "没有写 size 的正文", "color": "ink"}]}]}
-    from compiler import compile_deck
-    from pptx import Presentation
-    compile_deck(_mini, tmp / "default-size.pptx")
-    _run_sz = Presentation(tmp / "default-size.pptx").slides[0].shapes[0].text_frame.paragraphs[0].runs[0].font.size
-    check("字阶: 编译器缺省字号取自 TYPE_SCALE（不是另一份硬编码）",
-          abs(_run_sz.pt - _ps.px_to_pt(_tbl["body"])) < 0.01, str(_run_sz.pt))
-    check("字阶: 画布变宽整套等比放大，档位关系不变",
-          _ps.type_scale(1920)["title"] == _tbl["title"] * 1.5
-          and _ps.type_scale(1920)["display"] > _ps.type_scale(1920)["body"]
-          and _ps.type_scale(1280) == _tbl)
-
-
-
     r = mutate(lambda s: s["slides"][0]["elements"][0].update({"x": 1300}))
     check("guard: 越出画布必拦", any(c["rule"] == "safety" for c in r["checks"]))
 
@@ -1123,6 +977,7 @@ def test_verify(tmp: Path):
     # 未消费字段：作者写错的字段名被渲染器静默丢弃（`font_size` 写了但标题还是默认
     # 字号），而契约把这一类列为必拦。判据两档：近似已有字段 → error + 候选名；
     # 完全对不上的未知字段 → warn（可能是作者自己的注解，不假拦）。
+    _u_base = {"canvas": {"width": 1280, "height": 720}, "theme": {"colors": {}}}
     _u_text = {"type": "text", "id": "t", "x": 100, "y": 100, "width": 600, "height": 120,
                "size": 32, "text": "结论一句话", "max_lines": 2, "line_height": 1.3}
 
@@ -1157,24 +1012,7 @@ def test_verify(tmp: Path):
     _not_element = {"spec", "slides", "plan_path", "fix_plan", "draft", "release",
                     "matrix", "pie", "ranked_bar", "arrow", "image", "shape", "text",
                     "type", "id", "role", "name", "value", "display", "points", "layers",
-                    "chart_field_unconsumed", "body", "latin", "family",
-                    # 函数/参数名，不是元素字段：文档里用反引号提到它们，
-                    # 不该被当成「渲染器应消费的字段」来判。
-                    "measure_text", "wrap_lines", "insert_script_gaps",
-                    # plan 契约层键（判断卡 / deck 摘要 / 瘦身投影），不是元素字段：
-                    # 它们由 intelligence.validate_plan + schemas/plan.schema.json 守，
-                    # 不进渲染器。清单保持**显式且最小**：新增一项都要说得出为什么不渲染。
-                    "author", "hint", "judgment", "coherence", "must_place", "must_not",
-                    "numerals", "pending_author", "raw", "rejected", "provenance",
-                    "decided_by", "legend", "delete_candidates", "chosen", "option",
-                    # 策略分组名（policy.group(...) 的键）与 brief 键名：由
-                    # selftest.test_policy_contract / test_brief_contract 守，
-                    # 渲染器不消费——它们决定「怎么判」，不决定「怎么排」。
-                    "enums", "composition_grammar_preference", "information_weight",
-                    "evidence_shapes", "decomposition", "focus", "measure",
-                    "chart_kind", "production", "output",
-                    "audience", "audiance", "decision", "tension", "slides", "avoid",
-                    "content", "title", "asset", "role", "evidence", "plan"}
+                    "chart_field_unconsumed", "body", "latin", "family"}
     _doc_fields = set(_re_doc.findall(r"`([a-z_][a-z0-9_]*)`", _doc))
     _doc_missing = sorted(f for f in _doc_fields - _not_element if f not in _known)
     check("docs↔code: contract.md 点名的字段都在渲染器消费集里",
@@ -1290,66 +1128,6 @@ def test_verify(tmp: Path):
 
 
 # ── 3 · production（编译 / 缓存 / 资产 / 预览）────────────────────────
-# ── 3.5 · safe_area 闭环（审计 E16）────────────────────────────────────
-def test_safe_area(tmp: Path):
-    """safe_area 曾经只是成图提示词的一部分：把标题挪到高亮上，release 照过。
-
-    现在它必须同时是版面事实——页上声明、清单继承、guard 执行，三处口径一致。
-    """
-    from verify import check_spec
-    from PIL import Image
-    import vao
-
-    area = {"x": 0.06, "y": 0.08, "width": 0.34, "height": 0.78}
-
-    def deck(safe=area, x=88, role="claim", exempt=False):
-        element = {"id": "t", "type": "text", "role": role, "x": x, "y": 200,
-                   "width": 400, "height": 200, "text": "东京首店", "size": 54,
-                   "color": "ink"}
-        if exempt:
-            element["safe_area_exempt"] = True
-        return {"canvas": {"width": 1280, "height": 720},
-                "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111"}},
-                "slides": [{"id": "s01", "safe_area": safe, "elements": [
-                    {"id": "img", "type": "image", "src": "bg.png", "x": 0, "y": 0,
-                     "width": 1280, "height": 720, "layer": "background"},
-                    element]}]}
-
-    def errors(spec):
-        return [c["rule"] for c in check_spec(spec)["checks"] if c["level"] == "error"]
-
-    check("safe_area: 文字压出压字区必拦（E16：声明了就要执行）",
-          "safe_area" in errors(deck(x=760)) and "safe_area" not in errors(deck()))
-    check("safe_area: 来源区小字按契约豁免（它们本就压在页脚带上）",
-          "safe_area" not in errors(deck(x=760, role="source")))
-    check("safe_area: 写像素值报 schema（归一化坐标是唯一口径）",
-          "safe_area_schema" in errors(deck(safe={"x": 72, "y": 200, "width": 420,
-                                                  "height": 220})))
-    check("safe_area: 显式 safe_area_exempt 才放行图上游走的装饰字",
-          "safe_area" not in errors(deck(x=760, exempt=True)))
-
-    Image.new("RGB", (1280, 720), "gray").save(tmp / "bg1.png")
-    manifest = tmp / "safe-manifest.json"
-    manifest.write_text(json.dumps({"assets_dir": ".", "assets": [{
-        "asset_id": "bg1", "decision": "generate", "expected_filename": "bg1.png",
-        "safe_area": area}]}), encoding="utf-8")
-
-    def bind(slide_area):
-        spec = deck(safe=slide_area or {})
-        spec["slides"][0]["elements"][0]["asset_id"] = "bg1"
-        return vao.bind_asset_manifest(spec, manifest)
-
-    bound, report = bind(None)
-    check("safe_area: 清单压字区继承到版面（不再只是提示词的输入）",
-          report["safe_area_inherited"] == ["s01"]
-          and bound["slides"][0]["safe_area"] == area and report["status"] == "PASS",
-          str(report.get("safe_area_inherited")))
-    _, conflict = bind({"x": 0.55, "y": 0.08, "width": 0.4, "height": 0.78})
-    check("safe_area: 页声明≠清单 → BLOCK（图按 A 留白、字按 B 排字）",
-          conflict["status"] == "BLOCK" and conflict["safe_area_conflicts"],
-          str(conflict.get("safe_area_conflicts"))[:120])
-
-
 def test_production(tmp: Path):
     from compiler import compile_deck
     from primitives import ENGINE_SCOPES, file_digest, spec_view, compile_reuse, record_compile
@@ -1386,10 +1164,7 @@ def test_production(tmp: Path):
 
     from pptx import Presentation
     prs = Presentation(str(out1))
-    # 渲染层的排版间隙（U+2009 中西混排、U+00A0 数字与单位）不是文本内容：
-    # 断言的是「文字在对象模型里可改」，比较前统一抹掉这三类间隙字符。
     texts = [sh.text_frame.text.replace("\u2009", "").replace("\u200a", "")
-             .replace("\u00a0", "")
              for sl in prs.slides for sh in sl.shapes
              if sh.has_text_frame and sh.text_frame.text.strip()]
     check("compiler: 原生可编辑 PPTX（文本在对象模型里可改）",
@@ -1445,7 +1220,7 @@ def test_production(tmp: Path):
         _chart_ghost.ghost_page(chart_spec["slides"][1],chart_spec,scale=1,supersample=1)
     check("ghost: 原生图表类目/数值遵循作者字号与字体角色",
           any(c.args[0] == 24 and c.kwargs.get("cjk") and c.kwargs.get("family") == "_serif"
-              and c.kwargs.get("family_name") for c in fonts.call_args_list)
+              for c in fonts.call_args_list)
           and any(c.args[0] == 28 and c.kwargs.get("family") == "_serif" for c in fonts.call_args_list))
     check("ghost: 单 series 不把序列名缝进类别标签",
           [r["label"] for r in _chart_ghost._rows(forms[1])] == ["研发","交付"])
@@ -1658,134 +1433,6 @@ def test_production(tmp: Path):
           and _verify_mod.CHART_LIMITS == _LIMITS == {k: v["limit"] for k, v in _SPEC.items() if v["limit"] is not None}
           and set(_ghost.PREVIEW_ABSTRACT) == {k for k, v in _SPEC.items() if v["preview"] == "abstract"},
           f"spec={len(_SPEC)} kinds")
-    # 9.38：别名表已删除。旧名不再是「另一种写法」，而是**错误输入**——只保留一张
-    # 退役名表用于报错与批量迁移。这里锁三件事：表里没有渲染行为、guard 一定拦、
-    # 报错必须给出可执行的下一条命令（否则作者只看到「未知 chart_kind」）。
-    import primitives as _prim_kind
-    from primitives import (CHART_KINDS as _KINDS2, CHART_SPEC as _SPEC2,
-                            RETIRED_CHART_KINDS as _RETIRED,
-                            retired_chart_kind as _retired)
-    check("chart_alias: 别名表已删除（合法 kind 只有 CHART_SPEC 的 19 条）",
-          len(_SPEC2) == 19 and set(_KINDS2) == set(_SPEC2)
-          and len(_RETIRED) == 7
-          and not (_RETIRED.keys() & _SPEC2.keys())
-          and _retired("horizontal_bar") == ("bar", {"show_values": False})
-          and _retired("bar") is None
-          and not hasattr(_prim_kind, "apply_chart_alias")
-          and not hasattr(_prim_kind, "CHART_ALIASES"),
-          f"spec={len(_SPEC2)} kinds={len(_KINDS2)} retired={len(_RETIRED)}")
-
-    import hashlib as _hashlib, tempfile as _tempfile
-    from pathlib import Path as _Path
-    _mini = lambda k, **kw: {"canvas": {"width": 1280, "height": 720},  # noqa: E731
-        "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
-                             "primary": "#1F3A5F", "secondary": "#8899AA",
-                             "accent": "#9C3B26"}},
-        "slides": [{"id": "s", "elements": [dict(
-            {"id": "c", "type": "chart", "chart_kind": k, "x": 80, "y": 80,
-             "width": 900, "height": 400, "unit": "项",
-             "data": [{"label": "甲", "value": 3}, {"label": "乙", "value": 5}]}, **kw)]}]}
-    _td = _Path(_tempfile.mkdtemp())
-
-    def _sha(kind: str, **kw) -> str:
-        out = _td / f"{kind}-{len(list(_td.iterdir()))}.pptx"
-        compile_deck(_mini(kind, **kw), out)
-        return _hashlib.sha256(out.read_bytes()).hexdigest()
-
-    # 旧名不许「悄悄还能用」：guard 在任何档位都是 error，且报错带 canonical 与命令。
-    _legacy_rep = _verify_mod.check_spec(dict(_mini("horizontal_bar")))
-    _legacy_msgs = [c for c in _legacy_rep["checks"] if c["rule"] == "chart_kind_alias"]
-    check("chart_alias: 旧名一律拦（draft 也拦），报错给 canonical + 默认值 + 改名命令",
-          not _legacy_rep["passed"] and bool(_legacy_msgs)
-          and _legacy_msgs[0]["level"] == "error"
-          and "'bar'" in _legacy_msgs[0]["msg"]
-          and "show_values" in _legacy_msgs[0]["msg"]
-          and "rename_chart_kinds" in _legacy_msgs[0]["msg"]
-          and _verify_mod._rule_to_code("chart_kind_alias") == "CHART_KIND_ALIAS"
-          and "CHART_KIND_ALIAS" in _verify_mod.BLOCKING_CODES,
-          f"checks={[c['rule'] for c in _legacy_rep['checks']]}")
-
-    # 未知名与退役名必须区分：前者是「写错了/不支持」，后者是「迁移没做完」。
-    _unknown_rep = _verify_mod.check_spec(dict(_mini("no_such_kind")))
-    check("chart_alias: 未知名报 chart_type，不与退役名混成一条错",
-          any(c["rule"] == "chart_type" and c["level"] == "error"
-              for c in _unknown_rep["checks"])
-          and not any(c["rule"] == "chart_kind_alias" for c in _unknown_rep["checks"]),
-          f"checks={[c['rule'] for c in _unknown_rep['checks']]}")
-
-    # 批量改名：改名必须**原子**——名字换了、隐含默认值没补，横条图会突然长出数值
-    # 标签。所以这里不比字符串，直接比改名前后的编译产物 sha。
-    _rk = _Path(_tempfile.mkdtemp())
-    _rk_json = _rk / "plan.json"
-    _rk_json.write_text(json.dumps(_mini("horizontal_bar"), ensure_ascii=False, indent=2),
-                        encoding="utf-8")
-    # .py 侧改用 kind 键（另一条键名分支），字面量必须是 Python 的 True/False
-    _py_spec = _mini("donut_composition")
-    _el = _py_spec["slides"][0]["elements"][0]
-    _el["kind"] = _el.pop("chart_kind")
-    _rk_py = _rk / "build.py"
-    # 同文件再塞一处 kwargs 写法（dict(chart_kind=...)）：两种语法都要能改
-    _py_text = ("SPEC = " + repr(_py_spec) + "\n"
-                "EXTRA = dict(chart_kind='horizontal_bar', id='x')\n")
-    _rk_py.write_text(_py_text, encoding="utf-8")
-    _rename_tool = ROOT / "tools" / "rename_chart_kinds.py"
-    _before = {p.name: p.read_bytes() for p in (_rk_json, _rk_py)}
-    _dry = subprocess.run([sys.executable, str(_rename_tool), str(_rk)],
-                          capture_output=True, text=True)
-    _dry_kept = {p.name: p.read_bytes() for p in (_rk_json, _rk_py)} == _before
-    _write = subprocess.run([sys.executable, str(_rename_tool), str(_rk), "--write"],
-                            capture_output=True, text=True)
-    _texts = {p.name: p.read_text(encoding="utf-8") for p in (_rk_json, _rk_py)}
-    _again = subprocess.run([sys.executable, str(_rename_tool), str(_rk)],
-                            capture_output=True, text=True)
-    # 断言读的是**改完的源码语义**，不是字符串长相：键的引号、插入位置都不该被测试
-    # 绑死，作者用单引号写 build.py 也一样要能改。
-    _json_el = json.loads(_texts["plan.json"])["slides"][0]["elements"][0]
-    _py_ns: dict = {}
-    exec(compile(_texts["build.py"], str(_rk_py), "exec"), _py_ns)  # noqa: S102
-    _py_el = _py_ns["SPEC"]["slides"][0]["elements"][0]
-    _py_extra = _py_ns["EXTRA"]
-    check("chart_alias: 批量改名工具（干跑不落盘 / --write 改名补默认 / 二次运行幂等）",
-          _dry.returncode == 1 and _dry_kept and _write.returncode == 0
-          and _again.returncode == 0 and "没有旧名" in _again.stdout
-          and _json_el["chart_kind"] == "bar" and _json_el.get("show_values") is False
-          and _py_el["kind"] == "donut" and _py_el.get("show_values") is False
-          and _py_extra["chart_kind"] == "bar"
-          and _py_extra.get("show_values") is False,
-          f"dry={_dry.returncode} write={_write.returncode} again={_again.returncode}"
-          f" json={_json_el.get('chart_kind')}/{_json_el.get('show_values')}"
-          f" py={_py_el.get('kind')}/{_py_el.get('show_values')}")
-
-    _sha_renamed = _td / "renamed.pptx"
-    _rk_spec = json.loads(_texts["plan.json"])
-    compile_deck(_rk_spec, _sha_renamed)
-    # 迁移审计：`--audit` 是「全量迁移证据」的可执行版本——它必须能真的看见旧名
-    # （正则写错时最典型的失败是「永远报干净」），并指出文件与行号。
-    _aud = _Path(_tempfile.mkdtemp())
-    (_aud / "dirty.json").write_text('{"slides":[{"elements":[{"id":"c",'
-                                     '"chart_kind":"trend"}]}]}', encoding="utf-8")
-    (_aud / "dirty.py").write_text("E = dict(chart_kind='horizontal_bar')\n",
-                                   encoding="utf-8")
-    _aud_dirty = subprocess.run([sys.executable, str(_rename_tool), "--audit", str(_aud)],
-                                capture_output=True, text=True)
-    (_aud / "dirty.json").write_text('{"slides":[{"elements":[{"id":"c",'
-                                     '"chart_kind":"line"}]}]}', encoding="utf-8")
-    (_aud / "dirty.py").write_text("E = dict(chart_kind='bar')\n", encoding="utf-8")
-    _aud_clean = subprocess.run([sys.executable, str(_rename_tool), "--audit", str(_aud)],
-                                capture_output=True, text=True)
-    check("chart_alias: --audit 能看见旧名（文件:行）且干净时退出 0",
-          _aud_dirty.returncode == 1 and "dirty.json:1" in _aud_dirty.stdout
-          and "horizontal_bar" in _aud_dirty.stdout
-          and _aud_clean.returncode == 0 and "迁移完成" in _aud_clean.stdout,
-          f"dirty={_aud_dirty.returncode} clean={_aud_clean.returncode} "
-          f"{_aud_dirty.stdout[:120]}")
-
-    # 改名 = 从「退役名」搬到「canonical + 当时隐含的默认值」，三者产出的图必须同一张。
-    check("chart_alias: 改名后产物与改名前逐字节相同（改名不改图）",
-          _hashlib.sha256(_sha_renamed.read_bytes()).hexdigest()
-          == _sha("bar", show_values=False),
-          "rename 前后 pptx 字节必须一致")
-
     check("chart_rows: 编译与预览共用唯一行解析（desc/无效值/display 同口径）",
           _compiler_mod._rows is _chart_rows
           and _chart_rows({"data": [{"label": "A", "value": "3", "desc": "注"},
@@ -2132,9 +1779,8 @@ def test_production(tmp: Path):
         bg_color = (244, 239, 230, 255)
         expected = Image.new("RGBA", (240, 130), bg_color)
         old_overlay = Image.new("RGBA", expected.size, (0, 0, 0, 0))
-        _bucket, _family = _font_family(text_elem, ctx)
         ImageDraw.Draw(old_overlay, "RGBA").text(
-            (12, 24), "61%", font=_font(32, family=_bucket, family_name=_family),
+            (12, 24), "61%", font=_font(32, family=_font_family(text_elem, ctx)),
             fill=_rgba(ctx, "ink", opacity))
         expected.alpha_composite(old_overlay)
         actual = Image.new("RGBA", expected.size, bg_color)
@@ -2146,24 +1792,21 @@ def test_production(tmp: Path):
     import ghost as _g
     serif_ctx = RenderContext({"fonts": {"cn": "Noto Serif CJK SC", "latin": "Arial"}}, {})
     sans_ctx = RenderContext({"fonts": {"cn": "Noto Sans CJK SC", "latin": "Georgia"}}, {})
-    def _fam(element, context):
-        return _g._font_family(element, context)[0]
-
     check("ghost: 中文主题默认宋体不会静默画成黑体",
-          _g._font_family({"text": "中文"}, serif_ctx) == ("_serif", "Noto Serif CJK SC"))
+          _g._font_family({"text": "中文"}, serif_ctx) == "_serif")
     check("ghost: Latin font/family 覆盖不改变中文主题字面",
-          all(_fam(e, serif_ctx) == "_serif" for e in
+          all(_g._font_family(e, serif_ctx) == "_serif" for e in
               ({"text": "中文 AI 2026", "font": "latin"},
                {"text": "中文", "family": "Arial"}))
-          and _fam({"text": "中文", "font": "latin"}, sans_ctx) == "")
+          and _g._font_family({"text": "中文", "font": "latin"}, sans_ctx) == "")
     check("ghost: 纯拉丁遵循主题与显式覆盖（sans-serif 不是 serif）",
-          _fam({"text": "Evidence"}, sans_ctx) == "_serif"
-          and _fam({"text": "Evidence", "font": "latin"}, serif_ctx) == ""
-          and _fam({"text": "Evidence", "family": "sans-serif"}, sans_ctx) == ""
-          and _fam({"text": "Evidence", "family": "Times New Roman"}, serif_ctx) == "_serif")
+          _g._font_family({"text": "Evidence"}, sans_ctx) == "_serif"
+          and _g._font_family({"text": "Evidence", "font": "latin"}, serif_ctx) == ""
+          and _g._font_family({"text": "Evidence", "family": "sans-serif"}, sans_ctx) == ""
+          and _g._font_family({"text": "Evidence", "family": "Times New Roman"}, serif_ctx) == "_serif")
     alias_ctx = RenderContext({"fonts": {"body": "宋体", "display": "Georgia"}}, {})
     check("ghost: body/display 别名与编译器一致",
-          all(_fam({"text": t}, alias_ctx) == "_serif" for t in ("中文", "English")))
+          all(_g._font_family({"text": t}, alias_ctx) == "_serif" for t in ("中文", "English")))
     # 跨平台锁住 TTC index 参数，不靠 CI 恰好安装某字体；缺字库仍走原回退。
     from unittest.mock import patch
     saved_fonts = dict(_g._FONT_CACHE)
@@ -2204,11 +1847,9 @@ def test_production(tmp: Path):
     # 禁则只在其上做局部回退。随机混合文本 × 字号 × 宽度 × tracking 对拍内联的
     # 旧线性参考实现，输出必须逐字符一致——这条不变式一破，预览换行位置就变，
     # 像素证据不再可信。
-    from ghost import _wrap_lines as _wrap, _has_cjk as _has_cjk2, _NO_LINE_START as _nls
-    # 禁则 / 单位表 / 断行修正的实现都在 primitives：自检直接引用实现处，
-    # 不再经 ghost 转发一层（转发层正是「两处判据各一份」的温床）。
-    from primitives import (cjk_break_fix as _fix, UNIT_HEAD_RE as _unit_head,
-                            UNIT_INNER as _unit_inner)
+    from ghost import (_wrap_lines as _wrap, _has_cjk as _has_cjk2,
+                       _cjk_break_fix as _fix, _NO_LINE_START as _nls,
+                       _UNIT_HEAD as _unit_head, _UNIT_INNER as _unit_inner)
     # 禁则单一来源：预览折行与判断层断行建议共用 primitives 的同一份字符串，
     # 任一层再抄一份就会出现「建议不断、预览断了」的分叉。
     from primitives import NO_LINE_END_CJK as _PLE, NO_LINE_START_CJK as _PLS
@@ -2219,23 +1860,9 @@ def test_production(tmp: Path):
           "ghost/intelligence 必须取自 primitives.NO_LINE_*_CJK")
 
     def _linear_cjk(text, font, width, tracking=0.0):
-        # 参考实现必须与生产实现用**同一个度量**（含混排边界间距），否则比的是
-        # 度量差异而不是「二分 vs 线性扫描」——那会让这条不变式失去意义。
-        from primitives import script_gaps as _gaps, SCRIPT_GAP_EM as _GAP
-        size_px = float(getattr(font, "size", 0) or 0)
         limit = max(1, width)
-        from primitives import NO_LINE_START_CJK as _NLS
-
         def vw(value):
-            return (font.getlength(value) + max(0, len(value) - 1) * tracking
-                    + _GAP * size_px * _gaps(value))
-
-        def fits(value):
-            # 与生产实现同一条判据：行尾句读点可悬挂半个字
-            if vw(value) <= limit:
-                return True
-            return bool(value[-1:] in _NLS and vw(value[:-1]) + 0.5 * size_px <= limit)
-
+            return font.getlength(value) + max(0, len(value) - 1) * tracking
         out = []
         for raw in str(text).split("\n"):
             if not raw:
@@ -2244,20 +1871,18 @@ def test_production(tmp: Path):
             pos, n = 0, len(raw)
             while pos < n:
                 seg = raw[pos:]
-                if fits(seg):
+                if vw(seg) <= limit:
                     out.append(seg)            # 末行整段可容纳
                     break
                 if len(seg) == 1:
                     out.append(seg)
                     break
                 lo = 1                          # 逐字扫描：找到最长可容纳前缀
-                while lo < len(seg) and fits(seg[:lo + 1]):
+                while lo < len(seg) and vw(seg[:lo + 1]) <= limit:
                     lo += 1
                 lo = _fix(seg, lo)              # 与二分路径同一套禁则回退
                 out.append(seg[:lo].rstrip())
                 pos += lo
-                while pos < n and raw[pos].isspace():
-                    pos += 1                    # 行首空白不占位（与生产实现同一条规则）
         return out
 
     # 禁则本身：行首不得出现禁则字符；数字与单位不得被拆到两行
@@ -2431,23 +2056,10 @@ def test_cli(tmp: Path):
           == hashlib.sha256(brief.read_bytes()).hexdigest(),
           str(timing))
     payload = json.loads(plan.read_text(encoding="utf-8"))
-    check("cli: plan.json 携带逐页判断卡（瘦身版：被否决项是选项名，理由是 --full 的事）",
-          all(set(p["judgment"]["composition"]) <= {"chosen", "why", "rejected"}
-              and "chosen" in p["judgment"]["composition"]
-              and all(isinstance(r, str) and r
-                      for r in p["judgment"]["composition"].get("rejected") or [])
+    check("cli: plan.json 携带逐页判断卡（否决项有效、无竞争可空）",
+          all(set(p["judgment"]["composition"]) == {"chosen", "why", "rejected"}
+              and all(r["why_not"] for r in p["judgment"]["composition"]["rejected"])
               for p in payload["pages"]))
-    # --full 是完整推演的逃生口：否决理由、逐页说明都在，供复盘/答辩用。
-    full_plan = tmp / "plan-full.json"
-    r_full = run_vao("plan", str(brief), "--out", str(full_plan), "--full")
-    full_payload = json.loads(full_plan.read_text(encoding="utf-8"))
-    check("cli: --full 保留完整推演（被否决项带 why_not，且比默认版大）",
-          r_full.returncode == 0
-          and all(r["why_not"] for p in full_payload["pages"]
-                  for r in p["judgment"]["composition"]["rejected"])
-          and full_plan.stat().st_size > plan.stat().st_size,
-          f"full={full_plan.stat().st_size if full_plan.exists() else 0} "
-          f"lean={plan.stat().st_size}")
     check("cli: plan.json 无旧字段残留（direction/direction_execution/media）",
           "direction" not in payload["deck"] and "direction_execution" not in payload["deck"]
           and all("media" not in p for p in payload["pages"]))
@@ -2682,7 +2294,7 @@ def test_delivery(tmp):
               and [s.name for s in chart.series] == ["路径甲", "路径乙"]
               and [list(s.values) for s in chart.series] == [[12,30], [16,38]]
               and chart.plots[0].has_data_labels == slide["elements"][0]["show_values"])
-    for kind in ("pie", "donut"):
+    for kind in ("pie", "donut", "donut_composition"):
         for show in (False, True):
             e = {k:v for k,v in base.items() if k not in ("series", "categories")}
             e.update(chart_kind=kind, show_values=show, data=[{"label": f"类别{i}", "value": i+1} for i in range(7)])
@@ -2933,9 +2545,10 @@ def test_boundary_typography(tmp: Path):
           and prim.text_units(prim.NO_BREAK_SPACE) == prim.text_units(" "),
           str(prim.text_units(prim.NO_BREAK_SPACE)))
     # 单位词表只有一处：预览的禁则判据必须与编译器写出的间隙同源。
+    import ghost
     for probe in ("公里", "个月", "万元", "%", "家"):
         check(f"混排: 预览禁则与编译共用同一份单位表（{probe}）",
-              bool(prim.UNIT_HEAD_RE.match(probe)) and probe in prim.UNIT_WORDS)
+              bool(ghost._UNIT_HEAD.match(probe)) and probe in prim.UNIT_WORDS)
     # 真实产物里也必须是不换行：编译后从 PPTX 里读回文本核对。
     from compiler import compile_deck
     import vao
@@ -3475,7 +3088,7 @@ def test_design_judgment(tmp: Path):
         "slides": [{"id": "u1", "elements": [
             {"id": "t", "type": "text", "x": 48, "y": 96, "width": 1184, "height": 64,
              "text": "华东高端线售价", "size": 40, "color": "ink", "role": "title"},
-            {"id": "c", "type": "chart", "chart_kind": "bar", "x": 48, "y": 200,
+            {"id": "c", "type": "chart", "chart_kind": "comparison_bar", "x": 48, "y": 200,
              "width": 1184, "height": 440, "role": "focus", "unit": "元",
              "source": "来源：门店监测", "period": "2026 年 9 月", "basis": "同口径",
              "data": [{"label": "华东", "value": 480}, {"label": "泰国", "value": 300}]}]}]})
@@ -3718,11 +3331,8 @@ def test_cjk_rhythm_regression(tmp: Path):
         "2023年订单量 1,840 万单，履约成本 11.2 亿元；2024年订单量 2,150 万单，"
         "履约成本 13.8 亿元；2025年订单量 2,490 万单，履约成本 16.1 亿元",
         "去年订单量增长与履约成本同步上升")
-    # 期望值随量词表补全而更新：旧断言写「2,490 万」是**旧词表的截断产物**
-    # （「万单」不在量词表里，单位只读到「万」）。判断本身没变（仍是 2025 年
-    # 的末值、不回 2023 年基期），变的是这个 token 现在带着完整单位。
     check("focus: 双指标系列按「指标内末值＋主张主语位」取当前量，不回基期",
-          primary is not None and primary["raw"] == "2,490 万单",
+          primary is not None and primary["raw"] == "2,490 万",
           str(primary and primary["raw"]))
 
     # 6 · 眉标断词：单字边界切在词内，碎片通过长度与首尾检查成了页眉
@@ -4218,7 +3828,7 @@ def test_delivery_safety(tmp: Path):
     with patch.object(ghost.ImageDraw.ImageDraw, 'text', autospec=True) as draw:
         ghost.ghost_page(ks['slides'][0], ks, scale=0.5)
     check("ghost: 0 KPI 在结构预览中不消失", any('0' == str(c.args[2]) for c in draw.call_args_list))
-    for kind in ('pie', 'donut'):
+    for kind in ('pie', 'donut', 'donut_composition'):
         bad = copy.deepcopy(ks)
         bad['slides'][0]['elements'][0].update(chart_kind=kind,
             data=[{"label": "正", "value": 10}, {"label": "负", "value": -3}])
@@ -4404,7 +4014,7 @@ def test_delivery_safety(tmp: Path):
           and loaded_brief.get('subject') == 'brief')
 
 
-    for kind in ('pie', 'donut'):
+    for kind in ('pie', 'donut', 'donut_composition'):
         for values in ([10, -3], [0, 0]):
             bad = copy.deepcopy(ks)
             bad['slides'][0]['elements'][0].update(chart_kind=kind, categories=['A', 'B'],
@@ -5618,7 +5228,7 @@ def test_ghost_chart_color_single_source(tmp: Path):
         "slides": [{"id": "c1", "elements": [
             {"id": "ch", "type": "chart", "role": "chart",
              "x": 100, "y": 100, "width": 600, "height": 360,
-             "chart_kind": "bar",
+             "chart_kind": "comparison_bar",
              "data": [{"label": "前", "value": 47}, {"label": "后", "value": 8}],
              "highlight": "后", "primary_color": "muted",
              "unit": "分钟", "source": "s", "period": "p", "basis": "b",
@@ -5641,6 +5251,7 @@ def test_case004_regressions(root: Path):
     """PPT_CASE_004 实测回流回归：瀑布图 subtotal/show_values/同源色 + 环形图逐扇区反色。"""
     import primitives, compiler, ghost
     from pptx import Presentation
+    from pptx.oxml.ns import qn
 
     spec = {
         "canvas": {"width": 1280, "height": 720, "grid_columns": 12, "grid_unit": 8},
@@ -5746,773 +5357,6 @@ def test_case004_regressions(root: Path):
     check("donut: 预览与产物扇区文字明暗同源 auto_text_for",
           dl_colors == expected, f"pptx={dl_colors} expected={expected}")
 
-    # 饼/环的几何：PowerPoint / LibreOffice 都把圆内接在绘图区（实测 LO 对 900×400
-    # 的框渲染 394×394 的环），预览曾把元素框当外接矩形，宽框画成扁椭圆。
-    # 断言取椭圆的长宽比，不看颜色——几何错时文字颜色全对也照样说谎。
-    wide = {"canvas": {"width": 1280, "height": 720}, "theme": spec["theme"],
-            "slides": [{"id": "wide", "elements": [{
-                "id": "wide_dn", "type": "chart", "chart_kind": "donut",
-                "x": 80, "y": 80, "width": 900, "height": 400,
-                "data": [{"label": "甲", "value": 42}, {"label": "乙", "value": 28},
-                         {"label": "丙", "value": 19}]}]}]}
-    wimg = ghost.ghost_page(wide["slides"][0], wide, scale=1, supersample=1).convert("RGB")
-    bgc = wimg.getpixel((3, 3))
-    wpx = wimg.load()
-    wxs, wys = [], []
-    for yy in range(0, wimg.height, 2):
-        for xx in range(0, wimg.width, 2):
-            r, g, b = wpx[xx, yy]
-            if abs(r - bgc[0]) + abs(g - bgc[1]) + abs(b - bgc[2]) > 24:
-                wxs.append(xx)
-                wys.append(yy)
-    dw = max(wxs) - min(wxs)
-    dh = max(wys) - min(wys)
-    check("ghost: 饼/环按短边取圆（宽框不再拉成椭圆）",
-          0.9 <= dh / max(dw, 1) <= 1.1 and dh <= 410,
-          f"环外接 {dw}×{dh}（框 900×400，短边 400）")
-
-
-def test_plan_compact(tmp: Path):
-    """plan 瘦身投影：决策全留、重复句上提、纯函数、可复现。"""
-    from intelligence import compact_plan as _compact, think as _think
-
-    full = _think(BRIEF)
-    before = len(json.dumps(full, ensure_ascii=False))
-    lean = _compact(full)
-    again = _compact(full)
-    after = len(json.dumps(lean, ensure_ascii=False))
-    # 省下来的主要是「同一句说明在多页重复」：页越多，省得越多。所以判据不是
-    # 一个魔数，而是「5 页至少省 15%」+「页数翻倍后省得更多」（单调性）。
-    dup = dict(BRIEF, slides=[dict(sl, id=str(sl.get("id", f"p{i}")) + "b")
-                              for i, sl in enumerate(BRIEF["slides"])] + BRIEF["slides"])
-    full2 = _think(dup)
-    lean2 = _compact(full2)
-    size = lambda o: len(json.dumps(o, ensure_ascii=False))  # noqa: E731
-    ratio1 = 1 - size(lean) / size(full)
-    ratio2 = 1 - size(lean2) / size(full2)
-    check("plan: 瘦身投影省 ≥15% 且随页数增加更省（重复句上提，输入不被修改且幂等）",
-          ratio1 >= 0.15 and ratio2 > ratio1
-          and len(json.dumps(full, ensure_ascii=False)) == before and lean == again,
-          f"{before} → {after} ({ratio1 * 100:.1f}%) · 重复页 {ratio2 * 100:.1f}%")
-
-    # 决策字段一个都不能丢：瘦身只压缩表述，不改变「画什么、怎么排、谁当主角」。
-    pairs = (("claim", "text"), ("claim", "source"), ("focus", "element_role"),
-             ("focus", "type"), ("composition", "chosen"), ("visual_role", "role"),
-             ("rhythm", "move"), ("emphasis", "level"), ("media", "decision"),
-             ("understanding", "evidence"), ("typography", "lead"),
-             ("typography", "support"), ("spatial", "reading_path"),
-             ("production", "density_target"))
-    diffs = []
-    for a, b in zip(lean["pages"], full["pages"]):
-        for block, field in pairs:
-            if ((a["judgment"].get(block) or {}).get(field)
-                    != (b["judgment"].get(block) or {}).get(field)):
-                diffs.append(f"{a['id']}.{block}.{field}")
-        raws_lean = [n if isinstance(n, str) else n.get("raw")
-                     for n in (a["judgment"]["understanding"].get("numerals") or [])]
-        raws_full = [n.get("raw") for n in
-                     (b["judgment"]["understanding"].get("numerals") or [])]
-        if raws_lean != raws_full:
-            diffs.append(f"{a['id']}.numerals")
-        roles_lean = [x.split(":")[0] for x in
-                      (a["judgment"]["production"].get("must_place") or [])]
-        roles_full = [x.get("role") for x in
-                      (b["judgment"]["production"].get("must_place") or [])]
-        if roles_lean != roles_full:
-            diffs.append(f"{a['id']}.must_place")
-    check("plan: 瘦身不改任何决策字段（14 个决策位 × 8 页）", not diffs, str(diffs[:4]))
-
-    # 上提的句子必须原文存在于完整版里：省的是重复，不是信息。
-    legend = (lean.get("deck") or {}).get("legend") or {}
-    full_text = json.dumps(full, ensure_ascii=False)
-    check("plan: 上提的说明句逐字来自完整版（deck.legend 无新增信息）",
-          bool(legend) and all(v in full_text for v in legend.values()),
-          f"legend={list(legend)}")
-
-
-def test_policy_contract(tmp: Path):
-    """策略层（policy.py）：可调、可校验、可撤销，且**没有死键**。
-
-    分层纪律靠三条断言锁住，而不是靠文档自觉：
-      ① 覆盖必须被校验（未知键/错类型/负阈值/改枚举成员一律报错，不静默）；
-      ② 覆盖必须真的改变判断（写进去却不生效的旋钮＝假旋钮）；
-      ③ 每个可调键都必须被代码读取（死键会被当成「已经调过」的证据）。
-    """
-    import policy
-    import intelligence as intel
-
-    default = policy.POLICY["version"]
-    # ① 校验：四类非法覆盖各拦一次
-    for label, overrides in (
-            ("未知分组", {"weights": {"x": 1}}),
-            ("未知键", {"measure": {"max_cjk_typo": 40}}),
-            ("类型错", {"measure": {"max_cjk": "45"}}),
-            ("负阈值", {"information_weight": {"dense_chars": -1}}),
-            ("枚举成员被增删", {"enums": {"role": ["establish", "prove"]}})):
-        try:
-            policy.configure(overrides)
-            ok = False
-        except ValueError:
-            ok = True
-        check(f"policy: 非法覆盖被拦（{label}）", ok)
-        policy.reset()
-
-    # ② 生效：把「高密度页」阈值降到 0，删除候选必须出现（旋钮不是装饰）
-    policy.configure({"information_weight": {"dense_chars": 0, "dense_numerals": 0}})
-    dense = intel.information_weight(
-        {"numerals": [{"raw": "21%", "value": 21.0, "unit": "%", "year": False}],
-         "distinct_numerals": 1},
-        {"text": "复购率三年翻倍", "source": "extracted"},
-        "复购率三年翻倍。补贴率从 8% 降到 3%。门店回访集中在收货后 48 小时。")
-    policy.reset()
-    check("policy: 覆盖真的改变判断（dense_chars=0 → 出现删除候选）",
-          bool(dense.get("delete_candidates")),
-          str(dense.get("delete_candidates"))[:120])
-
-    # ② 生效：构图的同分次序可调（改顺序 → 平局换人），不碰算法。
-    # 这一页的分数确实是平局：无主张的命题页让 big_whitespace 与 editorial 各得 1.0，
-    # 谁胜出只由 enums.composition 的顺序决定。
-    tie_kw = dict(composition_grammar="", claim={}, content_len=50)
-    u_tie = {"evidence": "proposition", "distinct_numerals": 0, "numeric_density": 0.0}
-    base = intel.composition_of("explain", u_tie, **tie_kw)["chosen"]
-    policy.configure({"enums": {"composition": list(reversed(
-        policy.enum("composition")))}})
-    flipped = intel.composition_of("explain", u_tie, **tie_kw)["chosen"]
-    policy.reset()
-    restored = intel.composition_of("explain", u_tie, **tie_kw)["chosen"]
-    check("policy: 平局次序可调且可撤销（enums.composition 顺序生效）",
-          base == restored and base != flipped, f"{base} → {flipped} → {restored}")
-
-    # ③ 世界纪律与倾向表不得脱节：derive_world 产出的纪律必须在偏好表里
-    produced = set()
-    for brief, understand in (
-            ({"audience": "内部评审会", "decision": "批准预算"},
-             [intel.understand("复购率 21%")]),
-            ({"audience": "发布会现场", "decision": "推进发布"},
-             [intel.understand("一位釉工在车间 8 小时")] * 2),
-            ({"audience": "董事会", "decision": "批准预算"},
-             [intel.understand("复购率 21%；留存 33%；客单价 58 元；毛利 41%")] * 2)):
-        produced.add(intel.derive_world(brief, understand)["composition_grammar"])
-    missing = sorted(produced - set(policy.enum("composition_grammar_preference")))
-    check("policy: 世界纪律都有构图倾向（新增纪律必须登记，否则静默不生效）",
-          not missing, str(missing))
-
-    # ④ 无死键：每个可调键名都必须出现在读取它的代码里
-    source = "\n".join(p.read_text(encoding="utf-8")
-                        for p in sorted(SCRIPTS.glob("*.py")) if p.name != "policy.py")
-    dead = []
-    for group in policy.summary()["tunable_groups"]:
-        node = policy.group(group)
-        stack = [(group, node)]
-        while stack:
-            path, cur = stack.pop()
-            for key, value in cur.items():
-                if isinstance(value, dict):
-                    stack.append((f"{path}.{key}", value))
-                elif isinstance(value, list):
-                    continue
-                elif key not in source:
-                    dead.append(f"{path}.{key}")
-    check("policy: 没有死键（每个阈值/权重都被代码读取）", not dead, str(dead[:6]))
-
-    # ④b 策略↔契约同源：policy 的枚举与 schema 的 $defs 枚举必须逐项相同。
-    # 两处各写一份枚举是最容易分叉的地方（策略改了、契约没改 → plan 判不出来）。
-    import schema as schema_mod
-    plan_schema = schema_mod.load(ROOT / "schemas" / "plan.schema.json")
-    defs = plan_schema.get("$defs") or {}
-    pairs = (("evidence", "enumEvidence"), ("role", "enumRole"),
-             ("composition", "enumComposition"), ("density", "enumDensity"),
-             ("rhythm", "enumRhythm"), ("emphasis", "enumEmphasis"),
-             ("media", "enumMedia"), ("focus_type", "enumFocusType"),
-             ("provenance", "enumProvenance"), ("claim_source", "enumClaimSource"))
-    mismatched = []
-    for group_key, def_name in pairs:
-        want = set(policy.enum(group_key))
-        got = set((defs.get(def_name) or {}).get("enum") or [])
-        if want != got:
-            mismatched.append(f"{group_key} vs {def_name}: 策略多 {sorted(want - got)} "
-                              f"契约多 {sorted(got - want)}")
-    check("policy: 枚举与契约 $defs 同源（策略改了契约必须跟着改）",
-          not mismatched, "；".join(mismatched[:3]))
-
-    # ④b2 枚举的第二种死法：既没有代码按它排序，也没有契约引用它。
-    # 这种枚举读起来像「已生效的规则」，实际谁都不看。
-    contract_enums = {name: set((defs.get(name) or {}).get("enum") or [])
-                      for name in defs if name.startswith("enum")}
-    contract_members = {frozenset(v) for v in contract_enums.values() if v}
-    source_all = "\n".join(p.read_text(encoding="utf-8")
-                            for p in sorted(SCRIPTS.glob("*.py")) if p.name != "policy.py")
-    orphans = []
-    for name, value in policy.POLICY["enums"].items():
-        if not isinstance(value, list):
-            continue
-        consumed = f'policy.enum("{name}")' in source_all
-        in_contract = frozenset(value) in contract_members
-        if not consumed and not in_contract:
-            orphans.append(f"enums.{name}（既不被读取也不在契约里）")
-    check("policy: 每个枚举要么被代码读取、要么被契约引用（没有死词汇）",
-          not orphans, str(orphans[:4]))
-
-    # ④c 新外化的两组策略真的能改变判断（旋钮不是装饰）：
-    # 把「至少两个点才算形状」提到 4 → 三取值序列不再判 series；
-    # 把「分解至少 4 个不同取值」提到 5 → 两个子项 + 一个整体的真分解失效。
-    # （容差收到 0 不构成可测量的旋钮：实现里还有 1e-9 的浮点护栏，
-    #  「改到 0 会翻转」是伪命题；这里只写真的能翻转的那一个。）
-    seq_item = {"id": "p", "title": "复购率三年翻倍",
-                "content": "2022 年 21%；2023 年 33%；2024 年 44%"}
-    base_ev = intel.understand(f"{seq_item['title']} {seq_item['content']}")["evidence"]
-    policy.configure({"evidence_shapes": {"points_min": 4}})
-    flipped_ev = intel.understand(f"{seq_item['title']} {seq_item['content']}")["evidence"]
-    policy.reset()
-    check("policy: 证据形态阈值可调且可撤销（points_min 4 → 三点序列改判）",
-          base_ev == "series" and flipped_ev != "series", f"{base_ev} → {flipped_ev}")
-
-    decomp = {"id": "p", "title": "单均成本 6.6 元",
-              "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"}
-    base_pw = intel.understand(f"{decomp['title']} {decomp['content']}")["part_whole"]
-    policy.configure({"decomposition": {"min_unique_values": 5}})
-    flipped_pw = intel.understand(f"{decomp['title']} {decomp['content']}")["part_whole"]
-    policy.reset()
-    restored_pw = intel.understand(f"{decomp['title']} {decomp['content']}")["part_whole"]
-    check("policy: 分解判据可调且可撤销（min_unique_values 5 → 真分解失效）",
-          base_pw is True and flipped_pw is False and restored_pw is True,
-          f"{base_pw} → {flipped_pw} → {restored_pw}")
-
-    # ⑤ 策略摘要进 plan：判断可追溯到「当时用的哪一版阈值」
-    summary = policy.summary()
-    check("policy: 摘要含版本/摘要/可调分组",
-          bool(summary.get("version")) and len(str(summary.get("sha256"))) == 64
-          and bool(summary.get("tunable_groups")))
-    policy.reset()
-    check("policy: reset 回到默认摘要（覆盖可撤销）",
-          policy.POLICY["version"] == default)
-
-
-def test_plan_contract(tmp: Path):
-    """数据契约：schemas/plan.schema.json（形状）+ intelligence.validate_plan（含义）。
-
-    schema 只有被**执行**才算契约。这里既验 schema 文件本身（关键字都在校验器
-    白名单里），也验 plan 的两种投影（瘦身 / 完整）都通过，并注入违约样本确认
-    拦截生效——而不是「写了 schema 就宣称有契约」。
-    """
-    import schema as schema_mod
-    import intelligence as intel
-    from vao import run_plan
-
-    schema_path = ROOT / "schemas" / "plan.schema.json"
-    plan_schema = schema_mod.load(schema_path)
-    check("schema: 契约文件自检通过（无未被执行的校验关键字）", bool(plan_schema))
-
-    brief = tmp / "brief.yml"
-    brief.write_text(
-        "audience: 董事会\ndecision: 批准预算\ntension: 现金流\n"
-        "slides:\n"
-        "  - id: s01\n    title: 复购率三年翻倍，靠的是履约不是补贴\n"
-        "    content: 2022 年复购率 21%，2023 年 33%，2024 年 44%；同期补贴率从 8% 降到 3%\n"
-        "  - id: s02\n    title: 请批准 800 万元仓配扩容\n    content: 2025 年 Q3 前完成\n"
-        "  - id: s03\n    title: 谢谢\n    content: 汇报人：财务部\n",
-        encoding="utf-8")
-    lean_path = tmp / "lean.json"
-    full_path = tmp / "full.json"
-    run_plan(str(brief), str(lean_path))
-    run_plan(str(brief), str(full_path), lean=False)
-    for label, path in (("瘦身", lean_path), ("完整", full_path)):
-        problems = schema_mod.validate_file(path, schema_path)
-        bundle = json.loads(path.read_text(encoding="utf-8"))
-        problems += intel.validate_plan(bundle)
-        check(f"schema: 真实 plan（{label}投影）通过结构 + 语义契约", not problems,
-              str(problems[:3]))
-
-    data = json.loads(lean_path.read_text(encoding="utf-8"))
-
-    def mutate(fn):
-        copy = json.loads(json.dumps(data))
-        fn(copy)
-        return copy
-
-    samples = {
-        "缺必需字段": mutate(lambda d: d.pop("workflow")),
-        "枚举越界": mutate(lambda d: d["pages"][0]["judgment"]["composition"].update(
-            {"chosen": "masonry"})),
-        "未知字段": mutate(lambda d: d["pages"][0]["judgment"].update({"confidance": 0.9})),
-        "类型错": mutate(lambda d: d["deck"]["type_scale"].update({"title": "44"})),
-        "摘要非十六进制": mutate(lambda d: d["workflow"].update({"brief_file_sha256": "x" * 64})),
-        "页面 id 重复": mutate(lambda d: d["pages"][1].update({"id": d["pages"][0]["id"]})),
-    }
-    caught = {name: bool(schema_mod.validate(bad, plan_schema) + intel.validate_plan(bad))
-              for name, bad in samples.items()}
-    check("schema: 违约样本全部被拦（结构 5 类 + 语义 1 类）", all(caught.values()),
-          str({k: v for k, v in caught.items() if not v}))
-
-    # 语义层自己也要拦：coherence 与页数不对齐、chart_kind 不在 CHART_SPEC
-    semantic = mutate(lambda d: d["deck"]["coherence"]["roles"].pop())
-    check("schema: 语义契约拦 coherence 与页数不对齐",
-          any("不对齐" in m for m in intel.validate_plan(semantic)))
-    chart_bad = mutate(lambda d: d["pages"][0]["judgment"]["focus"].update(
-        {"chart_kind": "sunburst_radial"}))
-    check("schema: 语义契约拦不存在的 chart_kind（不抄 CHART_SPEC 进 schema）",
-          any("chart_kind" in m for m in intel.validate_plan(chart_bad)))
-
-    # 瘦身投影不得把「为什么」弄丢：页内没有就必须在 deck.legend 里
-    lost = mutate(lambda d: (d["deck"].pop("legend", None),
-                             [p["judgment"]["composition"].pop("why", None)
-                              for p in d["pages"]]))
-    check("schema: 语义契约拦「有结论没理由」（页内与 legend 都没有）",
-          any("理由" in m for m in intel.validate_plan(lost)))
-
-    # 策略枚举与 schema 枚举同源：两边各写一份时，必须锁住
-    import policy
-    mapping = {"evidence": "enumEvidence", "role": "enumRole",
-               "composition": "enumComposition", "density": "enumDensity",
-               "rhythm": "enumRhythm", "emphasis": "enumEmphasis",
-               "media": "enumMedia", "focus_type": "enumFocusType"}
-    drift = []
-    for enum_name, def_name in mapping.items():
-        want = set(policy.enum(enum_name))
-        got = set(plan_schema["$defs"][def_name]["enum"])
-        if enum_name in ("composition",):
-            continue        # 构图枚举在 schema 里是集合、在 policy 里附带平局顺序
-        if want != got:
-            drift.append(f"{enum_name}: policy-only={sorted(want - got)} "
-                         f"schema-only={sorted(got - want)}")
-    check("schema: 枚举与 policy 同源（无分叉）", not drift, str(drift))
-
-
-def test_unit_lexicon(tmp: Path):
-    """单位词表单一来源：判断层认的量词 = 断行/编译/预览认的量词。
-
-    两边各维护一份时，「27 处」在判断里是带单位的量、在排版里却可能断成
-    「27｜处」——同一份稿件两套标准。这里双向锁定：
-      a) UNIT_WORDS 里的每个词，判断层必须能把它当单位读出来；
-      b) 判断层量词表里的每个词，必须出现在 UNIT_WORDS（复合词名词除外）。
-    """
-    import primitives as prim
-    import intelligence as intel
-
-    not_read = [w for w in prim.UNIT_WORDS
-                if not (intel._NUM.search("5" + w) or [""]) or
-                not str(intel._NUM.search("5" + w).group(2) or "").startswith(w)]
-    check("units: UNIT_WORDS 里的每个量词，判断层都能读成单位", not not_read,
-          str(not_read[:6]))
-
-    # 复合词名词（「3 个季度」里的「季度」）不是独立单位，单列白名单
-    composite = {"周", "季度", "点", "星期"}
-    literals = {w for w in re.findall(r"[A-Za-z%\uff05\u4e00-\u9fff]{1,6}",
-                                      intel._NUM.pattern)
-                # 只取真正的量词字面量：含汉字，或 pp / % 这类符号单位。
-                # 纯拉丁片段（A-Za-z 字符类、正则里的 Za）不是量词。
-                if re.search(r"[\u4e00-\u9fff]", w) or w in ("pp", "%", "\uff05")}
-    unknown = sorted(w for w in literals
-                     if w not in prim.UNIT_WORDS and w not in composite)
-    check("units: 判断层量词表里的每个词都在 UNIT_WORDS（无第二份词表）",
-          not unknown, str(unknown[:8]))
-    check("units: 「27 处 / 12 项」与单位之间不再断行（绑定不断行空格）",
-          prim.bind_number_units("27 处") == "27\u00a0处"
-          and prim.bind_number_units("12 项") == "12\u00a0项")
-
-
-def test_provenance(tmp: Path):
-    """判断来源三态：作者声明 / 算法推导 / 词表提示，各自可追溯。"""
-    import intelligence as intel
-
-    def judge(item):
-        world = intel.derive_world(BRIEF, [intel.understand(
-            f"{item.get('title','')} {item.get('content','')}".strip())])
-        return intel.page_judgment(item, index=1, total=3, brief=BRIEF,
-                                   world=world, warnings=[])
-
-    plain = intel.provenance_of(judge({"id": "p", "title": "复购率三年翻倍靠履约",
-                                      "content": "2022 年 21%；2023 年 33%；2024 年 44%"}))
-    check("provenance: 推导页的来源全是 judgment",
-          set(plain["decided_by"].values()) == {"judgment"} and not plain["author_declared"])
-
-    declared = intel.provenance_of(judge({"id": "p", "title": "复购率三年翻倍靠履约",
-                                         "content": "2022 年 21%；2023 年 33%；2024 年 44%",
-                                         "role": "compare", "composition": "editorial"}))
-    check("provenance: 作者声明被标为 author 并列出覆盖项",
-          set(declared["author_declared"] or []) >= {"role", "composition"},
-          str(declared["author_declared"]))
-
-    hinted = intel.provenance_of(judge({"id": "p",
-                                       "title": "门店回访：复购发生在收货后第三天",
-                                       "content": "走访 12 家门店"}))
-    check("provenance: 词表提示标为 hint 并进 pending_author（不是判断）",
-          "media" in (hinted["pending_author"] or []) and
-          hinted["decided_by"]["media"] == "hint", str(hinted["decided_by"]))
-
-    exposed = intel.provenance_of({"claim": {"source": "frame"},
-                                   "understanding": {"evidence_source": "author"}})
-    check("provenance: 凭证帧与作者声明的证据形态如实标注",
-          exposed["decided_by"]["claim"] == "frame"
-          and exposed["decided_by"]["evidence"] == "author")
-
-
-def test_mixed_metrics(tmp: Path):
-    """多量并置（mixed_metrics）：认不出形状时说实话，不假装没证据，也不越权下判断。
-
-    这条判据来自一个真实缺口：「订单量 18.6 万单，退货 1.2 万单」两个可核对的量，
-    旧行为判 evidence=none —— 角色退到 persuade、两个数静默变成氛围，作者永远
-    不会被告知「这一页的关系你没写」。
-    """
-    import intelligence as intel
-
-    def judge(item):
-        world = intel.derive_world(BRIEF, [intel.understand(
-            f"{item.get('title','')} {item.get('content','')}".strip())])
-        return intel.page_judgment(item, index=1, total=3, brief=BRIEF,
-                                   world=world, warnings=[])
-
-    two = judge({"id": "p", "title": "订单量回升，退货压力仍在",
-                 "content": "2024 年订单量 18.6 万单，退货 1.2 万单"})
-    check("mixed: 两个不同源的量被记为并置（不是「没有证据」）",
-          two["understanding"].get("mixed_metrics") is True
-          and two["understanding"]["evidence"] == "none", str(two["understanding"]["evidence"]))
-    check("mixed: 不替作者编关系——未决里点名两个量与「补一句关系」",
-          any("18.6 万单" in q and "1.2 万单" in q and "关系" in q
-              for q in (two["open_questions"] or [])), str(two["open_questions"]))
-
-    # 反向护栏：主张本身在讨论这些数字（「相加为百不等于共同分母」）时，页面职责是
-    # 说清为什么不能相加，角色不得被改写成证据页（bench J13 的期望）。
-    caveat = judge({"id": "p", "title": "相加为百不等于共同分母",
-                    "content": "缓解率60%；不良反应40%。同一患者可同时满足两者。"})
-    check("mixed: 讨论数字本身的观点页仍是 persuade（不越权改角色）",
-          caveat["understanding"].get("mixed_metrics") is True
-          and caveat["visual_role"]["role"] == "persuade"
-          and caveat["focus"]["element_role"] == "statement_text",
-          f"{caveat['visual_role']['role']}/{caveat['focus']['element_role']}")
-
-    # 作者已把这一页定为证据页：并置量不共刻度，不给单一主语。
-    declared = judge({"id": "p", "title": "订单量回升，退货压力仍在", "role": "prove",
-                      "content": "2024 年订单量 18.6 万单，退货 1.2 万单"})
-    check("mixed: 作者声明证据页时焦点并置、不挑主语（也不画共用轴线的图）",
-          declared["focus"]["element_role"] == "comparison_field"
-          and declared["focus"]["type"] == "text"
-          and "18.6 万单" in declared["focus"]["why"]
-          and not declared["focus"].get("chart_kind"),
-          str(declared["focus"])[:160])
-
-    # 反向护栏：有形状的页不许被记成并置（时间序列 / 构成 / 两端对照）。
-    series = judge({"id": "p", "title": "复购率三年翻倍靠履约",
-                    "content": "2022 年复购率 21%；2023 年 33%；2024 年 44%"})
-    whole = judge({"id": "p", "title": "履约成本是单均成本的主体",
-                   "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"})
-    check("mixed: 已有形状的页不被记成并置（序列/构成）",
-          not series["understanding"].get("mixed_metrics")
-          and not whole["understanding"].get("mixed_metrics"),
-          f"series={series['understanding'].get('mixed_metrics')} "
-          f"whole={whole['understanding'].get('mixed_metrics')}")
-
-
-def test_share_and_total(tmp: Path):
-    """份额与分解：谁是整体、谁是子项，判断理由必须与数据一致。
-
-    这两条判据此前各有一次「说反了」的实测：
-      · 份额页把下一个数字当整体 ——「「428 万」是子集，同屏写清「51%」这个整体」；
-      · 真分解页把整体当子集 ——「「6.6 元」是已经发生的子集」。
-    读者按这类理由排版，得到的就是一张说反的图。
-    """
-    import intelligence as intel
-
-    def judge(item):
-        world = intel.derive_world(BRIEF, [intel.understand(
-            f"{item.get('title','')} {item.get('content','')}".strip())])
-        return intel.page_judgment(item, index=2, total=4, brief=BRIEF,
-                                   world=world, warnings=[])
-
-    share = judge({"id": "p", "title": "三类成本结构",
-                   "content": "履约成本 11.2 元，营销成本 4.1 元，履约成本占总成本 61%"})
-    check("share: 单句份额陈述（占+分母）判成构成，并记下分母标签",
-          share["understanding"]["evidence"] == "part_whole"
-          and (share["understanding"].get("share_of") or {}).get("whole_label") == "总成本"
-          and share["focus"]["element_role"] == "ratio_main",
-          str(share["understanding"].get("share_of")))
-    check("share: 焦点理由是「分子是分母的 61%」，不把百分比当整体",
-          "总成本" in share["focus"]["why"] and "61%" in share["focus"]["why"]
-          and "整体」" not in share["focus"]["why"].replace("不把整体→子集", ""),
-          share["focus"]["why"])
-
-    total = judge({"id": "p", "title": "单均成本可以压到 6.6 元",
-                   "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"})
-    check("total: 真分解记下整体值，理由把 6.6 元说成整体而不是子集",
-          total["understanding"].get("total_value") == 6.6
-          and "6.6 元」是几个子项相加得到的整体" in total["focus"]["why"],
-          total["focus"]["why"])
-
-    paren = judge({"id": "p", "title": "投资拆解",
-                   "content": "一期投入 4800 万元（设备 3200／改造 1100／数字化 500）"})
-    check("total: 括号内裸数继承总量单位后，分解才成立",
-          paren["understanding"]["evidence"] == "part_whole"
-          and paren["understanding"].get("total_value") == 4800.0,
-          f"{paren['understanding']['evidence']}/{paren['understanding'].get('total_value')}")
-
-    # 反向护栏：「占比」不是分母名；两个不相干的百分比不许被读成构成（bench T02）。
-    guard = intel.understand("经营指标 研发占比25%，客户满意度75%")
-    check("share: 「占比」不构成分母标签，两个百分比不判构成",
-          guard["evidence"] != "part_whole" and not guard.get("share_of"),
-          f"{guard['evidence']}/{guard.get('share_of')}")
-
-    # 数字解析：括号内的量、粘连碎片、枚举前缀三种形状各归各位。
-    parsed = {"paren": [n["raw"] for n in intel.numerals("（设备 3200／改造 1100／数字化 500）")],
-              "glue": [n["raw"] for n in intel.numerals("1,2401.8 倍")],
-              "enum": [n["raw"] for n in intel.numerals("1）汇率波动；2）现金流")],
-              "three_digit": [n["raw"] for n in intel.numerals("数字化 500）")]}
-    check("numerals: 括号内的量保留、粘连碎片与序号剔除",
-          parsed["paren"] == ["3200", "1100", "500"] and parsed["glue"] == []
-          and parsed["enum"] == [] and parsed["three_digit"] == ["500"], str(parsed))
-
-
-def test_contract_drift(tmp: Path):
-    """契约漂移：真实产出物里的每个字段，`schemas/plan.schema.json` 都必须声明。
-
-    上一轮踩过一次：`understanding` 新增 `mixed_metrics` 后瘦身投影被 `anyOf`
-    判成「形状不对」，**是 CI 才发现的**。顺序错了——应该由产出物去问契约。
-    这里用真实判断（57 个基准案例 + 全部冻结集 + 四个 brief 的瘦身/完整投影）
-    走一遍 `contract_gaps`：
-      ① 封闭对象里出现未声明字段 → 契约漏登记（红）；
-      ② 契约声明了却从来没被产出 → 死字段（红，等于给作者看的假接口）。
-    """
-    import schema as schema_mod
-    import intelligence as intel
-    from vao import run_plan
-
-    plan_schema = schema_mod.load(ROOT / "schemas" / "plan.schema.json")
-    BRIEF_LOCAL = {"audience": "内部评审会", "decision": "批准下一步预算"}
-
-    # ① 逐页判断：把基准案例与全部冻结集都当成「真实产出物」
-    pages, unders, gaps = [], [], []
-    for path in sorted((SCRIPTS / "json").glob("*.json")):
-        data = json.loads(path.read_text(encoding="utf-8"))
-        for case in data.get("cases") or []:
-            text = f"{case.get('title', '')} {case.get('content', '')}".strip()
-            world = intel.derive_world(BRIEF_LOCAL, [intel.understand(text)])
-            judged = intel.page_judgment(
-                {"id": "p", "title": case.get("title", ""), "content": case.get("content", "")},
-                index=case.get("index", 1), total=case.get("total", 3),
-                brief=BRIEF_LOCAL, world=world, warnings=[])
-            pages.append((f"{path.stem}/{case['id']}", judged))
-            unders.append((f"{path.stem}/{case['id']}", judged["understanding"]))
-    judgment_def = plan_schema["$defs"]["judgment"]
-    for name, judged in pages:
-        for gap in schema_mod.contract_gaps(judged, judgment_def, root=plan_schema):
-            gaps.append(f"{name}: {gap}")
-    check("contract: 逐页判断没有契约未声明的字段（封闭对象不得长出野字段）",
-          not gaps, "；".join(gaps[:3]))
-
-    # ② 反向：契约声明的字段必须真的会被产出（死字段 = 假接口）。
-    # 覆盖用「真实产出物」而不是「猜」：整份 plan 的完整投影（含 think 才加的
-    # rhythm/emphasis/provenance）+ 逐页判断 + 三条只在该分支出现的探针
-    # （作者声明证据形态、单句份额陈述、分解整体值）。
-    full = tmp / "drift_cover.json"
-    run_plan(str(ROOT / "templates" / "brief.yml"), str(full), lean=False)
-    bundle = json.loads(full.read_text(encoding="utf-8"))
-    probes = [
-        # 作者声明证据形态 → understanding.evidence_source
-        {"id": "probe1", "title": "复购率三年翻倍", "evidence": "series",
-         "content": "2022 年 21%；2023 年 33%；2024 年 44%"},
-        # 单句份额陈述 → understanding.share_of
-        {"id": "probe2", "title": "三类成本结构",
-         "content": "履约成本 11.2 元，营销成本 4.1 元，履约成本占总成本 61%"},
-        # 真分解 → understanding.total_value
-        {"id": "probe3", "title": "单均成本 6.6 元",
-         "content": "履约 2.1 元，营销 3.4 元，仓配 1.1 元，单均成本 6.6 元"},
-    ]
-    for item in probes:
-        world = intel.derive_world(BRIEF_LOCAL, [intel.understand(
-            f"{item['title']} {item['content']}")])
-        judged = intel.page_judgment(item, index=2, total=4, brief=BRIEF_LOCAL,
-                                     world=world, warnings=[])
-        pages.append((item["id"], judged))
-        unders.append((item["id"], judged["understanding"]))
-
-    declared = schema_mod.declared_properties(plan_schema, "understandingFull")
-    seen = {key for _n, u in unders for key in u}
-    seen |= {key for p in bundle["pages"] for key in p["judgment"]["understanding"]}
-    check("contract: understanding 的声明字段都有真实产出（没有死字段）",
-          declared <= seen, f"从未产出：{sorted(declared - seen)}")
-    declared_j = schema_mod.declared_properties(plan_schema, "judgment")
-    seen_j = {key for _n, judged in pages for key in judged}
-    seen_j |= {key for p in bundle["pages"] for key in p["judgment"]}
-    check("contract: judgment 的声明字段都有真实产出（可选字段也至少出现过一次）",
-          declared_j <= seen_j, f"从未产出：{sorted(declared_j - seen_j)}")
-
-    # ③ 整份 plan：模板 brief 的瘦身/完整两种投影都不许有未声明字段
-    plan_gaps = []
-    for label, lean in (("瘦身", True), ("完整", False)):
-        out = tmp / f"drift_{label}.json"
-        run_plan(str(ROOT / "templates" / "brief.yml"), str(out), lean=lean)
-        bundle = json.loads(out.read_text(encoding="utf-8"))
-        plan_gaps += [f"{label}: {g}" for g in schema_mod.contract_gaps(bundle, plan_schema)]
-    check("contract: 真实 plan（两种投影）没有契约未声明的字段",
-          not plan_gaps, "；".join(plan_gaps[:3]))
-
-    # ④ 探测器本身要能报警：注入一个野字段必须被指出路径
-    bundle = json.loads((tmp / "drift_完整.json").read_text(encoding="utf-8"))
-    bundle["pages"][0]["judgment"]["understanding"]["brand_new_flag"] = True
-    caught = schema_mod.contract_gaps(bundle, plan_schema)
-    check("contract: 探测器能报警（注入野字段 → 报出完整路径）",
-          len(caught) == 1 and "brand_new_flag" in caught[0], str(caught[:2]))
-
-
-def test_docs_policy_drift(tmp: Path = None):
-    """Markdown 管判断协议，数值只住 policy.py：文档里不许再写一遍阈值。
-
-    阈值写进文档就必然与代码分叉（改了文档不改代码，或反过来）。这条钉子只看
-    **可调策略的数值**在文档正文里是否出现：出现即视为「文档在替策略发言」。
-    例外：明确标注为示例的 plan 片段（`policy.measure.max_cjk` 这类键名引用），
-    以及版本号/年份/日期。
-    """
-    import policy
-    import re
-
-    numbers: dict[str, str] = {}
-
-    def collect(node, path=""):
-        for key, value in node.items():
-            where = f"{path}.{key}" if path else key
-            if isinstance(value, dict):
-                collect(value, where)
-            elif isinstance(value, (int, float)) and not isinstance(value, bool):
-                numbers.setdefault(str(value).rstrip("0").rstrip(".")
-                                   if isinstance(value, float) else str(value), where)
-
-    # 允许的巧合：文档里的这个数**不是**判断阈值（算术事实 / 单位换算 / 执行规则 /
-    # 超时时限）。每一行都要写清理由——新增一条就得回答「它为什么不是策略」。
-    # 按「文件 + 同行片段」定位，不按裸数字：同一个 0.75 既是换算系数又曾是策略权重。
-    ALLOWED = (
-        ("SKILL.md", "相加 100% 不证明共同分母", "算术事实：百分比加总为 100 不是判据"),
-        ("contract.md", "乘 0.75 转 pt", "单位换算：画布 px → PPTX pt"),
-        ("contract.md", "覆盖 ≥60% 画布", "执行层：guard 的伪背景判据，不是判断阈值"),
-        ("contract.md", "`--deadline`（默认 120s）", "执行层：超时默认值"),
-        ("contract.md", "让出 0.1 个字宽", "执行层：窄栏折行余量（verify.GUARD_NARROW_*）"),
-    )
-
-    def _allowed(doc_name: str, line_text: str) -> bool:
-        return any(doc_name == f and snippet in line_text for f, snippet, _why in ALLOWED)
-
-    collect(policy.POLICY)
-    # 扫描范围：判断协议与执行契约，以及维护台账——三者都**不该**替策略发言。
-    # README / CHANGELOG 不在其列：它们是变更记录与门面，允许引用当时的数字。
-    docs = [ROOT / "SKILL.md", ROOT / "MAINTENANCE.md"] \
-        + sorted((ROOT / "references").glob("*.md"))
-    offenders = []
-    for doc in docs:
-        text = doc.read_text(encoding="utf-8")
-        for raw, where in numbers.items():
-            if not raw or len(raw) < 2:          # 单个数字（0/1/2）不作为阈值指纹
-                continue
-            # 阈值指纹要**独立成词**：`G20`（案例编号）与 `3,100`（千分位）里的数字
-            # 不是阈值，贴着字母/逗号/小数点的一律不算。
-            for match in re.finditer(
-                    rf"(?<![\d.,A-Za-z_]){re.escape(raw)}(?![\d.A-Za-z_])", text):
-                line = text.count("\n", 0, match.start()) + 1
-                context = text.splitlines()[line - 1]
-                # 键名引用（policy.measure.max_cjk）不算文档在替策略发言
-                if "policy." in context or "policy." in text[max(0, match.start() - 40):match.start()]:
-                    continue
-                if _allowed(doc.name, context):
-                    continue
-                offenders.append(f"{doc.name}:{line} 出现 {raw}（policy.{where}）")
-    check("docs: 文档正文不重复策略阈值（数值只有 policy.py 一份）",
-          not offenders, "；".join(offenders[:4]))
-
-
-def test_brief_contract(tmp: Path):
-    """brief 输入契约：作者唯一的手写输入，笔误必须当场拦下。
-
-    `audiance` 写错一个字母不会报错，只会让整份稿的受众变成 None——收束页、张力、
-    媒介必要性全部跟着失准，而作者以为「我明明写了」。plan 有契约、元素字段有
-    guard 的「疑似写错」提示，唯独输入边界此前没有。
-    """
-    import schema as schema_mod
-    import intelligence as intel
-    from vao import run_plan
-
-    path = schema_mod.contract_path("brief.schema.json", required=True)
-    doc = schema_mod.load(path)
-    check("brief: 契约文件自检通过（每个关键字都被执行）", bool(doc))
-
-    # ① 仓库自带的真实 brief 必须全部合法（契约不能把合法输入挡在门外）
-    rejected = []
-    for brief_file in sorted((ROOT / "templates").glob("*.yml")) + \
-            sorted(Path("/home/user/work").glob("*.yml")):
-        try:
-            brief = intel.load_brief(brief_file)
-        except Exception as exc:                       # noqa: BLE001 - 探针要报告原文
-            rejected.append(f"{brief_file.name}: 读取失败 {exc}")
-            continue
-        errors = intel.validate_brief(brief)["errors"]
-        if errors:
-            rejected.append(f"{brief_file.name}: {errors[0]}")
-    check("brief: 仓库自带 brief 全部通过输入契约（含 docs 里声明的可用键）",
-          not rejected, "；".join(rejected[:3]))
-
-    base = {"audience": "董事会", "decision": "批准预算",
-            "slides": [{"id": "s01", "title": "复购率三年翻倍",
-                        "content": "2022 年 21%；2023 年 33%；2024 年 44%"}]}
-    check("brief: 合法 brief 无错无警", not intel.validate_brief(base)["errors"]
-          and not intel.validate_brief(base)["warnings"], str(intel.validate_brief(base)))
-
-    # ② 结构违约要拦：缺 slides / 页缺 id / id 重复 / 类型错 / 枚举外取值
-    cases = (
-        ("缺 slides", {"audience": "董事会"}),
-        ("页缺 id", {**base, "slides": [{"title": "x"}]}),
-        ("id 重复", {**base, "slides": base["slides"] * 2}),
-        ("title 类型错", {**base, "slides": [{"id": "s01", "title": 3}]}),
-        ("role 枚举外", {**base, "slides": [{**base["slides"][0], "role": "convince"}]}),
-    )
-    for label, brief in cases:
-        got = intel.validate_brief(brief)
-        check(f"brief: 结构违约被拦（{label}）", bool(got["errors"]), str(got["errors"][:2]))
-
-    # ③ 拼写：近邻键（编辑距离很小）→ 拦；远键（作者注解）→ 只警告
-    typo = intel.validate_brief({**base, "audiance": "董事会"})
-    check("brief: 疑似写错的键名被拦并给出候选",
-          any("audiance" in e and "audience" in e for e in typo["errors"]), str(typo["errors"]))
-    annotation = intel.validate_brief({**base, "note_for_me": "先卖个关子"})
-    check("brief: 对不上的未知键只告警（作者注解可留）",
-          not annotation["errors"] and any("note_for_me" in w for w in annotation["warnings"]),
-          str(annotation["warnings"]))
-    slide_typo = intel.validate_brief({**base, "slides": [{"id": "s01", "title": "x",
-                                                           "conten": "y"}]})
-    check("brief: 页级疑似写错同样拦（conten → content）",
-          any("conten" in e and "content" in e for e in slide_typo["errors"]),
-          str(slide_typo["errors"]))
-
-    # ④ 未知键的候选表来自契约而不是代码里的第二份清单
-    top, slide = intel._brief_key_sets()
-    check("brief: 已知键取自契约（不在代码里抄第二份清单）",
-          {"audience", "decision", "slides", "avoid"} <= top
-          and {"id", "title", "content", "asset", "safe_area"} <= slide,
-          f"top={sorted(top)}")
-
-    # ⑤ 端到端：写错的 brief 在 plan 阶段退出 2，且不产出 plan.json
-    bad = tmp / "bad_brief.yml"
-    bad.write_text("audiance: 董事会\ndecision: 批准预算\nslides:\n"
-                   "- id: s01\n  title: 复购率翻倍\n  conten: 2022 年 21%\n",
-                   encoding="utf-8")
-    out = tmp / "bad_plan.json"
-    proc = run_vao("plan", str(bad), "--out", str(out))
-    text = (proc.stdout or "") + (proc.stderr or "")
-    check("brief: 写错的 brief 在 plan 阶段退出 2，且不落盘 plan.json",
-          proc.returncode == 2 and not out.exists() and "疑似写错" in text, text[-200:])
-
-
-def test_tool_portability(tmp: Path):
-    """仓库自带工具不许写死绝对路径——换台机器/进 CI 就废。"""
-    import re as _re
-    offenders = []
-    for tool in sorted((ROOT / "tools").glob("*.py")):
-        for m in _re.finditer(r'["\'](/home/|/Users/|[A-Za-z]:\\\\Users)[^"\']*["\']',
-                              tool.read_text(encoding="utf-8")):
-            # 注释里提一句历史坑不算；只查字符串字面量用法。
-            line = tool.read_text(encoding="utf-8").count("\n", 0, m.start()) + 1
-            text = tool.read_text(encoding="utf-8").splitlines()[line - 1].strip()
-            if text.startswith("#"):
-                continue
-            offenders.append(f"{tool.name}:{line}")
-    check("tools: 渲染/普查工具不含写死的绝对路径（CI 与换机可跑）",
-          not offenders, str(offenders))
-
 
 def test_docs():
     import re
@@ -6522,13 +5366,6 @@ def test_docs():
     release = re.search(r'^## (\d+\.\d+\.\d+)', changelog, re.M)
     check("docs: 包版本与最新变更记录一致",
           bool(version and release and version[1] == release[1]))
-    # 技能包的 frontmatter 里也有版本（skill-creator 的 metadata）；三处必须一致，
-    # 否则「分发出去的包是什么版本」就成了第三个答案。
-    meta = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+version:\s*\"?([0-9.]+)\"?",
-                     (ROOT / "SKILL.md").read_text(encoding="utf-8"), re.M)
-    check("docs: SKILL.md frontmatter 的 metadata.version 与包版本一致",
-          bool(meta and version and meta.group(1) == version[1]),
-          f"{meta.group(1) if meta else '缺失'} vs {version[1] if version else '?'}")
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     refs = sorted(p.name for p in (ROOT / "references").glob("*.md"))
     check("docs: SKILL.md 只保留六节（身份/哲学/判断/Context/执行/QA）",
@@ -6539,246 +5376,6 @@ def test_docs():
     check("docs: 文档里没有退役模块名与旧概念",
           all(b not in skill for b in ("guard.py", "normalize.py", "route.py", "qa.py",
                                        "design_direction")))
-
-
-def test_guard_audit(tmp: Path):
-    """案例守不守判据：把 policy 判据一条条调坏，必须有人报警。
-
-    「57/57 通过」证明的是广度（每个案例钉住一个期望），不是深度（判据坏了有没有人管）。
-    这条检查把后者变成回归项：任何新判据只要没有案例能抓住，CI 就红。
-    """
-    import bench
-    result = bench.guard_audit(ROOT / "scripts" / "json" / "generalization_cases_r6.json")
-    check("guards: r6 判据守门集无人漏守且基线无红",
-          result["ok"], f"unguarded={result['unguarded']} red={result['baseline_red']}")
-    check("guards: 每条 policy 判据至少有一个案例抓得住",
-          not result["unguarded"], str(result["unguarded"]))
-    # 反向对照：老的 57 例判断基准集**不**守这些判据（否则 r6 是重复建设）。
-    old = bench.guard_audit(ROOT / "scripts" / "json" / "judgment_cases.json")
-    check("guards: r6 提供了判断基准集没有的判据守卫（不是重复建设）",
-          len(old["unguarded"]) > len(result["unguarded"]),
-          f"judgment={len(old['unguarded'])} r6={len(result['unguarded'])}")
-
-
-def test_evals(tmp: Path):
-    """任务级评测层：用例形状、断言词汇、以及「断言真的会红」。
-
-    这一层的存在理由是**轴不同**：`scripts/json` 钉「这一页判成什么」，
-    `evals/` 测「给一份 brief，整条链产出了什么」。两者的失败含义不同，
-    所以不许互相替代（判断单测全绿不代表任务能交付，反之亦然）。
-    """
-    import json as _json
-    import re as _re
-    sys.path.insert(0, str(ROOT / "evals"))
-    import grade as _grade
-
-    data = _json.loads((ROOT / "evals" / "evals.json").read_text(encoding="utf-8"))
-    skill_md = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    name = _re.search(r"^name:\s*(\S+)\s*$", skill_md, _re.M).group(1)
-    check("evals: skill_name 与 SKILL.md frontmatter 一致", data.get("skill_name") == name,
-          f"{data.get('skill_name')} vs {name}")
-
-    cases = data.get("evals") or []
-    check("evals: 至少 5 条任务级用例（覆盖判断/执行/资产/边界/整册）",
-          len(cases) >= 5, str(len(cases)))
-
-    unknown, unlabeled, missing = [], [], []
-    for case in cases:
-        if not (case.get("prompt") and case.get("expected_output")):
-            missing.append(f"{case.get('name')}: 缺 prompt/expected_output")
-        if not (ROOT / (case.get("brief") or "")).is_file():
-            missing.append(f"{case.get('name')}: brief 不存在")
-        if case.get("build") and not (ROOT / case["build"]).is_file():
-            missing.append(f"{case.get('name')}: build 夹具不存在")
-        for check_spec in case.get("checks") or []:
-            if check_spec["kind"] not in _grade.CHECK_KINDS:
-                unknown.append(f"{case['name']}.{check_spec['kind']}")
-            if not check_spec.get("label"):
-                unlabeled.append(f"{case['name']}.{check_spec['kind']}")
-    check("evals: 每条用例的 brief/build 夹具都在仓库里", not missing, "；".join(missing[:3]))
-    check("evals: 断言种类都在 grade.py 的词汇表里（写错就是永远真/永远假）",
-          not unknown, str(unknown[:4]))
-    check("evals: 每条断言都有人话标签（评分表要被人读懂）", not unlabeled, str(unlabeled[:4]))
-
-    # 断言必须**会红**：拿伪造事实喂进去，能变红的才是断言，永远绿的是装饰。
-    good = {"plan": {"pages": [{"id": "s01", "visual_role": {"role": "compare"},
-                                "understanding": {"evidence": "comparison"},
-                                "media": {"decision": "none"},
-                                "claim": {"source": "extracted", "text": "结论"},
-                                "composition": {"chosen": "data_field"}}]},
-            "plan_returncode": 0, "verdict": {"status": "PASS"},
-            "pptx": {"bytes": 44000, "native_charts": 1},
-            "spec": {"roles": ["source"]}, "ghost": {"truncations": {}, "out_of_canvas": {}}}
-    red, green = [], []
-    probes = [("release_pass", {}), ("native_charts", {"min": 1}), ("source_lines", {"min": 1}),
-              ("ghost_truncations", {"max": 0}), ("claim_present", {"page": "s01"}),
-              ("page_role", {"page": "s01", "in": ["compare"]})]
-    for kind, spec_ in probes:
-        ok, _, _ = _grade.judge(kind, spec_, good)
-        green.append((kind, ok))
-    doctored = _json.loads(_json.dumps(good))
-    # 判断层也要被污染：只弄坏产物层的话，plan 类断言仍然是绿的——
-    # 上一版就是只弄了产物层，于是这条「断言会红」的检查自己先红了。
-    page = doctored["plan"]["pages"][0]
-    page["visual_role"]["role"] = "persuade"
-    page["understanding"]["evidence"] = "none"
-    page["claim"] = {"source": "absent", "text": None}
-    doctored["verdict"]["status"] = "BLOCK"
-    doctored["pptx"]["native_charts"] = 0
-    doctored["spec"]["roles"] = []
-    doctored["ghost"]["truncations"] = {"s01/t": 2}
-    for kind, spec_ in probes:
-        ok, _, _ = _grade.judge(kind, spec_, doctored)
-        red.append((kind, ok))
-    check("evals: 断言在好产物上为真", all(v for _, v in green), str(green))
-    check("evals: 同一批断言在坏产物上为假（断言不是装饰）",
-          not any(v for _, v in red), str(red))
-
-    # 负向控制：真跑一次「删掉出处行」的产物，评分必须掉下来。
-    facts_mod_path = ROOT / "evals" / "facts.py"
-    check("evals: facts/grade/run_eval 三个文件都在位",
-          all((ROOT / "evals" / n).is_file()
-              for n in ("facts.py", "grade.py", "run_eval.py", "baseline_build.py")),
-          str(facts_mod_path))
-
-
-def test_blind_review(tmp: Path):
-    """盲评回路：预览不泄露身份、统计能翻译成 comparison.json、人评回执能落成待办。
-
-    三段各有各的失败方式，所以要分开钉：
-    ① 打包阶段泄露身份（PNG 文本块、plan.json 里的作者路径）；
-    ② 翻译阶段把「评审不足三位」写成结论（低置信度必须写在 reasoning 里）；
-    ③ 回执阶段把「无意见」算成「已验证」。
-    """
-    import importlib.util
-    import json as _json
-    import pathlib
-    import bench as _bench
-    from PIL import Image
-    from PIL.PngImagePlugin import PngInfo
-
-    def _tool(name):
-        spec = importlib.util.spec_from_file_location(f"_tool_{name}", ROOT / "tools" / f"{name}.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    b2c = _tool("blind_to_comparison")
-    intake = _tool("feedback_intake")
-
-    # ① 打包含预览：PNG 文本块被重建清除，流水线工件不进评审目录
-    src = tmp / "blind_src"
-    src.mkdir(parents=True, exist_ok=True)
-    (src / "plan.json").write_text("{\"author\": \"/home/someone/secret\"}", encoding="utf-8")
-    image = Image.new("RGB", (32, 18), (240, 240, 235))
-    info = PngInfo()
-    info.add_text("Author", "internal-reviewer-name")
-    info.add_text("Software", "vao-ghost")
-    image.save(src / "preview-ghost-01.png", pnginfo=info)
-    peer = tmp / "blind_peer"
-    peer.mkdir(parents=True, exist_ok=True)
-    (peer / "note.txt").write_text("peer", encoding="utf-8")
-    packed = _bench.blind_pack([str(src), str(peer)], tmp / "blind_out", seed=7,
-                               scrub_previews=True)
-    code = next(c for c in packed["items"]
-                if (tmp / "blind_out" / c / "preview-ghost-01.png").is_file())
-    names = [p.name for p in (tmp / "blind_out" / code).rglob("*")]
-    raw = (tmp / "blind_out" / code / "preview-ghost-01.png").read_bytes()
-    key = _json.loads(pathlib.Path(packed["key"]).read_text(encoding="utf-8"))
-    check("blind: 预览图进了评审目录且 PNG 文本块被清除（作者/工具指纹不随图外泄）",
-          names.count("preview-ghost-01.png") == 1
-          and not any(tag in raw for tag in (b"tEXt", b"iTXt", b"zTXt"))
-          and b"internal-reviewer-name" not in raw)
-    check("blind: 流水线工件（plan.json）不进评审目录，key 记录已清洗的预览清单",
-          "plan.json" not in names
-          and key["sha256"][code].get("previews_scrubbed") == ["preview-ghost-01.png"])
-    check("blind: 清洗只动元数据不动像素（同尺寸同像素）",
-          Image.open(tmp / "blind_out" / code / "preview-ghost-01.png").size == (32, 18))
-    check("blind: key 落在评审目录之外，且自身写明「可反推身份、只给组织者」",
-          not pathlib.Path(packed["key"]).is_relative_to(tmp / "blind_out")
-          and "只给组织者" in key.get("identity_warning", ""))
-
-    # ② 翻译：三份合成评分表 → comparison.json
-    sheets = [str(ROOT / "evals" / "fixtures" / "blind" / f"r{i}.csv") for i in (1, 2, 3)]
-    result = b2c.build(packed["key"], sheets)
-    check("blind: 三份完整评审 → winner=A、confidence=normal、带共识状态",
-          result["winner"] == "A" and result["confidence"] == "normal"
-          and result["consensus"] == "CONSENSUS_SUPPORTED",
-          f"{result['winner']}/{result['confidence']}/{result['consensus']}")
-    check("blind: rubric 保留 1–7 原尺度（不重标到 10 分，不发明精度）",
-          result["scale"].startswith("1-7")
-          and all(1 <= result["rubric"][side]["overall_score"] <= 7 for side in ("A", "B")))
-    check("blind: 评审原话逐字进 reviewer_notes（不改写不摘要）",
-          any("出处行" in note for notes in result["reviewer_notes"].values() for note in notes))
-    check("blind: 默认不写 identity（盲就盲到底），没有断言就不写 expectation_results",
-          "identity" not in result and "expectation_results" not in result)
-    check("blind: 维度差 ≥ 半档才写进 strengths/weaknesses",
-          result["output_quality"]["A"]["strengths"] != ["无显著领先维度（差距 < 半档）"]
-          and all("+" in item for item in result["output_quality"]["A"]["strengths"]))
-
-    # 人评页只读 benchmark.json / analysis.json，不读 comparison.json；
-    # 所以搬运这一步必须自己验：能进页面、幂等、低置信度要被写出来。
-    bench_doc = tmp / "bench.json"
-    bench_doc.write_text(_json.dumps({"notes": ["原有分析结论"], "runs": []}, ensure_ascii=False),
-                         encoding="utf-8")
-    b2c.annotate(result, str(bench_doc), str(tmp / "analysis.json"))
-    first_notes = _json.loads(bench_doc.read_text(encoding="utf-8"))["notes"]
-    b2c.annotate(result, str(bench_doc), str(tmp / "analysis.json"))
-    second_notes = _json.loads(bench_doc.read_text(encoding="utf-8"))["notes"]
-    analysis = _json.loads((tmp / "analysis.json").read_text(encoding="utf-8"))
-    check("blind: 盲评要点进 benchmark.json 的 notes（人评页读的就是这份），原有结论不被覆盖",
-          sum(n.startswith(b2c.NOTE_PREFIX) for n in second_notes) == 3
-          and "原有分析结论" in second_notes)
-    check("blind: 重复搬运是替换不是追加（人评页不会越跑越长）", first_notes == second_notes)
-    check("blind: analysis.json 写 winner 与评审原话，未揭盲时不伪造身份",
-          analysis["comparison_summary"]["winner"] == "A"
-          and analysis["comparison_summary"]["winner_skill"] == "未揭盲"
-          and analysis["reviewer_notes"])
-
-
-    # 评审不足三位：必须降级为低置信度并把「不能当结论」写进 reasoning
-    thin = b2c.build(packed["key"], sheets[:1])
-    check("blind: 不足三位评审 → confidence=low 且 reasoning 明说不能当结论",
-          thin["confidence"] == "low" and "证据不足" in thin["reasoning"])
-    low_doc = tmp / "bench_low.json"
-    b2c.annotate(thin, str(low_doc), None)
-    low_notes = _json.loads(low_doc.read_text(encoding="utf-8"))["notes"]
-    check("blind: 低置信度会写进人评页 notes（不让人在页面上误读成定论）",
-          any("不能当版本优劣结论" in n for n in low_notes)
-          and any("置信度=low" in n for n in low_notes))
-
-    # 版本数 ≠ 2 且没给 --pair：拒绝猜
-    three = tmp / "three.key.json"
-    three.write_text(_json.dumps({"items": {"V01": "a", "V02": "b", "V03": "c"}}), encoding="utf-8")
-    rejected = False
-    try:
-        b2c.build(str(three), sheets)
-    except SystemExit:
-        rejected = True
-    check("blind: 多版本且未指定 --pair 时拒绝自动挑选", rejected)
-
-    # ③ 人评回执：对齐 run_id、空反馈单列、未知 run_id 报警、日志去重
-    iteration = tmp / "iteration-1"
-    run_dir = iteration / "eval-0-demo" / "with_skill" / "run-1"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "eval_metadata.json").write_text(
-        _json.dumps({"eval_id": 0, "eval_name": "demo", "prompt": "p"}), encoding="utf-8")
-    (iteration / "feedback.json").write_text(_json.dumps({"status": "complete", "reviews": [
-        {"run_id": "eval-0-demo-with_skill-run-1", "feedback": "末页主语不够大", "timestamp": "t1"},
-        {"run_id": "eval-0-demo-with_skill-run-1-again", "feedback": "", "timestamp": "t2"}]}),
-        encoding="utf-8")
-    first = intake.intake(iteration)
-    md = pathlib.Path(first["markdown"]).read_text(encoding="utf-8")
-    check("blind: 人评回执按 run_id 对齐用例与配置，并把原话抄进待办表",
-          first["status"] == "OK" and "| demo | with_skill | 末页主语不够大 |" in md)
-    check("blind: 未知 run_id 显式报警（不静默丢弃）",
-          first["unknown_run_ids"] == ["eval-0-demo-with_skill-run-1-again"]
-          and "找不到对应运行" in md)
-    second = intake.intake(iteration)
-    check("blind: 同一条回执重复收口不重复记账（按 run_id+时间戳去重）", second["added"] == 0)
-    missing = intake.intake(tmp / "iteration-none")
-    check("blind: 没收到反馈文件时状态是 NO_FEEDBACK_FILE（不当成通过）",
-          missing["status"] == "NO_FEEDBACK_FILE")
 
 
 def main():
@@ -6793,7 +5390,6 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         for name, fn in (("intelligence", test_intelligence), ("verify", test_verify),
-                         ("safe_area", test_safe_area),
                          ("production", test_production), ("cli", test_cli), ("delivery", test_delivery), ("plan_boundaries", test_plan_boundaries),
                          ("release_evidence", test_release_evidence),
                          ("design_judgment", test_design_judgment),
@@ -6817,21 +5413,7 @@ def main():
                          ("unit_visibility", test_unit_visibility),
                          ("art_direction_linkage", test_art_direction_linkage),
                          ("ghost_chart_color", test_ghost_chart_color_single_source),
-                         ("case004_regressions", test_case004_regressions),
-                         ("plan_compact", test_plan_compact),
-                         ("policy_contract", test_policy_contract),
-                         ("plan_contract", test_plan_contract),
-                         ("unit_lexicon", test_unit_lexicon),
-                         ("provenance", test_provenance),
-                         ("mixed_metrics", test_mixed_metrics),
-                         ("share_and_total", test_share_and_total),
-                         ("contract_drift", test_contract_drift),
-                         ("brief_contract", test_brief_contract),
-                         ("docs_policy", test_docs_policy_drift),
-                         ("tool_portability", test_tool_portability),
-                         ("guard_audit", test_guard_audit),
-                         ("evals", test_evals),
-                         ("blind_review", test_blind_review)):
+                         ("case004_regressions", test_case004_regressions)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()

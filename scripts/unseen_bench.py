@@ -22,7 +22,6 @@ import sys
 from pathlib import Path
 
 import intelligence as intel
-import bench
 
 CASES = Path(__file__).resolve().parent / "json" / "generalization_cases.json"
 BRIEF = {"audience": "内部评审会", "decision": "批准下一步预算"}
@@ -34,9 +33,8 @@ CLASS_OF = {
     "media": "media", "media_source": "media", "media_suggested": "media",
     "claim": "claim", "claim_contains": "claim", "claim_soft": "claim",
     "claim_not_contains": "claim", "claim_text": "claim",
-    "composition": "composition",
 }
-CLASS_NAMES = {"severe": "严重误判", "media": "错误媒体决策", "composition": "构图错位",
+CLASS_NAMES = {"severe": "严重误判", "media": "错误媒体决策",
                "claim": "主张错位", "causal": "因果误推", "other": "其他"}
 
 
@@ -47,12 +45,29 @@ def _payload_hash(data: dict) -> str:
 
 
 def _actual_single(case: dict) -> dict:
-    """观测面只有一份实现：bench._actual。这里只补 unseen 的页位默认值（1/3）。
-
-    历史教训：这层曾经自带一份 _actual，于是 bench 能断言构图、unseen 不能，
-    两套量具对同一个案例给出不同结论。
-    """
-    return bench._actual({"index": 1, "total": 3, **case})
+    item = {"id": case["id"], "title": case.get("title", ""), "content": case.get("content", "")}
+    world = intel.derive_world(BRIEF, [intel.understand(f"{item['title']} {item['content']}")])
+    judged = intel.page_judgment(item, index=1, total=3, brief=BRIEF, world=world, warnings=[])
+    u = judged["understanding"]
+    media = judged["media"]
+    return {
+        "role": judged["visual_role"]["role"],
+        "evidence": u.get("evidence"),
+        "comparison": bool(u.get("comparison")),
+        "part_whole": bool(u.get("part_whole")),
+        "claim": judged["claim"].get("source"),
+        "claim_text": judged["claim"].get("text"),
+        "media": media.get("decision"),
+        "media_source": media.get("source"),
+        "media_suggested": media.get("suggested") or media.get("function"),
+        "focus": judged["focus"].get("element_role"),
+        # 主语量的正式落点是 typography.lead（typography_of 的 focal＝primary['raw']）；
+        # information_weight 只有 maximize/weaken/delete 三档列表，没有 lead 键。
+        # （第一轮盲测误读 information_weight['lead'] 造成 2 处假阳性——量具修正，期望未动。）
+        "primary": judged["typography"].get("lead"),
+        "distinct": u.get("distinct_numerals"),
+        "open_questions": judged.get("open_questions"),
+    }
 
 
 def _match(key: str, want, actual: dict) -> tuple[bool, str, str]:

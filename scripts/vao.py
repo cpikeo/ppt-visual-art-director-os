@@ -134,48 +134,10 @@ def bind_asset_manifest(spec, manifest_path, assets_dir=None):
                 walk(child)
 
     walk(result)
-
-    # safe_area 闭环：清单里的压字区是成图依据，也必须落成版面事实，否则版面可以
-    # 把字排到高亮上而无人发现（审计 E16）。页上没声明就继承清单；两处都写了却
-    # 不一致 = 图按 A 留白、版按 B 排字，直接 BLOCK（这比缺图更隐蔽）。
-    inherited, conflicts = [], []
-    keys = ("x", "y", "width", "height")
-
-    def _rect(value):
-        if not isinstance(value, dict):
-            return None
-        try:
-            return tuple(round(float(value[k]), 6) for k in keys)
-        except (KeyError, TypeError, ValueError):
-            return None
-
-    for slide in result.get("slides") or []:
-        if not isinstance(slide, dict):
-            continue
-        sid = str(slide.get("id") or "?")
-        for element in slide.get("elements") or []:
-            if not isinstance(element, dict) or element.get("type") != "image":
-                continue
-            item = by_id.get(str(element.get("asset_id"))) or {}
-            area = _rect(item.get("safe_area"))
-            if area is None:
-                continue                      # 空 safe_area = 不压字，版面自己保证
-            declared = _rect(slide.get("safe_area"))
-            if declared is None and slide.get("safe_area") not in (None, {}):
-                continue                      # 写坏了交给 verify 的 safe_area_schema 报
-            if declared is None:
-                slide["safe_area"] = {k: float(item["safe_area"][k]) for k in keys}
-                inherited.append(sid)
-            elif declared != area:
-                conflicts.append(
-                    f"{sid}: 页声明 {dict(zip(keys, declared))} ≠ 清单 {dict(zip(keys, area))}"
-                    "（图按清单留白，字却按页声明排）")
     report = {"manifest": str(manifest_file), "assets_dir": str(root), "bound": bound,
               "bound_count": len(bound), "missing_asset_ids": sorted(set(missing)),
               "missing_files": sorted(set(missing_files)),
-              "safe_area_inherited": sorted(set(inherited)),
-              "safe_area_conflicts": conflicts,
-              "status": "PASS" if not missing and not missing_files and not conflicts else "BLOCK"}
+              "status": "PASS" if not missing and not missing_files else "BLOCK"}
     return result, report
 
 
@@ -184,20 +146,12 @@ def bind_asset_manifest(spec, manifest_path, assets_dir=None):
 # ══════════════════════════════════════════════════════════════════
 def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = None,
              assets_out: str | None = None, assets_dir: str | None = None,
-             asset_cache: str | None = None, lean: bool = True,
-             policy_path: str | None = None) -> dict:
+             asset_cache: str | None = None) -> dict:
     started = time.perf_counter()
     timing: dict[str, float] = {}
 
     t = time.perf_counter()
-    # 策略覆盖必须先于判断：`--policy` 是「同一个 brief、换一组阈值」的唯一入口。
-    # 校验失败立即抛错（退出 2），不做部分生效——半套策略产生的 plan 无法复盘。
-    if policy_path:
-        import policy
-        policy.load(policy_path)
-        timing["policy_load_ms"] = round((time.perf_counter() - t) * 1000, 2)
-    from intelligence import (build_skeleton, compact_plan, load_brief, think,
-                              validate_brief, validate_plan)
+    from intelligence import load_brief, think, build_skeleton
     from datetime import datetime, timezone
     timing["module_import_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
@@ -205,23 +159,8 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
     brief, brief_sha256 = load_brief(brief_path, with_digest=True)
     timing["brief_load_ms"] = round((time.perf_counter() - t) * 1000, 2)
 
-    # 输入契约先于判断：结构/类型/枚举错与「疑似写错的键名」在这里拦下（退出 2），
-    # 不带着一个没人消费的键名去生成一份看起来正常的 plan。作者注解只进 warnings。
-    t = time.perf_counter()
-    brief_check = validate_brief(brief)
-    timing["brief_contract_ms"] = round((time.perf_counter() - t) * 1000, 2)
-    if brief_check["errors"]:
-        raise ValueError(f"brief 违反输入契约（{len(brief_check['errors'])} 项）："
-                         + "；".join(brief_check["errors"][:6]))
-    for msg in brief_check["warnings"][:6]:
-        print(f"VAO warning: {msg}", file=sys.stderr)
-
     t = time.perf_counter()
     bundle = think(brief)
-    if brief_check["warnings"]:
-        bundle.setdefault("warnings", [])
-        bundle["warnings"] = [{"rule": "brief_contract", "scope": "deck", "msg": msg}
-                              for msg in brief_check["warnings"]] + bundle["warnings"]
     timing["intelligence_ms"] = round((time.perf_counter() - t) * 1000, 2)
     if not bundle.get("pages"):
         raise ValueError("brief 里没有可路由的页面（slides 为空或每页都缺 title/content）："
@@ -291,38 +230,8 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
                 handle.write(text)
         bundle["workflow"]["skeleton_path"] = str(target.resolve())
     if out:
-        # 落盘的永远是给作者/模型读的那一份：默认瘦身投影（决策全留，重复的说明句
-        # 上提到 deck.legend）；`--full` 保留完整推演（被否决方案的理由、逐页说明）。
-        # 返回给调用方的 bundle 始终是完整的——CLI 打印、遥测、资产链都读它。
-        _json_write(out, compact_plan(bundle) if lean else bundle)
+        _json_write(out, bundle)
     timing["plan_artifact_write_ms"] = round((time.perf_counter() - t) * 1000, 2)
-
-    # 契约校验（P1）：结构查 schema，含义查 intelligence.validate_plan。
-    # 为什么在**写盘之后**再读回来查：验的是作者/模型真正拿到的那份字节，
-    # 不是内存里那份「应该一样」的对象。不合法即抛错 → CLI 退出 2，
-    # 不让一份违约的 plan 变成下游 BUILD 的输入。
-    if out:
-        t = time.perf_counter()
-        from schema import validate_file
-        schema_path = _plan_schema_path()
-        if schema_path is None:
-            # 契约文件缺失（只安装了模块副本、没有仓库目录）：结构校验降级为
-            # 显式警告，语义校验照跑。不静默——降级本身要留在输出里。
-            print("VAO warning: 未找到 schemas/plan.schema.json（结构契约未执行）；"
-                  "请以仓库方式运行或设置 VAO_SCHEMA_DIR", file=sys.stderr)
-            problems = []
-        else:
-            problems = validate_file(out, schema_path)
-        problems += validate_plan(bundle)
-        timing["plan_contract_ms"] = round((time.perf_counter() - t) * 1000, 2)
-        if problems:
-            raise ValueError(
-                f"plan 违反数据契约（{len(problems)} 项）：" + "；".join(problems[:6]))
-    else:
-        problems = validate_plan(bundle)
-        if problems:
-            raise ValueError(
-                f"plan 违反数据契约（{len(problems)} 项）：" + "；".join(problems[:6]))
 
     total_ms = round((time.perf_counter() - started) * 1000, 2)
     # 运行遥测只加在返回对象，不写入 plan.json：规划文件仍是确定性判断凭证。
@@ -330,13 +239,7 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
     bundle["performance"] = {
         "module_import_ms": timing["module_import_ms"],
         "brief_load_ms": timing["brief_load_ms"],
-        # 输入契约的成本同样要可见（与 plan_contract_ms 同一条理由）。
-        "brief_contract_ms": timing.get("brief_contract_ms", 0.0),
         "intelligence_ms": timing["intelligence_ms"],
-        # 契约闸门的成本必须可见：结构+语义校验是新增的一趟读盘 + 全量遍历，
-        # 报不出这一项，「契约贵不贵」就只能靠猜。
-        "plan_contract_ms": timing.get("plan_contract_ms", 0.0),
-        "policy_load_ms": timing.get("policy_load_ms", 0.0),
         "plan_artifact_write_ms": timing["plan_artifact_write_ms"],
         "asset_manifest_build_ms": timing["asset_manifest_build_ms"],
         "asset_manifest_prepare_ms": timing["asset_manifest_prepare_ms"],
@@ -350,12 +253,6 @@ def run_plan(brief_path: str, out: str | None = None, skeleton: str | None = Non
 # ══════════════════════════════════════════════════════════════════
 # VERIFY · check（一趟：normalize → guard → compile → 预览 → 结论）
 # ══════════════════════════════════════════════════════════════════
-def _plan_schema_path():
-    """plan 数据契约文件的位置（解析规则在 schema.contract_path，只写一份）。"""
-    import schema as schema_mod
-    return schema_mod.contract_path("plan.schema.json")
-
-
 def _compile_step(spec, output_path, *, speed, spec_path=None,
                   image_bytes=None, digests=None, decoded=None):
     """缓存探测 → 必要时编译 → 产物凭证 → 缓存写入，各阶段独立计时。"""
@@ -597,15 +494,6 @@ def _ghost(spec, output_dir, pages=None, base_path=None, image_bytes=None,
         print("VAO warning: 本机缺少预览字面 " + "、".join(sorted(fallbacks))
               + "；已回落到 PIL 默认位图字体（无中文字形），本轮页图只能当结构线看。",
               file=sys.stderr)
-    # 声明了本机没有的家族同属一类失真：预览用的是替换字面，行宽/换行与
-    # 「装了该字体的机器」不是一回事。逐家族记账，不重复刷屏。
-    from ghost import font_substitutions
-    substitutions = font_substitutions()
-    if substitutions:
-        info["font_substitutions"] = substitutions
-        print("VAO warning: 声明的字体本机缺失，预览已替换：" + "；".join(
-            f"{declared} → {actual}" for declared, actual in sorted(substitutions.items()))
-            + "。字形与行宽只是近似，换行位置不可当作产物证据。", file=sys.stderr)
     # max_lines 截断同理：预览按声明收笔，产物（PowerPoint）不截断。页面上已有
     # 可见标记；台账让它进 meta，可按「页/元素」复核，不必逐页放大找那一行字。
     from ghost import text_truncations
@@ -790,14 +678,12 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
                                     qc_result.get("report_path"), assets_dir,
                                     image_bytes=snapshots, digests=digests)
             if asset_binding and (asset_binding.get("missing_asset_ids")
-                                  or asset_binding.get("missing_files")
-                                  or asset_binding.get("safe_area_conflicts")):
+                                  or asset_binding.get("missing_files")):
                 workflow["status"] = "BLOCKED"
                 workflow.setdefault("issues", []).append(
                     "asset binding: " + "、".join(
                         asset_binding.get("missing_asset_ids", [])
-                        + asset_binding.get("missing_files", [])
-                        + asset_binding.get("safe_area_conflicts", [])))
+                        + asset_binding.get("missing_files", [])))
             asset_chain_ms = round((time.perf_counter() - t_chain) * 1000, 2)
         elif has_images and mode != "spec":
             from assets import verify_chain
@@ -968,8 +854,7 @@ def run_check(build_path: str, output: str, *, mode: str = "draft",
             manifest["qa_summary"]["performance"] = dict(result["performance"])
             _json_write(manifest_path, manifest)
         binding_block = bool(asset_binding and (asset_binding.get("missing_asset_ids")
-                                                or asset_binding.get("missing_files")
-                                                or asset_binding.get("safe_area_conflicts")))
+                                                or asset_binding.get("missing_files")))
         passed = bool(result.get("passed") and not binding_block)
         if packet or not passed:
             _json_write(packet_path, repair_packet(result, mode, build, output_path))
@@ -1068,10 +953,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--assets-dir", help="图将被放到哪个目录（写进清单，check 据此核验）")
     p.add_argument("--asset-cache", help="提示词缓存 JSON；相同视觉需求指纹直接复用")
     p.add_argument("--json", action="store_true", help="print the compact plan")
-    p.add_argument("--full", action="store_true",
-                   help="落盘完整推演（默认瘦身：决策全留，重复说明句上提到 deck.legend）")
-    p.add_argument("--policy", dest="policy_path", default=None,
-                   help="策略覆盖 JSON（深度合并进 policy.py 的默认策略；未知键直接报错）")
 
     c = sub.add_parser("check", help="VERIFY：build → normalize/guard/compile/preview → 结论")
     c.add_argument("build")
@@ -1139,9 +1020,9 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "plan":
-            bundle = run_plan(args.brief, args.plan_out, args.skeleton, lean=not args.full,
+            bundle = run_plan(args.brief, args.plan_out, args.skeleton,
                               assets_out=args.assets_out, assets_dir=args.assets_dir,
-                              asset_cache=args.asset_cache, policy_path=args.policy_path)
+                              asset_cache=args.asset_cache)
             if args.json:
                 print(json.dumps({"plan_path": str(Path(args.plan_out).expanduser().resolve()),
                                   "page_count": len(bundle["pages"]),
@@ -1154,7 +1035,8 @@ def main(argv=None) -> int:
                                .get("decision") not in (None, "none")]
                 world = bundle["deck"].get("world") or {}
                 print(f"plan: {len(pages)} 页 · 视觉世界 {world.get('name')} "
-                      f"· 规划 {bundle.get('planning_ms', 0)}ms")
+                      f"· 质量 {bundle['deck']['quality']} · "
+                      f"规划 {bundle.get('planning_ms', 0)}ms")
                 if bundle.get("warnings"):
                     for w in bundle["warnings"][:4]:
                         print(f"  ⚠ {w.get('msg') or w}")

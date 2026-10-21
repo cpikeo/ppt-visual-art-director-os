@@ -21,7 +21,3 @@ asset_prompt_cache.json
 .DS_Store
 
 # 回归语义样本收敛到 scripts/json/judgment_cases.json；无特例产物目录。
-
-# 评测产物是跑出来的证据，不是源码（run_eval.py 可随时重建）
-
-dist/

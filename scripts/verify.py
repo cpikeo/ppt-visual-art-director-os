@@ -17,7 +17,6 @@ import math
 from primitives import (CHAR_SPACING_MAX_PT,
                         CHART_KINDS, CHART_LABEL_MIN_COUNT, CHART_LABEL_MIN_H,
                         CHART_LIMITS, ELEMENT_VALUE_KINDS, NUMERIC_CHART_KINDS,
-                        retired_chart_kind,
                         ROWS_CHART_KINDS, DEFAULT_HEIGHT, DEFAULT_WIDTH, ELEMENT_TYPES,
                         SLIDE_MAX_PX, SLIDE_MIN_PX, emu,
                         is_background_declared, spec_fingerprint, resolve_chart_highlight)
@@ -119,26 +118,7 @@ def _closest_fields(name: str, known: frozenset) -> list[str] | None:
     return (head_hit + picks) or None
 
 
-# 容量估算的安全余量：**只对窄栏**（每行不足 12 字）生效，0.1 个字宽。
-# 依据是 tools/metrics_calibration.py 的对拍（128 个探针、逐行读 PDF 词框）：
-#   · 不留余量：1 个探针比真实排版少算一行（会放行溢出），恰好发生在 8.9 字/行；
-#   · 按比例留 1%：0 个低估，但有 11 个框被多算一行（把能排下的句子判成溢出）；
-#   · 窄栏才留 0.1 em：0 个低估、6 个多算——窄栏里 ±0.1 em 的字形误差足以跨过
-#     换行阈值，宽栏里同样的绝对误差被摊薄，不必再留。
-GUARD_NARROW_CHARS = 12.0
-GUARD_NARROW_EM = 0.1
-
-
-def _families(e: dict, theme: dict | None) -> tuple[str, str]:
-    """元素实际会用到的中/西文字体（与编译器同一套解析，含 body/display 别名）。"""
-    from primitives import RenderContext
-    try:
-        return RenderContext(theme or {}, {}).families(e)
-    except Exception:
-        return "", ""
-
-
-def _text_box_capacity(e: dict, theme: dict | None = None) -> dict | None:
+def _text_box_capacity(e: dict) -> dict | None:
     """文本是否装得下：物理容量只在这里判断，错误字段不许静默放行。
 
     字距（char_spacing）以 pt 声明，段距由 compiler.pt(px) 写入；
@@ -167,27 +147,15 @@ def _text_box_capacity(e: dict, theme: dict | None = None) -> dict | None:
         return {"invalid": "max_lines 必须是正整数"}
     if h <= 0 or w <= 0:
         return None  # 盒子本身由 element_schema 的退化几何门拦截
-    # 容量必须用**与预览同一套**折行与度量：宽度表（CJK 1.0em / 拉丁 0.6em）在
-    # 44px 标题上把 625px 的句子估成 680px，凭空多出一行；而真字面 + 混排边界
-    # 间距与 LibreOffice 回放逐行一致（见 audit/metrics/calibrate.py）。
-    from primitives import insert_script_gaps, measure_text, measured_lines
+    from primitives import estimate_lines, insert_script_gaps, text_width
     wrap = e.get("wrap", True) is not False
     usable_w = w - 2 * pad
     if usable_w <= 0:
         return {"invalid": "内边距占满文字框，可用宽度 ≤ 0"}
-    paragraphs = [insert_script_gaps(p) for p in str(e.get("text", "")).split("\n")]
-    cn, latin = _families(e, theme)
-    bold = bool(e.get("bold", False)) or bool(e.get("text_bold", False))
-    # 窄栏才留余量（判据与取值见 GUARD_NARROW_*）：拦错可以看预览继续，
-    # 放过则是页面在别人的电脑上溢出去——但余量也不该把宽栏的临界句子判成溢出。
-    narrow = usable_w < GUARD_NARROW_CHARS * size
-    safe_w = max(1.0, usable_w - (GUARD_NARROW_EM * size if narrow else 0.0))
-    if not wrap:
-        lines = 1
-    else:
-        lines = sum(measured_lines(p, safe_w, size, cn, latin,
-                                   spacing=spacing, bold=bold) for p in paragraphs)
-    width_need = max((measure_text(p, size, cn, latin, spacing=spacing, bold=bold)
+    paragraphs = str(e.get("text", "")).split("\n")
+    lines = sum(estimate_lines(insert_script_gaps(p), usable_w, size, wrap, spacing)
+                for p in paragraphs)
+    width_need = max((text_width(insert_script_gaps(p), size, spacing)
                       for p in paragraphs), default=0)
     # space_before/after 与字号/盒子同为 spec px（compiler.pt(px) 才转 pt）。
     paragraph_gap = max(0, len(paragraphs) - 1) * (before + after)
@@ -259,100 +227,6 @@ def _overlap_allowed(a: dict, b: dict) -> bool:
         if x.get("overlap_ok") is True or x.get("layer") in ("background", "backdrop"):
             return True
     return False
-
-
-# safe_area 是「压字区」：brief 声明 → 资产清单继承 → 成图按它留白。此前它只喂给
-# 成图 QC 的亮度采样，**版面完全不认**：把标题整体挪到右半区压在高亮上，release
-# 照样 PASS（审计 E16）。声明了却不执行，比不声明更坏——作者以为系统管了。
-_SAFE_AREA_EXEMPT_ROLES = {"source", "method", "metadata"}
-
-
-def _safe_rect(value):
-    """safe_area 必须是 0–1 归一化矩形（相对铺满画布的背景图）。"""
-    if not isinstance(value, dict):
-        return None
-    try:
-        x, y = float(value["x"]), float(value["y"])
-        w, h = float(value["width"]), float(value["height"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    if not all(math.isfinite(v) for v in (x, y, w, h)):
-        return None
-    if w <= 0 or h <= 0 or x < -1e-6 or y < -1e-6 or x + w > 1 + 1e-6 or y + h > 1 + 1e-6:
-        return None
-    return x, y, w, h
-
-
-def _text_anchor(e: dict):
-    """文字的真实落点：横向按 align，纵向按 anchor（缺省左/上）。
-
-    判「在不在压字区」看锚点而不是外框：短文字配宽框是常态，用框判会误杀左对齐
-    标题；而锚点越界就是真的把字放到了别处。
-    """
-    x, y, w, h = _element_rect(e) or (0, 0, 0, 0)
-    align = str(e.get("align") or "left").strip().lower()
-    if align == "center":
-        ax = x + w / 2
-    elif align == "right":
-        ax = x + w
-    else:
-        ax = x
-    anchor = str(e.get("anchor") or "top").strip().lower()
-    if anchor == "middle":
-        ay = y + h / 2
-    elif anchor == "bottom":
-        ay = y + h
-    else:
-        ay = y
-    return ax, ay
-
-
-def _check_safe_area(slide: dict, drawable: list, sid: str, add, cw: float, ch: float):
-    """声明了 safe_area 就落成版面事实（E16 闭环）。"""
-    raw = slide.get("safe_area")
-    if raw in (None, {}):
-        return
-    rect = _safe_rect(raw)
-    if rect is None:
-        add("safe_area_schema", sid, "error",
-            "safe_area 须是 0–1 归一化矩形 {x, y, width, height}（相对铺满画布的背景图）；"
-            "不压字的页写 {}，不要写像素值")
-        return
-    covers = []
-    for e in drawable:
-        if str(e.get("type")) != "image":
-            continue
-        qualified, _ = _bg_qualified(e, cw, ch)
-        er = _element_rect(e)
-        if qualified and er:
-            covers.append(er)
-    if not covers:
-        add("safe_area_schema", sid, "warn",
-            "声明了 safe_area 但本页没有整幅背景图（layer=background 且覆盖 ≥60%）："
-            "压字区无处可校，检查是不是漏了图层声明")
-        return
-    ix, iy, iw, ih = max(covers, key=lambda r: r[2] * r[3])
-    sx, sy, sw, sh = rect
-    left, top = ix + sx * iw, iy + sy * ih
-    right, bottom = left + sw * iw, top + sh * ih
-    for e in drawable:
-        if str(e.get("type")) != "text":
-            continue
-        if e.get("safe_area_exempt") is True:
-            continue
-        if str(e.get("role") or "").strip().lower() in _SAFE_AREA_EXEMPT_ROLES:
-            continue                       # 来源区小字：按契约本就压在页脚带上
-        ax, ay = _text_anchor(e)
-        out = []
-        if ax < left - 1 or ax > right + 1:
-            out.append(f"横向锚点 {ax:.0f}px 在压字区 {left:.0f}–{right:.0f}px 之外")
-        if ay < top - 1 or ay > bottom + 1:
-            out.append(f"纵向锚点 {ay:.0f}px 在压字区 {top:.0f}–{bottom:.0f}px 之外")
-        if out:
-            add("safe_area", str(e.get("id", "?")), "error",
-                "文字落位越出声明的 safe_area：" + "；".join(out)
-                + "。把文字挪回压字区，或把 safe_area 改成真实的压字范围（归一化坐标）；"
-                  "确实要压在图上的装饰性小字加 safe_area_exempt: true")
 
 
 def _bg_qualified(e: dict, cw: float, ch: float) -> tuple[bool, str | None]:
@@ -461,7 +335,6 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
             add("page_contract", sid, "error",
                 "这一页没有任何元素，也没有 background：画面上什么都没有"
                 "（要么给元素，要么给背景）")
-        _check_safe_area(slide, drawable, sid, add, cw, ch)
         bg = slide.get("background")
         if isinstance(bg, dict) and isinstance(bg.get("color"), (dict, list, tuple)):
             add("element_schema", sid, "error",
@@ -473,7 +346,7 @@ def check_spec(spec: dict, rules: dict | None = None) -> dict:
                 add("element_schema", sid, "error", "元素 id 必须非空且页内唯一（修复与焦点按 id 绑定）")
             seen_element_ids.add(eid)
             _check_element(e, sid, si, add, known_tokens, cw, ch,
-                           require_provenance=require_provenance, theme=theme)
+                           require_provenance=require_provenance)
         _check_collisions(slide, add, cw, ch, overlap_ratio,
                           text_ink_ratio, text_ink_v)
 
@@ -544,8 +417,7 @@ def _angle_ok(v) -> bool:
 
 
 def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
-                   ch: float, *, require_provenance: bool = False,
-                   theme: dict | None = None) -> None:
+                   ch: float, *, require_provenance: bool = False) -> None:
     # 定位符带上页面 id：「focus」在全稿多页重复，修复包必须能指到具体哪一页。
     # 约定 `页面:元素`，修复包的 affected_slides 按此前缀归页。
     eid = f"{sid}:{e.get('id', f'[{si}]')}"
@@ -711,7 +583,7 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
         te = e if typ == "text" else dict(e, size=e.get("text_size", 16),
                                           wrap=e.get("text_wrap", True),
                                           line_height=e.get("text_line_height", 1.25))
-        cap = _text_box_capacity(te, theme)
+        cap = _text_box_capacity(te)
         if cap and cap.get("invalid"):
             add("text_capacity", eid, "error", cap["invalid"])
         elif cap and cap["over_height"]:
@@ -752,20 +624,10 @@ def _check_element(e: dict, sid: str, si: int, add, known_tokens, cw: float,
 
 def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
     """图表：类型白名单 → 载荷 → 数据完整性 → 标签空间 → 出处。"""
-    kind = str(e.get("chart_kind") or e.get("kind", "")).strip().lower()
+    kind = str(e.get("chart_kind") or e.get("kind", ""))
     if kind not in SUPPORTED_CHART_KINDS:
-        retired = retired_chart_kind(kind)
-        if retired:
-            canonical, implied = retired
-            hint = ("，并补 " + ", ".join(f"{k}: {v!r}" for k, v in implied.items())
-                    if implied else "")
-            add("chart_kind_alias", eid, "error",
-                f"chart_kind={kind!r} 是已退役的名字（9.38 起不再接受）：改成 "
-                f"{canonical!r}{hint}。批量改：python3 tools/rename_chart_kinds.py "
-                "<文件> --write")
-        else:
-            add("chart_type", eid, "error",
-                f"未知 chart_kind={kind!r}；合法值：{sorted(SUPPORTED_CHART_KINDS)}")
+        add("chart_type", eid, "error",
+            f"未知 chart_kind={kind!r}；合法值：{sorted(SUPPORTED_CHART_KINDS)}")
         return
     from primitives import CHART_SPEC
     has_series = e.get("series") is not None
@@ -876,10 +738,10 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                     if not _finite(v):
                         add("data_integrity", f"{eid}[s{sidx}][{vi}]", "error",
                             f"series[{sidx}] value={v!r} 不是有限数字")
-                    elif kind in {"pie", "donut"} and float(v) < 0:
+                    elif kind in {"pie", "donut", "donut_composition"} and float(v) < 0:
                         add("data_integrity", f"{eid}[s{sidx}][{vi}]", "error",
                             f"{kind} 不接受负值构成；请改用可表达正负关系的图表")
-                if kind in {"pie", "donut"} and all(_finite(v) for v in vals):
+                if kind in {"pie", "donut", "donut_composition"} and all(_finite(v) for v in vals):
                     if sum(max(0, float(v)) for v in vals) <= 0:
                         add("data_integrity", f"{eid}[s{sidx}]", "error", "构成序列的有效数值总和必须大于 0")
         elif not isinstance(data, list) or not data:
@@ -900,7 +762,7 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                     add("data_integrity", f"{eid}[{di}]", "error",
                         f"图表数据 value={row.get('value')!r} 不是有限数字")
                 elif kind in {"ranked_bar", "progress_bar", "stacked_bar", "bubble",
-                                      "pie", "donut"} \
+                                      "pie", "donut", "donut_composition"} \
                         and float(row["value"]) < 0:
                     add("data_integrity", f"{eid}[{di}]", "error",
                         f"{kind} 不接受负值；请改用可表达正负关系的图表")
@@ -914,7 +776,7 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
                 add("data_integrity", eid, "error",
                     f"ranked_bar 的 target={e.get('target')!r} 不是有限数字；"
                     "目标线是「门槛/要到哪」的参考线，非数字会静默消失——请写成数值或删掉")
-    if not multi and kind in ("donut", "pie") and isinstance(data, list):
+    if not multi and kind in ("donut", "donut_composition", "pie") and isinstance(data, list):
         total = 0.0
         for row in data:
             if isinstance(row, dict) and _finite(row.get("value")):
@@ -944,7 +806,7 @@ def _check_chart(e: dict, eid: str, add, *, require_provenance: bool) -> None:
 
     # 标签空间：标签是独立可见对象，空间不足不允许渲染器硬塞（不缩字号）
     n = n_cat * n_series if multi else (len(data) if isinstance(data, list) else 0)
-    show_values = e.get("show_values", kind in ("bar", "column", "donut"))
+    show_values = e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
     # 单位可见性：不是阻断项（作者的构图决定），但必须留痕。release 出处硬门要求
     # 数值图表声明 unit，而数值标签关闭时这一声明不会出现在图上——此前编译器把
     # 它升级成编译失败，于是「门要 unit」与「编译器拒绝不可见的 unit」互相打架，
@@ -1038,7 +900,7 @@ def _check_metric_units(slides: list, add) -> None:
         for e in (slide.get("elements") or []):
             if not isinstance(e, dict) or str(e.get("type")) not in ("chart", "native_chart"):
                 continue
-            kind = str(e.get("chart_kind") or e.get("kind", "")).strip().lower()
+            kind = str(e.get("chart_kind") or e.get("kind", ""))
             if kind not in NUMERIC_CHART_KINDS:
                 continue
             metric = str(e.get("metric") or e.get("series_name") or "").strip()
@@ -1224,7 +1086,6 @@ _RULE_CODES = {
     "text_capacity": "TEXT_OVERFLOW",
     "data_integrity": "DATA_INTEGRITY_FAIL", "data_provenance": "DATA_INTEGRITY_FAIL",
     "metric_consistency": "DATA_INTEGRITY_FAIL",
-    "chart_kind_alias": "CHART_KIND_ALIAS",
     "chart_type": "CHART_TYPE_FAIL", "chart_payload": "CHART_TYPE_FAIL",
     "background_layer": "GUARD_FAIL", "color_token": "GUARD_FAIL",
     "element_type": "GUARD_FAIL", "element_schema": "GUARD_FAIL",
@@ -1241,10 +1102,6 @@ FIX_HINTS = {
     "DATA_INTEGRITY_FAIL": "每行 label + 有限 value；数值图齐 source/unit/period/basis；同指标同单位。",
     "CHART_TYPE_FAIL": "图表类型在白名单内且数据形态匹配（占比≠趋势）；载荷不可为空、字段类型合法"
                        "（matrix 的点须为有限 x/y）。",
-    "CHART_KIND_ALIAS": "这是 9.36 合并时退役的旧图种名，9.38 起不再接受；改成 canonical"
-                        "并补上当年隐含的默认值（horizontal_bar / donut_composition → "
-                        "show_values: false）。批量改："
-                        "python3 tools/rename_chart_kinds.py <文件> --write。",
     "COMPILE_FAIL": "按编译 warnings 修 schema，不绕过硬门。",
     "GUARD_FAIL": "按下述明细逐条修：schema / 越界 / 退化几何 / 未知类型优先。",
     "ASSET_WORKFLOW_FAIL": "按 asset_workflow.issues 修：出图 / 登记 / 重新核验。",
@@ -1479,8 +1336,7 @@ def release_manifest(spec, qa_report: dict, *, ghost_preview=None,
     # 「unit 声明了却没显示」说成排版问题，作者按提示找不到真正该动的地方。
     for w in (qa_report.get("guard_warnings") or [])[:8]:
         label = {"text_measure": "可读域",
-                 "chart_unit_invisible": "单位可见性",
-                 "chart_kind_alias": "图种别名"}.get(str(w.get("rule")), "非阻断")
+                 "chart_unit_invisible": "单位可见性"}.get(str(w.get("rule")), "非阻断")
         notes.append(f"[{label}] {w.get('msg')}")
     wf = workflow if isinstance(workflow, dict) else (qa_report.get("asset_workflow") or {})
     image_count = wf.get("image_count")
