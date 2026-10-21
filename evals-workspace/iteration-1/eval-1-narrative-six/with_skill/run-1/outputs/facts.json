@@ -1,0 +1,924 @@
+{
+ "brief": "/home/user/repo/evals/fixtures/narrative-six/brief.yml",
+ "steps": [
+  {
+   "name": "plan",
+   "cmd": [
+    "/usr/local/bin/python",
+    "/home/user/repo/scripts/vao.py",
+    "plan",
+    "/home/user/repo/evals/fixtures/narrative-six/brief.yml",
+    "--out",
+    "/home/user/repo/evals-workspace/iteration-1/eval-1-narrative-six/with_skill/run-1/outputs/plan.json",
+    "--json"
+   ],
+   "returncode": 0,
+   "stdout": "{\"plan_path\": \"/home/user/repo/evals-workspace/iteration-1/eval-1-narrative-six/with_skill/run-1/outputs/plan.json\", \"page_count\": 6, \"workflow\": {\"planned_at\": \"2026-10-21T02:44:26.688513+00:00\", \"brief_path\": \"/home/user/repo/evals/fixtures/narrative-six/brief.yml\", \"brief_file_sha256\": \"9ae8ea944f4524330896462fb69adf2493e7e3c53b282a7e6cede1c4e9d2b397\"}, \"warnings\": [], \"performance\": {\"module_import_ms\": 27.11, \"brief_load_ms\": 16.25, \"brief_contract_ms\": 1.12, \"intelligence_ms\": 20.2, \"plan_contract_ms\": 4.08, \"policy_load_ms\": 0.0, \"plan_artifact_write_ms\": 5.64, \"asset_manifest_build_ms\": 0.0, \"asset_manifest_prepare_ms\": 0.0, \"asset_manifest_write_ms\": 0.0, \"reference_files_read\": 0, \"total_ms\": 74.85}}\n",
+   "stderr": "",
+   "seconds": 0.134
+  }
+ ],
+ "plan_returncode": 0,
+ "plan_seconds": 0.134,
+ "plan": {
+  "deck": {
+   "audience": "董事会，季度经营会",
+   "decision": "批准下一财年把补贴预算的三成转投履约能力",
+   "tension": "过去两年靠补贴拉新，董事会担心停补贴就掉量",
+   "policy": {
+    "version": "2026.10-judgment-p2",
+    "sha256": "8b2b9deea7f2e7ccb57c9b06797795a3bebfc78e02082de33f13f78989244f75",
+    "overrides": null,
+    "tunable_groups": [
+     "enums",
+     "composition",
+     "information_weight",
+     "evidence_shapes",
+     "decomposition",
+     "focus",
+     "measure",
+     "chart_kind",
+     "production",
+     "output"
+    ]
+   },
+   "type_scale": {
+    "stat": 88.0,
+    "display": 64.0,
+    "title": 44.0,
+    "lead": 32.0,
+    "subtitle": 28.0,
+    "body": 18.0,
+    "caption": 14.0,
+    "source": 12.0,
+    "chart_label": 13.333333333333334,
+    "chart_value": 12.0,
+    "shape_text": 16.0
+   },
+   "world": {
+    "name": "document/neutral",
+    "source": "neutral_fallback",
+    "visual_world": "neutral matte ground, one light source, nothing decorative",
+    "light": "even diffuse daylight, no visible source",
+    "texture_keys": [
+     "paper"
+    ],
+    "chart_style": "hairline axis, one highlighted point, direct labels",
+    "composition_grammar": "strict_grid",
+    "type_voice": "austerity with human warmth：窄栏、大字阶、克制的粗体",
+    "fonts": {
+     "cn": "Source Han Serif SC",
+     "latin": "Georgia"
+    },
+    "paper": "#F1EFEA",
+    "ink": "#12120F",
+    "accent": "#6E6A63",
+    "accent_role": "指向被批准的那一件事",
+    "accent_why": "中性矿物灰：没有主题实体时最克制的一支（不与任何实体世界撞色）",
+    "reasons": {
+     "register": "受众与场合语域＝document（决定纸、字与克制程度）",
+     "subject": "内容里没有可指认的主题实体：退到中性纸世界，不猜风格",
+     "regime": "浅色纸面：文档语域下纸面托住信息",
+     "accent_role": "强调色语义＝指向被批准的那一件事（颜色服从语义，不服从风格）",
+     "composition": "世界级构图纪律＝strict_grid（由人的存在与数字密度推开，不是预设）",
+     "type_voice": "austerity with human warmth：窄栏、大字阶、克制的粗体"
+    }
+   },
+   "theme": {
+    "colors_seed": {
+     "foundation": "#F1EFEA",
+     "information": "#12120F",
+     "supporting": "#8A8984",
+     "accent": "#6E6A63"
+    },
+    "seed_source": "world_derivation",
+    "slots_overridden": null
+   },
+   "coherence": {
+    "compositions": [
+     "editorial",
+     "data_field",
+     "editorial",
+     "linear_structure",
+     "data_field",
+     "editorial"
+    ],
+    "densities": [
+     "balanced",
+     "dense",
+     "balanced",
+     "balanced",
+     "dense",
+     "balanced"
+    ],
+    "roles": [
+     "establish",
+     "prove",
+     "persuade",
+     "explain",
+     "compare",
+     "summarize"
+    ],
+    "media": [
+     "none:-",
+     "none:-",
+     "none:-",
+     "none:-",
+     "none:-",
+     "none:-"
+    ],
+    "climax": {
+     "page": "s06",
+     "why": "请求/决定落点在本页：内容高潮在这里，视觉重量向它集中，不为冲击力另起高潮"
+    },
+    "adjustments": null,
+    "notes": null
+   },
+   "legend": {
+    "typography/scale/why": "短文本：栏宽可以放开，但仍不横跨整页",
+    "typography/scale/limit": "22–45 汉字/行（启发式建议，实际字体与投影须另验）",
+    "information_weight/weaken#通用说明": "支撑证据：与结论同屏但小一档，读者需要时能找到"
+   }
+  },
+  "assets_hint": {
+   "generate": []
+  },
+  "warnings": [],
+  "workflow": {
+   "planned_at": "2026-10-21T02:44:26.688513+00:00",
+   "brief_path": "/home/user/repo/evals/fixtures/narrative-six/brief.yml",
+   "brief_file_sha256": "9ae8ea944f4524330896462fb69adf2493e7e3c53b282a7e6cede1c4e9d2b397"
+  },
+  "pages": [
+   {
+    "id": "s01",
+    "ref": "补贴换来的增长，正在被履约短板吃掉 2024 年新增用户 128 万，其中 61% 在首单后 90 天内流失。（来源：增长台账）",
+    "anchor": {
+     "eyebrow": "补贴换来"
+    },
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "补贴换来的增长，正在被履约短板吃掉",
+      "source": "extracted",
+      "why": "标题 ＋ 作者标题为断言 ＋ 正文无更强主张形状，标题居主张位；发布前请作者确认口径。"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted",
+      "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+     },
+     "information_weight": {
+      "maximize": [
+       "「补贴换来的增长，正在被履约短板吃掉」— 结论句，本页第一落点必须落在它身上"
+      ],
+      "weaken": [
+       "128 万",
+       "61%",
+       "90 天",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）"
+      ],
+      "delete": [],
+      "delete_candidates": []
+     },
+     "visual_role": {
+      "role": "establish",
+      "why": "开场页建立世界与主张，观众从这里决定要不要继续读。",
+      "alternatives": [
+       "explain"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "statement_text",
+      "type": "text",
+      "why": "焦点是这一页要立住的那句话：字阶与留白负责它的分量。",
+      "rejected": [
+       "banner_quote",
+       "stock_photo"
+      ]
+     },
+     "composition": {
+      "chosen": "editorial",
+      "why": "这一页以阅读节奏为主：字阶与栏宽决定先读什么、读多久。",
+      "rejected": []
+     },
+     "spatial": {
+      "reading_path": "标题 → 论据 → 出处",
+      "primary_zone": "标题与导语区",
+      "quiet_zone": "栏间留白",
+      "whitespace_duty": "建立阅读节奏：栏宽与字阶让读者知道先读什么、读多久"
+     },
+     "typography": {
+      "lead": "补贴换来的增长，正在被履约短板吃掉",
+      "support": "128 万",
+      "discipline": "结论按语义停顿断行，动词与对象相连、数字不与单位拆开；标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "display",
+       "size": 64.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null,
+      "necessity": "没有明确图像任务时用排版与空间建立世界；确需背景或对象时，由作者说明其价值。"
+     },
+     "production": {
+      "must_place": [
+       "statement_text:text",
+       "source:text"
+      ],
+      "must_not": [],
+      "density_target": "balanced"
+     },
+     "understanding": {
+      "evidence": "none",
+      "numerals": [
+       "2024 年",
+       "128 万",
+       "61%",
+       "90 天"
+      ],
+      "flags": [
+       "mixed_metrics"
+      ]
+     },
+     "open_questions": [
+      "本页有 3 个量（128 万 / 61% / 90 天）但判断不出它们的关系：补一句关系（比率／差值／先后），或说明它们只是并置的量。"
+     ],
+     "rhythm": {
+      "move": "open",
+      "previous": null,
+      "why": "建立整套主张：先让观众知道要判断什么。"
+     },
+     "emphasis": {
+      "level": "lead",
+      "why": "establish 页承载主张/决定：视觉分量高于普通证据页"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   },
+   {
+    "id": "s02",
+    "ref": "复购率三年翻倍，靠的是履约不是补贴 2022 年 21%，2023 年 33%，2024 年 44%；同期补贴率从 8% 降到 3%。（来源：门店台账）",
+    "anchor": {
+     "page_number": 2
+    },
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "复购率三年翻倍，靠的是履约不是补贴",
+      "source": "extracted",
+      "why": "标题 ＋ 作者标题为断言 ＋ 正文无更强主张形状，标题居主张位 ＋ 变化「翻倍」；发布前请作者确认口径。"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted",
+      "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+     },
+     "information_weight": {
+      "maximize": [
+       "3% — 主证据量：让观众看见可核验的量，不替它编造变化"
+      ],
+      "weaken": [
+       "21%",
+       "33%",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）",
+       "坐标轴与刻度 — 让基线和量级可核验，不参与叙事"
+      ],
+      "delete": [],
+      "delete_candidates": [
+       "「（来源：门店台账）」— 删除候选（与主张重合 0%，非主张数字 0 个，贡献 0.00）：作者裁决保留、移到备注或删除"
+      ]
+     },
+     "visual_role": {
+      "role": "prove",
+      "why": "数字承担论证：这一页的说服力来自可核验的量，而不是措辞。",
+      "alternatives": [
+       "persuade"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "kpi_main",
+      "type": "chart",
+      "why": "「3%」是序列的当前值：先立住现状，基期退到参照位。",
+      "chart_kind": "line",
+      "chart_kind_why": "同一单位的 5 个取值：折线的斜率就是变化本身",
+      "rejected": [
+       "card_grid_4",
+       "donut",
+       "gauge"
+      ]
+     },
+     "composition": {
+      "chosen": "data_field",
+      "why": "5 个同量纲数字交给对齐与数据场；先核对分母与期间，同口径才共用基线，不让装饰抢证据。",
+      "rejected": [
+       "editorial"
+      ]
+     },
+     "spatial": {
+      "reading_path": "结论 → 对照 → 明细",
+      "primary_zone": "上部结论带 + 中部数据场",
+      "quiet_zone": "分组之间",
+      "whitespace_duty": "承载证据密度：秩序来自网格与对齐，留白只出现在分组之间"
+     },
+     "typography": {
+      "lead": "3%",
+      "support": "21%",
+      "discipline": "终值与单位为主轴，基期退一层；可比数字才共享刻度/基线，期间与出处就近但不抢主值，勿用线框填空。",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "stat",
+       "size": 88.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null,
+      "necessity": "默认保留可核验证据的主次；真实记录可作为证据，生成图不能冒充记录。"
+     },
+     "production": {
+      "must_place": [
+       "kpi_main:chart",
+       "claim_text:text",
+       "source:text"
+      ],
+      "must_not": [],
+      "density_target": "dense"
+     },
+     "understanding": {
+      "evidence": "series",
+      "numerals": [
+       "2022 年",
+       "21%",
+       "2023 年",
+       "33%",
+       "2024 年",
+       "44%",
+       "8%",
+       "3%"
+      ],
+      "flags": [
+       "same_unit"
+      ]
+     },
+     "open_questions": [
+      "删除候选 1 句待作者裁决（高密度页，按对主张的贡献排序）"
+     ],
+     "rhythm": {
+      "move": "build",
+      "previous": "s01",
+      "why": "证据体量增大，阅读负荷上升：密度抬升处必须有新的信息增量，否则把负荷还给前页。"
+     },
+     "emphasis": {
+      "level": "support",
+      "why": "证据展开页：保持可读与秩序，把视觉高潮留给内容高潮"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   },
+   {
+    "id": "s03",
+    "ref": "履约每快一天，30 天复购提高 6 个点 12 城 A/B：次日达组 30 天复购 44%，三日达组 38%。（来源：运营实验 2024-Q3）",
+    "anchor": {
+     "page_number": 3
+    },
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "履约每快一天，30 天复购提高 6 个点",
+      "source": "extracted",
+      "why": "标题 ＋ 正文无更强主张形状，标题居主张位 ＋ 数字「30 天/6 个点」；发布前请作者确认口径。"
+     },
+     "tension": {
+      "issue": "过去两年靠补贴拉新，董事会担心停补贴就掉量",
+      "source": "deck",
+      "why": "说服页要正面回应整套决定面临的阻力，不能用漂亮画面绕过它。"
+     },
+     "information_weight": {
+      "maximize": [
+       "30 天 — 主证据量：让观众看见可核验的量，不替它编造变化"
+      ],
+      "weaken": [
+       "6 个点 — 支撑条件：不与主数字强行比较，不称作基期",
+       "12",
+       "44%",
+       "38%",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）"
+      ],
+      "delete": [
+       "30 天 的重复出现 — 同一数字在一页出现两次就删一次"
+      ],
+      "delete_candidates": [
+       "「（来源：运营实验 2024-Q3）」— 删除候选（与主张重合 0%，非主张数字 0 个，贡献 0.00）：作者裁决保留、移到备注或删除"
+      ]
+     },
+     "visual_role": {
+      "role": "persuade",
+      "why": "内容以观点为主：这一页的职责是把观点说得比周围信息更清楚。",
+      "alternatives": [
+       "prove"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "statement_text",
+      "type": "text",
+      "why": "焦点是这一页要立住的那句话：字阶与留白负责它的分量。",
+      "rejected": [
+       "banner_quote",
+       "stock_photo"
+      ]
+     },
+     "composition": {
+      "chosen": "editorial",
+      "why": "这一页以阅读节奏为主：字阶与栏宽决定先读什么、读多久。",
+      "rejected": [
+       "big_whitespace"
+      ]
+     },
+     "spatial": {
+      "reading_path": "标题 → 论据 → 出处",
+      "primary_zone": "标题与导语区",
+      "quiet_zone": "栏间留白",
+      "whitespace_duty": "建立阅读节奏：栏宽与字阶让读者知道先读什么、读多久"
+     },
+     "typography": {
+      "lead": "30 天",
+      "support": "6 个点",
+      "discipline": "结论按语义停顿断行，动词与对象相连、数字不与单位拆开；标题与支撑共用阅读轴，字距克制，装不下先删句而非压行距或缩字号。",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "title",
+       "size": 44.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null,
+      "necessity": "默认把注意力留给主张与论据；图像若有独立表达任务，由作者声明。"
+     },
+     "production": {
+      "must_place": [
+       "statement_text:text",
+       "source:text"
+      ],
+      "must_not": [
+       "删：30 天 的重复出现 — 同一数字在一页出现两次就删一次"
+      ],
+      "density_target": "balanced"
+     },
+     "understanding": {
+      "evidence": "none",
+      "numerals": [
+       "30 天",
+       "6 个点",
+       "12",
+       "30 天",
+       "44%",
+       "38%"
+      ],
+      "flags": [
+       "mixed_metrics"
+      ]
+     },
+     "open_questions": [
+      "删除候选 1 句待作者裁决（高密度页，按对主张的贡献排序）",
+      "本页有 3 个量（30 天 / 6 个点 / 12）但判断不出它们的关系：补一句关系（比率／差值／先后），或说明它们只是并置的量。"
+     ],
+     "rhythm": {
+      "move": "breathe",
+      "previous": "s02",
+      "why": "信息密度回落来自证据体量；用疏密给前一页让出阅读时间。"
+     },
+     "emphasis": {
+      "level": "lead",
+      "why": "persuade 页承载主张/决定：视觉分量高于普通证据页"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   },
+   {
+    "id": "s04",
+    "ref": "三个环节卡住了时效 拣货动线、干线频次、末端站点密度；其中末端站点密度是唯一未达标的环节。",
+    "anchor": {
+     "page_number": 4
+    },
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "其中末端站点密度是唯一未达标的环节",
+      "source": "extracted",
+      "why": "正文 ＋ 结论措辞「唯一」 ＋ 短句可复述；发布前请作者确认口径。"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted",
+      "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+     },
+     "information_weight": {
+      "maximize": [
+       "「其中末端站点密度是唯一未达标的环节」— 结论句，本页第一落点必须落在它身上",
+       "关系的形状（层级/顺序）— 结构本身就是这一页的视觉对象"
+      ],
+      "weaken": [],
+      "delete": [],
+      "delete_candidates": []
+     },
+     "visual_role": {
+      "role": "explain",
+      "why": "关系的形状比措辞更能说明机制，观众要的是结构。",
+      "alternatives": [
+       "prove"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "structure_map",
+      "type": "chart",
+      "why": "层级/顺序是内容本身的形状，画出来比写出来短。",
+      "rejected": [
+       "icon_row",
+       "card_stack"
+      ]
+     },
+     "composition": {
+      "chosen": "linear_structure",
+      "why": "主体与对象的关系同屏可读；只画已明示的归属/职责，不由列举顺序补上下级或时间。",
+      "rejected": [
+       "editorial"
+      ]
+     },
+     "spatial": {
+      "reading_path": "主体 → 职责/对象 → 关系",
+      "primary_zone": "关系与归属的共同阅读区",
+      "quiet_zone": "关系组之间",
+      "whitespace_duty": "分组与辨认归属；未给出上下级就不用连线暗示层级，空白不代表时间"
+     },
+     "typography": {
+      "lead": "其中末端站点密度是唯一未达标的环节",
+      "support": null,
+      "discipline": "主体与职责/对象按成对关系对齐，必要限定贴近所属对象；层级只按明确归属表达，不把职责分工改成时间轴或推测汇报线。",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "title",
+       "size": 44.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null,
+      "necessity": "默认先表达关系；确需图解、剖面或概念插图时，由作者确认结构可信性与解释任务。"
+     },
+     "production": {
+      "must_place": [
+       "structure_map:chart",
+       "claim_text:text"
+      ],
+      "must_not": [],
+      "density_target": "balanced"
+     },
+     "understanding": {
+      "evidence": "structure",
+      "flags": [
+       "same_unit"
+      ]
+     },
+     "open_questions": null,
+     "rhythm": {
+      "move": "turn",
+      "previous": "s03",
+      "why": "主张或证据形态变化，阅读路径跟着内容转向。"
+     },
+     "emphasis": {
+      "level": "support",
+      "why": "证据展开页：保持可读与秩序，把视觉高潮留给内容高潮"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   },
+   {
+    "id": "s05",
+    "ref": "同行已经把履约当成产品在做 对比：头部两家次日达占比 87% 与 82%，我们 68%。（来源：公开财报与门店走访）",
+    "anchor": {
+     "page_number": 5
+    },
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "同行已经把履约当成产品在做",
+      "source": "extracted",
+      "why": "标题 ＋ 作者标题为断言 ＋ 正文无更强主张形状，标题居主张位；发布前请作者确认口径。"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted",
+      "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+     },
+     "information_weight": {
+      "maximize": [
+       "87% — 主张所指的比较侧：与另一指标同屏，先核对指标分母和口径",
+       "比较对象与口径 — 两端要能辨认；只有分母一致时才画差值"
+      ],
+      "weaken": [
+       "82%",
+       "68%",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）"
+      ],
+      "delete": [],
+      "delete_candidates": []
+     },
+     "visual_role": {
+      "role": "compare",
+      "why": "内容本身有两端对比，张力来自内容而不是装饰。",
+      "alternatives": [
+       "explain"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "comparison_field",
+      "type": "text",
+      "why": "把两端的指标名与数值同屏标出；只有同口径才共享轴线并标差值，分母不同时先说明比较边界。",
+      "rejected": [
+       "two_pie",
+       "radar",
+       "side_by_side_cards"
+      ]
+     },
+     "composition": {
+      "chosen": "data_field",
+      "why": "3 个同量纲数字交给对齐与数据场；先核对分母与期间，同口径才共用基线，不让装饰抢证据。",
+      "rejected": [
+       "asymmetric_tension"
+      ]
+     },
+     "spatial": {
+      "reading_path": "结论 → 对照 → 明细",
+      "primary_zone": "上部结论带 + 中部数据场",
+      "quiet_zone": "分组之间",
+      "whitespace_duty": "承载证据密度：秩序来自网格与对齐，留白只出现在分组之间"
+     },
+     "typography": {
+      "lead": "87%",
+      "support": "82%",
+      "discipline": "两端指标名与数字分别对齐；分母/期间就近标注，只有同口径才共享刻度轴。不可比时用留白标出边界，不用面积暗示虚构倍数。",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "title",
+       "size": 44.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null,
+      "necessity": "默认让比较关系承担注意力；若需看见对象差异，由作者确认图像价值与位置。"
+     },
+     "production": {
+      "must_place": [
+       "comparison_field:text",
+       "claim_text:text",
+       "source:text"
+      ],
+      "must_not": [],
+      "density_target": "dense"
+     },
+     "understanding": {
+      "evidence": "comparison",
+      "numerals": [
+       "87%",
+       "82%",
+       "68%"
+      ],
+      "flags": [
+       "comparison",
+       "same_unit"
+      ]
+     },
+     "open_questions": [
+      "比较比例前核对分母/样本与期间；不同指标的百分比不能直接相减。"
+     ],
+     "rhythm": {
+      "move": "build",
+      "previous": "s04",
+      "why": "证据体量增大，阅读负荷上升：密度抬升处必须有新的信息增量，否则把负荷还给前页。"
+     },
+     "emphasis": {
+      "level": "support",
+      "why": "证据展开页：保持可读与秩序，把视觉高潮留给内容高潮"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   },
+   {
+    "id": "s06",
+    "ref": "请批准把三成补贴转投履约 预算重配 1.2 亿元；预期 12 个月内次日达占比 68% → 85%。（来源：财务测算）",
+    "anchor": {
+     "eyebrow": "批准",
+     "page_number": 6
+    },
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "请批准把三成补贴转投履约",
+      "source": "extracted",
+      "why": "标题 ＋ 正文无更强主张形状，标题居主张位 ＋ 结论措辞「请批准」 ＋ 要决定「请批准」；发布前请作者确认口径。"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted",
+      "why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。"
+     },
+     "information_weight": {
+      "maximize": [
+       "「请批准把三成补贴转投履约」— 结论句，本页第一落点必须落在它身上"
+      ],
+      "weaken": [
+       "1.2 亿元",
+       "12 个月",
+       "68%",
+       "85%",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）",
+       "坐标轴与刻度 — 让基线和量级可核验，不参与叙事"
+      ],
+      "delete": [],
+      "delete_candidates": []
+     },
+     "visual_role": {
+      "role": "summarize",
+      "why": "这一页要的是一个决定：把主张收成可执行的一句（做什么、谁来做、什么时候）。",
+      "alternatives": [
+       "prove"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "kpi_main",
+      "type": "text",
+      "why": "「1.2 亿元」是请求的资源量：它和动作同屏，期限不被误称作基期。",
+      "rejected": [
+       "card_grid_4",
+       "donut",
+       "gauge"
+      ]
+     },
+     "composition": {
+      "chosen": "editorial",
+      "why": "这一页以阅读节奏为主：字阶与栏宽决定先读什么、读多久。",
+      "rejected": []
+     },
+     "spatial": {
+      "reading_path": "标题 → 论据 → 出处",
+      "primary_zone": "标题与导语区",
+      "quiet_zone": "栏间留白",
+      "whitespace_duty": "建立阅读节奏：栏宽与字阶让读者知道先读什么、读多久"
+     },
+     "typography": {
+      "lead": "请批准把三成补贴转投履约",
+      "support": "1.2 亿元",
+      "discipline": "请求动作与资源量同行，数字及单位不拆行；期限在下一阅读层沿同轴退后，两种单位不共用数量刻度，不用等权卡片制造第二焦点。",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "display",
+       "size": 64.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null,
+      "necessity": "默认把注意力留给决定；如需视觉收束，先说明与核心请求的关系。"
+     },
+     "production": {
+      "must_place": [
+       "kpi_main:text",
+       "claim_text:text",
+       "source:text"
+      ],
+      "must_not": [],
+      "density_target": "balanced"
+     },
+     "understanding": {
+      "evidence": "series",
+      "numerals": [
+       "1.2 亿元",
+       "12 个月",
+       "68%",
+       "85%"
+      ]
+     },
+     "open_questions": null,
+     "rhythm": {
+      "move": "close",
+      "previous": "s05",
+      "why": "回收开场的决定，不用新装饰或谢谢页稀释请求。"
+     },
+     "emphasis": {
+      "level": "climax",
+      "why": "请求/决定落点在本页：内容高潮在这里，视觉重量向它集中，不为冲击力另起高潮"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   }
+  ]
+ },
+ "release": null
+}

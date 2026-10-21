@@ -1,0 +1,287 @@
+{
+ "brief": "/home/user/repo/evals/fixtures/asset-page/brief.yml",
+ "steps": [
+  {
+   "name": "plan",
+   "cmd": [
+    "/usr/local/bin/python",
+    "/home/user/repo/scripts/vao.py",
+    "plan",
+    "/home/user/repo/evals/fixtures/asset-page/brief.yml",
+    "--out",
+    "/home/user/repo/evals-workspace/iteration-1/eval-2-asset-page/with_skill/run-1/outputs/plan.json",
+    "--json"
+   ],
+   "returncode": 0,
+   "stdout": "{\"plan_path\": \"/home/user/repo/evals-workspace/iteration-1/eval-2-asset-page/with_skill/run-1/outputs/plan.json\", \"page_count\": 1, \"workflow\": {\"planned_at\": \"2026-10-21T02:44:26.818030+00:00\", \"brief_path\": \"/home/user/repo/evals/fixtures/asset-page/brief.yml\", \"brief_file_sha256\": \"a72096d0cd36baafbb42b19166d8d14b5bcb32c855a113edae13ca881880c68e\", \"assets_manifest_path\": \"/home/user/repo/evals-workspace/iteration-1/eval-2-asset-page/with_skill/run-1/outputs/asset_manifest.json\"}, \"warnings\": [{\"rule\": \"unresolved_content\", \"scope\": \"s01\", \"msg\": \"这一页有内容但没有可复述的结论：标题只到话题标签（不立主张），正文也没有结论措辞／要决定／比较或条件结果——把标题写成结论，或说清这页要读者记住哪一句；写不出就降级为章节页\"}], \"performance\": {\"module_import_ms\": 30.05, \"brief_load_ms\": 16.06, \"brief_contract_ms\": 1.25, \"intelligence_ms\": 9.68, \"plan_contract_ms\": 1.74, \"policy_load_ms\": 0.0, \"plan_artifact_write_ms\": 0.69, \"asset_manifest_build_ms\": 1.71, \"asset_manifest_prepare_ms\": 0.46, \"asset_manifest_write_ms\": 2.23, \"reference_files_read\": 0, \"total_ms\": 64.29}}\n",
+   "stderr": "",
+   "seconds": 0.121
+  }
+ ],
+ "plan_returncode": 0,
+ "plan_seconds": 0.121,
+ "plan": {
+  "deck": {
+   "audience": "品牌市场部，内部评审",
+   "decision": "确认秋季产品主视觉的摄影方向",
+   "tension": "上一版主视觉被指像电商详情页，缺少材质感",
+   "policy": {
+    "version": "2026.10-judgment-p2",
+    "sha256": "8b2b9deea7f2e7ccb57c9b06797795a3bebfc78e02082de33f13f78989244f75",
+    "overrides": null,
+    "tunable_groups": [
+     "enums",
+     "composition",
+     "information_weight",
+     "evidence_shapes",
+     "decomposition",
+     "focus",
+     "measure",
+     "chart_kind",
+     "production",
+     "output"
+    ]
+   },
+   "type_scale": {
+    "stat": 88.0,
+    "display": 64.0,
+    "title": 44.0,
+    "lead": 32.0,
+    "subtitle": 28.0,
+    "body": 18.0,
+    "caption": 14.0,
+    "source": 12.0,
+    "chart_label": 13.333333333333334,
+    "chart_value": 12.0,
+    "shape_text": 16.0
+   },
+   "world": {
+    "name": "document/ceramic_craft",
+    "source": "subject:ceramic_craft",
+    "visual_world": "kiln glaze on clay, matte crackle, pigment settling into earth",
+    "light": "single warm side light, long soft shadows",
+    "texture_keys": [
+     "glaze",
+     "clay"
+    ],
+    "chart_style": "hairline + direct label",
+    "composition_grammar": "soft_asymmetry",
+    "type_voice": "austerity with human warmth：窄栏、大字阶、克制的粗体",
+    "fonts": {
+     "cn": "Source Han Serif SC",
+     "latin": "Georgia"
+    },
+    "paper": "#F0EFEA",
+    "ink": "#12120F",
+    "accent": "#4F6E6A",
+    "accent_role": "指向被批准的那一件事",
+    "accent_why": "窑青/铜绿：釉自己的颜色",
+    "reasons": {
+     "register": "受众与场合语域＝document（决定纸、字与克制程度）",
+     "subject": "内容里的主题实体＝ceramic_craft（决定材质、光与强调色相）",
+     "regime": "浅色纸面：文档语域下纸面托住信息",
+     "accent_role": "强调色语义＝指向被批准的那一件事（颜色服从语义，不服从风格）",
+     "composition": "世界级构图纪律＝soft_asymmetry（由人的存在与数字密度推开，不是预设）",
+     "type_voice": "austerity with human warmth：窄栏、大字阶、克制的粗体"
+    }
+   },
+   "theme": {
+    "colors_seed": {
+     "foundation": "#F0EFEA",
+     "information": "#12120F",
+     "supporting": "#898984",
+     "accent": "#4F6E6A"
+    },
+    "seed_source": "world_derivation",
+    "slots_overridden": null
+   },
+   "coherence": {
+    "compositions": [
+     "image_narrative"
+    ],
+    "densities": [
+     "sparse"
+    ],
+    "roles": [
+     "summarize"
+    ],
+    "media": [
+     "required:declared"
+    ],
+    "climax": {
+     "page": "s01",
+     "why": "请求/决定落点在本页：内容高潮在这里，视觉重量向它集中，不为冲击力另起高潮"
+    },
+    "adjustments": null,
+    "notes": null
+   },
+   "legend": {
+    "claim/why": "最接近的是标题（只有位置分，1.2分）：没有结论措辞/数字/决定句——先补一句结论，或把它降级为章节/证据页。",
+    "tension/why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。",
+    "visual_role/why": "末页按决定类型（commit）收束：主张保留在页上，焦点让给决定本身。",
+    "focus/why": "收束页的落点是待批的决定本身（确认秋季产品主视觉的摄影方向）：批准的对象与量级同屏，理由退一层。",
+    "composition/why": "这一页的主语是具体实体（declared）：图像承担现场，文字退到解说位。",
+    "spatial/whitespace_duty": "承载情绪与现场：文字侧留白是给标题的呼吸位",
+    "typography/discipline": "收束页的唯一落点：决定/动作/判据的字阶最大，对象与条件同行；理由与出处退一层，不与落点争字阶。",
+    "typography/scale/why": "短文本：栏宽可以放开，但仍不横跨整页",
+    "typography/scale/limit": "22–45 汉字/行（启发式建议，实际字体与投影须另验）",
+    "media/necessity": "作者显式声明；素材价值仍须按内容与构图人工复核。",
+    "rhythm/why": "建立整套主张：先让观众知道要判断什么。",
+    "emphasis/why": "请求/决定落点在本页：内容高潮在这里，视觉重量向它集中，不为冲击力另起高潮",
+    "information_weight/weaken#通用说明": "支撑证据：与结论同屏但小一档，读者需要时能找到"
+   }
+  },
+  "assets_hint": {
+   "generate": [
+    "s01"
+   ]
+  },
+  "warnings": [
+   {
+    "rule": "unresolved_content",
+    "scope": "s01",
+    "msg": "这一页有内容但没有可复述的结论：标题只到话题标签（不立主张），正文也没有结论措辞／要决定／比较或条件结果——把标题写成结论，或说清这页要读者记住哪一句；写不出就降级为章节页"
+   }
+  ],
+  "workflow": {
+   "planned_at": "2026-10-21T02:44:26.818030+00:00",
+   "brief_path": "/home/user/repo/evals/fixtures/asset-page/brief.yml",
+   "brief_file_sha256": "a72096d0cd36baafbb42b19166d8d14b5bcb32c855a113edae13ca881880c68e",
+   "assets_manifest_path": "/home/user/repo/evals-workspace/iteration-1/eval-2-asset-page/with_skill/run-1/outputs/asset_manifest.json"
+  },
+  "pages": [
+   {
+    "id": "s01",
+    "ref": "茶杯的釉面开片要在近景里看清 青瓷杯口径 8.2 厘米，开片纹路 0.3 毫米级；上一版远景里完全看不见。",
+    "anchor": null,
+    "declarations": {
+     "asset": "required",
+     "asset_role": "illustration",
+     "asset_function": "proof",
+     "asset_subject": "a celadon tea bowl at right, close view of the crackle glaze, empty space at left for text",
+     "medium": "photography",
+     "safe_area": {
+      "x": 0.06,
+      "y": 0.12,
+      "width": 0.38,
+      "height": 0.72
+     },
+     "text_color": "dark"
+    },
+    "judgment": {
+     "claim": {
+      "text": null,
+      "source": "absent"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted"
+     },
+     "information_weight": {
+      "maximize": [],
+      "weaken": [
+       "8.2 厘米",
+       "0.3 毫米",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）"
+      ],
+      "delete": [],
+      "delete_candidates": []
+     },
+     "visual_role": {
+      "role": "summarize",
+      "source": "decision",
+      "alternatives": []
+     },
+     "focus": {
+      "element_role": "decision_ask",
+      "type": "text",
+      "rejected": [
+       "headline",
+       "kpi_row"
+      ]
+     },
+     "composition": {
+      "chosen": "image_narrative",
+      "rejected": [
+       "editorial",
+       "big_whitespace"
+      ]
+     },
+     "spatial": {
+      "reading_path": "画心 → 标题 → 说明",
+      "primary_zone": "画心（图像主体）",
+      "quiet_zone": "文字侧负空间"
+     },
+     "typography": {
+      "lead": "未决结论",
+      "support": "8.2 厘米",
+      "scale": {
+       "lead_break": null,
+       "body_measure_cjk": 38,
+       "step": "title",
+       "size": 44.0
+      }
+     },
+     "media": {
+      "decision": "required",
+      "source": "author",
+      "function": "declared"
+     },
+     "production": {
+      "must_place": [
+       "decision_ask:text",
+       "claim_text:text",
+       "source:text",
+       "image:image"
+      ],
+      "must_not": [],
+      "density_target": "sparse"
+     },
+     "understanding": {
+      "evidence": "none",
+      "numerals": [
+       "8.2 厘米",
+       "0.3 毫米"
+      ],
+      "flags": [
+       "mixed_metrics"
+      ],
+      "subjects": [
+       "botanical",
+       "ceramic_craft"
+      ]
+     },
+     "open_questions": [
+      "本页结论：先写出一句可复述的话（或删掉这一页）",
+      "本页有 2 个量（8.2 厘米 / 0.3 毫米）但判断不出它们的关系：补一句关系（比率／差值／先后），或说明它们只是并置的量。"
+     ],
+     "rhythm": {
+      "move": "open",
+      "previous": null
+     },
+     "emphasis": {
+      "level": "climax"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "absent",
+       "evidence": "judgment",
+       "role": "decision",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "author",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": [
+       "media"
+      ],
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   }
+  ]
+ },
+ "release": null
+}

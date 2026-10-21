@@ -1,0 +1,57 @@
+{
+ "canvas": {
+  "width": 1280,
+  "height": 720,
+  "grid_columns": 12,
+  "grid_unit": 8
+ },
+ "theme": {
+  "colors": {
+   "background": "#F5F4F1",
+   "ink": "#14140F",
+   "muted": "#6A6A64",
+   "primary": "#14140F",
+   "secondary": "#6A6A64",
+   "accent": "#14140F"
+  },
+  "fonts": {
+   "cn": "Source Han Serif SC",
+   "latin": "Georgia"
+  }
+ },
+ "slides": [
+  {
+   "id": "s01",
+   "elements": [
+    {
+     "id": "s01_t",
+     "type": "text",
+     "x": 96,
+     "y": 88,
+     "width": 1088,
+     "height": 140,
+     "text": "四城次日达占比：深圳已达 91%，成都仍停在 62%",
+     "size": 34,
+     "color": "ink",
+     "font": "Georgia",
+     "bold": true,
+     "align": "left"
+    },
+    {
+     "id": "s01_b",
+     "type": "text",
+     "x": 96,
+     "y": 260,
+     "width": 1088,
+     "height": 340,
+     "text": "深圳 91%、杭州 84%、武汉 73%、成都 62%；成都末端站点密度每万人 0.7 个，深圳 1.9 个。（来源：运营月报 · 2024 全年 · 自营仓配口径）",
+     "size": 17,
+     "color": "muted",
+     "font": "Georgia",
+     "bold": false,
+     "align": "left"
+    }
+   ]
+  }
+ ]
+}

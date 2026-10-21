@@ -1,0 +1,108 @@
+{
+ "eval_id": 6,
+ "eval_name": "data-deck",
+ "config": "with_skill",
+ "expectations": [
+  {
+   "text": "[data-deck] plan 通过数据契约: 期望 plan 落盘成功且通过契约",
+   "passed": true,
+   "evidence": "实际 returncode=0 pages=4",
+   "layer": "plan"
+  },
+  {
+   "text": "[data-deck] 页数: 期望 4–4 页",
+   "passed": true,
+   "evidence": "实际 4 页",
+   "layer": "plan"
+  },
+  {
+   "text": "[data-deck] 首屏角色: 期望 ∈ ['prove', 'establish']",
+   "passed": true,
+   "evidence": "实际 prove",
+   "layer": "plan"
+  },
+  {
+   "text": "[data-deck] 末屏角色: 期望 ∈ ['summarize', 'persuade']",
+   "passed": true,
+   "evidence": "实际 summarize",
+   "layer": "plan"
+  },
+  {
+   "text": "[data-deck] 序列证据: 期望 ∈ ['series', 'comparison']",
+   "passed": true,
+   "evidence": "实际 series",
+   "layer": "plan"
+  },
+  {
+   "text": "[data-deck] 构成证据: 期望 ∈ ['part_whole', 'comparison']",
+   "passed": true,
+   "evidence": "实际 part_whole",
+   "layer": "plan"
+  },
+  {
+   "text": "[data-deck] release 结论: 期望 release PASS",
+   "passed": true,
+   "evidence": "实际 status=PASS blocking=0 codes=[]",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 预览截断: 期望 ≤0 处截断",
+   "passed": true,
+   "evidence": "实际 0 处 []",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 产物体积: 期望 20000–200000 字节",
+   "passed": true,
+   "evidence": "实际 44698",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 编译页数: 期望 ≥4 页编译",
+   "passed": true,
+   "evidence": "实际 4",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 每页出处行: 期望 ≥4 条出处行",
+   "passed": true,
+   "evidence": "实际 4 条（roles=['source', 'source', 'source', 'source']）",
+   "layer": "release"
+  }
+ ],
+ "skipped": [],
+ "summary": {
+  "passed": 11,
+  "failed": 0,
+  "total": 11,
+  "pass_rate": 1.0
+ },
+ "execution_metrics": {
+  "tool_calls": {
+   "vao_cli": 2
+  },
+  "total_tool_calls": 2,
+  "total_steps": 2,
+  "files_created": [
+   "plan.json",
+   "deck.pptx"
+  ],
+  "errors_encountered": 0,
+  "output_chars": 0,
+  "artifact_bytes": 44698,
+  "transcript_chars": 0
+ },
+ "timing": {
+  "plan_seconds": 0.119,
+  "check_seconds": 0.248,
+  "total_duration_seconds": 0.367
+ },
+ "user_notes_summary": {
+  "uncertainties": [
+   "token 成本不适用：本轮为确定性引擎运行，无模型参与（total_tokens 记为 0）",
+   "预览事实采集失败：AttributeError: 'tuple' object has no attribute 'get'"
+  ],
+  "needs_review": [],
+  "workarounds": []
+ }
+}

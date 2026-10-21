@@ -1,0 +1,21 @@
+{
+ "eval_id": 6,
+ "eval_name": "data-deck",
+ "prompt": "路演用的一份四页稿子，投资人会问「复购是不是补贴堆出来的」。数字都在 brief 里：2022 年 21%、2023 年 33%、2024 年 44%，补贴率 8% 降到 3%；履约成本 11.2 元、营销 4.1 元；走访 12 家门店 36 单。最后一页是请批 800 万做长三角仓配扩容。",
+ "assertions": [
+  "plan 通过数据契约",
+  "页数",
+  "首屏角色",
+  "末屏角色",
+  "序列证据",
+  "构成证据",
+  "release 结论",
+  "预览截断",
+  "产物体积",
+  "编译页数",
+  "每页出处行"
+ ],
+ "expected_output": "四页整册：首屏建立、中段证据（序列与构成）、末页收束到决定；release PASS，预览无截断，产物在合理体积内。",
+ "brief": "evals/fixtures/data-deck/brief.yml",
+ "build": "evals/fixtures/data-deck/build.py"
+}

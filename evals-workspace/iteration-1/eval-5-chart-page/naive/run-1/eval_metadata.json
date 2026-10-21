@@ -1,0 +1,20 @@
+{
+ "eval_id": 5,
+ "eval_name": "chart-page",
+ "prompt": "四城次日达占比要出一页，深圳 91、杭州 84、武汉 73、成都 62，口径是自营仓配、2024 全年，来源运营月报。图必须是 PowerPoint 里能改的那种，不要截图。要能一眼看出成都掉队，结论是「差距不在仓，在末端站点密度」。",
+ "assertions": [
+  "plan 通过数据契约",
+  "页面角色",
+  "证据形态",
+  "主张",
+  "release 结论",
+  "原生图表数",
+  "预览截断",
+  "出画布元素",
+  "出处行",
+  "编译页数"
+ ],
+ "expected_output": "一页原生图表：产物里有可编辑图表（不是图片），release 档 PASS，预览无截断无出画布，页码与出处齐备。",
+ "brief": "evals/fixtures/chart-page/brief.yml",
+ "build": "evals/fixtures/chart-page/build.py"
+}

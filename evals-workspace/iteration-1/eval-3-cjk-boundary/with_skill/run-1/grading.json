@@ -1,0 +1,70 @@
+{
+ "eval_id": 3,
+ "eval_name": "cjk-boundary",
+ "config": "with_skill",
+ "expectations": [
+  {
+   "text": "[cjk-boundary] plan 通过数据契约: 期望 plan 落盘成功且通过契约",
+   "passed": true,
+   "evidence": "实际 returncode=0 pages=2",
+   "layer": "plan"
+  },
+  {
+   "text": "[cjk-boundary] 页数: 期望 2–2 页",
+   "passed": true,
+   "evidence": "实际 2 页",
+   "layer": "plan"
+  },
+  {
+   "text": "[cjk-boundary] 事实页主张: 期望 有可复述主张",
+   "passed": true,
+   "evidence": "实际 source=extracted text='三年里我们把“次日达”从 41% 提到 91%，'",
+   "layer": "plan"
+  },
+  {
+   "text": "[cjk-boundary] 事实页证据形态: 期望 ∈ ['sequence', 'series', 'comparison']",
+   "passed": true,
+   "evidence": "实际 sequence",
+   "layer": "plan"
+  },
+  {
+   "text": "[cjk-boundary] 缺结论必须报警: 期望 ≥1 条 unresolved_content",
+   "passed": true,
+   "evidence": "实际 1 条 · 全部规则=['unresolved_content']",
+   "layer": "plan"
+  }
+ ],
+ "skipped": [],
+ "summary": {
+  "passed": 5,
+  "failed": 0,
+  "total": 5,
+  "pass_rate": 1.0
+ },
+ "execution_metrics": {
+  "tool_calls": {
+   "vao_cli": 1
+  },
+  "total_tool_calls": 1,
+  "total_steps": 1,
+  "files_created": [
+   "plan.json"
+  ],
+  "errors_encountered": 0,
+  "output_chars": 0,
+  "artifact_bytes": 0,
+  "transcript_chars": 0
+ },
+ "timing": {
+  "plan_seconds": 0.125,
+  "check_seconds": null,
+  "total_duration_seconds": 0.125
+ },
+ "user_notes_summary": {
+  "uncertainties": [
+   "token 成本不适用：本轮为确定性引擎运行，无模型参与（total_tokens 记为 0）"
+  ],
+  "needs_review": [],
+  "workarounds": []
+ }
+}

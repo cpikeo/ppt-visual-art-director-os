@@ -1,0 +1,416 @@
+{
+ "brief": "/home/user/repo/evals/fixtures/chart-page/brief.yml",
+ "steps": [
+  {
+   "name": "plan",
+   "cmd": [
+    "/usr/local/bin/python",
+    "/home/user/repo/scripts/vao.py",
+    "plan",
+    "/home/user/repo/evals/fixtures/chart-page/brief.yml",
+    "--out",
+    "/home/user/repo/evals-workspace/iteration-1/eval-5-chart-page/with_skill/run-1/outputs/plan.json",
+    "--json"
+   ],
+   "returncode": 0,
+   "stdout": "{\"plan_path\": \"/home/user/repo/evals-workspace/iteration-1/eval-5-chart-page/with_skill/run-1/outputs/plan.json\", \"page_count\": 1, \"workflow\": {\"planned_at\": \"2026-10-21T02:44:27.185424+00:00\", \"brief_path\": \"/home/user/repo/evals/fixtures/chart-page/brief.yml\", \"brief_file_sha256\": \"de1955af7947026696fba8f4f4c64d0c52809981f3383e97f708c770ccfcfc43\"}, \"warnings\": [], \"performance\": {\"module_import_ms\": 26.62, \"brief_load_ms\": 14.17, \"brief_contract_ms\": 1.0, \"intelligence_ms\": 17.04, \"plan_contract_ms\": 2.96, \"policy_load_ms\": 0.0, \"plan_artifact_write_ms\": 4.6, \"asset_manifest_build_ms\": 0.0, \"asset_manifest_prepare_ms\": 0.0, \"asset_manifest_write_ms\": 0.0, \"reference_files_read\": 0, \"total_ms\": 66.77}}\n",
+   "stderr": "",
+   "seconds": 0.134
+  },
+  {
+   "name": "check",
+   "cmd": [
+    "/usr/local/bin/python",
+    "/home/user/repo/scripts/vao.py",
+    "check",
+    "/home/user/repo/evals/fixtures/chart-page/build.py",
+    "/home/user/repo/evals-workspace/iteration-1/eval-5-chart-page/with_skill/run-1/outputs/deck.pptx",
+    "--mode",
+    "release",
+    "--speed",
+    "strict",
+    "--json",
+    "--preview",
+    "/home/user/repo/evals-workspace/iteration-1/eval-5-chart-page/with_skill/run-1/outputs/preview"
+   ],
+   "returncode": 0,
+   "stdout": "{\"status\": \"PASS\", \"verdict\": {\"verdict\": \"PASS\", \"status\": \"PASS\", \"blocking\": 0, \"codes\": [], \"question\": \"这份 PPT 能不能交付？\"}, \"failure_codes\": [], \"fix_plan\": {\"policy\": \"本轮一次修完全部组，修完复跑同一条 check 命令；不逐条对话。\", \"groups\": []}, \"next_action\": \"ready\", \"timing\": {\"load_spec_ms\": 1.79, \"module_import_ms\": 0.78, \"spec_identity_ms\": 0.09, \"asset_bind_ms\": 0.0, \"qc_ms\": 0.0, \"asset_chain_ms\": 0.0, \"asset_count\": 0, \"asset_retry_count\": 0, \"normalization_ms\": 0.23, \"guard_ms\": 67.15, \"verdict_ms\": 0.03, \"cache_probe_ms\": 0.89, \"compile_ms\": 0.0, \"attestation_ms\": 0.05, \"cache_write_ms\": 0.0, \"cache_reason\": \"hit\", \"cache_enabled\": true, \"speed_profile\": \"strict\", \"slides\": 1, \"compile_reused\": true, \"normalization\": {\"changes\": [{\"scope\": \"s01\", \"id\": \"s01_t\", \"field\": \"height\", \"from\": 110, \"to\": 112, \"rule\": \"grid\"}, {\"scope\": \"s01\", \"id\": \"s01_t\", \"field\": \"color\", \"from\": \"ink\", \"to\": \"#12120F\", \"rule\": \"color\"}, {\"scope\": \"s01\", \"id\": \"s01_b\", \"field\": \"color\", \"from\": \"ink\", \"to\": \"#12120F\", \"rule\": \"color\"}, {\"scope\": \"s01\", \"id\": \"s01_src\", \"field\": \"color\", \"from\": \"muted\", \"to\": \"#5B574F\", \"rule\": \"color\"}], \"counts\": {\"grid\": 1, \"color\": 3}, \"changes_total\": 4, \"changes_omitted\": 0}, \"provenance_required\": true, \"speed\": \"strict\", \"cache_probe_error\": null, \"cache_write_error\": null, \"cache_dir\": \"/home/user/repo/evals-workspace/iteration-1/eval-5-chart-page/with_skill/run-1/outputs/deck_vao\", \"ghost_ms\": 54.06, \"render_pages\": 1, \"render_pages_drawn\": 1, \"render_pages_cached\": 0, \"render_bundle_reused\": false, \"contact_sheet_cached\": false, \"release_manifest_ms\": 0.14, \"asset_qc_reused\": 0, \"image_source_snapshots\": 0, \"image_snapshot_bytes\": 0, \"image_decode_seed_entries\": 0, \"qa_ms\": 67.55, \"total_ms\": 134.99}}\n",
+   "stderr": "VAO warning: 声明的字体本机缺失，预览已替换：Georgia → DejaVuSerif。字形与行宽只是近似，换行位置不可当作产物证据。\n",
+   "seconds": 0.214
+  }
+ ],
+ "plan_returncode": 0,
+ "plan_seconds": 0.134,
+ "plan": {
+  "deck": {
+   "audience": "区域运营负责人，周会现场",
+   "decision": "批准把成都的末端站点建设前置到本季度",
+   "tension": "成都单量够，但履约慢，团队认为原因是仓不够",
+   "policy": {
+    "version": "2026.10-judgment-p2",
+    "sha256": "8b2b9deea7f2e7ccb57c9b06797795a3bebfc78e02082de33f13f78989244f75",
+    "overrides": null,
+    "tunable_groups": [
+     "enums",
+     "composition",
+     "information_weight",
+     "evidence_shapes",
+     "decomposition",
+     "focus",
+     "measure",
+     "chart_kind",
+     "production",
+     "output"
+    ]
+   },
+   "type_scale": {
+    "stat": 88.0,
+    "display": 64.0,
+    "title": 44.0,
+    "lead": 32.0,
+    "subtitle": 28.0,
+    "body": 18.0,
+    "caption": 14.0,
+    "source": 12.0,
+    "chart_label": 13.333333333333334,
+    "chart_value": 12.0,
+    "shape_text": 16.0
+   },
+   "world": {
+    "name": "working/neutral",
+    "source": "neutral_fallback",
+    "visual_world": "neutral matte ground, one light source, nothing decorative",
+    "light": "even diffuse daylight, no visible source",
+    "texture_keys": [
+     "paper"
+    ],
+    "chart_style": "shared baseline, two-tone delta, direct labels",
+    "composition_grammar": "evidence_field",
+    "type_voice": "clarity：信息优先，字体是最安静的工具",
+    "fonts": {
+     "cn": "Source Han Sans SC",
+     "latin": "Arial"
+    },
+    "paper": "#F7F7F7",
+    "ink": "#1A1A1A",
+    "accent": "#6E6A63",
+    "accent_role": "指向被批准的那一件事",
+    "accent_why": "中性矿物灰：没有主题实体时最克制的一支（不与任何实体世界撞色）",
+    "reasons": {
+     "register": "受众与场合语域＝working（决定纸、字与克制程度）",
+     "subject": "内容里没有可指认的主题实体：退到中性纸世界，不猜风格",
+     "regime": "浅色纸面：文档语域下纸面托住信息",
+     "accent_role": "强调色语义＝指向被批准的那一件事（颜色服从语义，不服从风格）",
+     "composition": "世界级构图纪律＝evidence_field（由人的存在与数字密度推开，不是预设）",
+     "type_voice": "clarity：信息优先，字体是最安静的工具"
+    }
+   },
+   "theme": {
+    "colors_seed": {
+     "foundation": "#F7F7F7",
+     "information": "#1A1A1A",
+     "supporting": "#919191",
+     "accent": "#6E6A63"
+    },
+    "seed_source": "world_derivation",
+    "slots_overridden": null
+   },
+   "coherence": {
+    "compositions": [
+     "editorial"
+    ],
+    "densities": [
+     "balanced"
+    ],
+    "roles": [
+     "compare"
+    ],
+    "media": [
+     "none:-"
+    ],
+    "climax": {
+     "page": null,
+     "why": "内容没有指认高潮位（无请求/主视觉/建立主张）：不硬指一页，先补内容"
+    },
+    "adjustments": null,
+    "notes": null
+   },
+   "legend": {
+    "claim/why": "标题 ＋ 正文无更强主张形状，标题居主张位 ＋ 数字「91%/62%」 ＋ 变化「占」；发布前请作者确认口径。",
+    "tension/why": "这一页靠证据或章节职责成立；没有页级冲突，不凭空制造张力。",
+    "visual_role/why": "内容本身有两端对比，张力来自内容而不是装饰。",
+    "focus/why": "「91%」是「：深圳已达」的 91%：分子与分母同屏，比例才有意义；不把整体→子集误画成下降。",
+    "composition/why": "这一页以阅读节奏为主：字阶与栏宽决定先读什么、读多久。",
+    "spatial/whitespace_duty": "建立阅读节奏：栏宽与字阶让读者知道先读什么、读多久",
+    "typography/discipline": "子集先读、总体分母紧跟；数量与单位不拆行，标签沿同一阅读轴，不把一个证据拆成两张等权卡或画成趋势。",
+    "typography/scale/why": "短文本：栏宽可以放开，但仍不横跨整页",
+    "typography/scale/limit": "22–45 汉字/行（启发式建议，实际字体与投影须另验）",
+    "media/necessity": "本页已有图表，默认不追加素材；若图像承担不可替代的对象或解释职责，先明确构图再由作者声明。",
+    "rhythm/why": "建立整套主张：先让观众知道要判断什么。",
+    "emphasis/why": "证据展开页：保持可读与秩序，把视觉高潮留给内容高潮",
+    "information_weight/weaken#通用说明": "支撑证据：与结论同屏但小一档，读者需要时能找到"
+   }
+  },
+  "assets_hint": {
+   "generate": []
+  },
+  "warnings": [],
+  "workflow": {
+   "planned_at": "2026-10-21T02:44:27.185424+00:00",
+   "brief_path": "/home/user/repo/evals/fixtures/chart-page/brief.yml",
+   "brief_file_sha256": "de1955af7947026696fba8f4f4c64d0c52809981f3383e97f708c770ccfcfc43"
+  },
+  "pages": [
+   {
+    "id": "s01",
+    "ref": "四城次日达占比：深圳已达 91%，成都仍停在 62% 深圳 91%、杭州 84%、武汉 73%、成都 62%；成都末端站点密度每万人 0.7 个，深圳 1.9 个。（来源：运营月报 · 2024 全年 · 自营仓配口径）",
+    "anchor": null,
+    "declarations": null,
+    "judgment": {
+     "claim": {
+      "text": "四城次日达占比：深圳已达 91%，成都仍停在 62%",
+      "source": "extracted"
+     },
+     "tension": {
+      "issue": null,
+      "source": "not_asserted"
+     },
+     "information_weight": {
+      "maximize": [
+       "91% — 子集的实际人数/数量：突出已发生的结果，同时明确给出总体",
+       "比较对象与口径 — 两端要能辨认；只有分母一致时才画差值"
+      ],
+      "weaken": [
+       "62% — 总体/分母：和子集同屏，但不是变化前的基期",
+       "84%",
+       "73%",
+       "0.7 个",
+       "1.9 个",
+       "来源/口径/期间 — 必须可见但不争夺注意力（小字、固定位置）"
+      ],
+      "delete": [
+       "91%、62% 的重复出现 — 同一数字在一页出现两次就删一次"
+      ],
+      "delete_candidates": [
+       "「成都末端站点密度每万人 0.7 个，深圳 1.9 个」— 删除候选（与主张重合 14%，非主张数字 2 个，贡献 -0.21）：作者裁决保留、移到备注或删除",
+       "「（来源：运营月报 · 2024 全年 · 自营仓配口径）」— 删除候选（与主张重合 0%，非主张数字 0 个，贡献 0.00）：作者裁决保留、移到备注或删除"
+      ]
+     },
+     "visual_role": {
+      "role": "compare",
+      "alternatives": [
+       "explain"
+      ],
+      "source": "judgment"
+     },
+     "focus": {
+      "element_role": "ratio_main",
+      "type": "chart",
+      "chart_kind": "bar",
+      "chart_kind_why": "6 个部分用环形会把扇区压成细条：横条按长度可比",
+      "rejected": [
+       "trend_line",
+       "card_grid_4"
+      ]
+     },
+     "composition": {
+      "chosen": "editorial",
+      "rejected": [
+       "asymmetric_tension"
+      ]
+     },
+     "spatial": {
+      "reading_path": "标题 → 论据 → 出处",
+      "primary_zone": "标题与导语区",
+      "quiet_zone": "栏间留白"
+     },
+     "typography": {
+      "lead": "91%",
+      "support": "62%",
+      "scale": {
+       "lead_break": "四城次日达占比：深圳已达 91%，｜成都仍停在 62%",
+       "body_measure_cjk": 38,
+       "step": "stat",
+       "size": 88.0
+      }
+     },
+     "media": {
+      "decision": "none",
+      "source": "judgment",
+      "function": null
+     },
+     "production": {
+      "must_place": [
+       "ratio_main:chart",
+       "claim_text:text",
+       "source:text"
+      ],
+      "must_not": [
+       "删：91%、62% 的重复出现 — 同一数字在一页出现两次就删一次"
+      ],
+      "density_target": "balanced"
+     },
+     "understanding": {
+      "evidence": "comparison",
+      "numerals": [
+       "91%",
+       "62%",
+       "91%",
+       "84%",
+       "73%",
+       "62%",
+       "0.7 个",
+       "1.9 个"
+      ],
+      "flags": [
+       "part_whole",
+       "has_chart"
+      ]
+     },
+     "open_questions": [
+      "删除候选 2 句待作者裁决（高密度页，按对主张的贡献排序）",
+      "比较比例前核对分母/样本与期间；不同指标的百分比不能直接相减。"
+     ],
+     "rhythm": {
+      "move": "open",
+      "previous": null
+     },
+     "emphasis": {
+      "level": "support"
+     },
+     "provenance": {
+      "decided_by": {
+       "claim": "judgment",
+       "evidence": "judgment",
+       "role": "judgment",
+       "focus": "judgment",
+       "composition": "judgment",
+       "media": "judgment",
+       "rhythm": "judgment",
+       "emphasis": "judgment"
+      },
+      "author_declared": null,
+      "pending_author": null,
+      "rule": "作者声明 > 算法推导 > 词表提示；提示未确认前不得当作判断使用。"
+     }
+    }
+   }
+  ]
+ },
+ "check_returncode": 0,
+ "check_seconds": 0.214,
+ "verdict": {
+  "status": "PASS",
+  "verdict": {
+   "verdict": "PASS",
+   "status": "PASS",
+   "blocking": 0,
+   "codes": [],
+   "question": "这份 PPT 能不能交付？"
+  },
+  "failure_codes": [],
+  "fix_plan": {
+   "policy": "本轮一次修完全部组，修完复跑同一条 check 命令；不逐条对话。",
+   "groups": []
+  },
+  "next_action": "ready",
+  "timing": {
+   "load_spec_ms": 1.79,
+   "module_import_ms": 0.78,
+   "spec_identity_ms": 0.09,
+   "asset_bind_ms": 0.0,
+   "qc_ms": 0.0,
+   "asset_chain_ms": 0.0,
+   "asset_count": 0,
+   "asset_retry_count": 0,
+   "normalization_ms": 0.23,
+   "guard_ms": 67.15,
+   "verdict_ms": 0.03,
+   "cache_probe_ms": 0.89,
+   "compile_ms": 0.0,
+   "attestation_ms": 0.05,
+   "cache_write_ms": 0.0,
+   "cache_reason": "hit",
+   "cache_enabled": true,
+   "speed_profile": "strict",
+   "slides": 1,
+   "compile_reused": true,
+   "normalization": {
+    "changes": [
+     {
+      "scope": "s01",
+      "id": "s01_t",
+      "field": "height",
+      "from": 110,
+      "to": 112,
+      "rule": "grid"
+     },
+     {
+      "scope": "s01",
+      "id": "s01_t",
+      "field": "color",
+      "from": "ink",
+      "to": "#12120F",
+      "rule": "color"
+     },
+     {
+      "scope": "s01",
+      "id": "s01_b",
+      "field": "color",
+      "from": "ink",
+      "to": "#12120F",
+      "rule": "color"
+     },
+     {
+      "scope": "s01",
+      "id": "s01_src",
+      "field": "color",
+      "from": "muted",
+      "to": "#5B574F",
+      "rule": "color"
+     }
+    ],
+    "counts": {
+     "grid": 1,
+     "color": 3
+    },
+    "changes_total": 4,
+    "changes_omitted": 0
+   },
+   "provenance_required": true,
+   "speed": "strict",
+   "cache_probe_error": null,
+   "cache_write_error": null,
+   "cache_dir": "/home/user/repo/evals-workspace/iteration-1/eval-5-chart-page/with_skill/run-1/outputs/deck_vao",
+   "ghost_ms": 54.06,
+   "render_pages": 1,
+   "render_pages_drawn": 1,
+   "render_pages_cached": 0,
+   "render_bundle_reused": false,
+   "contact_sheet_cached": false,
+   "release_manifest_ms": 0.14,
+   "asset_qc_reused": 0,
+   "image_source_snapshots": 0,
+   "image_snapshot_bytes": 0,
+   "image_decode_seed_entries": 0,
+   "qa_ms": 67.55,
+   "total_ms": 134.99
+  }
+ },
+ "pptx": {
+  "exists": true,
+  "bytes": 46635,
+  "native_charts": 1
+ },
+ "spec": {
+  "slides": 1,
+  "roles": [
+   "source"
+  ],
+  "charts": 1,
+  "text_chars": 88
+ },
+ "ghost": {
+  "error": "AttributeError: 'tuple' object has no attribute 'get'"
+ }
+}

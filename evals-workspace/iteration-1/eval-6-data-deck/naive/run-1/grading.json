@@ -1,0 +1,97 @@
+{
+ "eval_id": 6,
+ "eval_name": "data-deck",
+ "config": "naive",
+ "expectations": [
+  {
+   "text": "[data-deck] release 结论: 期望 release PASS",
+   "passed": true,
+   "evidence": "实际 status=PASS blocking=0 codes=[]",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 预览截断: 期望 ≤0 处截断",
+   "passed": true,
+   "evidence": "实际 0 处 []",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 产物体积: 期望 20000–200000 字节",
+   "passed": true,
+   "evidence": "实际 43581",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 编译页数: 期望 ≥4 页编译",
+   "passed": true,
+   "evidence": "实际 4",
+   "layer": "release"
+  },
+  {
+   "text": "[data-deck] 每页出处行: 期望 ≥4 条出处行",
+   "passed": false,
+   "evidence": "实际 0 条（roles=[]）",
+   "layer": "release"
+  }
+ ],
+ "skipped": [
+  {
+   "kind": "plan_contract_clean",
+   "why": "基线配置不产判断（无 plan 判断层）"
+  },
+  {
+   "kind": "pages",
+   "why": "基线配置不产判断（无 plan 判断层）"
+  },
+  {
+   "kind": "page_role",
+   "why": "基线配置不产判断（无 plan 判断层）"
+  },
+  {
+   "kind": "page_role",
+   "why": "基线配置不产判断（无 plan 判断层）"
+  },
+  {
+   "kind": "page_evidence",
+   "why": "基线配置不产判断（无 plan 判断层）"
+  },
+  {
+   "kind": "page_evidence",
+   "why": "基线配置不产判断（无 plan 判断层）"
+  }
+ ],
+ "summary": {
+  "passed": 4,
+  "failed": 1,
+  "total": 5,
+  "pass_rate": 0.8
+ },
+ "execution_metrics": {
+  "tool_calls": {
+   "vao_cli": 1
+  },
+  "total_tool_calls": 1,
+  "total_steps": 1,
+  "files_created": [
+   "deck.pptx"
+  ],
+  "errors_encountered": 0,
+  "output_chars": 0,
+  "artifact_bytes": 43581,
+  "transcript_chars": 0
+ },
+ "timing": {
+  "plan_seconds": null,
+  "check_seconds": 0.238,
+  "total_duration_seconds": 0.238
+ },
+ "user_notes_summary": {
+  "uncertainties": [
+   "token 成本不适用：本轮为确定性引擎运行，无模型参与（total_tokens 记为 0）",
+   "基线是 engine-baseline（无判断层直排），不是 model-baseline；它衡量的是判断层带来的差异，不代表「人不用技能时会怎样」",
+   "预览事实采集失败：AttributeError: 'tuple' object has no attribute 'get'"
+  ],
+  "needs_review": [],
+  "workarounds": []
+ }
+}

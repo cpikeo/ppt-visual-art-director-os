@@ -1,0 +1,174 @@
+{
+ "brief": "/home/user/repo/evals/fixtures/data-deck/brief.yml",
+ "steps": [
+  {
+   "name": "check",
+   "cmd": [
+    "/usr/local/bin/python",
+    "/home/user/repo/scripts/vao.py",
+    "check",
+    "/home/user/repo/evals-workspace/iteration-1/eval-6-data-deck/naive/run-1/outputs/baseline-spec.json",
+    "/home/user/repo/evals-workspace/iteration-1/eval-6-data-deck/naive/run-1/outputs/deck.pptx",
+    "--mode",
+    "release",
+    "--speed",
+    "strict",
+    "--json",
+    "--preview",
+    "/home/user/repo/evals-workspace/iteration-1/eval-6-data-deck/naive/run-1/outputs/preview"
+   ],
+   "returncode": 0,
+   "stdout": "{\"status\": \"PASS\", \"verdict\": {\"verdict\": \"PASS\", \"status\": \"PASS\", \"blocking\": 0, \"codes\": [], \"question\": \"这份 PPT 能不能交付？\"}, \"failure_codes\": [], \"fix_plan\": {\"policy\": \"本轮一次修完全部组，修完复跑同一条 check 命令；不逐条对话。\", \"groups\": []}, \"next_action\": \"ready\", \"timing\": {\"load_spec_ms\": 0.2, \"module_import_ms\": 0.7, \"spec_identity_ms\": 0.09, \"asset_bind_ms\": 0.0, \"qc_ms\": 0.0, \"asset_chain_ms\": 0.0, \"asset_count\": 0, \"asset_retry_count\": 0, \"normalization_ms\": 0.18, \"guard_ms\": 54.14, \"verdict_ms\": 0.04, \"cache_probe_ms\": 1.25, \"compile_ms\": 0.0, \"attestation_ms\": 0.07, \"cache_write_ms\": 0.0, \"cache_reason\": \"hit\", \"cache_enabled\": true, \"speed_profile\": \"strict\", \"slides\": 4, \"compile_reused\": true, \"normalization\": {\"changes\": [{\"scope\": \"s01\", \"id\": \"s01_t\", \"field\": \"color\", \"from\": \"ink\", \"to\": \"#14140F\", \"rule\": \"color\"}, {\"scope\": \"s01\", \"id\": \"s01_b\", \"field\": \"color\", \"from\": \"muted\", \"to\": \"#6A6A64\", \"rule\": \"color\"}, {\"scope\": \"s02\", \"id\": \"s02_t\", \"field\": \"color\", \"from\": \"ink\", \"to\": \"#14140F\", \"rule\": \"color\"}, {\"scope\": \"s02\", \"id\": \"s02_b\", \"field\": \"color\", \"from\": \"muted\", \"to\": \"#6A6A64\", \"rule\": \"color\"}, {\"scope\": \"s03\", \"id\": \"s03_t\", \"field\": \"color\", \"from\": \"ink\", \"to\": \"#14140F\", \"rule\": \"color\"}, {\"scope\": \"s03\", \"id\": \"s03_b\", \"field\": \"color\", \"from\": \"muted\", \"to\": \"#6A6A64\", \"rule\": \"color\"}, {\"scope\": \"s04\", \"id\": \"s04_t\", \"field\": \"color\", \"from\": \"ink\", \"to\": \"#14140F\", \"rule\": \"color\"}, {\"scope\": \"s04\", \"id\": \"s04_b\", \"field\": \"color\", \"from\": \"muted\", \"to\": \"#6A6A64\", \"rule\": \"color\"}], \"counts\": {\"color\": 8}, \"changes_total\": 8, \"changes_omitted\": 0}, \"provenance_required\": true, \"speed\": \"strict\", \"cache_probe_error\": null, \"cache_write_error\": null, \"cache_dir\": \"/home/user/repo/evals-workspace/iteration-1/eval-6-data-deck/naive/run-1/outputs/deck_vao\", \"ghost_ms\": 110.95, \"render_pages\": 4, \"render_pages_drawn\": 4, \"render_pages_cached\": 0, \"render_bundle_reused\": false, \"contact_sheet_cached\": false, \"release_manifest_ms\": 0.2, \"asset_qc_reused\": 0, \"image_source_snapshots\": 0, \"image_snapshot_bytes\": 0, \"image_decode_seed_entries\": 0, \"qa_ms\": 54.56, \"total_ms\": 177.69}}\n",
+   "stderr": "",
+   "seconds": 0.238
+  }
+ ],
+ "plan_returncode": null,
+ "plan_seconds": null,
+ "plan": null,
+ "check_returncode": 0,
+ "check_seconds": 0.238,
+ "verdict": {
+  "status": "PASS",
+  "verdict": {
+   "verdict": "PASS",
+   "status": "PASS",
+   "blocking": 0,
+   "codes": [],
+   "question": "这份 PPT 能不能交付？"
+  },
+  "failure_codes": [],
+  "fix_plan": {
+   "policy": "本轮一次修完全部组，修完复跑同一条 check 命令；不逐条对话。",
+   "groups": []
+  },
+  "next_action": "ready",
+  "timing": {
+   "load_spec_ms": 0.2,
+   "module_import_ms": 0.7,
+   "spec_identity_ms": 0.09,
+   "asset_bind_ms": 0.0,
+   "qc_ms": 0.0,
+   "asset_chain_ms": 0.0,
+   "asset_count": 0,
+   "asset_retry_count": 0,
+   "normalization_ms": 0.18,
+   "guard_ms": 54.14,
+   "verdict_ms": 0.04,
+   "cache_probe_ms": 1.25,
+   "compile_ms": 0.0,
+   "attestation_ms": 0.07,
+   "cache_write_ms": 0.0,
+   "cache_reason": "hit",
+   "cache_enabled": true,
+   "speed_profile": "strict",
+   "slides": 4,
+   "compile_reused": true,
+   "normalization": {
+    "changes": [
+     {
+      "scope": "s01",
+      "id": "s01_t",
+      "field": "color",
+      "from": "ink",
+      "to": "#14140F",
+      "rule": "color"
+     },
+     {
+      "scope": "s01",
+      "id": "s01_b",
+      "field": "color",
+      "from": "muted",
+      "to": "#6A6A64",
+      "rule": "color"
+     },
+     {
+      "scope": "s02",
+      "id": "s02_t",
+      "field": "color",
+      "from": "ink",
+      "to": "#14140F",
+      "rule": "color"
+     },
+     {
+      "scope": "s02",
+      "id": "s02_b",
+      "field": "color",
+      "from": "muted",
+      "to": "#6A6A64",
+      "rule": "color"
+     },
+     {
+      "scope": "s03",
+      "id": "s03_t",
+      "field": "color",
+      "from": "ink",
+      "to": "#14140F",
+      "rule": "color"
+     },
+     {
+      "scope": "s03",
+      "id": "s03_b",
+      "field": "color",
+      "from": "muted",
+      "to": "#6A6A64",
+      "rule": "color"
+     },
+     {
+      "scope": "s04",
+      "id": "s04_t",
+      "field": "color",
+      "from": "ink",
+      "to": "#14140F",
+      "rule": "color"
+     },
+     {
+      "scope": "s04",
+      "id": "s04_b",
+      "field": "color",
+      "from": "muted",
+      "to": "#6A6A64",
+      "rule": "color"
+     }
+    ],
+    "counts": {
+     "color": 8
+    },
+    "changes_total": 8,
+    "changes_omitted": 0
+   },
+   "provenance_required": true,
+   "speed": "strict",
+   "cache_probe_error": null,
+   "cache_write_error": null,
+   "cache_dir": "/home/user/repo/evals-workspace/iteration-1/eval-6-data-deck/naive/run-1/outputs/deck_vao",
+   "ghost_ms": 110.95,
+   "render_pages": 4,
+   "render_pages_drawn": 4,
+   "render_pages_cached": 0,
+   "render_bundle_reused": false,
+   "contact_sheet_cached": false,
+   "release_manifest_ms": 0.2,
+   "asset_qc_reused": 0,
+   "image_source_snapshots": 0,
+   "image_snapshot_bytes": 0,
+   "image_decode_seed_entries": 0,
+   "qa_ms": 54.56,
+   "total_ms": 177.69
+  }
+ },
+ "pptx": {
+  "exists": true,
+  "bytes": 43581,
+  "native_charts": 0
+ },
+ "spec": {
+  "slides": 4,
+  "roles": [],
+  "charts": 0,
+  "text_chars": 208
+ },
+ "ghost": {
+  "error": "AttributeError: 'tuple' object has no attribute 'get'"
+ }
+}

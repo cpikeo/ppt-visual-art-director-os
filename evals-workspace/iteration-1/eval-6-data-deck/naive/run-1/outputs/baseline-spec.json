@@ -1,0 +1,156 @@
+{
+ "canvas": {
+  "width": 1280,
+  "height": 720,
+  "grid_columns": 12,
+  "grid_unit": 8
+ },
+ "theme": {
+  "colors": {
+   "background": "#F5F4F1",
+   "ink": "#14140F",
+   "muted": "#6A6A64",
+   "primary": "#14140F",
+   "secondary": "#6A6A64",
+   "accent": "#14140F"
+  },
+  "fonts": {
+   "cn": "Source Han Serif SC",
+   "latin": "Georgia"
+  }
+ },
+ "slides": [
+  {
+   "id": "s01",
+   "elements": [
+    {
+     "id": "s01_t",
+     "type": "text",
+     "x": 96,
+     "y": 88,
+     "width": 1088,
+     "height": 140,
+     "text": "复购率三年翻倍，靠的是履约不是补贴",
+     "size": 34,
+     "color": "ink",
+     "font": "Georgia",
+     "bold": true,
+     "align": "left"
+    },
+    {
+     "id": "s01_b",
+     "type": "text",
+     "x": 96,
+     "y": 260,
+     "width": 1088,
+     "height": 340,
+     "text": "2022 年复购率 21%，2023 年 33%，2024 年 44%；同期补贴率从 8% 降到 3%",
+     "size": 17,
+     "color": "muted",
+     "font": "Georgia",
+     "bold": false,
+     "align": "left"
+    }
+   ]
+  },
+  {
+   "id": "s02",
+   "elements": [
+    {
+     "id": "s02_t",
+     "type": "text",
+     "x": 96,
+     "y": 88,
+     "width": 1088,
+     "height": 140,
+     "text": "门店回访：复购发生在收货后第三天",
+     "size": 34,
+     "color": "ink",
+     "font": "Georgia",
+     "bold": true,
+     "align": "left"
+    },
+    {
+     "id": "s02_b",
+     "type": "text",
+     "x": 96,
+     "y": 260,
+     "width": 1088,
+     "height": 340,
+     "text": "2024 年走访 12 家门店，店员反馈复购集中在收货后 48 到 72 小时；样本 36 单",
+     "size": 17,
+     "color": "muted",
+     "font": "Georgia",
+     "bold": false,
+     "align": "left"
+    }
+   ]
+  },
+  {
+   "id": "s03",
+   "elements": [
+    {
+     "id": "s03_t",
+     "type": "text",
+     "x": 96,
+     "y": 88,
+     "width": 1088,
+     "height": 140,
+     "text": "三类成本结构",
+     "size": 34,
+     "color": "ink",
+     "font": "Georgia",
+     "bold": true,
+     "align": "left"
+    },
+    {
+     "id": "s03_b",
+     "type": "text",
+     "x": 96,
+     "y": 260,
+     "width": 1088,
+     "height": 340,
+     "text": "履约成本 11.2 元，营销成本 4.1 元，履约成本占总成本 61%",
+     "size": 17,
+     "color": "muted",
+     "font": "Georgia",
+     "bold": false,
+     "align": "left"
+    }
+   ]
+  },
+  {
+   "id": "s04",
+   "elements": [
+    {
+     "id": "s04_t",
+     "type": "text",
+     "x": 96,
+     "y": 88,
+     "width": 1088,
+     "height": 140,
+     "text": "下一步",
+     "size": 34,
+     "color": "ink",
+     "font": "Georgia",
+     "bold": true,
+     "align": "left"
+    },
+    {
+     "id": "s04_b",
+     "type": "text",
+     "x": 96,
+     "y": 260,
+     "width": 1088,
+     "height": 340,
+     "text": "请批准 800 万元用于长三角仓配扩容，2025 年 Q3 前完成",
+     "size": 17,
+     "color": "muted",
+     "font": "Georgia",
+     "bold": false,
+     "align": "left"
+    }
+   ]
+  }
+ ]
+}

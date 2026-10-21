@@ -1,0 +1,58 @@
+{
+ "eval_id": 2,
+ "eval_name": "asset-page",
+ "config": "with_skill",
+ "expectations": [
+  {
+   "text": "[asset-page] plan 通过数据契约: 期望 plan 落盘成功且通过契约",
+   "passed": true,
+   "evidence": "实际 returncode=0 pages=1",
+   "layer": "plan"
+  },
+  {
+   "text": "[asset-page] 媒体必要性: 期望 ∈ ['required', 'suggested']",
+   "passed": true,
+   "evidence": "实际 required",
+   "layer": "plan"
+  },
+  {
+   "text": "[asset-page] 无结论必须报警: 期望 ≥1 条 unresolved_content",
+   "passed": true,
+   "evidence": "实际 1 条 · 全部规则=['unresolved_content']",
+   "layer": "plan"
+  }
+ ],
+ "skipped": [],
+ "summary": {
+  "passed": 3,
+  "failed": 0,
+  "total": 3,
+  "pass_rate": 1.0
+ },
+ "execution_metrics": {
+  "tool_calls": {
+   "vao_cli": 1
+  },
+  "total_tool_calls": 1,
+  "total_steps": 1,
+  "files_created": [
+   "plan.json"
+  ],
+  "errors_encountered": 0,
+  "output_chars": 0,
+  "artifact_bytes": 0,
+  "transcript_chars": 0
+ },
+ "timing": {
+  "plan_seconds": 0.121,
+  "check_seconds": null,
+  "total_duration_seconds": 0.121
+ },
+ "user_notes_summary": {
+  "uncertainties": [
+   "token 成本不适用：本轮为确定性引擎运行，无模型参与（total_tokens 记为 0）"
+  ],
+  "needs_review": [],
+  "workarounds": []
+ }
+}

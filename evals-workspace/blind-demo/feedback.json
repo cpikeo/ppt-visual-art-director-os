@@ -1,0 +1,15 @@
+{
+ "reviews": [
+  {
+   "run_id": "eval-0-two-metric-page-with_skill-run-1",
+   "feedback": "末页那个 800 万的数字和正文一样大，看不出是决定；建议主语再大一号",
+   "timestamp": "2026-10-21T10:00:00Z"
+  },
+  {
+   "run_id": "eval-1-narrative-six-with_skill-run-1",
+   "feedback": "",
+   "timestamp": "2026-10-21T10:01:00Z"
+  }
+ ],
+ "status": "complete"
+}

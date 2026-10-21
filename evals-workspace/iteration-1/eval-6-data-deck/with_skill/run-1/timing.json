@@ -1,0 +1,6 @@
+{
+ "total_tokens": null,
+ "duration_ms": 367,
+ "total_duration_seconds": 0.367,
+ "note": "确定性引擎运行，无模型参与；token 成本不适用"
+}

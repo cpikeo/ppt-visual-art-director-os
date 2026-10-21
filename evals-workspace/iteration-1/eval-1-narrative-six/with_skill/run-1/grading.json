@@ -1,0 +1,94 @@
+{
+ "eval_id": 1,
+ "eval_name": "narrative-six",
+ "config": "with_skill",
+ "expectations": [
+  {
+   "text": "[narrative-six] plan 通过数据契约: 期望 plan 落盘成功且通过契约",
+   "passed": true,
+   "evidence": "实际 returncode=0 pages=6",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 页数: 期望 6–6 页",
+   "passed": true,
+   "evidence": "实际 6 页",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 首屏角色: 期望 ∈ ['establish']",
+   "passed": true,
+   "evidence": "实际 establish",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 证据页角色: 期望 ∈ ['prove', 'compare']",
+   "passed": true,
+   "evidence": "实际 prove",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 末屏角色: 期望 ∈ ['summarize', 'persuade']",
+   "passed": true,
+   "evidence": "实际 summarize",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 序列证据: 期望 ∈ ['series']",
+   "passed": true,
+   "evidence": "实际 series",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 结构证据: 期望 ∈ ['structure', 'sequence']",
+   "passed": true,
+   "evidence": "实际 structure",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 首屏主张: 期望 有可复述主张",
+   "passed": true,
+   "evidence": "实际 source=extracted text='补贴换来的增长，正在被履约短板吃掉'",
+   "layer": "plan"
+  },
+  {
+   "text": "[narrative-six] 末屏主张: 期望 有可复述主张",
+   "passed": true,
+   "evidence": "实际 source=extracted text='请批准把三成补贴转投履约'",
+   "layer": "plan"
+  }
+ ],
+ "skipped": [],
+ "summary": {
+  "passed": 9,
+  "failed": 0,
+  "total": 9,
+  "pass_rate": 1.0
+ },
+ "execution_metrics": {
+  "tool_calls": {
+   "vao_cli": 1
+  },
+  "total_tool_calls": 1,
+  "total_steps": 1,
+  "files_created": [
+   "plan.json"
+  ],
+  "errors_encountered": 0,
+  "output_chars": 0,
+  "artifact_bytes": 0,
+  "transcript_chars": 0
+ },
+ "timing": {
+  "plan_seconds": 0.134,
+  "check_seconds": null,
+  "total_duration_seconds": 0.134
+ },
+ "user_notes_summary": {
+  "uncertainties": [
+   "token 成本不适用：本轮为确定性引擎运行，无模型参与（total_tokens 记为 0）"
+  ],
+  "needs_review": [],
+  "workarounds": []
+ }
+}

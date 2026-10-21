@@ -1,0 +1,17 @@
+{
+ "eval_id": 0,
+ "eval_name": "two-metric-page",
+ "prompt": "帮我把这页做出来：给区域运营负责人周会用，目的是让他们同意把华东的履约资源调一部分给华南。数据是华东复购率 62%、华南 44%，华东履约次日达 91%、华南 68%，都来自区域台账 2024 全年。一页就够。",
+ "assertions": [
+  "plan 通过数据契约",
+  "页数",
+  "页面角色",
+  "证据形态",
+  "媒体决策",
+  "主张",
+  "构图落点"
+ ],
+ "expected_output": "一页两端对照的证据页：判成 compare/prove，证据形态是两端可比量，主张可复述，无配图，构图有落点。",
+ "brief": "evals/fixtures/two-metric-page/brief.yml",
+ "build": null
+}
