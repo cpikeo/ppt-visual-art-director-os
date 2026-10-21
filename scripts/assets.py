@@ -383,6 +383,15 @@ BACKGROUND_DISCIPLINE: tuple[str, ...] = (
     "one continuous tonal and material field with no competing objects",
 )
 
+# 声明了主体的背景图不是空场：作者已经决定画面里有什么（「分拣线在右，左侧
+# 留白」）。此时再发「not a picture of a thing / no dominant protagonist」是
+# 自相矛盾的指令——生成器要么无视主体声明，要么无视背景纪律，两种结果都不是
+# 作者要的。背景纪律改为「主体融进环境、不贴片」，唯一的主语仍然是作者声明的
+# 那一个。判断在 SKILL §3，这里只负责不覆盖它。
+BACKGROUND_SUBJECT_DISCIPLINE: tuple[str, ...] = (
+    "the declared subject sits inside the environment as one continuous scene",
+)
+
 # 资产类型后缀
 ASSET_TYPE_SUFFIX = {
     "background": (),  # 比例句（"16:9 presentation background"）由组装第 4 步按实际 ratio 生成
@@ -748,7 +757,11 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
 
     # 角色纪律：背景优先判断 空间 → 光 → 材质 → 负空间；插图优先判断 对象 → 轮廓 →
     # 尺度 → 位置 → 与文字的关系。同一张图只走其中一条链。
-    segments.extend(ROLE_DISCIPLINE.get(asset_type, ()))
+    has_subject = bool(str(card.get("subject") or "").strip())
+    if asset_type == "background" and has_subject:
+        segments.extend(BACKGROUND_SUBJECT_DISCIPLINE)
+    else:
+        segments.extend(ROLE_DISCIPLINE.get(asset_type, ()))
     if asset_type == "background":
         segments.extend(BACKGROUND_DISCIPLINE)
     if medium:

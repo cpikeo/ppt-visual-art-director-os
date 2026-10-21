@@ -5413,12 +5413,136 @@ def main():
                          ("unit_visibility", test_unit_visibility),
                          ("art_direction_linkage", test_art_direction_linkage),
                          ("ghost_chart_color", test_ghost_chart_color_single_source),
-                         ("case004_regressions", test_case004_regressions)):
+                         ("case004_regressions", test_case004_regressions),
+                         ("audit_fixes", test_audit_fixes)):
             (root / name).mkdir(parents=True, exist_ok=True)
             fn(root / name)
         test_docs()
     print(f"\n{PASS}/{PASS + FAIL} passed")
     return 0 if FAIL == 0 else 1
+
+
+def test_audit_fixes(tmp: Path):
+    """第四轮审计：五处「判断/证据/产物」分叉的回归钉。
+
+    每条钉都对应一个已实测的失效模式，不是为了覆盖率的形状测试：
+      1. 文字墨迹按锚点落位——底部对齐的大字号数字曾压穿下一行说明而 guard 放行；
+      2. 预览墨迹与 guard 同源——预览曾把同一段字画低 ~48px，两套证据互相打脸；
+      3. 眉标不输出半截词/连词——曾产出「成本结构里真」「如果」；
+      4. 作者标题占主张位——数据列举行曾顶掉作者写下的结论；
+      5. 单序列数值默认可读——横向条把柱图旋转 90° 就丢数字；
+      6. 声明主体后提示词不自相矛盾——「not a picture of a thing」曾与主体声明打架。
+    """
+    import intelligence as intel
+    from primitives import ink_span, text_ink_height, default_show_values
+    from verify import check_spec
+
+    # ── 1 · 墨迹跨度：行距只在行间生效，末行按字形高度计 ──────────────
+    one = text_ink_height(1, 150, 1.0)
+    check("ink: 单行墨迹不因行距 1.0 缩到一字高（150px 字 ≥ 180px 墨迹）",
+          one >= 150 * 1.2 - 0.01, f"{one}")
+    two = text_ink_height(2, 50, 1.0)
+    check("ink: 两行墨迹 = 行距 + 末行字形高",
+          abs(two - (50 * 1.0 + 50 * 1.2)) < 0.01, f"{two}")
+    top_span = ink_span(100, 200, 0, 180, "top")
+    bottom_span = ink_span(100, 200, 0, 180, "bottom")
+    check("ink: 底对齐把墨迹压到框底（top 锚点则从框顶起算）",
+          abs(bottom_span[1] - 300) < 0.01 and abs(top_span[0] - 100) < 0.01,
+          f"{top_span} {bottom_span}")
+
+    # guard 必须按同一语义判碰撞：底对齐大字号数字压到下方说明行 → 必须拦。
+    def _spec_with_text(els):
+        return {"canvas": {"width": 1280, "height": 720},
+                "theme": {"colors": {"background": "#FFFFFF", "ink": "#111111",
+                                     "muted": "#777777", "primary": "#222222",
+                                     "secondary": "#333333", "accent": "#AA0000"}},
+                "slides": [{"id": "s1", "elements": els}]}
+
+    big = {"id": "big", "type": "text", "role": "kpi_main", "x": 100, "y": 300,
+           "width": 600, "height": 200, "size": 150, "line_height": 1.0,
+           "anchor": "bottom", "max_lines": 1, "text": "2.4 亿", "color": "ink"}
+    caption = {"id": "cap", "type": "text", "role": "evidence", "x": 100, "y": 486,
+               "width": 600, "height": 30, "size": 16, "max_lines": 1,
+               "text": "分三年投入 · 每期验收后再放款", "color": "muted"}
+    hit = check_spec(_spec_with_text([dict(big), dict(caption)]))
+    check("guard: 底对齐大字号压住下方说明行 → OVERLAP（旧模型按框高缩系数放行）",
+          any(c["rule"] == "overlap" for c in hit["checks"]),
+          str([c["rule"] for c in hit["checks"]])[:200])
+    # 同样的几何改成顶对齐：墨迹在框内，不构成本例的重叠。
+    safe = dict(big, anchor="top")
+    ok = check_spec(_spec_with_text([safe, dict(caption)]))
+    check("guard: 顶对齐同几何不误报（碰撞来自锚点，不是框重叠）",
+          not [c for c in ok["checks"] if c["rule"] == "overlap"],
+          str([c for c in ok["checks"] if c["rule"] == "overlap"])[:200])
+
+    # ── 2 · 预览与 guard 同一墨迹口径 ────────────────────────────────
+    import ghost
+    from PIL import Image
+    ctx = ghost.RenderContext({"theme": {"colors": {}},
+                              "canvas": {"width": 1280, "height": 720}})
+    for anchor in ("middle", "bottom"):
+        el = dict(big, anchor=anchor, color="#F1EFEA")
+        img = Image.new("RGB", (1280, 720), (23, 19, 16))
+        ghost._draw_text(img, el, ctx, 1.0)
+        rows = [y for y in range(img.height)
+                if any(img.getpixel((x, y))[0] > 140 for x in range(96, 700, 2))]
+        span = ink_span(300, 200, 0, text_ink_height(1, 150, 1.0), anchor)
+        check(f"ghost: {anchor} 锚点绘制起点与 guard 墨迹跨度一致（Δ≤3px）",
+              bool(rows) and abs(rows[0] - span[0]) <= 3,
+              f"ghost={rows[:1]} guard={span[0]:.0f}")
+
+    # ── 3 · 眉标：不输出半截词、悬空修饰语、条件连词 ─────────────────
+    for text, want, why in (
+            ("成本结构里真正失控的是二次搬运", "成本结构", "「真正」被「正」劈开不再产出「成本结构里真」"),
+            ("单仓人效三年提升 38%，但增幅正在收窄", "", "数量残片「…三」「…升」不留在眉标"),
+            ("只要门店密度达到每 10 万人 1.2 家，配送成本就能压到 8 元以内", "门店密度",
+             "充分条件的主题在从句里，剥连词继续派生"),
+            ("如果只改一半，回报会被摊薄到 5.8 年", "", "条件从句的连词不是主题"),
+            ("请批准 2027 年 2.4 亿改造预算", "", "请求句没有可定位的名词短语"),
+            ("改造一期只动了三个可复制的仓", "改造一期", "干净主语照常派生")):
+        got = intel.section_label({}, {"text": text}, "prove")
+        check(f"eyebrow: {why}", got == want, repr(got))
+
+    # ── 4 · 作者标题占主张位（正文数据列举不夺位）────────────────────
+    j = intel.extract_claim({"title": "改造一期只动了三个可复制的仓",
+                             "content": "华东 11 仓中先改 3 仓，改造后单均成本下降 0.42 元，其余 8 仓未改造"})
+    check("claim: 作者标题（动词+了）不被正文数据列举顶掉",
+          j.get("text") == "改造一期只动了三个可复制的仓", str(j.get("text")))
+    j2 = intel.extract_claim({"title": "门店的晨会节奏",
+                              "content": "15 分钟站立会。（来源：观察）"})
+    check("claim: 纯名词化话题仍让位给正文结论（不反向放宽）",
+          j2.get("text") != "门店的晨会节奏", str(j2.get("text")))
+
+    # ── 5 · 数值标签缺省口径唯一 ─────────────────────────────────────
+    check("chart: 单序列横向条默认显示数值（与 column 不再分叉）",
+          default_show_values("horizontal_bar",
+                              {"categories": ["a", "b"], "series": [{"values": [1, 2]}]}))
+    check("chart: 单序列折线默认显示数值",
+          default_show_values("line", {"categories": ["1"], "series": [{"values": [3]}]}))
+    check("chart: 多序列默认关闭（标签互相遮挡）",
+          not default_show_values("column", {"categories": ["a"],
+                                             "series": [{"values": [1]}, {"values": [2]}]}))
+    check("chart: 声明 value_size 即视为要求看见数值",
+          default_show_values("column", {"value_size": 14, "categories": ["a"],
+                                         "series": [{"values": [1]}, {"values": [2]}]}))
+    check("chart: 类别过多默认关闭",
+          not default_show_values("bar", {"data": [{"label": str(i), "value": i}
+                                                   for i in range(9)]}))
+
+    # ── 6 · 声明主体后提示词不自相矛盾 ───────────────────────────────
+    import assets
+    card = assets.resolve_asset_card({"asset_id": "x", "asset_type": "background",
+                                      "subject": "an automated sorting line at right",
+                                      "safe_area": {"x": .06, "y": .08, "width": .34, "height": .78}})
+    prompt = assets.build_asset_prompt(card, {"safe_area": card.get("safe_area")})["prompt"]
+    check("asset: 声明主体的背景提示词不再要求「没有主角/不是一张东西的照片」",
+          "not a picture of a thing" not in prompt
+          and "no single dominant protagonist" not in prompt, prompt[:160])
+    bare = assets.resolve_asset_card({"asset_id": "y", "asset_type": "background"})
+    bare_prompt = assets.build_asset_prompt(bare, {})["prompt"]
+    check("asset: 未声明主体时仍保留空场纪律（不丢判据）",
+          "not a picture of a thing" in bare_prompt or "no dominant" in bare_prompt,
+          bare_prompt[:160])
 
 
 if __name__ == "__main__":

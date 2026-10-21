@@ -15,7 +15,7 @@ from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from primitives import (
     RenderContext, emu, pt, px_to_pt, DEFAULT_WIDTH, DEFAULT_HEIGHT, CHART_KINDS,
     CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS, CHART_SPEC,
-    ELEMENT_PAYLOAD_KINDS, NUMERIC_CHART_KINDS, chart_rows,
+    ELEMENT_PAYLOAD_KINDS, NUMERIC_CHART_KINDS, chart_rows, default_show_values,
     highlight_index, resolve_chart_highlight,
     split_runs, is_cjk,
     insert_script_gaps,
@@ -790,7 +790,7 @@ def _native_chart_text(chart, element: dict, ctx: RenderContext, kind: str,
         style(chart.value_axis.tick_labels.font, float(element.get("label_size", 32 / 3)), muted)
         chart.category_axis.format.line.fill.background()
         style(chart.category_axis.tick_labels.font, float(element.get("label_size", 40 / 3)), ink)
-    show = element.get("show_values", kind in ("comparison_bar", "bar", "column", "donut"))
+    show = element.get("show_values", default_show_values(kind, element))
     if show and count >= CHART_LABEL_MIN_COUNT and height < CHART_LABEL_MIN_H:
         if str(element.get("label_collision_policy", "fail")) == "hide_redundant":
             show = False  # 作者已明确授权隐藏冗余值；不是编译失败

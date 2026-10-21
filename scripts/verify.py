@@ -202,11 +202,25 @@ def _is_rule_shape(e: dict) -> bool:
 
 
 def _box(e: dict, text_ink_ratio: float = 1.0, text_ink_v: float = 1.0):
-    """元素的有效墨迹盒：文本框不等于墨迹（按系数收窄）。bool 同 `_coord` 拒绝。"""
+    """元素的有效墨迹盒：文本框不等于墨迹（按系数收窄）。bool 同 `_coord` 拒绝。
+
+    文本的**纵向**跨度按字号/行数/行距/垂直锚点算（`primitives.ink_span`），
+    不再用「框高 × 缩系数」：底部对齐的大字号数字，墨迹其实贴在框底并向上
+    展开，旧模型让它停在框内，实际会压穿下方一行说明。锚点与行距是作者
+    写下的排版决定，guard 必须按同一语义判碰撞。
+    """
     x, y, w, h = _coord(e.get("x", 0)), _coord(e.get("y", 0)), \
         _coord(e.get("width", 0)), _coord(e.get("height", 0))
     if str(e.get("type")) == "text":
         w *= text_ink_ratio
+        cap = _text_box_capacity(e)
+        if cap and not cap.get("invalid"):
+            from primitives import ink_span, text_ink_height
+            ink_h = text_ink_height(cap["lines"], cap["size"], cap["line_height"],
+                                    cap["paragraph_gap"])
+            pad = float(e.get("padding", 0) or 0)
+            top, bottom = ink_span(y, h, pad, ink_h, e.get("anchor", "top"))
+            return x, top, w, max(0.0, bottom - top)
         h *= text_ink_v
     return x, y, w, h
 

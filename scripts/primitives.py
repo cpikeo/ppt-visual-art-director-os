@@ -483,6 +483,27 @@ CHART_LIMITS = {k: v["limit"] for k, v in CHART_SPEC.items() if v["limit"] is no
 PREVIEW_ABSTRACT_KINDS = frozenset(k for k, v in CHART_SPEC.items()
                                    if v["preview"] == "abstract")
 
+# 数值标签的缺省口径（compiler 与 ghost 共用）。此前逐 kind 写死：
+# `bar/column` 默认显示、`horizontal_bar/line` 默认隐藏——同一组数据把图转 90°
+# 就丢了数字，作者声明 `value_size` 也不生效。默认规则只有一条：
+# **单序列、类别数不多于 6 的直角坐标数值图，缺省显示数值**；多序列默认关闭
+# 以免标签互相遮挡。作者写 `show_values` 一律压过缺省。
+VALUE_LABEL_KINDS = frozenset({"bar", "column", "horizontal_bar", "comparison_bar",
+                               "line", "trend", "single_trend_line", "area"})
+VALUE_LABEL_AUTO_MAX = 6
+
+
+def default_show_values(kind: str, element: dict) -> bool:
+    """数值标签缺省开关（唯一的缺省定义，两个渲染器都读这里）。"""
+    if "value_size" in element:
+        return True                    # 声明了数值字号 = 作者要求看见数值
+    if kind not in VALUE_LABEL_KINDS:
+        return kind == "donut"
+    series = element.get("series") or []
+    data = element.get("data") or []
+    points = series[0].get("values") if len(series) == 1 and series else data
+    return len(series) <= 1 and len(points or []) <= VALUE_LABEL_AUTO_MAX
+
 
 def chart_rows(element: dict) -> list[dict]:
     """图表 data 行的唯一规范化（compiler 与 ghost 共用，口径不再分叉）。
@@ -1316,6 +1337,45 @@ def text_width(text: str, size: float, spacing: float = 0) -> float:
                   else 1.0 if ord(c) > 127 else
                   0.95 if c in "MW@#%&" else 0.3 if c in "ilI.,:;!'| " else 0.6)
     return units * size + max(0, len(text) - 1) * max(0, spacing) / 0.75
+
+
+# 字形墨迹 ≥ 行距：line_height 是**行与行的距离**，不是字形高度。字体自然行盒
+# （升部 + 降部）通常约为 1.16–1.22 em；line_height < 1.2 时真实墨迹比
+# 「字号 × 行高」更高。guard 与预览曾各按一套算，同一句话前者认为 140px、
+# 后者画出 210px——两套证据互相打脸。这里给出一份共享口径：
+# 无字体度量时取 1.2 作为保守下限（1 行 150px 字 → 180px 墨迹，而不是 150px）。
+NATURAL_LINE_RATIO = 1.2
+
+
+def text_ink_height(lines: int, size: float, line_height: float,
+                    paragraph_gap: float = 0.0) -> float:
+    """一段文本的墨迹纵向跨度（px）：行距堆叠 + 末行字形高度。
+
+    单行时行距不产生跨度（行距只在行与行之间生效），因此不能写成
+    `lines * size * line_height` —— 那会把「行距 1.0 的大字」算矮一整个字形。
+    """
+    if lines <= 0 or size <= 0:
+        return 0.0
+    glyph = max(size * max(line_height, 0.0), size * NATURAL_LINE_RATIO)
+    return (lines - 1) * size * line_height + glyph + max(0.0, paragraph_gap)
+
+
+def ink_span(y: float, h: float, pad: float, ink_h: float,
+             anchor: str | None = "top") -> tuple[float, float]:
+    """按垂直锚点把墨迹跨度落进文本框，返回 (顶, 底)。
+
+    锚点是 PowerPoint 的真实语义：bottom 把**末行墨迹的底边**贴到框底，
+    middle 居中。旧模型一律按左上角缩系数取墨迹，于是「底部对齐的大字号
+    数字」在 guard 眼里停在框内，实际却压穿了下方的说明行。
+    """
+    a = str(anchor or "top").lower()
+    if a in ("middle", "center"):
+        top = y + (h - ink_h) / 2.0
+    elif a in ("bottom", "end"):
+        top = y + h - pad - ink_h
+    else:
+        top = y + pad
+    return top, top + ink_h
 
 
 def estimate_lines(text: str, width: float, size: float, wrap: bool = True,

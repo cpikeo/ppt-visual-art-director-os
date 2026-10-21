@@ -1348,6 +1348,11 @@ _DISPOSAL_CLAIM = re.compile(r"^\s*(?:把|将)")
 _ATTRIBUTION_CLAIM = re.compile(r".{1,12}(?:来自|源于)")
 
 
+# 汉语陈述句最稳的句法标记：动词/形容词 + 体标记「了」。名词短语不会带它
+# （「门店的晨会节奏」），所以它是「标题是不是一句话」的判据，不是题材词表。
+_PREDICATE_LE = re.compile(r"[一-鿿]了")
+
+
 def _title_assertive(title: str) -> bool:
     """标题是否携带主张（而不是一个名词标签）。
 
@@ -1357,7 +1362,11 @@ def _title_assertive(title: str) -> bool:
     """
     return (bool(evidence_numerals(title)) or _hit(title, _TITLE_ASSERTION + _CHANGE_WORDS)
             or bool(_CONTRAST_ASSERTION.search(title)) or bool(_DISPOSAL_CLAIM.search(title))
-            or bool(_ATTRIBUTION_CLAIM.search(title)))
+            or bool(_ATTRIBUTION_CLAIM.search(title))
+            # 动词 + 「了」是陈述句的句法标记（「只动了三个仓」「完成了切换」）。
+            # 少了这一档，「改造一期只动了三个可复制的仓」会被 `的` 判成名词化
+            # 话题（「X 的 Y」），作者写下的主张被正文证据行顶掉。
+            or bool(_PREDICATE_LE.search(title)))
 
 
 def _is_data_listing(sent: str) -> bool:
@@ -1512,7 +1521,11 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
             else:
                 score += 1.6 if content else 0.0
                 bits.append("数字「" + "/".join(n["raw"] for n in snums[:3]) + "」")
-        if not listing and _hit(sent, _CHANGE_WORDS):
+        if not listing and _hit(sent, _CHANGE_WORDS) and content_may_lift:
+            # 「变化」与「短句」都是**证据行的加分项**，不是主张形状：标题占着
+            # 主张位、正文只是「11 仓改 3 仓，成本降 0.42 元」时，这两项会把
+            # 证据行抬到作者写下的标题之上（实测：标题 1.2 输给正文 2.0，
+            # s04 的结论变成一串数据）。只有能竞争主张位的句子才吃这两项。
             score += 0.8
             bits.append(f"变化「{_fired(sent, _CHANGE_WORDS)}」")
         if len(sent) <= 42:
@@ -2552,6 +2565,15 @@ def _intent_value(value) -> bool:
 _LABEL_HEAD_PREFIX = ("我们", "本页", "这一页", "首先", "其次", "同时", "另外",
                       "因此", "所以", "但是", "请", "建议", "也就是说", "换句话说",
                       "同期", "本期", "目前", "当前", "今年", "未来")
+# 条件句分两类，证据不同、处理也不同：
+# - **充分条件**（只要/一旦/既然）：条件从句的主语就是本页主题，
+#   「只要门店密度达到每 10 万人 1.2 家…」的眉标是「门店密度」——剥掉连词继续派生。
+# - **假设/让步**（如果/若/假如/倘若/即使/尽管/虽然/因为/由于/除非/无论）：
+#   从句主语是假设对象，不是本页主题；「如果只改一半，回报会被摊薄到 5.8 年」
+#   曾派生眉标「如果」（一个连词）或「改一半」（一个谓语）。这类直接缺省。
+_LABEL_CONDITIONAL_PREFIX = ("只要", "一旦", "既然")
+_LABEL_HYPOTHETICAL_OPENERS = ("如果", "若", "假如", "倘若", "即使", "尽管", "虽然",
+                               "因为", "由于", "除非", "无论", "与其", "宁可")
 # 眉标在**谓语/虚词之前**收口：主语短语才是「这一段在论证里的位置」。
 # 「用」「有」不在边界表里：它们嵌在名词词内的频率高于作独立虚词（利用率/现有），
 # 按它们切开会把「利用率不足」劈成「利｜率不足」、「保留现有干线」劈成「保留现｜干线」，
@@ -2594,7 +2616,10 @@ _LABEL_TAIL_STOP = set("做在为有成给使让占到把被与和或并且而�
                        # 否定/未完副词收尾 = 被截断的从句，不是名词短语：
                        # 「答案不在开店速度」曾派生出眉标「答案不」，
                        # 「同店销售额仍在增长」曾派生出「同店销售额仍」。
-                       "不没无未仍还也都又再更才就只仅正已将且")
+                       "不没无未仍还也都又再更才就只仅正已将且"
+                       # 「真」是「真正」被单字边界「正」劈开后留下的半个词：
+                       # 「成本结构里真正失控的」→「成本结构里真」。
+                       "真")
 
 
 # 计量单位本身不是主题短语（只收量词/单位，不收题材名词）。
@@ -2614,7 +2639,9 @@ def section_label(item: dict, claim: dict, role: str) -> str:
     if declared:
         return declared[:16]
     text = str((claim or {}).get("text") or (item or {}).get("title") or "").strip()
-    for prefix in _LABEL_HEAD_PREFIX:
+    if text.startswith(_LABEL_HYPOTHETICAL_OPENERS):
+        return ""
+    for prefix in _LABEL_CONDITIONAL_PREFIX + _LABEL_HEAD_PREFIX:
         if text.startswith(prefix):
             text = text[len(prefix):]
             break
@@ -2652,6 +2679,14 @@ def section_label(item: dict, claim: dict, role: str) -> str:
             if not core or core not in q:
                 continue
             p = core.strip(_LABEL_TAIL)
+            # 单字边界劈开两字词时，段末会留下半个词（「成本结构里｜真正失控」
+            # 被「正」劈成「…里真」）。判据不是猜词表，而是**结构**：末字之前
+            # 紧跟处所/助词（里中上下内外前后）时，段落在名词短语的中间，末字
+            # 只可能是下一个词的首字——削掉它才是那个名词短语。
+            # 不做通用削字：「科室用时」的「时」是量词收尾，不是碎片，
+            # 通用后削会得到「科室用」这种更长更错的结果。
+            if len(p) >= 3 and p[-1] in _LABEL_TAIL_STOP and p[-2] in _LABEL_TAIL:
+                p = p[:-1].rstrip(_LABEL_TAIL)
             # 上限 7：完整的主语短语（「去年订单量增长」7 字）好过整页缺省；
             # 词内碎片几乎都短于 7 字，放宽上限不增加碎片面。
             if not (2 <= len(p) <= 7):

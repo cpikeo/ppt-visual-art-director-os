@@ -23,7 +23,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
                         highlight_index, resolve_chart_highlight, color_to_hex,
                         CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS,
-                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows)
+                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows,
+                        default_show_values)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -471,10 +472,21 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     line_height = float(e.get("line_height", 1.35) or 1.35) * size
     total_h = sum(line_height + gap for gap in line_gaps)
     anchor = str(e.get("anchor", "top")).lower()
-    if anchor in {"middle", "center"}:
-        cy = y + (h - total_h) / 2
-    elif anchor in {"bottom", "end"}:
-        cy = y + h - total_h
+    # 行盒 ≠ 字形墨迹：PIL 以「升部顶端」为绘制原点，CJK 字面的升部比字形
+    # 高出一截，直接按 total_h 对齐会让居底/居中文本整体下漂（150px 字实测
+    # 漂 48px，压穿下一行说明）。按 guard 的同一份墨迹口径落位：
+    # primitives.text_ink_height 给出跨度，ink_span 给出锚点位置，再用本行
+    # 真实 ink bbox 把绘制原点对到该跨度顶端——预览与 guard 不再各说一套。
+    if anchor in {"middle", "center", "bottom", "end"} and lines:
+        from primitives import ink_span, text_ink_height
+        probe = ImageDraw.Draw(img)
+        gap_total = sum(line_gaps)
+        ink_h = text_ink_height(len(lines), size, line_height / size if size else 1.0,
+                                gap_total)
+        top, _ = ink_span(y, h, pad, ink_h, anchor)
+        bbox_top = probe.textbbox((0, 0), lines[0], font=font)[1]
+        origin = top - bbox_top
+        cy = origin
     else:
         cy = y + pad
     align = str(e.get("align", "left")).lower()
@@ -943,7 +955,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     category_text = " ".join(str(r.get("label", "")) for r in rows)
     category_font = native_font(e.get("label_size", 40 / 3), category_text)
     value_font = native_font(e.get("value_size", 12), "0123456789")
-    native_values = bool(e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut")))
+    native_values = bool(e.get("show_values", default_show_values(kind, e)))
     if (len(rows) >= CHART_LABEL_MIN_COUNT and float(e.get("height", 0)) < CHART_LABEL_MIN_H
             and e.get("label_collision_policy") == "hide_redundant"):
         native_values = False

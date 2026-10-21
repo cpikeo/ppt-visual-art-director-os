@@ -39,7 +39,7 @@ spec = {
 
 **编辑级文字纪律**：`size / width / height / padding / space_before / space_after` 按画布 px 填，`line_height` 是相对倍数，`char_spacing` 以 pt 填。`theme.fonts.cn`（别名 `body`）决定中文字体，`latin`（别名 `display`）决定拉丁字体；`font` token 与 `family` 元素字段只覆盖拉丁字体。PIL 是结构取证，字形与换行须在 PowerPoint 上另行校验。
 
-`chart_kind` 的合法值、编译路由、载荷形态、数值属性、截断上限与预览口径只在 `primitives.CHART_SPEC` 定义一次，本文不抄录。`kpi / executive_kpi / big_number` 读元素级 `value`，数值 `0` 是有效内容；`pie / donut / donut_composition` 的数值须非负且总和 > 0，`pie` 只接受一个序列。数值图表齐 `source / unit / period / basis`（release 硬门），同 `metric` 跨页必须同单位。`label_size` 控原生轴标签、`value_size` 控数值标签（画布 px，写入 PPTX 乘 0.75 转 pt）；多序列 `name` 必须非空且唯一。
+`chart_kind` 的合法值、编译路由、载荷形态、数值属性、截断上限与预览口径只在 `primitives.CHART_SPEC` 定义一次，本文不抄录。`kpi / executive_kpi / big_number` 读元素级 `value`，数值 `0` 是有效内容；`pie / donut / donut_composition` 的数值须非负且总和 > 0，`pie` 只接受一个序列。数值图表齐 `source / unit / period / basis`（release 硬门），同 `metric` 跨页必须同单位。`label_size` 控原生轴标签、`value_size` 控数值标签（画布 px，写入 PPTX 乘 0.75 转 pt）；多序列 `name` 必须非空且唯一。**数值标签缺省**（`primitives.default_show_values`，编译与预览同源）：单序列且类别 ≤6 的直角坐标数值图（`bar/column/horizontal_bar/comparison_bar/line/trend/single_trend_line/area`）缺省显示；多序列或类别 >6 缺省关闭；环形图缺省显示；**声明 `value_size` 即视为要求看见数值**。写了 show_values 一律压过缺省（写 false 也是声明）。
 
 **载荷两式**：数值图表用 `categories + series[].values`；复合排版图（`steps / process_flow / timeline / big_number_row / matrix / architecture`）用 `data: [{label, value, desc?}]`（matrix 用 `points`、architecture 用 `layers`，`matrix` 每点为 `{x, y, label}`，x/y 须为有限数字）。两式不得同时声明。**目标线**只由 `ranked_bar` 渲染：`target` 为有限数字 + 可选 `target_label`，超出数据范围按端点夹紧；其他 kind 写这两个字段得到 `chart_field_unconsumed` 告警。**`highlight`**（`primitives.resolve_chart_highlight`）：写序列名 = 整条序列，写类别名 = 该数据点，写整数时多序列按序列索引、单序列按类别索引；不命中则不猜（guard 告警）。
 
@@ -77,3 +77,12 @@ spec = {
 ## 文本测量边界
 
 Guard 的字号、折行、字距与段距是**粗估**，不是目标字体真实排版；中文禁则回退只在 ghost 折行模型里生效，编译器写的是原生文本，实际断行由目标 PowerPoint 与字体决定。ghost 无违例也不证明 PPTX 正确（SKILL §6）。
+
+**墨迹跨度按锚点算，不按框高算**（guard 与 ghost 共用 `primitives.text_ink_height / ink_span`）：
+
+- 纵向跨度 = `(行数 − 1) × 字号 × line_height` ＋ **末行字形高**（取 `字号 × max(line_height, 1.2)`）。
+  行距是**行与行的距离**，不产生单行高度；`line_height: 1.0` 的大字不会被算矮。
+- 锚点 bottom 把末行墨迹的底边贴到框底、向上展开；middle 居中；top 从框顶 + padding 起算。
+  **框大不等于墨迹大**：`height: 200` 装 150px 单行字，底对齐时墨迹向上占 180px，下方留白全部落在框外。
+- 因此「压住下一行」的判据是**墨迹相交**，不是框相交；把 `anchor` 当作纯排版细节会让碰撞门失效。
+- 1.2 是无字体度量时的保守下限：真实升部/降部随字体与落位环境变化，投影前仍须在目标 PowerPoint 复核。
