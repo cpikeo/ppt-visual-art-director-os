@@ -55,6 +55,9 @@ jobs:
         env:
           PYTHONPATH: scripts
 
+      - name: CASE_004 image-layout contract regression
+        run: python -m unittest discover -s tests -p "test_case004_contract.py" -v
+
       - name: Judgment regression (all 57 cases; failure exits nonzero)
         run: python scripts/bench.py
 

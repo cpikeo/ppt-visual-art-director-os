@@ -2107,7 +2107,7 @@ def test_cli(tmp: Path):
           cache_first.returncode == 0 and cache_second.returncode == 0
           and cache_file.is_file()
           and json.loads(cache_file.read_text(encoding="utf-8")).get("schema")
-          == "vao-asset-prompt-cache-v3" and cache_meta.get("hits") == 1,
+          == "vao-asset-prompt-cache-v4" and cache_meta.get("hits") == 1,
           f"rc={cache_second.returncode} hits={cache_meta.get('hits')} "
           f"{cache_second.stderr[-160:]}")
 
@@ -4159,9 +4159,9 @@ def test_material_direction(tmp: Path):
                                "negative": "no flat graphics", "meta": {}}}}), encoding="utf-8")
     rebuilt = a.build_manifest(brief, bundle, cache_path=cache)
     warm = a.build_manifest(brief, bundle, cache_path=cache)
-    check("material: 旧 v2 提示词缓存重建，v3 暖缓存保留确定性复用",
+    check("material: 旧 v2 提示词缓存重建，v4 暖缓存保留确定性复用",
           rebuilt["prompt_cache"]["hits"] == 0 and warm["prompt_cache"]["hits"] == 1
-          and json.loads(cache.read_text(encoding="utf-8"))["schema"] == "vao-asset-prompt-cache-v3"
+          and json.loads(cache.read_text(encoding="utf-8"))["schema"] == "vao-asset-prompt-cache-v4"
           and rebuilt["assets"][0]["prompt"] == warm["assets"][0]["prompt"]
           and "outdated forced" not in rebuilt["assets"][0]["prompt"])
 
@@ -4557,7 +4557,7 @@ def test_integrity_followup(tmp: Path):
     import intelligence
     bundle = intelligence.think(brief)
     cache = tmp / "prompt-cache.json"
-    json_write(cache, {"schema": "vao-asset-prompt-cache-v3", "entries": ["bad"]})
+    json_write(cache, {"schema": "vao-asset-prompt-cache-v4", "entries": ["bad"]})
     try:
         manifest = assets.build_manifest(brief, bundle, cache_path=cache)
         ok = len(assets.asset_entries(manifest)) == 1

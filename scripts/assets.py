@@ -131,8 +131,8 @@ def photo_gate_active(card: dict) -> bool:
 
 
 NEGATIVE_SPACE_PHRASES = {
-    "left": "large clean negative space on the left side",
-    "right": "large clean negative space on the right side",
+    "left": "a quiet low-detail area at left, formed by natural depth or light falloff; continuous scene, not a flat colour panel",
+    "right": "a quiet low-detail area at right, formed by natural depth or light falloff; continuous scene, not a flat colour panel",
     "top": "quiet empty area in the upper part",
     "bottom": "quiet empty area in the lower part",
     "center": "quiet calm center area, activity pushed to the edges",
@@ -247,6 +247,73 @@ def normalize_safe_area(value=None, anchor: str = "left") -> dict:
         return dict(SAFE_AREA_PRESETS.get(anchor, SAFE_AREA_PRESETS["left"]))
     return {"x": round(x, 4), "y": round(y, 4),
             "width": round(w, 4), "height": round(h, 4)}
+
+
+def resolve_space_contract(page: dict, fallback: str = "left") -> tuple[str, dict]:
+    """Explicit anchor wins; otherwise infer text side from the declared rectangle.
+
+    An explicit empty rectangle means no text overlay, not a missing rectangle.
+    This is a prompt/QC contract, not a license to generate a flat colour panel.
+    """
+    explicit = page.get("negative_space_anchor")
+    if isinstance(page.get("safe_area"), dict) and not page["safe_area"]:
+        return "none", {}
+    anchor = str(explicit or fallback).lower()
+    area = normalize_safe_area(page.get("safe_area"), anchor)
+    if not area:
+        return "none", {}
+    if not explicit and isinstance(page.get("safe_area"), dict):
+        cx = area["x"] + area["width"] / 2
+        cy = area["y"] + area["height"] / 2
+        dx, dy = cx - .5, cy - .5
+        if max(abs(dx), abs(dy)) < .10:
+            anchor = "center"
+        elif abs(dx) >= abs(dy):
+            anchor = "left" if dx < 0 else "right"
+        else:
+            anchor = "top" if dy < 0 else "bottom"
+    return anchor, area
+
+
+def asset_layout_issues(spec: dict, entries: dict) -> list[str]:
+    """Check a necessary, not sufficient, overlay condition in final slide space.
+
+    A declared image text-safe region cannot be used when ALL native text is
+    outside the picture. No pixel-level typography/crop-safe certification is made.
+    Touching edges and empty text do not count as overlay. Invalid geometry is
+    left to the normal geometry guard, not silently repaired here.
+    """
+    issues = []
+    for slide in spec.get("slides") or []:
+        elements = slide.get("elements") or []
+        texts = [e for e in elements if e.get("type") == "text"
+                 and str(e.get("text") or "").strip()
+                 and e.get("role") not in {"source", "method", "metadata",
+                                           "eyebrow", "page_number"}]
+        if not texts:
+            continue  # no native page text: visual-only placement, human review
+        for image in elements:
+            if image.get("type") != "image":
+                continue
+            entry = entries.get(image.get("asset_id")) or {}
+            if not entry.get("safe_area"):
+                continue
+            try:
+                x, y = float(image["x"]), float(image["y"])
+                w, h = float(image["width"]), float(image["height"])
+                def intersects(t):
+                    tx, ty = float(t["x"]), float(t["y"])
+                    tw, th = float(t["width"]), float(t["height"])
+                    return min(x+w, tx+tw) > max(x, tx) and min(y+h, ty+th) > max(y, ty)
+                if w > 0 and h > 0 and not any(intersects(t) for t in texts):
+                    issues.append(f"{slide.get('id')}/{image.get('asset_id')}: "
+                                  "图片声明了文字安全区，但最终正文/标题全部在图外；"
+                                  "移除无用的图内留白，或重新确认压字构图。"
+                                  "须更新 brief 的 safe_area: {} 并重新 plan；"
+                                  "不得仅改清单绕过检查，既有图仍须人工复核或重裁/重出")
+            except (KeyError, TypeError, ValueError):
+                continue
+    return issues
 
 
 def safe_area_phrase(area: dict, text_color: str | None = None) -> str:
@@ -750,11 +817,11 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     segments.extend(_as_list(light_decision.get("photo_lines")))
 
     # --- 3. OS 强制三段 --------------------------------------------------
-    anchor = str(negative_space or page.get("negative_space_anchor") or "left").lower()
+    anchor, area = resolve_space_contract(
+        {**page, **({"negative_space_anchor": negative_space} if negative_space else {})})
     light = str(light_direction or page.get("light_direction") or "left").lower()
     level = str(energy or page.get("energy") or "low").lower()
     function = str(asset_function or page.get("asset_function") or function_hint).lower()
-    area = normalize_safe_area(page.get("safe_area"), anchor)
     text_color = page.get("text_color") or page.get("safe_area_text_color")
     medium = str(card.get("medium") or card.get("render_mode") or "").strip().lower()
 
@@ -778,7 +845,7 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     # 「主体与文字的关系」——把插图的整块画面压成低密度是错的指令。
     space_phrases = (SUBJECT_TEXT_RELATION_PHRASES if asset_type == "illustration"
                      else NEGATIVE_SPACE_PHRASES)
-    if anchor in space_phrases:
+    if area and anchor in space_phrases:
         segments.append(space_phrases[anchor])
     # 句式光兜底也是决策期结论（phrase_fallback 来源）：光没有被介质纪律、
     # 作者声明或卡片已有光语接管时，句式光 + 能量句式一起托底（见 resolve_asset_card）。
@@ -1622,6 +1689,7 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
         manifest = json_read_cached(path)
         issues.extend(verify_sources(manifest))
         entries = {e["asset_id"]: e for e in asset_entries(manifest)}
+        issues.extend(asset_layout_issues(spec, entries))
         qpath = _Path(qc_path).expanduser().resolve() if qc_path else path.with_name(path.stem + ".qc.json")
         qc = json_read_cached(qpath)
         manifest_sha = digest(manifest)
@@ -1748,9 +1816,8 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
     derived = deck.get("world") or {}
     asset_role, asset_role_source = resolve_asset_role(raw.get("asset_role"))
     function = str(raw.get("asset_function") or "frame")
-    anchor = str(raw.get("negative_space_anchor")
-                 or _NEGATIVE_SPACE_ANCHOR.get(function, "left")).lower()
-    safe_area = normalize_safe_area(raw.get("safe_area"), anchor)
+    anchor, safe_area = resolve_space_contract(
+        raw, _NEGATIVE_SPACE_ANCHOR.get(function, "left"))
     title = str(raw.get("title") or page.get("ref") or "visual context")
     subject = raw.get("asset_subject")
     subject_fallback = not subject
@@ -1855,7 +1922,7 @@ def prompt_cache_key(fingerprint: str, card: dict, page: dict | None = None) -> 
                                         "light_direction", "energy", "asset_function",
                                         "ratio")}
     payload["resolved"] = card.get("resolved")
-    return f"{fingerprint}|{identity(payload, schema='vao-asset-prompt-input-v1', short=10)}"
+    return f"{fingerprint}|{identity(payload, schema='vao-asset-prompt-input-v2', short=10)}"
 
 
 def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
@@ -1869,7 +1936,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     if cache_file:
         try:
             loaded = json.loads(cache_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v3":
+            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v4":
                 entries = loaded.get("entries")
                 prompt_cache = entries if isinstance(entries, dict) else {}
         except (OSError, ValueError, TypeError):
@@ -1931,7 +1998,10 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             continue
         provisional = f"asset-{sid}"
         card, page_contract = asset_card(page, brief, plan_deck, provisional)
-        fingerprint = asset_fingerprint(card, page_contract)
+        # Inferred QC-side direction must not rename an existing visual demand.
+        fingerprint = asset_fingerprint(card, {**page_contract,
+            "negative_space_anchor": raw.get("negative_space_anchor")
+                or _NEGATIVE_SPACE_ANCHOR.get(page_contract["asset_function"], "left")})
         existing = by_fingerprint.get(fingerprint)
         if existing:
             # 视觉身份刻意不含 QC 声明（校准安全区不应让已出图改名），
@@ -1995,7 +2065,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         generated_count += 1
     if cache_file:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v3", "entries": prompt_cache})
+        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v4", "entries": prompt_cache})
     return {
         "schema": "vao-assets-v1",
         "visual_world": (plan_deck.get("world") or {}).get("name"),
