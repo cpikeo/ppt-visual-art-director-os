@@ -63,9 +63,7 @@ jobs:
           python - <<'PYTEST'
           import pathlib, subprocess, sys
           required = {"generalization_cases.json", "generalization_cases_r2.json",
-                      "generalization_cases_r3.json", "generalization_cases_r4.json",
-                      "generalization_cases_r5.json", "generalization_cases_r6.json",
-                      "generalization_cases_r7.json"}
+                      "generalization_cases_r3.json", "generalization_cases_r4.json"}
           found = {p.name for p in pathlib.Path("scripts/json").glob("generalization_cases*.json")}
           missing = required - found
           if missing:

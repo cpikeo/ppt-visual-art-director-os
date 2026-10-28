@@ -1,16 +1,16 @@
 # Assets（资产执行契约）
 
-设计判断只见 `../SKILL.md`；此文件说明如何消费 plan 的资产决策。`vao.py plan` 判定确需图像时，在同一次执行把 `asset_manifest.json` 写到计划目录；外部工具按契约备图，`check` 完成 QC 与链核验。无图不生成空清单。
+设计判断只见 `../SKILL.md`；此文件说明如何消费 plan 的资产决策。`vao.py plan` 判断确需图像时，在同一次执行将 `asset_manifest.json` 写到计划目录；外部工具按契约准备图像，`check` 完成 QC 与链核验。无图不生成空清单。
 
 ## 1. 计划字段
 
-逐页 `asset: required|reuse|none` 为作者声明；`asset_subject` 非空等价 `required`。**图像只由作者声明产生**，词表命中只写 hint 不出图；声明的图全部进入清单，不设自动额度。
+逐页 `asset: required|reuse|none` 为作者声明；`asset_subject` 为画面主体。图像只由作者声明产生（`asset: required|reuse`）；词表命中只写 hint 不出图。声明的图全部进入清单，不设自动额度。
 
-- `asset_role: background|illustration|hybrid`：承载空间 / 表达对象 / 两者兼有，影响提示词与 QC。
-- `asset_function`：页面用途（`hero|proof|emotion|context|frame|separate`），缺省 `frame`（生成与既有素材同一缺省）；未知值在卡片自检里被点名。
-- `asset_reason`（可选）：删除素材会损失什么；进骨架，不作出图触发器。
-- `asset_composition`（可选）：素材内部的景别、裁切、主体重心；覆盖构图句，不改页面布局。
-- `material / lighting / texture`：原样覆盖推导值，`texture: []` 关闭纹理。
+- `asset_role: background|illustration|hybrid`：承载空间 / 表达对象 / 两者兼有。角色影响提示词与 QC。
+- `asset_function`：页面用途（hero|proof|emotion|context|frame|separate）。
+- `asset_reason`（可选）：记录删除素材会损失什么；进入骨架，不作为出图触发器。
+- `asset_composition`（可选）：素材内部的景别、裁切、主体重心；覆盖资产构图句，不自动更改页面布局。
+- `material / lighting / texture`：原样覆盖 plan 推导值。`texture: []` 关闭纹理。
 - 生成图始终是生成图，不能用 `witness` 字段升级为事实证词。
 
 ## 2. 执行顺序
@@ -23,46 +23,33 @@ brief → plan（同次准备清单）→ 按清单批量备图/核权 → 编�
 
 ## 3. 提示词
 
-提示词消费 plan 与页级声明：`medium` 显式声明优先于上下文线索，光照声明与素材构图均保留。摄影只补物理可信性，不规定固定留白比例或景别；反向词只默认排除生产失效，明确禁项写 `negative` 或 deck 的 `avoid`。背景可继承视觉世界的材质与融合，对象型插图不默认继承；确需融合再声明 `fusion_enabled: true`。`energy: low|high` 调整世界光语强弱。提示词缓存 v4，旧缓存重建。
+提示词消费 plan 与页级声明。`medium` 显式声明优先于上下文线索；光照声明、素材构图均保留。摄影只补物理可信性，不规定固定留白比例或景别。反向词只默认排除生产失效；明确禁项写 `negative` 或 deck 的 `avoid`。
+
+背景可继承视觉世界的材质与融合；对象型插图不默认继承。需要时显式写 `material / lighting / texture`；确需融合再声明 `fusion_enabled: true`。`energy: low|high` 调整世界光语强弱。提示词缓存 v3，旧缓存重建。
 
 图标语义与编排判断见 SKILL §3；当前不增加 `asset_role: icon` 或 SVG 编译器。
 
-## 4. 素材家族与复用执行
-
-职责判定（这张图帮观众理解什么、承担什么、删掉损失什么）见 SKILL §3，此处只管执行一致：
-
-- **家族一致**：同套素材的介质、光语、材质走同一来源链（作者显式声明 > 世界推导 > 兜底）。跨介质混排由作者以 `medium / material / lighting / texture` 显式声明并写明表达理由（`asset_reason`），提示词不替作者发明关系。
-- **图标族**：同一组 `medium / style / lighting` 声明固化族特征（线条、端点、填充、比例、视觉重量），逐条复用不逐条改写；按 1:1 出图，落位尺寸由作者按视觉校正。
-- **复用优先**：`asset_source.kind: reuse|provided|licensed|original` 走既有素材路径，跳过生成仍须 QC；同一素材跨页复用一个主条目 + `slide_ids`。提示词缓存只省算力，不降低当轮 QC 与链核验标准。
-- **一次批量**：清单出图一次批量进行；删除测试不过的素材不进清单，进了清单的素材必须落到页面职责上。
-
-## 5. 三条路径
+## 4. 三条路径
 
 | 路径 | 做法 |
 |---|---|
-| **生成** | 按清单 `prompt / negative / ratio / safe_area` 出图；QC 按实际像素判定 |
+| **生成** | 按清单 prompt / negative / ratio / safe_area 出图；QC 按实际像素判定 |
 | **既有素材** | `asset_source: {kind: provided\|licensed\|original\|reuse, path, source}`；跳过生成，仍须 QC |
 | **无图** | `decision: none`；排版、留白与数字承担这一页 |
 
-## 6. QC 与核验
+## 5. QC 与核验
 
-- QC 只判物理事实：安全区是否被纹理压到文字、对比是否够、可见像素与透明度、比例是否匹配、有效分辨率是否低于落位尺寸。
-- 两档都读取并哈希当轮字节，测量缓存不得仅凭 size/mtime 复用。
+- QC 只判物理事实：安全区是否被纹理压到文字、对比是否够、可见像素/透明度、比例是否匹配、有效分辨率是否低于落位尺寸。
+- 两档均读取并哈希当轮字节，测量缓存不得仅凭 size/mtime 复用。
 - 同一既有素材、同一 QC 契约跨页复用一个主条目与 `slide_ids`；安全区或字色不同则分别核验。
 - 资产链核验：每张图 = QC 通过的那张 + 绑到正确的页 + 分辨率够 + 文件未被替换。
 - `draft` 档坏图最多一次定向重出；`release` 档坏图直接 BLOCK。
-- `qc` 复用生产解析与判据，仅读不写；阻断退出码 2。
-
-**来源与缓存硬边界**：清单 `workflow.schema` 必须精确为 `vao-asset-chain-v2`，`brief_path` 指向真实文件，`brief_file_sha256` 为匹配字节的 SHA-256；缺 brief、缺摘要、伪造 schema 都不能用清单自洽性代替来源核验，修改 brief 后须重跑 plan。像素 QC 可暖复用，来源/工作流状态仍每轮核验。`crop` 与编译 / ghost 共用校验和几何。
+- `qc` 复用生产解析与判据，仅读不写；阻断退出码为 2。
 
 人工验收只用 `SKILL.md §3 / §6`，不在此维护第二套审美标准。
 
+### 来源与缓存硬边界
 
-### CASE_004 安全区与最终落位
+图片链要求清单的 `workflow.schema` 精确为 `vao-asset-chain-v2`，`brief_path` 指向真实文件，`brief_file_sha256` 为匹配字节的 SHA-256。缺 brief / 缺摘要 / 伪造 schema 均不能用清单自洽性代替来源核验；修改 brief 后须重跑 plan。
 
-- 先判断文字是否压图。文字在图外时显式写 `safe_area: {}`；页内留白由排版负责，摄影无需再空出半幅。
-- 未声明文字方向时，从显式安全区矩形中心推导方向；用途缺省只在没有矩形时兜底。显式 `negative_space_anchor` 仍优先，作者须确认它与矩形及素材构图一致。
-- 左右低信息密度区域通过真实景深、天空或光线衰减形成；不能要求“完全平坦、无纹理的色块”。
-- 资产链新增最终图文关系检查：当页面有正文/标题，而带安全区的图片与所有正文/标题框都不相交时 BLOCK。边缘接触不算压字，页码/来源/眉标不算正文。
-- 此检查只验证必要条件；不计算裁切后的安全区映射、遮挡层次、文字墨迹或字色对比，文本框有相交不代表安全区落位合格。纯影像页交人工审查。
-- 契约改变必须更新 brief 后重新 plan；不得只清空清单字段。取消安全区不代表旧图自动可用，须复核、裁切或重出。
+像素 QC 可暖复用，但来源/工作流状态仍每轮核验。`crop` 与编译/ghost 共用校验和几何。

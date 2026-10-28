@@ -23,8 +23,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from primitives import (CHART_KINDS, RenderContext, DEFAULT_WIDTH, DEFAULT_HEIGHT, px_to_pt,
                         highlight_index, resolve_chart_highlight, color_to_hex,
                         CHART_LABEL_MIN_H, CHART_LABEL_MIN_COUNT, CHART_LIMITS,
-                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows,
-                        default_show_values, progress_ratio)
+                        CHART_SPEC, NO_LINE_END_CJK, NO_LINE_START_CJK, chart_rows)
 
 
 _FONT_CACHE: dict[tuple[str, int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
@@ -318,11 +317,6 @@ _UNIT_HEAD = re.compile(
 # 手抄版漏过「方米」「瓦时」以及「个百分点/个点/个季度」的内部对，词表一扩就漂移。
 _UNIT_INNER = {u[i:i + 2] for u in _UNIT_WORDS if len(u) >= 2
                for i in range(len(u) - 1)}
-# 数字本身也是不可拆的：断在数字内部（「2.｜6 年」「1｜8%」）比「数字与单位分家」
-# 更隐蔽——退到数字前面就已经看不见了，行首行尾都像正常文本。PowerPoint 不在数字
-# 内部断行，预览断了就与真实排版是两回事（实测：标题「回收期从 2.6 年拉到 3.9 年」
-# 在 440px 预览里被断成「2.」/「6 年」，同一行文本在产物里不会这样排）。
-_NUMBER_TOKEN = re.compile(r"\d+(?:[.,]\d+)*[%％]?")
 
 
 def _cjk_break_fix(seg: str, lo: int) -> int:
@@ -354,11 +348,6 @@ def _cjk_break_fix(seg: str, lo: int) -> int:
         while start > 1 and (left[start - 1].isdigit() or left[start - 1] in ".,"):
             start -= 1
         lo = start
-    # 数字内部不是断点：断口落在同一个数字 token 中间时，整个 token 一起推下。
-    for token in _NUMBER_TOKEN.finditer(seg):
-        if token.start() < lo < token.end():
-            lo = max(1, token.start())
-            break
     return max(1, lo)
 
 
@@ -472,21 +461,10 @@ def _draw_text(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> N
     line_height = float(e.get("line_height", 1.35) or 1.35) * size
     total_h = sum(line_height + gap for gap in line_gaps)
     anchor = str(e.get("anchor", "top")).lower()
-    # 行盒 ≠ 字形墨迹：PIL 以「升部顶端」为绘制原点，CJK 字面的升部比字形
-    # 高出一截，直接按 total_h 对齐会让居底/居中文本整体下漂（150px 字实测
-    # 漂 48px，压穿下一行说明）。按 guard 的同一份墨迹口径落位：
-    # primitives.text_ink_height 给出跨度，ink_span 给出锚点位置，再用本行
-    # 真实 ink bbox 把绘制原点对到该跨度顶端——预览与 guard 不再各说一套。
-    if anchor in {"middle", "center", "bottom", "end"} and lines:
-        from primitives import ink_span, text_ink_height
-        probe = ImageDraw.Draw(img)
-        gap_total = sum(line_gaps)
-        ink_h = text_ink_height(len(lines), size, line_height / size if size else 1.0,
-                                gap_total)
-        top, _ = ink_span(y, h, pad, ink_h, anchor)
-        bbox_top = probe.textbbox((0, 0), lines[0], font=font)[1]
-        origin = top - bbox_top
-        cy = origin
+    if anchor in {"middle", "center"}:
+        cy = y + (h - total_h) / 2
+    elif anchor in {"bottom", "end"}:
+        cy = y + h - total_h
     else:
         cy = y + pad
     align = str(e.get("align", "left")).lower()
@@ -955,7 +933,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
     category_text = " ".join(str(r.get("label", "")) for r in rows)
     category_font = native_font(e.get("label_size", 40 / 3), category_text)
     value_font = native_font(e.get("value_size", 12), "0123456789")
-    native_values = bool(e.get("show_values", default_show_values(kind, e)))
+    native_values = bool(e.get("show_values", kind in ("comparison_bar", "bar", "column", "donut")))
     if (len(rows) >= CHART_LABEL_MIN_COUNT and float(e.get("height", 0)) < CHART_LABEL_MIN_H
             and e.get("label_collision_policy") == "hide_redundant"):
         native_values = False
@@ -1084,12 +1062,12 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         # 预览曾用 ink/secondary/muted，与产物里的同色相明度阶梯毫无关系——作者会
         # 把「金色系深浅」误读成「中性灰」。
         hl = int(highlight_index(e, rows, 0))
-        raw_palette = ctx.series_palette(len(vals), hl)
-        palette = [_rgba_color(c, 0.92) for c in raw_palette]
+        palette = [_rgba_color(c, 0.92) for c in ctx.series_palette(len(vals), hl)]
         # 类别名直接标在扇区上：产物给构成图开了 showCatName（图例全局关闭），
         # 预览若只画色块，作者看到的就是四块没有名字的颜色——与产物不是一件事。
-        # 文字色与 compiler 同源走 auto_text_for(palette[i])（深扇区反白、浅扇区深墨）。
+        # 位置按扇区中角、半径中点；文字色取背景色（扇区上是实色填充）。
         label_font = native_font(e.get("value_size", 12), category_text)
+        label_ink = _rgba(ctx, "background", 0.95) or (255, 255, 255, 235)
         show_values = native_values
         cx0, cy0 = (left + right) / 2, (top + bottom) / 2
         radius = (right - left) / 2
@@ -1104,8 +1082,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 if show_values:
                     text += f" {int(val) if float(val).is_integer() else val}"
                 if text.strip():
-                    auto_rgb = tuple(ctx.auto_text_for(raw_palette[i]))
-                    d.text((lx, ly), text, font=label_font, fill=(*auto_rgb, 242), anchor="mm")
+                    d.text((lx, ly), text, font=label_font, fill=label_ink, anchor="mm")
             start = end
         cx, cy = (left + right) // 2, (top + bottom) // 2
         # 环心孔只属于 donut/donut_composition：compiler 的 pie 是实心饼，预览若
@@ -1145,15 +1122,6 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         hl = highlight_index(e, rows, -1)
         show_values = native_values
         vfont = value_font
-        # 单序列基础色与编译器同一条规则（chart_primary_color 单一真源）：
-        # 此前硬编码 ink——作者用 primary_color 把非高亮条压回弱色时，产物
-        # （series=primary_color）与预览（墨条）分叉，预览把「强调哪一项」画错
-        # （2026-10-20 审计实测：PPTX series=#8A8984 而 ghost 画墨条）。有高亮
-        # 且基础==accent 时让位 primary 角色（同 compiler 的 hl0/base）。
-        prim = ctx.chart_primary_color(e)
-        if 0 <= hl and prim is not None and tuple(prim) == tuple(ctx.color("accent") or ()):
-            prim = ctx.chart_role("primary") or ctx.color("primary") or prim
-        base_col = _rgba_color(prim, 0.95) if prim is not None else ink
         # 零基轴线：条长编码的是**到零的距离**，不是「到最小值」。按最小值起算时，
         # 最负的一条长度为 0——产物里它是一根可见的负向条，预览里却什么都没有，
         # 作者会以为那一期没有数据。负值在轴线另一侧生长，两侧共用一把尺。
@@ -1197,7 +1165,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
                 col = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
-                col = accent if i == hl else base_col
+                col = accent if i == hl else ink
             x0, x1 = sorted((zero_x, zero_x + bw2))
             d.rounded_rectangle((x0, by, x1, by + bh),
                                 radius=max(1, int(4 * scale)), fill=col)
@@ -1248,12 +1216,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
                 role = (ctx.chart_role(str(roles[gi])) if gi < len(roles) else None)
                 fill = _rgba_color(role if role is not None else gpalette[gi], 0.95)
             else:
-                # 单序列基础色同 bar 分支：chart_primary_color 单一真源，不再硬编码 ink。
-                prim = ctx.chart_primary_color(e)
-                if 0 <= hl and prim is not None and tuple(prim) == tuple(ctx.color("accent") or ()):
-                    prim = ctx.chart_role("primary") or ctx.color("primary") or prim
-                fill = accent if i == hl else (
-                    _rgba_color(prim, 0.95) if prim is not None else ink)
+                fill = accent if i == hl else ink
             y0, y1 = sorted((zero_y, by))
             d.rounded_rectangle((bx, y0, bx + bw, y1), radius=max(1, int(4 * scale)),
                                 fill=fill)
@@ -1354,26 +1317,13 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         n = max(len(rows), 1)
         bw = w / n * 0.46
         lfont = _font(px_to_pt(11 * scale), cjk=True)
-        wf_show_values = bool(e.get("show_values", False))
-        wf_unit = str(e.get("unit") or "").strip()
-        wf_vfont = _font(px_to_pt(float(e.get("value_size", 11.5)) * scale), bold=True, cjk=True)
-        prim_rgba = _rgba_color(ctx.chart_primary_color(e), 0.95) or ink
-        sec_tok = _resolve_color(ctx, e.get("secondary_color")) if e.get("secondary_color") else None
-        sec_rgba = (*sec_tok, 217) if sec_tok is not None else _rgba(ctx, "secondary", 0.8)
         for i, row in enumerate(rows):
             bx = x + w * (i + 0.5) / n - bw / 2
             top = max(starts[i], ends[i]); bot = min(starts[i], ends[i])
             ry = _py(top); rh = max(5 * scale, (top - bot) / span * plot_h)
             d.rectangle((int(bx), int(ry), int(bx + bw), int(ry + rh)),
                         fill=(accent if is_total[i] else
-                              (prim_rgba if (row.get("value") or 0) >= 0 else sec_rgba)))
-            if wf_show_values:
-                raw_disp = str(row.get("display", row.get("value", "")))
-                vtxt = f"{raw_disp}{wf_unit}" if wf_unit and wf_unit not in raw_disp else raw_disp
-                d.text((int(bx + bw / 2), int(max(y, ry - 6 * scale))),
-                       vtxt[:16], font=wf_vfont,
-                       fill=prim_rgba if (is_total[i] or (row.get("value") or 0) >= 0) else _rgba(ctx, "muted", 0.95),
-                       anchor="mb")
+                              (ink if (row.get("value") or 0) >= 0 else _rgba(ctx, "secondary", 0.8))))
             d.text((int(bx + bw / 2), int(y + h * 0.82 + 10 * scale)),
                    str(row.get("label", ""))[:12], font=lfont,
                    fill=ink if is_total[i] else _rgba(ctx, "muted", 0.9), anchor="ma")
@@ -1405,8 +1355,7 @@ def _draw_chart(img: Image.Image, e: dict, ctx: RenderContext, scale: float) -> 
         for i, row in enumerate(data):
             cy = y + row_h * (i + 0.5)
             span = max(track_right - bar_x, 10)
-            filled = span * (max(0.0, _value(row)) / top_value if kind == "ranked_bar"
-                             else progress_ratio(row, e))
+            filled = span * max(0.0, _value(row)) / (top_value if kind == "ranked_bar" else 100.0)
             if kind == "progress_bar":
                 d.rounded_rectangle((int(bar_x), int(cy - bar_h / 2), int(track_right), int(cy + bar_h / 2)),
                                     radius=max(1, int(bar_h / 2)), fill=_rgba(ctx, "muted", 0.22))

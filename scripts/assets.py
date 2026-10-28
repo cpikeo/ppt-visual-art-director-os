@@ -131,8 +131,8 @@ def photo_gate_active(card: dict) -> bool:
 
 
 NEGATIVE_SPACE_PHRASES = {
-    "left": "a quiet low-detail area at left, formed by natural depth or light falloff; continuous scene, not a flat colour panel",
-    "right": "a quiet low-detail area at right, formed by natural depth or light falloff; continuous scene, not a flat colour panel",
+    "left": "large clean negative space on the left side",
+    "right": "large clean negative space on the right side",
     "top": "quiet empty area in the upper part",
     "bottom": "quiet empty area in the lower part",
     "center": "quiet calm center area, activity pushed to the edges",
@@ -249,73 +249,6 @@ def normalize_safe_area(value=None, anchor: str = "left") -> dict:
             "width": round(w, 4), "height": round(h, 4)}
 
 
-def resolve_space_contract(page: dict, fallback: str = "left") -> tuple[str, dict]:
-    """Explicit anchor wins; otherwise infer text side from the declared rectangle.
-
-    An explicit empty rectangle means no text overlay, not a missing rectangle.
-    This is a prompt/QC contract, not a license to generate a flat colour panel.
-    """
-    explicit = page.get("negative_space_anchor")
-    if isinstance(page.get("safe_area"), dict) and not page["safe_area"]:
-        return "none", {}
-    anchor = str(explicit or fallback).lower()
-    area = normalize_safe_area(page.get("safe_area"), anchor)
-    if not area:
-        return "none", {}
-    if not explicit and isinstance(page.get("safe_area"), dict):
-        cx = area["x"] + area["width"] / 2
-        cy = area["y"] + area["height"] / 2
-        dx, dy = cx - .5, cy - .5
-        if max(abs(dx), abs(dy)) < .10:
-            anchor = "center"
-        elif abs(dx) >= abs(dy):
-            anchor = "left" if dx < 0 else "right"
-        else:
-            anchor = "top" if dy < 0 else "bottom"
-    return anchor, area
-
-
-def asset_layout_issues(spec: dict, entries: dict) -> list[str]:
-    """Check a necessary, not sufficient, overlay condition in final slide space.
-
-    A declared image text-safe region cannot be used when ALL native text is
-    outside the picture. No pixel-level typography/crop-safe certification is made.
-    Touching edges and empty text do not count as overlay. Invalid geometry is
-    left to the normal geometry guard, not silently repaired here.
-    """
-    issues = []
-    for slide in spec.get("slides") or []:
-        elements = slide.get("elements") or []
-        texts = [e for e in elements if e.get("type") == "text"
-                 and str(e.get("text") or "").strip()
-                 and e.get("role") not in {"source", "method", "metadata",
-                                           "eyebrow", "page_number"}]
-        if not texts:
-            continue  # no native page text: visual-only placement, human review
-        for image in elements:
-            if image.get("type") != "image":
-                continue
-            entry = entries.get(image.get("asset_id")) or {}
-            if not entry.get("safe_area"):
-                continue
-            try:
-                x, y = float(image["x"]), float(image["y"])
-                w, h = float(image["width"]), float(image["height"])
-                def intersects(t):
-                    tx, ty = float(t["x"]), float(t["y"])
-                    tw, th = float(t["width"]), float(t["height"])
-                    return min(x+w, tx+tw) > max(x, tx) and min(y+h, ty+th) > max(y, ty)
-                if w > 0 and h > 0 and not any(intersects(t) for t in texts):
-                    issues.append(f"{slide.get('id')}/{image.get('asset_id')}: "
-                                  "图片声明了文字安全区，但最终正文/标题全部在图外；"
-                                  "移除无用的图内留白，或重新确认压字构图。"
-                                  "须更新 brief 的 safe_area: {} 并重新 plan；"
-                                  "不得仅改清单绕过检查，既有图仍须人工复核或重裁/重出")
-            except (KeyError, TypeError, ValueError):
-                continue
-    return issues
-
-
 def safe_area_phrase(area: dict, text_color: str | None = None) -> str:
     """留白指令，只用视觉语言，不写坐标。
 
@@ -353,19 +286,12 @@ ENERGY_PHRASES = {
 # 能量调谐：视觉世界给光的**方向与质感**，页面判断只在 low/high 时追加一句
 # 强弱。两者正交：能量永远没有改方向的权力。作者逐页写下的光句逐字赢，
 # 能量不追加一个字。
-# asset_function 词表与文档契约同源（hero|proof|emotion|context|frame|separate，
-# 见本文件 §Asset Role Separation 的二维矩阵与 references/assets.md）：
-# 「为什么存在」只许有一套词。审计实测（2026-10-20）：旧表键名
-# （direct/contextualize/immersive）与文档词表漂移——作者按文档写 hero/proof/
-# emotion/context 时提示词**静默丢失**用途句，而三个旧键全库零消费者。
-# 死键按「死常量不保留」删除；用途句只描述职责，不承诺事实证词（生成图不是证据）。
 ASSET_FUNCTION_PHRASES = {
-    "hero": "the image carries the page's main visual statement",
-    "proof": "the image presents the examined subject plainly, readable for verification without dramatization",
-    "emotion": "the image carries the emotional register of the moment without melodrama",
-    "context": "the image establishes context while keeping the foreground readable",
     "frame": "the image frames the message without competing with it",
     "separate": "the image separates sections while staying quiet",
+    "direct": "the image guides the eye toward the main subject",
+    "contextualize": "the image establishes context while keeping the foreground readable",
+    "immersive": "immersive full-bleed spatial field supporting the declared subject and page hierarchy",
 }
 
 # --------------------------------------------------------------------------
@@ -448,15 +374,6 @@ ROLE_DISCIPLINE: dict[str, tuple[str, ...]] = {
 # 背景资产的空间纪律（背景图默认倾向）：大面积连续视觉场、不以具体物件竞争。
 BACKGROUND_DISCIPLINE: tuple[str, ...] = (
     "one continuous tonal and material field with no competing objects",
-)
-
-# 声明了主体的背景图不是空场：作者已经决定画面里有什么（「分拣线在右，左侧
-# 留白」）。此时再发「not a picture of a thing / no dominant protagonist」是
-# 自相矛盾的指令——生成器要么无视主体声明，要么无视背景纪律，两种结果都不是
-# 作者要的。背景纪律改为「主体融进环境、不贴片」，唯一的主语仍然是作者声明的
-# 那一个。判断在 SKILL §3，这里只负责不覆盖它。
-BACKGROUND_SUBJECT_DISCIPLINE: tuple[str, ...] = (
-    "the declared subject sits inside the environment as one continuous scene",
 )
 
 # 资产类型后缀
@@ -624,17 +541,10 @@ def validate_asset_card(card: dict) -> list[str]:
         issues.append(f"未知 asset_role: {declared_role}"
                       f"（可选 {'|'.join(ASSET_ROLES)}）：background=承载空间 / "
                       "illustration=表达对象 / hybrid=两者兼有")
-    function = str(card.get("asset_function") or "").strip().lower()
-    if function and function not in ASSET_FUNCTION_PHRASES:
-        issues.append(f"未知 asset_function: {function}"
-                      f"（可选 {'|'.join(ASSET_FUNCTION_PHRASES)}）："
-                      "hero=主视觉 / proof=证据对象 / emotion=情绪 / context=环境 / "
-                      "frame=边界 / separate=分隔——写了读不懂的用途句不会进提示词，"
-                      "QC 还会按具象主体从严判")
     if not card.get("apc"):
         issues.append("缺少 apc：资产卡编号未溯源")
     if card.get("subject_source") == "title_fallback":
-        issues.append("未声明 asset_subject：主体描述取自页面标题与正文。"
+        issues.append("未声明 asset_subject：主体描述取自页面标题。"
                       "标题是观点（「这一年真正的收获，不是增速」），不是画面；"
                       "照着它出图会跑偏——补一句画面描述再出图。")
     subject_blob = " ".join(str(x) for x in _as_list(card.get("subject")))
@@ -687,9 +597,6 @@ def resolve_asset_card(card: dict, page: dict | None = None) -> dict:
         light["ink_lines"] = list(INK_DISCIPLINE)
     if photo:
         # 介质说明不再接管光照：作者/世界的光均沿同一优先级结算。
-        # 这里取 [1:]（去掉 illumination 那句）是刻意的：既有光语（作者声明或
-        # 世界推导）一旦存在，再补一句通用光照就是同一件事说两遍，还可能与之
-        # 矛盾；只有完全无光语的摄影卡（下面的 photo_discipline 分支）才用整组。
         light["photo_lines"] = list(PHOTO_REALISM_DISCIPLINE[1:])
     if declared:
         # 作者写了光照句子：逐字赢，能量不得触碰（不着一字）；
@@ -817,26 +724,17 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     segments.extend(_as_list(light_decision.get("photo_lines")))
 
     # --- 3. OS 强制三段 --------------------------------------------------
-    anchor, area = resolve_space_contract(
-        {**page, **({"negative_space_anchor": negative_space} if negative_space else {})})
+    anchor = str(negative_space or page.get("negative_space_anchor") or "left").lower()
     light = str(light_direction or page.get("light_direction") or "left").lower()
     level = str(energy or page.get("energy") or "low").lower()
     function = str(asset_function or page.get("asset_function") or function_hint).lower()
+    area = normalize_safe_area(page.get("safe_area"), anchor)
     text_color = page.get("text_color") or page.get("safe_area_text_color")
     medium = str(card.get("medium") or card.get("render_mode") or "").strip().lower()
 
     # 角色纪律：背景优先判断 空间 → 光 → 材质 → 负空间；插图优先判断 对象 → 轮廓 →
     # 尺度 → 位置 → 与文字的关系。同一张图只走其中一条链。
-    # subject 是**列表**：`str(list)` 对任何列表都非空，`or ""` 只挡住 `[]`，
-    # 挡不住 `[""]` / `["  "]`——空串列表仍会注入「作者声明的主体坐在环境里」，
-    # 而画面上一个字的主体都没有（实测：subject=[""] 的 background 卡拿到
-    # BACKGROUND_SUBJECT_DISCIPLINE，与同一提示词里的「不设主角」自相矛盾）。
-    # 判据只能是「有没有一句非空的话」。
-    has_subject = any(str(s).strip() for s in _as_list(card.get("subject")))
-    if asset_type == "background" and has_subject:
-        segments.extend(BACKGROUND_SUBJECT_DISCIPLINE)
-    else:
-        segments.extend(ROLE_DISCIPLINE.get(asset_type, ()))
+    segments.extend(ROLE_DISCIPLINE.get(asset_type, ()))
     if asset_type == "background":
         segments.extend(BACKGROUND_DISCIPLINE)
     if medium:
@@ -845,7 +743,7 @@ def build_asset_prompt(card: dict, page: dict | None = None, *,
     # 「主体与文字的关系」——把插图的整块画面压成低密度是错的指令。
     space_phrases = (SUBJECT_TEXT_RELATION_PHRASES if asset_type == "illustration"
                      else NEGATIVE_SPACE_PHRASES)
-    if area and anchor in space_phrases:
+    if anchor in space_phrases:
         segments.append(space_phrases[anchor])
     # 句式光兜底也是决策期结论（phrase_fallback 来源）：光没有被介质纪律、
     # 作者声明或卡片已有光语接管时，句式光 + 能量句式一起托底（见 resolve_asset_card）。
@@ -1050,7 +948,7 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
     except (TypeError, ValueError):
         requested = ASSET_QC_MAX_RETRIES
     retry_cap = min(requested, ASSET_QC_MAX_RETRIES)
-    checks = (qc.get("checks") or []) if isinstance(qc, dict) else []
+    checks = qc.get("checks") or [] if isinstance(qc, dict) else []
     issues = [c for c in checks if isinstance(c, dict) and c.get("status") == "issue"]
     # 「主体贴边被裁」这条判据为**具象主体**而设：产品、人物、建筑被画框切掉一眼就是错的。
     # 而空间资产的画面边界本来就该由材质与光填满——宣纸撕边、石面颗粒、雾的过渡延伸
@@ -1102,17 +1000,6 @@ def qc_retry_decision(qc: dict, *, attempt: int = 0,
 
 
 # 安全区定义：文字通常落在声明锚点的对面/一侧（留白区），按锚点取一块矩形。
-def _has_alpha(image) -> bool:
-    """这张图是否**带透明通道**（模式或 info.transparency）。
-
-    单一权威（v9.37.1）：工作域要合成底色、原生安全区纹理也要合成底色，两条
-    路径问的是同一件事，就不能各写一份内联判断——其中一条漏了，透明图的两个
-    口径立刻分叉（原生按不可见的 RGB 量纹理，工作域按合成后的亮度量）。
-    只读头部与模式，不触像素：调用点常在解码之前。
-    """
-    return image.mode in ("RGBA", "LA", "PA", "P") or "transparency" in image.info
-
-
 def _hard_seam_check(arr, alpha):
     """硬缝 / 假留白面板：满高度列均值阶跃 + 阶跃一侧整带几乎无方差。
 
@@ -1122,10 +1009,6 @@ def _hard_seam_check(arr, alpha):
     """
     import numpy as np          # 懒加载：纯组装路径不引入像素依赖（与 image_qc 同律）
     _STEP_MIN, _FLAT_MAX, _SHARE_MIN = 6.0 / 255.0, 1.2 / 255.0, 0.10
-    # 降采样不会把「全不透明」判成不透明之外的东西：箱式平均只会取块内均值，
-    # 常数 255 平均后仍是 255（实测 reduce(2/4/8) 的 min/max 都是 255），
-    # 所以快速档的 alpha 判据不会因为缩放而漏掉硬缝；只有α本身就带透明像素
-    # （本该跳过）时才会 <250。原生分辨率回退见 hard_seam_result。
     opaque = bool((alpha >= 250).all()) if alpha is not None else True
     if not opaque or arr.shape[1] <= 2:
         return True, None, None
@@ -1168,20 +1051,12 @@ def _settle(native, handed: bool) -> None:
         native.close()
 
 
-def _native_safe_area_texture(opened, w: int, h: int, normalized: dict,
-                              background: str | None = "#FFFFFF") -> float | None:
+def _native_safe_area_texture(opened, w: int, h: int, normalized: dict) -> float | None:
     """安全区纹理密度（原生分辨率，QC_BLOCK 方块口径与严格档逐字一致）。
 
     快速档的全局统计在降采样域进行，但「文字压在什么纹理上」这件事必须按原始
     像素量：箱式平均会把细密颗粒抹平，而它正是压字可读性最直接的风险。
     只裁安全区（通常 ≤1/3 画面）→ 代价有界，判据不失真。
-
-    透明画布必须先与**声明底色**合成再量亮度（v9.37.1）：工作域的 arr 就是
-    `alpha_composite(底色, rgba)` 后的亮度，原生这一路若直接 convert("L")，
-    量到的是透明像素下面的 RGB——抠图残留与蒙版导出里那是一层任意噪点。
-    实测：一张安全区完全透明、RGB 带噪点的 RGBA 插画，原生路径 busy=1.00 →
-    text_safe_area 判 issue → release 档 BLOCK；而同一块区域合成白色底后是
-    纯白平板。同一份像素、两条口径，就必须合成同一块底色。
     """
     try:
         import numpy as np
@@ -1190,19 +1065,7 @@ def _native_safe_area_texture(opened, w: int, h: int, normalized: dict,
         y1 = int((normalized["y"] + normalized["height"]) * h)
         x1, y1 = max(x1, x0 + QC_BLOCK), max(y1, y0 + QC_BLOCK)
         # 先裁后转：只在安全区（≤1/3 画面）上做 L 转换，不复制整幅 4K。
-        crop = opened.crop((x0, y0, min(x1, w), min(y1, h)))
-        if _has_alpha(crop):
-            # 底色口径与 image_qc 的 arr 同源：同一个 background 参数、同一套
-            # alpha_composite；脏色值当白色（QC 不该因底色写法崩掉一条判据）。
-            from PIL import Image as _Image
-            from PIL import ImageColor
-            try:
-                rgb = ImageColor.getrgb(str(background or "#FFFFFF"))[:3]
-            except (ValueError, TypeError):
-                rgb = (255, 255, 255)
-            base = _Image.new("RGBA", crop.size, (*rgb, 255))
-            crop = _Image.alpha_composite(base, crop.convert("RGBA"))
-        box = crop.convert("L")
+        box = opened.crop((x0, y0, min(x1, w), min(y1, h))).convert("L")
         arr = np.asarray(box, dtype=np.float32) / 255.0
         bh, bw = arr.shape[0] // QC_BLOCK, arr.shape[1] // QC_BLOCK
         if bh < 1 or bw < 1:
@@ -1321,7 +1184,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
         w, h = opened.size
         # 快路径：不透明图直接以 L 通道工作——RGB→RGBA 转换、alpha 通道抽取、
         # alpha_composite 三步在整幅 4K 图上都是纯开销（判据只用亮度与是否可见）。
-        transparent = _has_alpha(opened)
+        transparent = opened.mode in ("RGBA", "LA", "PA", "P") or "transparency" in opened.info
         try:
             opened.load()  # 头部可识别不代表像素完整；解码失败同样属于资产错误
         except BaseException:
@@ -1459,7 +1322,7 @@ def image_qc(path: str, safe_area: str = "left", text_is_dark: bool | None = Non
     # 会被平均掉，而它恰是压字可读性最直接的杀手。只裁安全区一块（约占画面 1/3），
     # 成本与全图扫描不在一个量级——所以这一条快速档也不省。
     if native is not None:
-        native_busy = _native_safe_area_texture(native, w, h, normalized, background)
+        native_busy = _native_safe_area_texture(native, w, h, normalized)
         if native_busy is not None:
             busy = native_busy    # 单一口径：两档都在原生分辨率量，杜绝 fast/strict 分歧
     _add("text_safe_area", busy < 0.15,
@@ -1689,7 +1552,6 @@ def verify_chain(spec: dict, manifest_path=None, qc_path=None, assets_dir=None,
         manifest = json_read_cached(path)
         issues.extend(verify_sources(manifest))
         entries = {e["asset_id"]: e for e in asset_entries(manifest)}
-        issues.extend(asset_layout_issues(spec, entries))
         qpath = _Path(qc_path).expanduser().resolve() if qc_path else path.with_name(path.stem + ".qc.json")
         qc = json_read_cached(qpath)
         manifest_sha = digest(manifest)
@@ -1800,10 +1662,8 @@ def blocked_result(spec: dict, workflow: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════
 # 资产卡与清单规划（原 vao 内嵌段：规划 → 卡 → 批量清单）
 # ══════════════════════════════════════════════════════════════════
-# 用途 → 文字落侧的缺省（不声明 negative_space_anchor 时用）：与 ASSET_FUNCTION_PHRASES
-# 同一词表。frame/separate 走全局缺省 left，不在表内重复。审计删除旧键 direct（零消费者）。
 _NEGATIVE_SPACE_ANCHOR = {"hero": "left", "emotion": "left", "context": "left",
-                          "proof": "right"}
+                          "proof": "right", "direct": "right"}
 
 
 def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
@@ -1816,8 +1676,9 @@ def asset_card(page: dict, brief: dict, deck: dict, asset_id: str) -> tuple:
     derived = deck.get("world") or {}
     asset_role, asset_role_source = resolve_asset_role(raw.get("asset_role"))
     function = str(raw.get("asset_function") or "frame")
-    anchor, safe_area = resolve_space_contract(
-        raw, _NEGATIVE_SPACE_ANCHOR.get(function, "left"))
+    anchor = str(raw.get("negative_space_anchor")
+                 or _NEGATIVE_SPACE_ANCHOR.get(function, "left")).lower()
+    safe_area = normalize_safe_area(raw.get("safe_area"), anchor)
     title = str(raw.get("title") or page.get("ref") or "visual context")
     subject = raw.get("asset_subject")
     subject_fallback = not subject
@@ -1922,7 +1783,7 @@ def prompt_cache_key(fingerprint: str, card: dict, page: dict | None = None) -> 
                                         "light_direction", "energy", "asset_function",
                                         "ratio")}
     payload["resolved"] = card.get("resolved")
-    return f"{fingerprint}|{identity(payload, schema='vao-asset-prompt-input-v2', short=10)}"
+    return f"{fingerprint}|{identity(payload, schema='vao-asset-prompt-input-v1', short=10)}"
 
 
 def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
@@ -1936,7 +1797,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
     if cache_file:
         try:
             loaded = json.loads(cache_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v4":
+            if isinstance(loaded, dict) and loaded.get("schema") == "vao-asset-prompt-cache-v3":
                 entries = loaded.get("entries")
                 prompt_cache = entries if isinstance(entries, dict) else {}
         except (OSError, ValueError, TypeError):
@@ -1962,22 +1823,11 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             op = _Path(origin["path"]).expanduser()
             base = _Path((bundle.get("workflow") or {}).get("brief_path") or ".").resolve().parent
             origin["path"] = str(op.resolve() if op.is_absolute() else (base / op).resolve())
-            # 角色走与生成路径**同一个解析器**（v9.37.1）：这里原先直接抄原始字符串，
-            # 拼错的 asset_role（illustrtion）会带着 source="declared" 进清单，
-            # 下游认不出就退回 asset_function 口径——写了一个字段，它却不生效，
-            # 还顺手放宽了 subject_position 这类阻断判据。用一份文件登记的素材，
-            # 与让引擎出图的素材，对「角色写错了怎么办」必须给同一个答案。
-            # 未声明仍记 None：assumed 的角色不许冒充 declared 去改 QC 判据。
-            declared_role = str(raw.get("asset_role") or "").strip()
-            role, role_source = (resolve_asset_role(declared_role) if declared_role
-                                 else (None, None))
             entry = {"slide_ids": [sid], "decision": "existing",
                            "origin": origin,
-                           # 缺省与生成路径同源（frame）：一个字段一个缺省——
-                           # 审计实测旧缺省 "context" 与 asset_card/提示词的 "frame" 两套。
-                           "asset_function": raw.get("asset_function", "frame"),
-                           "asset_role": role,
-                           "asset_role_source": role_source,
+                           "asset_function": raw.get("asset_function", "context"),
+                           "asset_role": str(raw.get("asset_role") or "").strip().lower() or None,
+                           "asset_role_source": ("declared" if raw.get("asset_role") else None),
                            "safe_area": normalize_safe_area(
                                raw.get("safe_area"), raw.get("negative_space_anchor", "left")),
                            "meta": {"text_color": raw.get("text_color")},
@@ -1998,10 +1848,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
             continue
         provisional = f"asset-{sid}"
         card, page_contract = asset_card(page, brief, plan_deck, provisional)
-        # Inferred QC-side direction must not rename an existing visual demand.
-        fingerprint = asset_fingerprint(card, {**page_contract,
-            "negative_space_anchor": raw.get("negative_space_anchor")
-                or _NEGATIVE_SPACE_ANCHOR.get(page_contract["asset_function"], "left")})
+        fingerprint = asset_fingerprint(card, page_contract)
         existing = by_fingerprint.get(fingerprint)
         if existing:
             # 视觉身份刻意不含 QC 声明（校准安全区不应让已出图改名），
@@ -2065,7 +1912,7 @@ def build_manifest(brief: dict, bundle: dict, cache_path=None) -> dict:
         generated_count += 1
     if cache_file:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v4", "entries": prompt_cache})
+        json_write(cache_file, {"schema": "vao-asset-prompt-cache-v3", "entries": prompt_cache})
     return {
         "schema": "vao-assets-v1",
         "visual_world": (plan_deck.get("world") or {}).get("name"),

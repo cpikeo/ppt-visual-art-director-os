@@ -483,27 +483,6 @@ CHART_LIMITS = {k: v["limit"] for k, v in CHART_SPEC.items() if v["limit"] is no
 PREVIEW_ABSTRACT_KINDS = frozenset(k for k, v in CHART_SPEC.items()
                                    if v["preview"] == "abstract")
 
-# 数值标签的缺省口径（compiler 与 ghost 共用）。此前逐 kind 写死：
-# `bar/column` 默认显示、`horizontal_bar/line` 默认隐藏——同一组数据把图转 90°
-# 就丢了数字，作者声明 `value_size` 也不生效。默认规则只有一条：
-# **单序列、类别数不多于 6 的直角坐标数值图，缺省显示数值**；多序列默认关闭
-# 以免标签互相遮挡。作者写 `show_values` 一律压过缺省。
-VALUE_LABEL_KINDS = frozenset({"bar", "column", "horizontal_bar", "comparison_bar",
-                               "line", "trend", "single_trend_line", "area"})
-VALUE_LABEL_AUTO_MAX = 6
-
-
-def default_show_values(kind: str, element: dict) -> bool:
-    """数值标签缺省开关（唯一的缺省定义，两个渲染器都读这里）。"""
-    if "value_size" in element:
-        return True                    # 声明了数值字号 = 作者要求看见数值
-    if kind not in VALUE_LABEL_KINDS:
-        return kind == "donut"
-    series = element.get("series") or []
-    data = element.get("data") or []
-    points = series[0].get("values") if len(series) == 1 and series else data
-    return len(series) <= 1 and len(points or []) <= VALUE_LABEL_AUTO_MAX
-
 
 def chart_rows(element: dict) -> list[dict]:
     """图表 data 行的唯一规范化（compiler 与 ghost 共用，口径不再分叉）。
@@ -534,41 +513,13 @@ def chart_rows(element: dict) -> list[dict]:
                 display = raw if isinstance(raw, str) else (
                     int(num) if float(num).is_integer() else num)
             rows.append({"label": str(it["label"]), "value": num,
-                         "display": display, "desc": it.get("desc"),
-                         "subtotal": bool(it.get("subtotal") or it.get("is_total") or it.get("total")),
-                         # 行级 max 是 progress_bar 的刻度（verify 的 ROW_RENDERED_KEYS
-                         # 已把它列为渲染键）：丢掉它，compiler 的 per-row ceiling
-                         # 分支就成了死代码，行刻度被静默当作不存在。
-                         **({"max": it["max"]} if "max" in it else {}),
-                         "_index": i,
+                         "display": display, "desc": it.get("desc"), "_index": i,
                          "missing": missing, "invalid": invalid})
         elif (isinstance(it, (int, float)) and not isinstance(it, bool)
               and math.isfinite(float(it))):
             rows.append({"label": str(i), "value": float(it), "display": it,
                          "_index": i, "missing": False, "invalid": False})
     return rows
-
-
-def progress_ratio(row: dict, element: dict) -> float:
-    """progress_bar 填充比例（compiler 与 ghost 的唯一口径）。
-
-    刻度 = 行级 `max`，缺省元素级 `max`，再缺省 100；比例夹紧到 [0, 1]。
-    此前 ghost 硬编码 100：声明 `max: 200` 时产物画 75%、预览冲出轨道到
-    150%——同一张图两套证据（实测）。无效刻度回落 100，上线由 guard 拦。
-    """
-    ceiling_raw = (row or {}).get("max", (element or {}).get("max", 100))
-    try:
-        ceiling = float(ceiling_raw)
-    except (TypeError, ValueError, OverflowError):
-        ceiling = 100.0
-    if isinstance(ceiling_raw, bool) or not math.isfinite(ceiling) or ceiling <= 0:
-        ceiling = 100.0
-    try:
-        value = float((row or {}).get("value") or 0.0)
-    except (TypeError, ValueError, OverflowError):
-        value = 0.0
-    return max(0.0, min(1.0, value / ceiling))
-
 
 def highlight_index(element, rows, default: int = -1) -> int:
     """强调项解析：整数索引，或直接写类别名。
@@ -1330,26 +1281,22 @@ def split_runs(text: str):
 
 
 def text_units(value: str) -> float:
-    """文本容量估算：CJK 字符计 1.0（全角方块），拉丁字符按字形宽度细分。
-    HAIR_SPACE 计 0.2，NO_BREAK_SPACE 计 0.55（与普通空格同占位）。
-    拉丁宽窄区分（MW@#%& 为 0.95，窄字符 ilI 为 0.3，其余 0.55–0.6）与 text_width 共用
-    同一物理口径，使 Guard 的容量估算与 Ghost 预览的实际占宽一致，避免“估算通过、
-    渲染溢出”。细化后密集正文的容量误差更小；字段契约见 references/contract.md。
-    注意该估算仍非 Office 精确度量，终稿须人工验收。"""
+    """文本容量估算：CJK 字符计 1.0（全角方块），拉丁字符计 0.55。
+    0.55 取自 Helvetica / Inter 等常见无衬线字体在 14–20px 时
+    拉丁字母平均宽度与 CJK 字符宽度的经验比值（0.50–0.58 区间的中位）。
+    修正点：原 0.53 在大字号下偏低估，密集正文的容量估算易「乐观」，
+    表现为 Guard 通过、渲染溢出。把 0.55 设为默认后，估算与渲染
+    可读性复核的对齐误差更小；字段契约见 references/contract.md。
+    注意该估算不是 Office 字体的精确度量，终稿仍须人工验收。
+    中西混排细空格（HAIR_SPACE）计 0.2，使插入脚本间隙后的估算与渲染一致。"""
     total = 0.0
     for c in value:
         if c == HAIR_SPACE:
             total += 0.2
         elif c == NO_BREAK_SPACE:
-            total += 0.55
+            total += 0.55          # 与普通空格同占位，单位不被算成第 N 个汉字
         elif ord(c) > 127:
             total += 1.0
-        elif c == " ":
-            total += 0.55          # 普通空格与不断行空格同宽（契约锁定，避免“数字+单位”间隙被算作窄字符）
-        elif c in "MW@#%&":
-            total += 0.95
-        elif c in "ilI.,:;!'|":
-            total += 0.3
         else:
             total += 0.55
     return total
@@ -1365,45 +1312,6 @@ def text_width(text: str, size: float, spacing: float = 0) -> float:
     return units * size + max(0, len(text) - 1) * max(0, spacing) / 0.75
 
 
-# 字形墨迹 ≥ 行距：line_height 是**行与行的距离**，不是字形高度。字体自然行盒
-# （升部 + 降部）通常约为 1.16–1.22 em；line_height < 1.2 时真实墨迹比
-# 「字号 × 行高」更高。guard 与预览曾各按一套算，同一句话前者认为 140px、
-# 后者画出 210px——两套证据互相打脸。这里给出一份共享口径：
-# 无字体度量时取 1.2 作为保守下限（1 行 150px 字 → 180px 墨迹，而不是 150px）。
-NATURAL_LINE_RATIO = 1.2
-
-
-def text_ink_height(lines: int, size: float, line_height: float,
-                    paragraph_gap: float = 0.0) -> float:
-    """一段文本的墨迹纵向跨度（px）：行距堆叠 + 末行字形高度。
-
-    单行时行距不产生跨度（行距只在行与行之间生效），因此不能写成
-    `lines * size * line_height` —— 那会把「行距 1.0 的大字」算矮一整个字形。
-    """
-    if lines <= 0 or size <= 0:
-        return 0.0
-    glyph = max(size * max(line_height, 0.0), size * NATURAL_LINE_RATIO)
-    return (lines - 1) * size * line_height + glyph + max(0.0, paragraph_gap)
-
-
-def ink_span(y: float, h: float, pad: float, ink_h: float,
-             anchor: str | None = "top") -> tuple[float, float]:
-    """按垂直锚点把墨迹跨度落进文本框，返回 (顶, 底)。
-
-    锚点是 PowerPoint 的真实语义：bottom 把**末行墨迹的底边**贴到框底，
-    middle 居中。旧模型一律按左上角缩系数取墨迹，于是「底部对齐的大字号
-    数字」在 guard 眼里停在框内，实际却压穿了下方的说明行。
-    """
-    a = str(anchor or "top").lower()
-    if a in ("middle", "center"):
-        top = y + (h - ink_h) / 2.0
-    elif a in ("bottom", "end"):
-        top = y + h - pad - ink_h
-    else:
-        top = y + pad
-    return top, top + ink_h
-
-
 def estimate_lines(text: str, width: float, size: float, wrap: bool = True,
                    spacing: float = 0) -> int:
     """估算段内折行；只在作者显式加字距时多算字形与 tracking 的占位。
@@ -1414,9 +1322,9 @@ def estimate_lines(text: str, width: float, size: float, wrap: bool = True,
     """
     if not text or not wrap:
         return 1
-    # 容量估算需与预览/编译的实际占宽一致：text_units 与 text_width 已共用同一
-    # 拉丁字形宽度表，此处取两者最大值，确保含宽字符（MW）与字距的文本不被低估。
-    used = max(text_units(text) * size, text_width(text, size, spacing))
+    used = text_units(text) * size
+    if spacing > 0:
+        used = max(used, text_width(text, size, spacing))
     return max(1, math.ceil(used / max(width, size)))
 
 

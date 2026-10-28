@@ -109,9 +109,7 @@ _NUM = re.compile(
     # 而页面写的是「个点/个百分点/个季度」）；无名词跟随时仍是计数（「5 个」）。
     r"%|％|pp|倍|万|亿|元|家|人|个百分点|百分点|"
     r"个(?:季度|星期|周|点|小时|分钟|名|位|件|家|次|台|套|箱|份|笔|张|页|股|手|元|分|秒|人)?"
-    # 计量分类词里最常出现在经营/工程稿里的计数单位：「27 处/12 项/3 条/2 起」
-    # 是带单位的量。缺了它们，缺陷清单、整改台账这类页面会整页落到「无证据」。
-    r"|名|位|件|次|天|月|年|分|秒|处|项|条|起|所|栋|册|辆|架|艘|门|款)?")
+    r"|名|位|件|次|天|月|年|分|秒)?")
 _SENTENCE_SPLIT = re.compile(r"[。；;!?！？\n]|(?<=\.)\s+")
 
 _NEGATED_EXCEED = re.compile(r"没(有)?超[过越]|不得超[过越]|[不未]超[过越]")
@@ -195,12 +193,7 @@ _INTENTION_MARK = re.compile(
     r"产品|行业|画像|客层|软件|系统))"
     r"|计划(?![外内部处科室])|规划(?![部处科室图])|力争|争取|预计|预期|期望|打算"
     r"|拟[建投新增扩改]")
-# 比较倍数只认**两端关系**（「是…的 4.2 倍」「相当于 3 倍」「4 倍于」）。
-# 「三年增长 4 倍」「翻了一倍」是变化幅度，不是两个对象在比：把它读成比较，
-# 会让一条三点时间序列落成 comparison（实测 F-03：出货 28/62/120 台被判两端
-# 对照，作者被要求做对比条而不是趋势线）。
-_MULTIPLE_OF = re.compile(r"(?:是|为|相当于|等同于)[^，。；、]{0,10}?\d+(?:\.\d+)?\s*倍"
-                          r"|\d+(?:\.\d+)?\s*倍于")
+_MULTIPLE_OF = re.compile(r"\d+(?:\.\d+)?\s*倍")
 # 被否定的比较仍然是比较：「尚未超过对手」讲的就是这个落差。判据是**宾语类型**——
 # 否定词 + 超过 + 名词宾语（对手/同行/去年…）＝两端被并置后否定；否定词 + 超过 + 数字
 # （「误差不超过 5%」）＝界限，不是两端。只按宾语形态分，不靠「对手」这类词表。
@@ -211,13 +204,13 @@ _NEGATED_COMPARISON = re.compile(
 # 数值图表的载荷与规格行不含这个形状，不会被误收。
 _TWO_ENDS_JOINED = re.compile(r"\d[^，,。；;\n]{0,10}?\s*(?:对|vs\.?|VS\.?)\s*\d")
 _THRESHOLD_WORDS = ("高于", "低于", "超过")
-_COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "不到", "前者", "后者",
+_COMPARISON_WORDS = ("相比", "vs", " versus ", "高于", "低于", "前者", "后者",
                      "优于", "落后", "差距", "benchmark", "对标", "增减",
                      "超过", "超越")
-# （`_SERIES_WORDS` 已删除：序列的判据是形状——同量纲时间轴，或一条同量纲读数。
-# 词表入口的两种情形都被这两条覆盖（同量纲时第一条成立；不同量纲时第二条要求
-# 读数，而读数本身已直接成立），任何输入下都不改变判断。取证见
-# eval/wordlist_ablation.py 与 CHANGELOG 9.37.0「删表」一节。）
+_SERIES_WORDS = ("趋势", "增长", "下降", "同比", "环比", "逐年", "路径", "曲线",
+                 "涨", "跌", "下滑", "回升", "掉到", "掉至", "跌到", "跌至",
+                 "升至", "升到", "降至", "降到", "增至", "增到", "减至", "回落至",
+                 "trend", "growth", "grew", "rose", "fell", "yoy", "qoq")
 # 期间坐标词：同比/环比/逐年自带时间轴，是序列的合法坐标
 # （序列词 ∧（同单位 ∨ 期间坐标）——变动动词「涨/跌」单独不是序列，F3 实测）。
 _TEMPORAL_SERIES_CUE = ("同比", "环比", "逐年", "yoy", "qoq")
@@ -528,13 +521,6 @@ def numerals(text: str) -> list[dict]:
         token = m.group(0)
         before = raw_text[:m.start()].rstrip()
         prev_char = raw_text[m.start() - 1] if m.start() else ""
-        # 设备代号/编号里的数字不是量（A-01/X2/B-02）：数字前是字母+连字符/字母直连时为编号零件
-        if m.start() >= 2 and raw_text[m.start() - 1] == "-" and raw_text[m.start() - 2].isalnum():
-            continue                                   # A-01 / X-2 的编号后段
-        if m.start() >= 1 and raw_text[m.start() - 1].isalpha() and not unit:
-            # 紧贴字母的无单位数字是代号零件（Q1/V2/3C 但 220V 例外已由后缀分支处理）
-            # 已由 (?<![A-Za-z]) 拦住首段，此处补漏连字符后的二次匹配（如 A-01 中 01 前为 - 但 - 前为 A）
-            pass
         if token[:1] in ("-", "+") and prev_char.isdigit():
             continue                                   # 2026-09 / 38-92 的后半段
         if re.search(r"\d{4}\s*[-/.]$", before):
@@ -604,64 +590,6 @@ def _is_quantile_row(body: str) -> bool:
     return False
 
 
-_PARENTHETICAL = re.compile(r"[（(][^（）()]*[）)]")
-
-
-def _strip_parenthetical(text: str) -> str:
-    """去掉括号注记（（−80 度）（来源：台账）（口径：可比门店））。
-
-    括号里的量是注记/增减量，不是与主量并列的第三项；把它们算进并列集合，
-    拆项行「电力 1,240 度（−80 度）」会被读成四个可比的取值。
-    """
-    return _PARENTHETICAL.sub(" ", text)
-
-
-def _sums_parts(values: list[float]) -> tuple[float, tuple[float, ...]] | None:
-    """同单位取值里的算术分解：返回 (总计, ≥3 个部分)，无分解返回 None。
-
-    纯算术，不猜语义：3200＋1100＋500＝4800、21＋12＋5＝38 是作者写下的分解关系，
-    不是设计偏好。取整容差 0.5% 吸收四舍五入，并排除全部取值相同的重复列举。
-    三个以上的部分才算分解：两项相加恰好等于第三项在比率/日期里太常见
-    （缩短 1.8 天 ＋ 现值 6.6 天 ＝ 原值 8.4 天；0.8% ＋ 1.1% ≈ 2%），
-    那不是作者写下的构成，是算术巧合。两项分解通常写成「其中/其余/占」。
-    """
-    uniq = sorted(v for v in set(values) if v > 0)
-    if len(uniq) < 4 or len(values) > 8:
-        return None
-    from itertools import combinations
-    for total in uniq:
-        parts = [v for v in uniq if v != total]
-        for size in range(3, min(4, len(parts)) + 1):
-            for combo in combinations(parts, size):
-                if abs(sum(combo) - total) <= abs(total) * 0.005 + 1e-9:
-                    return total, combo
-    return None
-
-
-def _sums_to_total(values: list[float]) -> bool:
-    return _sums_parts(values) is not None
-
-
-def _decomposition(nums: list[dict]) -> tuple[dict, list[dict]] | None:
-    """数字对象版的分解：按单位分组，返回 (总计对象, 部分对象列表)。"""
-    by_unit: dict[str, list[dict]] = {}
-    for n in nums or []:
-        if not n.get("year"):
-            by_unit.setdefault(n.get("unit") or "", []).append(n)
-    for group in by_unit.values():
-        found = _sums_parts([float(n["value"]) for n in group])
-        if not found:
-            continue
-        total_value, part_values = found
-        total = next((n for n in group
-                      if abs(float(n["value"]) - total_value) < 1e-9), None)
-        parts = [n for n in group
-                 if any(abs(float(n["value"]) - v) < 1e-9 for v in part_values)]
-        if total is not None and len(parts) >= 3 and total not in parts:
-            return total, parts
-    return None
-
-
 _ARRIVAL_CUE = re.compile(
     r"(?:升[至到]|降[至到]|增[至到]|减[至到]|跌[至到]|回落[至到]|提高[至到]|"
     r"达到|→|->|到(?=\s*(?:20\d{2}\s*年?)?\s*\d)|今年|目前|当前|现为|"
@@ -687,16 +615,6 @@ _CJK_RUN = re.compile(r"[一-鿿]{2,}")
 # 长 CJK 串内部按虚词再切：不切的话「与印尼的口岸清关时效在」会成为一个
 # 19 字的「指标名」，主张里的「清关」永远命中不上。
 _METRIC_SEPARATORS = re.compile(r"[的与和或是在由从对把被之并而就才更最也都还又则即及等中上下为了到至使让]")
-# 词边界归一（F-08）：指标名的**两端**会粘上不属于它的字。
-# 「2027 年漏损率降至 8.5%」的 CJK 游程从「年」起头（数字紧邻），留下它，同一
-# 指标的两次取值就归到「年漏损率降」与「年降」两个名下；主张点名了前者、没点名
-# 后者，两者得分不对称，主语退回基期。判据是**位置**（游程首字紧跟数字）而不是
-# 词表：紧跟在数字后的 年/月/季/日/周 是时间坐标，不是指标名的一部分。
-_TIME_UNIT_CHARS = "年月季日周"
-# 结尾的单字变化动词同理（「漏损率降」与「漏损率」是同一个指标）。但「回升 /
-# 下降 / 上涨 / 减少」本身就是词：前一个字也是动词时不动，避免剥出「增速回」。
-_TRAIL_VERB = frozenset("降升降增减涨跌")
-_TRAIL_VERB_GUARD = frozenset("回下上增减提升降涨跌分化合")
 # 太通用的 2 字片段（「成本」「数据」…）不足以证明主张点名了这个指标。
 _WEAK_METRIC_SLICE = frozenset({
     "成本", "数据", "时间", "比例", "金额", "数量", "情况", "内容", "方式", "结果",
@@ -705,14 +623,6 @@ _WEAK_METRIC_SLICE = frozenset({
 })
 # 区间下界：「1.8 至 6.4 天」里的 1.8 是波动的下沿，不是这一页要立住的量。
 _RANGE_NEXT = re.compile(r"^\s*(?:至|到|~|～|—|–|-)\s*[-+]?\d")
-# 「开业 5 年以上门店 640 家」「毛利 40% 以上」里的数字限定的是**筛选条件/门槛**，
-# 不是这一页测量的量。把它当主语，权重与焦点会停在一个修饰语上（实测 F-06：
-# 三类门店页的「必被最大化的量」成了「5 年」）。同区间下界一个池子：不做主语，
-# 但整页只有它时仍退回全体，不判空。
-_QUALIFIER_NEXT = re.compile(r"^\s*(?:以上|以下|以内|以內|左右|之上|之下|起步|开外)")
-# 「增长 4 倍」「翻一倍」里的倍数是端点比值的复述，不是这一页被测量的量：
-# 它既不该当主语（「三年出货」页的主语是 120 台），也不该独占一条轴。
-_DERIVED_UNITS = ("倍",)
 # 时间坐标点：取值前面的「2026 年 / Q3 / 3 月 / 第 3 个月」——序列的位置，不是题材词。
 _TIME_POINT = re.compile(r"(20\d{2}\s*年?|Q[1-4q]|第\s*[0-9一二三四五六七八九十]+\s*个?(?:月|季度|周)"
                          r"|[0-9一二三四五六七八九十]{1,2}\s*月|上半年|下半年)")
@@ -753,12 +663,6 @@ def _metric_of_clause(clause: str) -> list[str]:
             # 不是一回事；起名避开导入名，防止在本函数里遮蔽单一来源的词表接口。）
             unit_chars = "元%％万亿倍℃吨升米克角钱"
             prev = clause[:m.start() + a].rstrip()[-1:]
-            # 时间坐标字不是指标名（F-08）：只在紧邻数字时剥，避免把「月活」
-            # 「年度营收」这类以时间字开头的真指标名切坏。
-            if prev and prev.isdigit() and tok[:1] in _TIME_UNIT_CHARS and len(tok) > 1:
-                tok = tok[1:]
-                if len(tok) < 2 or tok in _METRIC_STOPWORDS:
-                    continue
             if prev and prev.isdigit() and tok[:1] in unit_chars:
                 salvage = run[a:].lstrip(unit_chars)
                 salvage = re.sub(r"^(?:高于|低于|超过|升至|降至|增至|降到|涨到|掉到|达到)", "", salvage)
@@ -768,12 +672,6 @@ def _metric_of_clause(clause: str) -> list[str]:
                 continue
             # 「降至 / 升至 / 达到」这类动词壳不是指标名；剥掉常见后缀再判一次。
             core = re.sub(r"(降至|升至|增到|减到|达到|超过|低于|高于|为|约|达|从)$", "", tok)
-            # 结尾的单字变化动词不是指标名的一部分（「漏损率降」→「漏损率」）：
-            # 剥完至少留 2 字，且前一字不是动词（否则剥的是「回升/上涨」这类词）。
-            if (len(core) >= 3 and core[-1] in _TRAIL_VERB
-                    and core[-2] not in _TRAIL_VERB_GUARD
-                    and core[:-1] not in _METRIC_STOPWORDS):
-                core = core[:-1]
             if len(core) >= 2 and core not in _METRIC_STOPWORDS:
                 out.append(core)
     return out
@@ -905,21 +803,6 @@ def _locate_numbers(text: str, nums: list[dict]):
         yield n, pos
 
 
-def _threshold_num_ids(text: str, nums: list[dict]) -> set:
-    """「5 年以上 / 40% 以下 / 20% 左右」里的数字限定的是**筛选门槛**，
-    不是这一页被测量的量。焦点与权重共用这一份判定。
-
-    只判门槛词，不判区间下界（「1.8 至 6.4 天」的下界另有既有口径：没有主张
-    锚定时按原文顺序取首值）。判据只看数字后紧跟的六个字符，不靠行业词表。
-    """
-    ids = set()
-    for n, pos in _locate_numbers(text, nums):
-        tail = text[pos + len(n["raw"]):pos + len(n["raw"]) + 6]
-        if _QUALIFIER_NEXT.match(tail):
-            ids.add(id(n))
-    return ids
-
-
 def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
     """焦点数字＝**主张所指的那个量**，不是第一个或最后一个数字。
 
@@ -963,8 +846,6 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         clause = text[a:b]
         tail = text[pos + len(n["raw"]):pos + len(n["raw"]) + 6]
         is_range_bound = bool(_RANGE_NEXT.match(tail))
-        is_qualifier = (bool(_QUALIFIER_NEXT.match(tail))
-                        or (n.get("unit") or "") in _DERIVED_UNITS)
         score = 0.0
         # 逐数字归因（F2 实测）：「客诉率 8.4% 高于行业均值 5.9%」里主张把两个度量
         # 都点了名，从句级归属把「客诉率」同时绑给两个数，主语漂到比较的另一端。
@@ -981,8 +862,7 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
             score += 2.0
         if year and years.get(idx) == year:
             score += 3.0
-        arrived = bool(_ARRIVAL_CUE.search(clause[:pos - a]))
-        if arrived:
+        if _ARRIVAL_CUE.search(clause[:pos - a]):
             score += 1.0
         # 条件从句里的数是护栏（「若 6 月前获批」），不是页面在展示的量；
         # 被申请的量不受此限（「若批准，30 家先行」的 30 家就是请求本身）。
@@ -1000,17 +880,12 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
                 and not any(_claim_mentions(subject_end, m) for m in named)))
         is_denominator = total_sig is not None and (
             round(n["value"], 6), n.get("unit") or "") == total_sig
-        scored.append((score, not is_range_bound and not is_qualifier and not is_guardrail
+        scored.append((score, not is_range_bound and not is_guardrail
                        and not is_intention
                        and not is_other_end and not is_denominator,
-                       n, tuple(metrics.get(idx, ())), arrived))
+                       n, tuple(metrics.get(idx, ()))))
     alive = [s for s in scored if s[1]]
-    if not alive:
-        # 整页数字都是非取值（门槛/倍数/护栏/区间/比较另一端）：这一页没有可立
-        # 的主语。退回全体会让「开业 5 年以上」或「增长 4 倍」当上主语（实测
-        # F-05/F-06）；调用方本来就有「没有主数就从正文另找锚点」的分支。
-        return None
-    pool = alive
+    pool = alive or scored                       # 全是区间边界时退回全体（不判空）
     best = max(pool, key=lambda t: t[0])
     if best[0] <= 0:
         return None
@@ -1036,31 +911,12 @@ def _attributed_primary(text: str, nums: list[dict], claim: str) -> dict | None:
         else:
             reduced.append(t)
     if len(reduced) >= 2 and all(t[3] for t in reduced):
-        def _claim_pos(t):
-            pos = [claim.find(m) for m in t[3] if m and claim.find(m) >= 0]
-            return min(pos) if pos else None
-
         def _claim_order(t) -> int:
-            # 没被主张点名的候选排在后面（不是排到最前：-1 会让最后一个实体胜出）。
-            got = _claim_pos(t)
-            return len(claim) + 1 if got is None else got
-        # 只有主张**真的点名了**某个指标时，才按主张里的出现顺序取主语。
-        # 一个都没点名（主张说的是「漏损率两年下降」，归属标签是「年漏损率降」/
-        # 「年降」）时，claim_order 全是 -1，min 会退回文本第一个数——那是基期
-        # 而不是当前状态（实测 F-08）。此时交给下面的同量纲末值判据。
-        # 分解页（有「其中/其余」）例外：那里并列的是同一总体的构成项，主语由
-        # 算术关系决定（嵌套分解的有名子项仍是主数），不能按「末值」规则改判。
-        if any(_claim_pos(t) is not None for t in reduced) or _REMAINDER_CUE.search(text) \
-                or not all(t[4] for t in reduced):
-            # 只有**每个候选都带到达信号**（同一指标的两个时间点）才按末值取主语；
-            # 并列实体（三类门店 640/210/350）没有先后，末值规则会把主语换成最后一个。
-            return min(reduced, key=_claim_order)[2]
+            pos = [claim.find(m) for m in t[3] if m and claim.find(m) >= 0]
+            return min(pos) if pos else len(claim) + 1
+        return min(reduced, key=_claim_order)[2]
     if len(tied) >= 2 and len({t[2].get("unit") or "" for t in tied}) == 1 \
             and len({t[3] for t in tied}) == 1:
-        return tied[-1][2]
-    # 归属标签因断词而分叉（「漏损率降」/「年降」）时，同量纲 + 全部带到达信号
-    # 仍是同一条序列：取文本顺序的末值（当前状态），不落在第一个基期值上。
-    if len(tied) >= 2 and len({t[2].get("unit") or "" for t in tied}) == 1:
         return tied[-1][2]
     return best[2]
 
@@ -1078,36 +934,10 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
     nums = evidence_numerals(text)
     if not nums:
         return nums, None
-    anchored = None
     if claim:
         anchored = _attributed_primary(text, nums, str(claim))
-    # 算术分解（≥3 个部分加总等于总计）是内容的形状，不是措辞：主张没有
-    # **全名**点名某个部分时，焦点是最大的那个部分，总计是分母不是主语。
-    # 只靠 2 字片段「命中」的主张（如页面主题词「改造」碰上指标名「产线改造」）
-    # 不算全名点名——它曾把 1,100 万元顶成主数、把真正的最大部分 3,200 万元
-    # 写成「总体/分母」（实测）。主张全名点名了某个部分（如「采后损耗 47%」
-    # 的嵌套分解）时仍由主张锚定，见 suites 的冻结期望。
-    decomp = _decomposition(nums)
-    if decomp:
-        _total, parts = decomp
-        owns = False
-        if anchored is not None and claim:
-            own_metric = {id(n): m for n, m in _metric_attribution(text, nums)}.get(id(anchored))
-            clean = str(own_metric or "").rstrip("占为达")
-            # 全名 (或 3 字片段) 点名才算主张真正点名了这个量；2 字弱片段不算。
-            owns = bool(clean and (clean in str(claim) or (
-                len(clean) >= 3
-                and any(clean[i:i + 3] in str(claim) for i in range(len(clean) - 2)))))
-            if anchored is _total and clean not in (
-                    "合计", "总计", "共计", "总和", "总额", "全部", "总"):
-                # 嵌套分解的总计本身是有名字的构成项（「采后损耗 47%＝运输+
-                # 分拣+仓储」）：它就是主张的那个子集，不是无名分母。只有写成
-                # 「合计/总计」的量才是分母，焦点落到它最大的部分上。
-                owns = True
-        if not owns:
-            return nums, max(parts, key=lambda n: float(n["value"]))
-    if anchored is not None:
-        return nums, anchored
+        if anchored is not None:
+            return nums, anchored
     subset = _PART_OF_WHOLE.search(text)
     if subset:
         part = evidence_numerals(subset.group("part"))
@@ -1116,11 +946,6 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
                             and n["unit"] == part[0]["unit"]), None)
             if matched:
                 return nums, matched
-    # 目标/门槛不是「已经有这个量」：标题写「漏损率降到 8% 以下」时，8% 是计划线，
-    # 页面实际展示的是正文里已经发生的 7.2%。终值信号（降到/增至）本身不区分
-    # 「达到」与「目标」，所以这一档也要过门槛判据（实测：三页样片 s03 的主语
-    # 是目标线 8%，而不是当前的 7.2%）。
-    blocked = _threshold_num_ids(text, nums)
     for cue in reversed(list(_ARRIVAL_CUE.finditer(text))):
         # 离终值太远的数字属于下一句话，不得误认；允许「到 2025 年 61%」。
         nearby = re.split(r"[，。；;!?！？]", text[cue.end():], maxsplit=1)[0][:32]
@@ -1128,15 +953,12 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
         if arrival:
             primary = next((n for n in nums if n["value"] == arrival["value"]
                             and n["unit"] == arrival["unit"]), None)
-            if primary and id(primary) not in blocked:
+            if primary:
                 return nums, primary
     # 主张点名了指标、正文没写标签、取值各自带时间坐标（「准点率连续四个季度下滑：
     # Q1 87.2%，Q2 85.1%…」）：这一列就是该指标的序列，答案是**当前状态**（末值），
-    # 不是序列开头的基期。判据是形状（每个取值都落在时间点上 + 同单位），不是
-    # 主张的措辞——「一路走低／走高／攀升」这类同义词不在词表里，靠词表把关只会
-    # 让没收录的说法退回首值、再被 focus 误称为「序列的当前值」（实测：三年复购率
-    # 一路走低，主数落在 2023 年的 31%）。实体并置（「早班 62 人，晚班 12 人」）
-    # 没有时间坐标，仍走原回退；主张序数点年/全名点名指标已由上方锚定处理。
+    # 不是序列开头的基期。判据要求序列信号在主张里（下滑/收窄/增长…）且每个取值都
+    # 落在时间点上——实体并置（「早班 62 人，晚班 12 人」）没有时间坐标，仍走原回退。
     claim_nums_ok = claim and any(_claim_mentions(str(claim), m)
                                   for m in _metric_of_clause(str(claim)))
     ev_nums = [n for n in nums if not n["year"]]
@@ -1151,16 +973,11 @@ def number_roles(text: str, claim: str | None = None) -> tuple[list[dict], dict 
         timed_flags.append(bool(_TIME_POINT.search(text[start:pos])))
     ev_nums = current
     if (claim_nums_ok and timed_flags and all(timed_flags) and len(ev_nums) >= 2
-            and len({n.get("unit") or "" for n in ev_nums}) == 1):
+            and len({n.get("unit") or "" for n in ev_nums}) == 1
+            and (_hit(str(claim), _CHANGE_WORDS + _SERIES_WORDS)
+                 or _SERIES_MORPH.search(str(claim)))):
         return nums, ev_nums[-1]
-    # 兜底不拿筛选条件当主语：「开业 5 年以上门店 640 家」的主语是 640 家，
-    # 不是年限门槛 5 年（实测 F-06：三类门店页「必须最大化的量」成了「5 年」）。
-    conditional = _threshold_num_ids(text, nums)
-    solid = [n for n in nums
-             if id(n) not in conditional and (n.get("unit") or "") not in _DERIVED_UNITS]
-    # 全是门槛/倍数时**不立主语**（返回 None），让调用方回到正文锚定：
-    # 「下滑集中在开业 5 年以上门店」的主语在正文（640 家），不是标题里的年限。
-    return nums, (solid[0] if solid else None)
+    return nums, nums[0]
 
 
 # 只收正文中可逐字核对的「主体—关系—对象」，不从“治理/四层”等话题词造图。
@@ -1201,119 +1018,6 @@ def explicit_relations(content: str) -> list[dict]:
         if fact["object"] and fact not in found:
             found.append(fact)
     return found if len({f["subject"] for f in found}) >= 2 else []
-
-
-# 指标名前后常粘着期间/方向修饰（「同店销售额连续」「同店销售额同比」）。
-# 判「同一指标是否有 ≥2 个读数」前先把它们剥掉；剥空了（只剩「同比」本身）
-# 说明这个数字是某条变化率的旁注，不构成独立指标。
-_METRIC_QUALIFIERS = ("同比增长", "同比下降", "相较", "同比", "环比", "连续", "累计",
-                      "增长", "上升", "下降", "提升", "降低", "增至", "降至", "高于",
-                      "低于", "超过", "不到", "为正", "为负")
-
-
-def _metric_stem(name: str) -> str:
-    n = str(name or "").strip()
-    for _ in range(2):
-        changed = False
-        for w in _METRIC_QUALIFIERS:
-            if n.startswith(w) and len(n) > len(w):
-                n, changed = n[len(w):], True
-            if n.endswith(w) and len(n) > len(w):
-                n, changed = n[:-len(w)], True
-        if not changed:
-            break
-    n = n.strip()
-    # 剥完仍是方向/期间词（「同比增长」→「增长」）：它是变化率旁注，不是指标名。
-    return "" if n in _METRIC_QUALIFIERS else n
-
-
-def _series_readings(body: str, attributed: list | None = None) -> bool:
-    """页面里是否存在**一条**可画的读数：同一量纲的 ≥2 个不同取值，且这句
-    自己带时间/到达关系（从 A 到 B、降至、升至、逐月）。
-
-    序列的判据是「一条曲线」，不是「整页只有一个量纲」：页面里的门店数、
-    口径数量、百分点增减量都是旁注，它们不构成第二条轴，也不该把一条真实的
-    单指标变化（「开业周期从 45 天压到 28 天」，同页还写着「同一口径 12 家
-    门店」）判成非序列。反过来，几个各出现一次的指标凑在一起（「营收 1200
-    万元 / 毛利率 38% / 客户数 240 家」）也凑不出一条曲线——那是多指标面板。
-    """
-    def _one_reading(chunk: str) -> bool:
-        vals = [n for n in numerals(chunk) if not n["year"]]
-        if len(vals) < 2:
-            return False
-        units = {(n.get("unit") or "").strip() for n in vals}
-        return (len(units) == 1 and "" not in units
-                and len({round(n["value"], 6) for n in vals}) >= 2)
-
-    # 端点变化是自带边界的（「从 45 天压到 28 天」），先按它切：标题与正文直接
-    # 拼在一起、中间没有标点时，整段分句会把旁注（「同一口径 12 家门店」）读成
-    # 第二个量纲，一条真实的变化被判成非序列（实测 R13 / F-05）。
-    for m in _FROM_TO_QUANTITY.finditer(body):
-        if _one_reading(m.group(0)):
-            return True
-    for clause in _CLAUSE_SPLIT.split(body):
-        if not (_ARRIVAL_CUE.search(clause) or _FROM_TO_QUANTITY.search(clause)
-                or _hit(clause, _TEMPORAL_SERIES_CUE)):
-            continue
-        if _one_reading(clause):
-            return True
-    # 一个分句一个时间点、每个时间点一个量（「2027 年漏损率降至 8.5%，2028 年
-    # 降至 7.2%」）：分句内只有一个数，读不成「一条读数」，但它在时间轴上就是
-    # 一条序列。判据是**同一量纲 ≥2 个取值，且各自落在时间坐标上**。
-    spans_all = _clause_spans(body)
-    by_unit: dict[str, list[tuple[dict, int]]] = {}
-    for n, pos in _locate_numbers(body, [x for x in numerals(body) if not x["year"]]):
-        unit = (n.get("unit") or "").strip()
-        if unit:
-            by_unit.setdefault(unit, []).append((n, pos))
-    # 变化率旁注（「同比增长 18%」）的单位也是 %，但它标注的是另一条指标的变化，
-    # 不是时间点上的读数：指标名剥完只剩方向词的数字不参与分组。
-    # 用（取值, 单位）作签名，不用对象 id：这一步会重新扫描一遍数字，
-    # 两次扫描拿到的是不同对象，按 id 查表会把所有行都滤掉（实测）。
-    def _sig(n: dict) -> tuple:
-        return (round(n["value"], 6), (n.get("unit") or "").strip())
-    stem_of = {_sig(n): _metric_stem(m) for n, m in (attributed or [])}
-    for unit, rows in by_unit.items():
-        rows = [r for r in rows
-                if not attributed or (stem_of.get(_sig(r[0])) or "") != ""]
-        if len({round(n["value"], 6) for n, _ in rows}) < 2:
-            continue
-        timed = 0
-        for n, pos in rows:
-            clause = next((body[a:b] for a, b in spans_all if a <= pos < b), "")
-            if _TIME_POINT.search(clause) or _DATE_TOKEN.search(clause) \
-                    or _hit(clause, _TEMPORAL_SERIES_CUE) or _PERIOD_LABEL.search(clause):
-                timed += 1
-        if timed >= 2:
-            return True
-    # 同一指标的两个读数被拆在不同分句里（「同店销售额连续 8 个季度为正，
-    # Q2 同店销售额同比 +12.4%」）：指标名重复 + 至少一处期间坐标 = 一条读数。
-    # 旁注指标（各出现一次）走不到这里，所以多指标面板不会被它冒充成曲线。
-    if attributed:
-        spans = _clause_spans(body)
-        seen: dict[str, list[int]] = {}
-        for n, m in attributed:
-            stem = _metric_stem(m)
-            # 剥完只剩方向/期间词（「增长」「提升」）＝这是某条变化率的旁注，
-            # 不是独立指标，不能与另一条旁注凑成「同一指标的两个读数」。
-            if len(stem) < 2 or stem in _METRIC_QUALIFIERS:
-                continue
-            seen.setdefault(stem, []).append(id(n))
-        if seen:
-            positions = {id(n): pos for n, pos in
-                         _locate_numbers(body, [n for n, _m in attributed])}
-            for stem, ids in seen.items():
-                if len(ids) < 2:
-                    continue
-                timed = 0
-                for nid in ids:
-                    pos = positions.get(nid)
-                    clause = next((body[a:b] for a, b in spans if a <= (pos or 0) < b), "")
-                    if _hit(clause, _TEMPORAL_SERIES_CUE) or _ARRIVAL_CUE.search(clause):
-                        timed += 1
-                if timed >= 2:
-                    return True
-    return False
 
 
 def understand(text: str, *, has_chart: bool = False, content: str | None = None) -> dict:
@@ -1358,11 +1062,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
                    for m in _AXIS_TIME_TOKEN.finditer(body)}
     compared = [n for n in ev
                 if (round(n["value"], 6), n.get("unit") or "") not in axis_tokens]
-    # 「3 年增长 4 倍」里的 4 倍是对端点比值的复述，不是第二条轴：把它算进
-    # 量纲集合，整页就变成「混合量纲」，一条干干净净的同单位年度序列（出货
-    # 28/62/120 台）会被判成两端对照（实测 F-03）。倍数只作旁注。
-    _axis_nums = [n for n in (compared or ev) if (n.get("unit") or "") != "倍"]
-    same_unit = len({n.get("unit") or "" for n in (_axis_nums or compared or ev)}) <= 1
+    same_unit = len({n.get("unit") or "" for n in (compared or ev)}) <= 1
     chars = max(len(text), 1)
     pct = [n["value"] for n in ev if (n.get("unit") or "") in ("%", "％")]
     # 算术相加不能证明共同分母或互斥；必须有作者的分解语义。
@@ -1376,72 +1076,12 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
                       # 但作者的分解动作必须看得见（占×2 + 其余/其中/剩余）。
                       or (len(_SHARE_OF_TOTAL.findall(body)) >= 2
                           and bool(_REMAINDER_CUE.search(body)))))
-    # 同一单位的一组取值：分解（可加总 / 「其余」）与并列（同一指标落在多个并列项上）
-    # 都不需要比较措辞才成立。中文经营稿里最常见的写法恰恰没有「相比 / 高于」：
-    # 「实训课 82%，直播课 61%，录播课 44%」「支座脱空 27 处，裂缝 64 处」。
-    # 缺了这两条，一页数据会被判成观点页（role=establish / focus=statement_text），
-    # 作者拿到的是「立一句话」而不是「把可比的量排齐」。
-    groups: dict[str, list[float]] = {}
-    for n in compared or ev:
-        groups.setdefault(n.get("unit") or "", []).append(round(n["value"], 6))
-    sum_decomposition = any(_sums_to_total(vals) for vals in groups.values())
-    remainder_decomposition = bool(_REMAINDER_CUE.search(body)) and any(
-        len(vals) >= 2 for vals in groups.values())
-    # 序列的坐标只有一种——时间（同比/环比这类期间词，或年份/期间轴）。并列量的
-    # 分句要先排除：括号里的（−80 度）是相对增减注记，不是第三个并列项。
-    # 时间坐标先判：≥2 个显式时间点（年份／第 N 个月／Q1…）说明这些片段是
-    # **同一条时间轴上的取值**，不是「同一时刻的规格行」。规格行判据只看
-    # 「≥3 段都以数字开头／收尾」，年份开头的中文句天然满足它——「2023 年人均
-    # 产值 42 万元；2024 年…；2025 年…」曾被判成规格行，一整页年度序列因此
-    # 降级为 evidence=none（实测 F-01）。期间词（同比/环比）不算时间坐标：
-    # 它出现在规格行里同样合法，不足以推翻「多个量并列」。
-    time_coords = (years >= 2 or len(axis_tokens) >= 2
-                   or len(_PERIOD_LABEL.findall(body)) >= 2)
-    time_axis = time_coords or bool(_hit(_evidence_body(body), _TEMPORAL_SERIES_CUE))
-    quantile_row = _is_quantile_row(body) and not time_coords
-    plain_groups: dict[str, list[float]] = {}
-    for n in numerals(_strip_parenthetical(body)):
-        if not n["year"]:
-            plain_groups.setdefault(n.get("unit") or "", []).append(round(n["value"], 6))
-    # 并列可比量：同一单位（单位必须真的写出来——裸数「能耗 132；排放 41；良率 96」
-    # 不可比，不许替作者补单位）的 ≥3 个不同取值。它成立的是**证据形态**，
-    # 不是「两端对照」：三档报价并排不等于两端有胜负，`comparison` 标志留给两端。
-    # 单位相同只是必要条件：同一页上的「1.9 元利润 / 6.2 元履约成本 / 58 元客单价」
-    # 单位相同却是三个指标，不是三个并列项。并列要求整页证据只有一个单位（same_unit），
-    # 且有 ≥3 个不同取值——同一指标落在多个并列项上。
-    # 并列可比量：同一单位（裸数不计——标题里的「3 类病害」是分类词）的 ≥3 个不同取值。
-    # 多量纲页要再验一次指标名：「1.9 元利润 / 6.2 元履约成本 / 58 元客单价」同单位
-    # 却是三个指标，那是多指标面板，不是并列项比较。
-    measured = {u: v for u, v in plain_groups.items() if u}
-    attributed = _metric_attribution(body, ev)
-    # 「一条可画的读数」既决定序列形态，也决定多指标面板是否成立：有读数就不是
-    # 面板（面板是没有单一曲线时的形状）。算一次，两处共用。
-    series_readings = _series_readings(body, attributed)
-
-    def _parallel_group(unit: str, vals: list[float]) -> bool:
-        if len(set(vals)) < 3:
-            return False
-        if len(measured) == 1:
-            return True
-        names = {m for n, m in attributed if (n.get("unit") or "") == unit and m}
-        return len(names) <= 1
-
-    parallel_units = (distinct >= 3 and not time_axis and not quantile_row
-                      and not phased and not _FROM_TO_QUANTITY.search(body)
-                      and any(_parallel_group(u, v) for u, v in measured.items()))
-    is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole \
-        or sum_decomposition or remainder_decomposition
+    is_subset = (distinct >= 2 and bool(_PART_OF_WHOLE.search(body))) or pct_whole
     # 阈值列举：多个子句各带一个数、且单位互不相容（「连续两月低于 15 万元；退货率高于 8%；
     # 流失超过 2 人」）是并列条件，没有两端可比的量。「高于/低于/超过」在这里只是阈值词，
     # 不能单独构成比较；只有明确的比较措辞（相比/优于/对标…）仍按比较处理。
     num_clauses = {i for i, c in enumerate(_CLAUSE_SPLIT.split(body)) if _NUM.search(c)}
-    # 「阈值列举」要求**每个条件各自带阈值词**（「连续两月低于 15 万元；退货率高于
-    # 8%；流失超过 2 人」）。只要整页出现过「高于/低于」就判列举，会把一句基准
-    # 对照（标题「会员复购率 34%，高于同业 8 个百分点」，正文「会员数 860 万，
-    # 月活 210 万…」）读成三条并列阈值——证据形态落成 structure，作者被要求给
-    # 一页复购率对照画层级图（实测 F-02）。
-    threshold_clauses = [c for c in _CLAUSE_SPLIT.split(cmp_body) if _hit(c, _THRESHOLD_WORDS)]
-    threshold_list = (len(threshold_clauses) >= 2 and len(num_clauses) >= 2
+    threshold_list = (_hit(cmp_body, _THRESHOLD_WORDS) and len(num_clauses) >= 2
                       and len({n.get("unit") or "" for n in ev}) >= 2)
     strong_cmp = _hit(cmp_body, _COMPARISON_WORDS) and not _hit(cmp_body, _THRESHOLD_WORDS)
     is_comparison = not phased and (
@@ -1462,22 +1102,11 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     if ev or is_comparison or _hit(relation_text, _SEQUENCE_WORDS) or any(mark in relation_text for mark in SEQUENCE_MARKERS):
         relations = []
     evidence_body = _evidence_body(body)  # 复合名词过滤一次，下游共用
-    # 一个指标一条轴：**序列要求整页同一个量纲**。量纲不止一种、又有时间/到达
-    # 坐标时，页面是「几个指标各自的时间走向」——那是同屏对照（要分轴、要对齐
-    # 期间），不是一条曲线。缺了这一档，「单店营收 48.6→37.5 万元；门店数
-    # 980→1200 家」被判 series，作者拿到的必落元素是 chart，而两串数字没有共同
-    # 基线（实测 F-01/F-04）。`comparison` 标志不跟着改：多指标面板不是两端胜负。
-    mixed_metric_panel = (distinct >= 2 and not same_unit and not series_readings
-                          and (time_axis or bool(_FROM_TO_QUANTITY.search(body))))
     modes: dict[str, float] = {}
-    if is_comparison or parallel_units or mixed_metric_panel \
-            or (distinct >= 2 and has_chart and years < 2):
-        # 并列量进同一形态，但不改 `comparison` 标志：并列是「可比的量排在一起」，
-        # 两端对照才是有胜负的比较。
+    if is_comparison or (distinct >= 2 and has_chart and years < 2):
         modes["comparison"] = 0.6 + 0.1 * min(distinct, 3)
     if is_subset:
-        # 分解压过并列：能加总/有「其余」的一组量是一个整体，不是几个待比较的选项。
-        modes["part_whole"] = 0.92 if (sum_decomposition or remainder_decomposition) else 0.84
+        modes["part_whole"] = 0.84
     # 序列至少两个数据点：「增长/趋势」这类词只有配上两个以上的量才是曲线；
     # 单独出现在封面或收尾的措辞里（「接管增长」「内容增长负责人」）不是证据。
     # 「三个以上同单位数字」不是序列的充分条件：规格行/并列量同样满足它，
@@ -1485,12 +1114,14 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
     # 变动动词与同单位也都不是序列的充分条件（F3 实测）：拆项成本行「采购 31 元
     # （−1.2 元）；物流 24 元（+2.8 元）」全同单位、带「涨」字，仍是并列拆项。
     # 序列的坐标只有一种——**时间**（同比/环比/逐年这类期间词，或年份/期间轴）。
-    # 序列＝「一页只有一种量纲、且有时间坐标」，或「页面里存在一条同量纲的
-    # 到达/变化读数」。整页 `same_unit` 不是序列的判据：它把旁注（门店数、
-    # 口径数量）当成第二条轴，也会让「营收同比 +18%，毛利率同比 +3 个百分点」
-    # 这种一句话里几个指标各出现一次的页面冒充曲线（实测 F-01）。
-    if distinct >= 2 and not quantile_row and (
-            (same_unit and time_axis) or series_readings):
+    quantile_row = _is_quantile_row(body)
+    time_axis = (years >= 2 or len(axis_tokens) >= 2
+                 or len(_PERIOD_LABEL.findall(body)) >= 2
+                 or bool(_hit(evidence_body, _TEMPORAL_SERIES_CUE)))
+    words_series = _hit(evidence_body, _SERIES_WORDS) and time_axis
+    if (distinct >= 2 and words_series) \
+            or (distinct >= 2 and same_unit and time_axis and not quantile_row) \
+            or _FROM_TO_QUANTITY.search(body):
         modes["series"] = 0.55 + 0.08 * min(distinct, 4)
     if distinct == 1:
         modes["number"] = 0.7
@@ -1519,19 +1150,7 @@ def understand(text: str, *, has_chart: bool = False, content: str | None = None
         else:
             modes["sequence"] = 0.75
     if phased:
-        # 分期只是「同一承诺的先后」：没有流程名、也不是「分三期」这种显式排期时，
-        # 它压不过数据形状。「一期投产 14 个月，损失由 26% 降至 18%」「一期投入 4800
-        # 万元（设备 3200／改造 1100／数字化 500）」曾被判成时间轴，作者因此把投资
-        # 拆解页画成流程图——一期/二期在这里只是项目名，不是页面结构。
-        # 「分期」要成为一条可排的承诺轴，每一期得各自带着**同单位**的量
-        # （一期 1,200 万；二期 1,800 万；三期 1,800 万）。一期写时长、二期写目标，
-        # 或只有一期带数，都只是项目名，不足以把页面判成时间轴。
-        phase_clauses = [c for c in _CLAUSE_SPLIT.split(body) if _PHASE_MARKERS.search(c)]
-        phase_amounts = [n for c in phase_clauses for n in numerals(c) if not n["year"]]
-        quantified_phases = (len({c for c in phase_clauses if _NUM.search(c)}) >= 2
-                             and len({n.get("unit") or "" for n in phase_amounts}) == 1)
-        explicit_phase = bool(_PHASE_SPLIT.search(body)) or seq_strong or quantified_phases
-        modes["sequence"] = max(modes.get("sequence", 0.0), 0.9 if explicit_phase else 0.7)
+        modes["sequence"] = max(modes.get("sequence", 0.0), 0.9)  # 分期结构压过数值形态（series 上限 0.87）
     if _hit(body, _CONCLUSION_WORDS):
         modes["proposition"] = 0.55
     if relations:
@@ -1588,7 +1207,7 @@ def _topic_shaped(title: str) -> bool:
 # 这一句就不只是名词标签（「华东区数据」），而是对内容有主张的一句话。
 # 断言谓语：标题里出现这些词，说明作者在下判断（「差距明显」「回本周期缩短」），
 # 而不是给一个名词标签（「华东区数据」）。词表只收谓语，不收题材名词。
-_TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足", "不到", "超过", "低于", "高于",
+_TITLE_ASSERTION = ("是", "才", "最", "唯一", "第一", "过半", "不足", "超过", "低于", "高于",
                     "不再", "已经", "正在", "仍未", "尚未", "必须", "需要", "决定", "意味",
                     "成为", "没有", "不能", "无法", "达到", "降至", "升至", "翻倍",
                     "下降", "上升", "增长", "减少", "解耦", "落地", "启动", "完成",
@@ -1630,11 +1249,6 @@ _DISPOSAL_CLAIM = re.compile(r"^\s*(?:把|将)")
 _ATTRIBUTION_CLAIM = re.compile(r".{1,12}(?:来自|源于)")
 
 
-# 汉语陈述句最稳的句法标记：动词/形容词 + 体标记「了」。名词短语不会带它
-# （「门店的晨会节奏」），所以它是「标题是不是一句话」的判据，不是题材词表。
-_PREDICATE_LE = re.compile(r"[一-鿿]了")
-
-
 def _title_assertive(title: str) -> bool:
     """标题是否携带主张（而不是一个名词标签）。
 
@@ -1644,11 +1258,7 @@ def _title_assertive(title: str) -> bool:
     """
     return (bool(evidence_numerals(title)) or _hit(title, _TITLE_ASSERTION + _CHANGE_WORDS)
             or bool(_CONTRAST_ASSERTION.search(title)) or bool(_DISPOSAL_CLAIM.search(title))
-            or bool(_ATTRIBUTION_CLAIM.search(title))
-            # 动词 + 「了」是陈述句的句法标记（「只动了三个仓」「完成了切换」）。
-            # 少了这一档，「改造一期只动了三个可复制的仓」会被 `的` 判成名词化
-            # 话题（「X 的 Y」），作者写下的主张被正文证据行顶掉。
-            or bool(_PREDICATE_LE.search(title)))
+            or bool(_ATTRIBUTION_CLAIM.search(title)))
 
 
 def _is_data_listing(sent: str) -> bool:
@@ -1753,8 +1363,7 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
             score += 0.6
             bits.append("作者标题为断言")
         if is_title and content and not _topic_shaped(title) \
-                and not (_NOMINALIZED_TOPIC.match(title) and not _title_assertive(title)) \
-                and not content_claim_shaped:
+                and not _NOMINALIZED_TOPIC.match(title) and not content_claim_shaped:
             # 标题在主张位、正文全是证据陈述：标题原话即主张（「先做中央商务区，
             # 两家运营商同步进场」）。名词化话题（「X 的 Y」）不在此列。
             score += 0.6
@@ -1803,11 +1412,7 @@ def extract_claim(item: dict, *, positional: bool = False) -> dict:
             else:
                 score += 1.6 if content else 0.0
                 bits.append("数字「" + "/".join(n["raw"] for n in snums[:3]) + "」")
-        if not listing and _hit(sent, _CHANGE_WORDS) and content_may_lift:
-            # 「变化」与「短句」都是**证据行的加分项**，不是主张形状：标题占着
-            # 主张位、正文只是「11 仓改 3 仓，成本降 0.42 元」时，这两项会把
-            # 证据行抬到作者写下的标题之上（实测：标题 1.2 输给正文 2.0，
-            # s04 的结论变成一串数据）。只有能竞争主张位的句子才吃这两项。
+        if not listing and _hit(sent, _CHANGE_WORDS):
             score += 0.8
             bits.append(f"变化「{_fired(sent, _CHANGE_WORDS)}」")
         if len(sent) <= 42:
@@ -1929,13 +1534,9 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
         else:
             why = "主证据量：让观众看见可核验的量，不替它编造变化"
         maxi.append(f"{primary['raw']} — {why}")
-    _decomp = _decomposition(claim_nums) if u.get("part_whole") else None
     for n in [n for n in claim_nums if n is not primary][:2]:
-        if u.get("part_whole") and primary and n["unit"] == primary["unit"] \
-                and _decomp and n is _decomp[0]:
+        if u.get("part_whole") and primary and n["unit"] == primary["unit"]:
             why = "总体/分母：和子集同屏，但不是变化前的基期"
-        elif u.get("part_whole") and primary and n["unit"] == primary["unit"]:
-            why = "另一构成项：同屏参照，不是总体，也不是主数"
         elif comparing:
             why = "另一比较对象：注明各自定义，口径不同不得直接相减"
         elif u.get("evidence") == "series" and primary and n["unit"] == primary["unit"]:
@@ -1949,10 +1550,7 @@ def information_weight(u: dict, claim: dict, text: str = "", *,
         maxi.append(f"「{claim_text[:26]}」— 结论句，本页第一落点必须落在它身上")
     if comparing:
         maxi.append("比较对象与口径 — 两端要能辨认；只有分母一致时才画差值")
-    if u.get("evidence") in ("structure", "sequence") \
-            and not _hit(claim_text, _ASK_WORDS):
-        # 请求页的顺序只是支撑形状：把它列为「必须最大化」，会和 decision_ask
-        # 焦点互相打架（实测批准页权重同时要求画结构与立请求）。
+    if u.get("evidence") in ("structure", "sequence"):
         maxi.append("关系的形状（层级/顺序）— 结构本身就是这一页的视觉对象")
 
     for n in [x for x in (u.get("numerals") or [])
@@ -2079,24 +1677,16 @@ def visual_role(u: dict, *, index: int, total: int, tension: str,
 # 6 · 焦点判定（Focus Determination）
 # ─────────────────────────────────────────────────────────────────────
 def _metric_attribution(text: str, nums: list[dict]) -> list[tuple[dict, str]]:
-    """每个数字归属它前面最近的那个指标名（「履约成本 11.2 元」→ 履约成本）。
-
-    从句自身没有指标名时，沿用它所在句子里**上一个写出来的指标名**：中文把
-    「2027 年漏损率降至 8.5%，2028 年降至 7.2%」的第二段主语全省了，只按本从句
-    归属，第二个数拿不到指标名，主张就点名不了它——与 `_metric_by_clause` 同一
-    口径（同一份继承规则，两处结果必须一致，否则焦点与集中度会各说各话）。
-    """
+    """每个数字归属它前面最近的那个指标名（「履约成本 11.2 元」→ 履约成本）。"""
     spans = _clause_spans(text)
-    inherited = _metric_by_clause(text)
     pairs = []
     for n, pos in _locate_numbers(text, nums):
-        idx = next((i for i, (a, b) in enumerate(spans) if a <= pos < b), None)
-        clause = text[spans[idx][0]:spans[idx][1]] if idx is not None else text
-        prefix = (clause[:max(0, pos - spans[idx][0])] if idx is not None else clause)
+        clause = next((text[a:b] for a, b in spans if a <= pos < b), text)
+        prefix = clause[:max(0, pos - next(a for a, b in spans if a <= pos < b))] \
+            if any(a <= pos < b for a, b in spans) else clause
         # 取**离数字最近**的那个指标名（「…口岸清关时效在 1.8」→ 清关时效，
         # 不是句首的「越南」）：指标名归属错了，集中度与焦点判据一起错。
-        head = (_metric_of_clause(prefix) or _metric_of_clause(clause)
-                or (inherited.get(idx) if idx is not None else None) or [])
+        head = _metric_of_clause(prefix) or _metric_of_clause(clause)
         pairs.append((n, head[-1] if head else ""))
     return pairs
 
@@ -2178,33 +1768,17 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
                     ["kpi_row", "把数字排成一行＝观众先看数字后看主张，顺序反了"]]
     elif u.get("part_whole") and carried:
         part = (primary or carried[-1])["raw"]
-        _primary = primary or carried[-1]
-        _decomp = _decomposition(carried)
-        # 总体只能是：算术分解的总计（主数是它的部分时），或同单位且大于主数的
-        # 那个量（「12 家中 9 家」的 12）。其余候选是另一部分/子集（如「占 38%，
-        # 其中的 24%」的 24% 小于主数），写成总体就是把分母说错（实测）。
-        _whole = None
-        if _decomp and any(n is _primary for n in _decomp[1]):
-            _whole = _decomp[0]
-        if _whole is None:
-            _larger = [n for n in carried if n is not _primary
-                       and (n.get("unit") or "") == (_primary.get("unit") or "")
-                       and float(n["value"]) > float(_primary["value"])]
-            _whole = max(_larger, key=lambda n: float(n["value"])) if _larger else None
-        whole = _whole["raw"] if _whole else "总体"
+        whole = next((n["raw"] for n in carried if n is not primary), "总体")
         choice = {"element_role": "ratio_main", "type": "text",
                   "why": f"「{part}」是已经发生的子集；同屏写清「{whole}」的总体，"
                          "不把整体→子集误画成下降，也不让比例脱离分母。"}
         rejected = [["trend_line", "总量和子集不是先后两个时间点：折线会虚构下降"],
                     ["card_grid_4", "一个分子与分母不需要四张等权卡片"]]
     elif (u.get("comparison") or u.get("evidence") == "comparison") \
-            and int(u.get("distinct_numerals") or 0) >= 2 and not support_only:
+            and int(u.get("distinct_numerals") or 0) >= 2:
         # 六个以上的数字是**一条序列**，不是两端对照：同屏排成数字墙会丢掉形状，
         # 交给图表（同一基线 + 单一高亮终值）才读得出趋势。
-        # 「数字墙交给图表」的前提是这些数字**共用一条轴**。量纲不同的数字排进
-        # 同一张图，读者会去比较不该比较的量：多指标面板保持文字/分栏对照，
-        # 由作者决定是否分轴，判断层不替他把不同基线画成一张图。
-        many = int(u.get("distinct_numerals") or 0) >= 6 and u.get("same_unit", True)
+        many = int(u.get("distinct_numerals") or 0) >= 6
         choice = {"element_role": "comparison_field",
                   "type": "chart" if (u.get("has_chart") or many) else "text",
                   "why": ("这一页有 %d 个数字：把它们排进文本框读者要自己连点成线，"
@@ -2238,17 +1812,6 @@ def focus_of(role: str, u: dict, claim: dict, media: dict | None = None, *,
         rejected = [["card_grid_4", "四张等权卡片：等权＝没有结论，观众平均用力后什么都没记住"],
                     ["donut", "把一句话画成一圈：环形图要求读者心算比例，结论被稀释"],
                     ["gauge", "仪表盘指针只表达「好/不好」，不表达「多少」"]]
-    elif _hit(claim_text, _ASK_WORDS) and u.get("evidence") in ("structure", "sequence"):
-        # 收束请求自己就是焦点（_closing_ask 同一条纪律）：正文里偶然出现的
-        # 分期/阶段词是支撑证据的项目名，不是这一页要画的流程图。请求量已由
-        # 上方 carried 分支处理；走到这里说明没有可锚定的量，落点回到请求本身。
-        # 只拦截 structure/sequence 的误落：无证据形态的请求页仍走下方陈述
-        # 分支（R2 钉：主张已点名请求时不另换 brief 决定派生的落点）。
-        choice = {"element_role": "decision_ask", "type": "text",
-                  "why": "这一页要观众做的决定就是焦点：请求与对象同屏，"
-                         "证据退一层——把请求画成流程图，决定就被推迟了。"}
-        rejected = [["structure_map", "把支撑证据的项目分期画成流程：顺序成了主角，请求反而退场"],
-                    ["kpi_row", "数字先排成一行：数字在前，决定在后"]]
     elif u.get("evidence") in ("structure", "sequence"):
         choice = {"element_role": "structure_map", "type": "chart",
                   "why": "层级/顺序是内容本身的形状，画出来比写出来短。"}
@@ -2325,11 +1888,6 @@ def _composition_scores(u: dict, role: str, media: dict, text_len: int,
         s["big_whitespace"] += 1.0
     s["linear_structure"] = (4.5 if u.get("relations") else
                              3.0 if ev in ("sequence", "structure") else 0.0)
-    if _hit(str((claim or {}).get("text") or ""), _ASK_WORDS) and not u.get("relations"):
-        # 请求页同 focus 的纪律：分期词带来的 sequence 只是支撑形状，把页面
-        # 排成线性流程会让「起点→终点」冒充收束落点（实测：批准页构图
-        # linear_structure、空间读法「轴线上第一个节点」）。明示关系不受此限。
-        s["linear_structure"] = 0.0
     s["asymmetric_tension"] = (2.5 if u.get("comparison") else 0.0) \
         + (1.5 if role == "compare" else 0.0) \
         + (1.0 if n >= 2 and u.get("comparison") else 0.0)
@@ -2894,15 +2452,6 @@ def _intent_value(value) -> bool:
 _LABEL_HEAD_PREFIX = ("我们", "本页", "这一页", "首先", "其次", "同时", "另外",
                       "因此", "所以", "但是", "请", "建议", "也就是说", "换句话说",
                       "同期", "本期", "目前", "当前", "今年", "未来")
-# 条件句分两类，证据不同、处理也不同：
-# - **充分条件**（只要/一旦/既然）：条件从句的主语就是本页主题，
-#   「只要门店密度达到每 10 万人 1.2 家…」的眉标是「门店密度」——剥掉连词继续派生。
-# - **假设/让步**（如果/若/假如/倘若/即使/尽管/虽然/因为/由于/除非/无论）：
-#   从句主语是假设对象，不是本页主题；「如果只改一半，回报会被摊薄到 5.8 年」
-#   曾派生眉标「如果」（一个连词）或「改一半」（一个谓语）。这类直接缺省。
-_LABEL_CONDITIONAL_PREFIX = ("只要", "一旦", "既然")
-_LABEL_HYPOTHETICAL_OPENERS = ("如果", "若", "假如", "倘若", "即使", "尽管", "虽然",
-                               "因为", "由于", "除非", "无论", "与其", "宁可")
 # 眉标在**谓语/虚词之前**收口：主语短语才是「这一段在论证里的位置」。
 # 「用」「有」不在边界表里：它们嵌在名词词内的频率高于作独立虚词（利用率/现有），
 # 按它们切开会把「利用率不足」劈成「利｜率不足」、「保留现有干线」劈成「保留现｜干线」，
@@ -2923,17 +2472,8 @@ _LABEL_BOUNDARY = ("是", "在", "与", "和", "或", "由", "从", "对", "把"
 _GAP_WORDS = ("差距", "差值", "差额", "价差", "落差", "收敛", "收窄", "拉大", "缩小", "差额率")
 
 _LABEL_TAIL = "的里中上下内外前后了过等及"
-# 右端自动去尾只收**纯助词**：里/中/上/下 既是处所助词也是常见词尾（集中/下滑/
-# 上限/内部），自动去尾会把词劈开；它们交给「末字前一位是助词」的结构判据。
-_LABEL_TAIL_TRIM = "的里了过等及"
 # 段首的「名词 + 数字 + 单位」说明语：「中国 800 元以上」「本轮 1.8 亿元里」
-# 尾部用**权威单位表**（_ENDPOINT_UNIT，与端点变化共用一份定义），不用
-# 「0–3 个汉字」：后者会把下一个词的首字一起吞掉——「批准 3.2 亿元改造预算」
-# 剥成「造预算」，一个动词+名词的眉标就出现在页眉上（实测 F-07）。
-# 「第 1 页/第 3 章」是编号，不是「名词 + 数量」的说明语：编号后面跟的是
-# 标签词（结论句/概览），剥掉它会把标签本身当主题（实测 F-07）。
-_NUM_MODIFIER = re.compile(r"^[^0-9A-Za-z]{0,6}(?<!第)[0-9][0-9.,]*\s*(?:"
-                           + _ENDPOINT_UNIT + r")")
+_NUM_MODIFIER = re.compile(r"^[^0-9A-Za-z]{0,6}[0-9][0-9.,]*\s*[一-鿿]{0,3}")
 # 切段边界（长词优先），在此处断开而不是在断口前截断
 _BOUNDARY_SPLIT = re.compile("|".join(
     re.escape(w) for w in sorted(_LABEL_BOUNDARY, key=len, reverse=True)))
@@ -2954,10 +2494,7 @@ _LABEL_TAIL_STOP = set("做在为有成给使让占到把被与和或并且而�
                        # 否定/未完副词收尾 = 被截断的从句，不是名词短语：
                        # 「答案不在开店速度」曾派生出眉标「答案不」，
                        # 「同店销售额仍在增长」曾派生出「同店销售额仍」。
-                       "不没无未仍还也都又再更才就只仅正已将且"
-                       # 「真」是「真正」被单字边界「正」劈开后留下的半个词：
-                       # 「成本结构里真正失控的」→「成本结构里真」。
-                       "真")
+                       "不没无未仍还也都又再更才就只仅正已将且")
 
 
 # 计量单位本身不是主题短语（只收量词/单位，不收题材名词）。
@@ -2977,14 +2514,7 @@ def section_label(item: dict, claim: dict, role: str) -> str:
     if declared:
         return declared[:16]
     text = str((claim or {}).get("text") or (item or {}).get("title") or "").strip()
-    if text.startswith(_LABEL_HYPOTHETICAL_OPENERS):
-        return ""
-    if text.startswith("请") and _hit(text, _ASK_WORDS):
-        # 请求句没有可定位的主题短语（既有钉的口径）：「请委员会批准…」里
-        # 受请对象（委员会）不是本页主题，按边界切只会留下「委员」这种
-        # 被「会」字劈开的半截机构名（实测）。宁可缺省，不输出错位名词。
-        return ""
-    for prefix in _LABEL_CONDITIONAL_PREFIX + _LABEL_HEAD_PREFIX:
+    for prefix in _LABEL_HEAD_PREFIX:
         if text.startswith(prefix):
             text = text[len(prefix):]
             break
@@ -3009,10 +2539,8 @@ def section_label(item: dict, claim: dict, role: str) -> str:
             # 相邻段是**单字**＝切口落在两字词内部（「付费会员」被「会」劈成
             # 「付费｜员」、「利用率不足」被「用」劈成「利｜率不足」）：
             # 无论候选在单字段之前还是之后，它都是那个词的半截，跳过。
-            if (idx > 0 and len(parts[idx - 1].strip()) <= 1) \
+            if (idx > 0 and len(parts[idx - 1].strip()) == 1) \
                     or (idx + 1 < len(parts) and len(parts[idx + 1].strip()) == 1):
-                # 前一段为空 = 这个边界字是段首、正劈在两字词内部（「会员复购率」
-                # 被「会」劈成「/员复购率」，劈出来的「员复购率」曾当上眉标）。
                 continue
             # 以数字开头的段是数量短语（「15 万元」「2 人」）：残留的单位字不是主题。
             # 实测：「单店月净利…低于 15 万元」的眉标被派成「万元」。
@@ -3023,19 +2551,7 @@ def section_label(item: dict, claim: dict, role: str) -> str:
             # 是编号，去掉边缘编号仍是同一个名词。
             if not core or core not in q:
                 continue
-            # 只在**右端**去掉纯助词。以前用两端的 strip(_LABEL_TAIL)，段首的
-            # 上/下/内/外/里 被一起吃掉：「下滑集中」→「滑集」、「上限 3 亿元」
-            # →「限 3 亿元」，一个由两个词拼出来的假词成了页眉（实测 F-07）。
-            # 处所/助词收尾的半个词另由下面的结构判据处理。
-            p = core.rstrip(_LABEL_TAIL_TRIM)
-            # 单字边界劈开两字词时，段末会留下半个词（「成本结构里｜真正失控」
-            # 被「正」劈成「…里真」）。判据不是猜词表，而是**结构**：末字之前
-            # 紧跟处所/助词（里中上下内外前后）时，段落在名词短语的中间，末字
-            # 只可能是下一个词的首字——削掉它才是那个名词短语。
-            # 不做通用削字：「科室用时」的「时」是量词收尾，不是碎片，
-            # 通用后削会得到「科室用」这种更长更错的结果。
-            if len(p) >= 3 and p[-1] in _LABEL_TAIL_STOP and p[-2] in _LABEL_TAIL:
-                p = p[:-1].rstrip(_LABEL_TAIL)
+            p = core.strip(_LABEL_TAIL)
             # 上限 7：完整的主语短语（「去年订单量增长」7 字）好过整页缺省；
             # 词内碎片几乎都短于 7 字，放宽上限不增加碎片面。
             if not (2 <= len(p) <= 7):
@@ -3051,11 +2567,6 @@ def section_label(item: dict, claim: dict, role: str) -> str:
     # 段首是「名词 + 数字 + 单位」的说明语（「中国 800 元以上…」）：剥掉它再收一次，
     # 真正的主语常常在数量词之后。
     stripped = _NUM_MODIFIER.sub("", head, count=1).strip()
-    # 剥掉「名词+数字+单位」后，若剩下的是「的…」这类定语尾巴，说明数字不是
-    # 段首修饰语、名词在数字**之前**（「每年 1.4 亿元的水没有计量」）：此时
-    # 剩下的只是一句话，不是主题短语，直接缺省（实测 F-07）。
-    if stripped.startswith(("的", "了", "着", "是", "而", "在")):
-        return ""
     if stripped and stripped != head:
         label = _label_of(stripped)
         if label:
@@ -3236,9 +2747,7 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
     # 只按「终值信号」扫一遍，会把决策页的「扩到 3 个」当成主语，而真正要批的
     #「30 家」被降成支撑——主张点名的量必须赢过任何后出现的终值。
     anchor = number_roles(claim_text, claim_text or None)
-    # 主张里的数字全是门槛/倍数时没有可立的主语（primary is None）：此时回到
-    # 正文锚定，否则「开业 5 年以上」的年限会当上整页主语（实测 F-06）。
-    if not anchor[1] and role["role"] in ("prove", "compare") \
+    if not anchor[0] and role["role"] in ("prove", "compare") \
             and u.get("evidence") in ("number", "series", "comparison", "part_whole"):
         # 结论在标题、结果值在证据中：主张照样锚定「哪一个量」是本页主语
         anchor = number_roles(content, claim_text or None)
@@ -3265,14 +2774,8 @@ def page_judgment(item: dict, *, index: int, total: int, brief: dict, world: dic
                       "把请求与资源量同屏落在收束位，别让数字焦点把它挤成一行正文")
     if claim["source"] == "absent":
         open_q.append("本页结论：先写出一句可复述的话（或删掉这一页）")
-    if media["decision"] in ("required", "reuse") and not item.get("asset_source") \
-            and not str(item.get("asset_subject") or "").strip():
-        # 死分支修复（审计实测）：旧条件挂在「judgment 来源的 required」上，而
-        # media_necessity 只有作者声明才返回 required——真正需要提问的是
-        # 「声明了出图、没说画什么」：主体会回落为标题与正文（观点句当画面），
-        # 出图必跑偏。清单 meta 的提醒在执行层，判断层也要开口。
-        open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）；"
-                      "声明 asset_subject——未声明时主体回落为标题与正文，观点句当画面会跑偏")
+    if media["source"] == "judgment" and media["decision"] == "required":
+        open_q.append("图像主题由作者确认：画面里究竟出现什么（人物/场所/物件）")
     if media["source"] == "hint":
         open_q.append("图像：内容提到人物或场所，但未声明是否配图；需要时声明 asset: required")
     if u.get("evidence") == "part_whole":
@@ -3354,56 +2857,10 @@ def _coherence_pass(pages: list) -> dict:
             move, why = ("turn", "主张或证据形态变化，阅读路径跟着内容转向。")
         current["rhythm"] = {"move": move, "previous": pages[index - 1]["id"] if index else None,
                              "why": why}
-
-    # 视觉分量（内容推导的候选，与 rhythm 同一次整套回看产出）：
-    # SKILL §3「视觉高潮必须对应内容高潮」在 BUILD 侧需要一个可读的落点——
-    # 谁拿全篇最强的视觉重量、谁安静。只从内容事实推导（请求/决定句、图像在场、
-    # 主张载体、凭证框架），不按审美口味打分；作者可覆盖。没有内容高潮就不硬指一页。
-    ask_pages = [p for p in pages
-                 if (p["judgment"].get("visual_role") or {}).get("source") == "decision"
-                 or _hit(str((p["judgment"].get("claim") or {}).get("text") or ""), _ASK_WORDS)]
-    hero_pages = [p for p in pages
-                  if (p["judgment"].get("media") or {}).get("decision") in ("required", "reuse")
-                  and (p["judgment"].get("claim") or {}).get("source") != "frame"]
-    establish_pages = [p for p in pages
-                       if (p["judgment"].get("visual_role") or {}).get("role") == "establish"
-                       and (p["judgment"].get("claim") or {}).get("text")]
-    climax_page, climax_why = None, ""
-    if ask_pages:
-        climax_page = ask_pages[-1]
-        climax_why = ("请求/决定落点在本页：内容高潮在这里，视觉重量向它集中，"
-                      "不为冲击力另起高潮")
-    elif hero_pages:
-        climax_page = hero_pages[0]
-        climax_why = ("全篇没有请求句；主视觉素材落在本页，"
-                      "图像承担全篇最强的视觉分量")
-    elif establish_pages:
-        climax_page = establish_pages[0]
-        climax_why = "建立页承载整套主张；无素材与请求时，分量落在开场的那句话"
-    else:
-        climax_why = "内容没有指认高潮位（无请求/主视觉/建立主张）：不硬指一页，先补内容"
-    for page in pages:
-        judgment = page["judgment"]
-        claim = judgment.get("claim") or {}
-        role = (judgment.get("visual_role") or {}).get("role")
-        media = (judgment.get("media") or {}).get("decision")
-        if climax_page is not None and page is climax_page:
-            level, why = "climax", climax_why
-        elif claim.get("source") == "frame":
-            level, why = ("quiet", "凭证/框架页不承载结论：视觉分量让给主张页，"
-                                  "不与主角争注意力")
-        elif media in ("required", "reuse") or role in ("establish", "persuade"):
-            level, why = ("lead", "图像在场：素材承担核心视觉分量，文字退到解说位"
-                          if media in ("required", "reuse")
-                          else f"{role} 页承载主张/决定：视觉分量高于普通证据页")
-        else:
-            level, why = ("support", "证据展开页：保持可读与秩序，把视觉高潮留给内容高潮")
-        judgment["emphasis"] = {"level": level, "why": why}
     return {"compositions": [p["judgment"]["composition"]["chosen"] for p in pages],
             "densities": [p["judgment"]["production"]["density_target"] for p in pages],
             "roles": [p["judgment"]["visual_role"]["role"] for p in pages],
             "media": media_seq,
-            "climax": {"page": climax_page["id"] if climax_page else None, "why": climax_why},
             "adjustments": None,
             "notes": notes or None}
 
@@ -3644,10 +3101,6 @@ def build_skeleton(bundle: dict) -> str:
     seq = coherence.get("compositions") or []
     if seq:
         facts.append("整套节奏: " + " → ".join(map(str, seq)))
-    climax = coherence.get("climax") or {}
-    facts.append("视觉高潮（内容推导的候选）: "
-                 + (f"{climax.get('page')} — {climax.get('why')}" if climax.get("page")
-                    else f"无 — {climax.get('why') or '未推导'}"))
     for adj in (coherence.get("adjustments") or [])[:4]:
         facts.append(f"跨页校准: {adj.get('page')} {adj.get('field')} "
                      f"{adj.get('from')}→{adj.get('to')}（{adj.get('why')}）")
@@ -3755,10 +3208,6 @@ def build_skeleton(bundle: dict) -> str:
             L.append(f'        #    媒体: {media.get("decision")} — {media.get("necessity")}')
         L.append(_action("跨页节奏", pg.get("id"),
                          f'        #    跨页节奏[{rhythm.get("move")}]：{rhythm.get("why")}'))
-        if j.get("emphasis"):
-            L.append(_action("视觉分量", pg.get("id"),
-                             f'        #    视觉分量[{j["emphasis"].get("level")}]：'
-                             f'{j["emphasis"].get("why")}'))
         if prod.get("must_place"):
             L.append(_action(
                 "必落元素/密度", pg.get("id"),
